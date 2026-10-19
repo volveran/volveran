@@ -53,8 +53,18 @@ _Avoid_: Skip, requeue, ignore
 ## Accountability
 
 **Operator**:
-The person using the tool, as they named themselves in its configuration. Recorded alongside the Broker Profile's broker user, which is often a shared service account.
+The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account.
 _Avoid_: User, who, actor
+
+## Running
+
+**Solo Mode**:
+The tool running for one Operator on their own machine, reachable only from that machine, with no sign-in.
+_Avoid_: Local mode, dev mode, no-auth mode
+
+**Team Mode**:
+The tool running as a shared service that Operators reach over the network after signing in through single sign-on.
+_Avoid_: Server mode, hosted mode, SSO mode
 
 **Audit Entry**:
 A record of one triage action: which Operator did it, as which broker user, when, on which Broker Profile and queue. For a Discard it includes a full copy of the Message.
