@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: pre-alpha.** The design is written down and checked against RabbitMQ by the broker-facts suite. The application runs in Solo Mode and lists queues; Checkout, Decisions and Apply have not landed yet. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** The design is written down and checked against RabbitMQ by the broker-facts suite. The application runs in Solo Mode or Team Mode (OIDC sign-in) and lists queues; Checkout, Decisions and Apply have not landed yet. See the [roadmap](ROADMAP.md).
 
 ## Why
 
@@ -46,9 +46,43 @@ Why `--network host`: a container's own loopback cannot be reached through a pub
 | `VOLVERAN_PROFILES_FILE` | `./profiles.yaml` (`/config/profiles.yaml` in the image) | Broker Profiles file |
 | `VOLVERAN_HOST` | `127.0.0.1` | listen address; Solo Mode accepts loopback only |
 | `VOLVERAN_PORT` | `8080` | listen port |
-| `VOLVERAN_AUTH` | `none` | `none` is Solo Mode; `oidc` (Team Mode) is not available yet |
+| `VOLVERAN_AUTH` | `none` | `none` is Solo Mode; `oidc` is [Team Mode](#running-in-team-mode) |
 | `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
 | `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
+
+## Running in Team Mode
+
+Team Mode is a shared service: Operators sign in through your OIDC provider (Keycloak, JumpCloud, Okta, Entra ID, ...) and every API call needs a session. The Operator recorded for an action is the signed-in person (the provider's `sub`, shown as their email or name); brokers are still reached with each Broker Profile's shared credentials.
+
+1. Register Volverán at your provider as a confidential client using the authorization code flow, with redirect URL `https://<volveran-host>/auth/callback`. [docs/team-mode.md](docs/team-mode.md) has a generic guide and a worked example for Keycloak brokering JumpCloud.
+2. Run the image listening on the network, behind your TLS-terminating proxy or load balancer:
+
+```sh
+docker run --rm --read-only -p 8080:8080 \
+  -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
+  -e VOLVERAN_HOST=0.0.0.0 \
+  -e VOLVERAN_AUTH=oidc \
+  -e VOLVERAN_OIDC_ISSUER=https://sso.example.com/realms/ops \
+  -e VOLVERAN_OIDC_CLIENT_ID=volveran \
+  -e VOLVERAN_OIDC_CLIENT_SECRET \
+  -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
+  -e VOLVERAN_SESSION_SECRET \
+  -e VOLVERAN_DEV_PASSWORD \
+  volveran
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VOLVERAN_AUTH` | `none` | `oidc` turns Team Mode on |
+| `VOLVERAN_HOST` | `127.0.0.1` | `0.0.0.0` to listen on the network (only Team Mode may) |
+| `VOLVERAN_OIDC_ISSUER` | required | the provider's issuer URL; Volverán reads `<issuer>/.well-known/openid-configuration` at startup and exits if it cannot |
+| `VOLVERAN_OIDC_CLIENT_ID` | required | client ID |
+| `VOLVERAN_OIDC_CLIENT_SECRET` | required | client secret (sent as `client_secret_post`) |
+| `VOLVERAN_OIDC_REDIRECT_URL` | required | `https://<volveran-host>/auth/callback`, as the browser reaches it |
+| `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
+| `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
+
+The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
 
 ## Learn more
 
@@ -63,7 +97,7 @@ Requirements: Node.js 24 and Docker with Compose v2.
 
 ```sh
 npm ci
-npm run dev            # server and web app with reload (Vite on :5173)
+npm run dev            # server and web app with reload (Vite on :5173; it proxies /api and /auth)
 npm run lint           # typecheck server, web app and tests
 npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
@@ -75,7 +109,7 @@ npm run build          # dist/server and dist/web
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
-**Test broker.** `test/broker/` holds the compose file, `rabbitmq.conf` (15 s global `consumer_timeout`) and `definitions.json` (users, vhosts, origin queues and dead-letter queues). Every checkout gets its own broker: the compose project is named after the checkout's directory and path (`volveran-test-<dir>-<hash>`), and the host ports are random free ports on 127.0.0.1, so several worktrees can run tests at once. `npm run test:broker` and `test:integration` always tear their broker down. To iterate against a running broker:
+**Test broker.** `test/broker/` holds the compose file, `rabbitmq.conf` (15 s global `consumer_timeout`) and `definitions.json` (users, vhosts, origin queues and dead-letter queues). The compose file also runs a mock OIDC provider ([mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), issuer `http://127.0.0.1:<port>/default`) for the Team Mode tests; `TestBrowser` in `test/integration/oidc-provider.ts` signs in through it as any `sub`, email and name. Every checkout gets its own broker: the compose project is named after the checkout's directory and path (`volveran-test-<dir>-<hash>`), and the host ports are random free ports on 127.0.0.1, so several worktrees can run tests at once. `npm run test:broker` and `test:integration` always tear their broker down. To iterate against a running broker:
 
 ```sh
 npm run broker:up      # prints the project name and ports
@@ -89,6 +123,7 @@ The test helpers find the running broker of the checkout on their own. Environme
 |---|---|---|
 | `VOLVERAN_TEST_PROJECT` | derived from the checkout path | compose project name |
 | `VOLVERAN_TEST_AMQP_PORT`, `VOLVERAN_TEST_MGMT_PORT` | random free ports | host ports of the broker |
+| `VOLVERAN_TEST_OIDC_PORT` | random free port | host port of the mock OIDC provider |
 | `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
 | `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against |
 

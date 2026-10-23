@@ -2,7 +2,7 @@
 // in localStorage) and see its queues, dead-letter queues first.
 import { useEffect, useState } from 'react';
 import { product } from '../shared/product.js';
-import { api, ApiError, type Profile, type Queue, type Session } from './api.js';
+import { api, ApiError, signOut, type Profile, type Queue, type Session } from './api.js';
 
 const STORAGE_KEY = 'volveran.location';
 
@@ -139,9 +139,17 @@ export function App() {
           </span>
         )}
         {profile?.protected && <span className="badge protected-badge">Protected Profile</span>}
-        {session && (
+        {session?.mode === 'solo' && (
           <span className="who">
             Solo Mode · Operator <strong>{session.operator}</strong>
+          </span>
+        )}
+        {session?.mode === 'team' && (
+          <span className="who">
+            Operator <strong title={session.operatorId}>{session.operator}</strong>{' '}
+            <button type="button" onClick={() => void signOut()}>
+              Sign out
+            </button>
           </span>
         )}
       </header>

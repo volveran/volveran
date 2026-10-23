@@ -12,6 +12,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': `http://127.0.0.1:${process.env.VOLVERAN_PORT ?? '8080'}`,
+      // Team Mode sign-in; set VOLVERAN_OIDC_REDIRECT_URL to http://localhost:5173/auth/callback.
+      '/auth': `http://127.0.0.1:${process.env.VOLVERAN_PORT ?? '8080'}`,
     },
   },
 });

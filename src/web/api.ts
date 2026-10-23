@@ -2,11 +2,21 @@
 // server's JSON by hand (src/server/server.ts); keep them in sync.
 import { product } from '../shared/product.js';
 
-export interface Session {
-  mode: 'solo';
-  /** Who is acting: in Solo Mode, the configured name. */
-  operator: string;
-}
+export type Session =
+  | {
+      mode: 'solo';
+      /** Who is acting: in Solo Mode, the configured name. */
+      operator: string;
+    }
+  | {
+      mode: 'team';
+      /** Who is acting: the signed-in person's email, else name, else `sub`. */
+      operator: string;
+      /** The provider's `sub`. */
+      operatorId: string;
+      email?: string;
+      name?: string;
+    };
 
 export interface Profile {
   name: string;
@@ -58,12 +68,26 @@ async function getJson<T>(path: string): Promise<T> {
   const body = await res.json().catch(() => undefined);
   if (!res.ok) {
     const { code, message, ...details } = (body?.error ?? {}) as { code?: string; message?: string };
+    // Team Mode without a session (none yet, expired, or ended elsewhere): sign in and come back here.
+    if (res.status === 401 && code === 'not_signed_in') signIn();
     throw new ApiError(res.status, code ?? 'http_error', message ?? `Request failed with ${res.status}`, details);
   }
   return body as T;
 }
 
 const segment = encodeURIComponent;
+
+/** Team Mode: go to the provider's sign-in, then back to this page. */
+export function signIn(): void {
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  window.location.assign(`/auth/login?returnTo=${encodeURIComponent(here)}`);
+}
+
+/** Team Mode: end the session, then show the sign-in again. */
+export async function signOut(): Promise<void> {
+  await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
+  signIn();
+}
 
 export const api = {
   session: () => getJson<Session>('/api/session'),

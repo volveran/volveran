@@ -4,17 +4,19 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import { createTeamAuth, type TeamAuth } from './auth.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import { loadProfilesFile, type BrokerProfile } from './profiles.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSources } from './triage/queue-list.js';
+import { attachOperator, operatorOf } from './operator.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
   profilesFile: string;
-  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER. */
+  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET. */
   env: Record<string, string | undefined>;
   host: string;
   /** 0 picks a free port. */
@@ -34,7 +36,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const mode = resolveRunMode(options.env, options.host);
   if (!mode.ok) throw new ConfigError(mode.error);
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
-  const app = buildApp(profiles, mode.mode, options);
+  const teamAuth = mode.mode.kind === 'team' ? await createTeamAuth(mode.mode.oidc, mode.mode.sessionSecret) : undefined;
+  const app = await buildApp(profiles, mode.mode, teamAuth, options);
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
@@ -45,7 +48,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
 }
 
-function buildApp(profiles: BrokerProfile[], mode: RunMode, options: ServerOptions): FastifyInstance {
+async function buildApp(
+  profiles: BrokerProfile[],
+  mode: RunMode,
+  teamAuth: TeamAuth | undefined,
+  options: ServerOptions,
+): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -56,8 +64,27 @@ function buildApp(profiles: BrokerProfile[], mode: RunMode, options: ServerOptio
     return reply.status(500).send({ error: { code: 'internal_error', message: (err as Error).message } });
   });
 
-  // Who is acting: in Solo Mode the configured Operator name.
-  app.get('/api/session', async () => ({ mode: mode.kind, operator: mode.operator }));
+  // Every request carries its Operator (operator.ts); in Team Mode, /api/
+  // routes refuse requests without a session before any handler runs.
+  if (mode.kind === 'solo') {
+    const operator = { id: mode.operator, displayName: mode.operator };
+    attachOperator(app, () => operator);
+  } else {
+    await teamAuth!.register(app);
+  }
+
+  // Who is acting: in Solo Mode the configured name, in Team Mode the signed-in person.
+  app.get('/api/session', async (req) => {
+    const operator = operatorOf(req);
+    if (mode.kind === 'solo') return { mode: 'solo', operator: operator.displayName };
+    return {
+      mode: 'team',
+      operator: operator.displayName,
+      operatorId: operator.id,
+      ...(operator.email !== undefined && { email: operator.email }),
+      ...(operator.name !== undefined && { name: operator.name }),
+    };
+  });
 
   app.get('/api/profiles', async () => ({
     profiles: profiles.map((p) => ({
