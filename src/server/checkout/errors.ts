@@ -12,6 +12,7 @@ export type CheckoutErrorCode =
   | 'queue_has_consumers'
   | 'lock_not_permitted'
   | 'checkout_not_found'
+  | 'not_checkout_owner'
   | 'checkout_not_active'
   | 'message_not_found'
   | 'decision_not_allowed'
@@ -25,6 +26,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   queue_has_consumers: 409,
   lock_not_permitted: 403,
   checkout_not_found: 404,
+  not_checkout_owner: 403,
   checkout_not_active: 409,
   message_not_found: 404,
   decision_not_allowed: 422,
@@ -78,4 +80,12 @@ export function lockNotPermitted({ profile, vhost, queue }: QueueRef): CheckoutE
 
 export function queueNotFound({ vhost, queue }: Queue): CheckoutError {
   return new CheckoutError('queue_not_found', `Queue "${queue}" does not exist in vhost "${vhost}".`);
+}
+
+/** Another Operator's Checkout: says nothing of what it holds. */
+export function notCheckoutOwner(id: string): CheckoutError {
+  return new CheckoutError(
+    'not_checkout_owner',
+    `Checkout ${id} belongs to another Operator. Only the Operator who started a Checkout can see or use it.`,
+  );
 }

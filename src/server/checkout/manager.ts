@@ -32,7 +32,7 @@ import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import { isCheckoutQueueType, notCheckoutableReason } from '../triage/queue-list.js';
 import { collect } from './collect.js';
-import { CheckoutError, hasConsumers, inCheckout, lockNotPermitted, operatorHasCheckout, queueNotFound } from './errors.js';
+import { CheckoutError, hasConsumers, inCheckout, lockNotPermitted, notCheckoutOwner, operatorHasCheckout, queueNotFound } from './errors.js';
 import type { Checkout, EndReason } from './state.js';
 import { queueInfo, view, type CheckoutView } from './view.js';
 
@@ -138,6 +138,16 @@ export class CheckoutManager {
     const checkout = this.find(id);
     if (checkout.status === 'active') checkout.heartbeatTimer?.refresh();
     return view(checkout);
+  }
+
+  /**
+   * Only the Checkout's owner may use it: throws 403 `not_checkout_owner`
+   * when another Operator asks (before anything of it is read). An unknown
+   * id passes; the action that follows reports it.
+   */
+  checkOwner(id: string, operator: Operator): void {
+    const checkout = this.checkouts.get(id);
+    if (checkout && checkout.operator.id !== operator.id) throw notCheckoutOwner(id);
   }
 
   get(id: string): CheckoutView {
@@ -333,7 +343,11 @@ export class CheckoutManager {
         exclusive: true,
         autoDelete: true,
         durable: false,
-        arguments: lockArguments(checkout.queue, { operator: checkout.operator.displayName, since: checkout.startedAt.toISOString() }),
+        arguments: lockArguments(
+          checkout.queue,
+          { operator: checkout.operator.displayName, since: checkout.startedAt.toISOString() },
+          checkout.operator.id,
+        ),
       });
     } catch (err) {
       const code = (err as { code?: number }).code;

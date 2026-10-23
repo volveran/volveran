@@ -226,6 +226,56 @@ describe('Checkout in Team Mode', () => {
     expect(await readyCount('/', 'orders.dlq')).toBe(2);
   });
 
+  describe("another Operator's Checkout", () => {
+    // Each route under /api/checkouts/:id, with a body a valid request would carry.
+    const routes: Array<[method: string, route: string, body?: unknown]> = [
+      ['GET', '/api/checkouts/:id'],
+      ['GET', '/api/checkouts/:id/messages/1'],
+      ['POST', '/api/checkouts/:id/heartbeat', {}],
+      ['POST', '/api/checkouts/:id/matching', { filter: [] }],
+      ['POST', '/api/checkouts/:id/decisions', { handles: [1], decision: { kind: 'discard', reason: 'Not needed' } }],
+      ['POST', '/api/checkouts/:id/end', {}],
+      ['DELETE', '/api/checkouts/:id'],
+    ];
+
+    async function aliceAndBob() {
+      await seedMessages('/', 'orders.dlq', 2);
+      const a = new TestBrowser(baseUrl);
+      const b = new TestBrowser(baseUrl);
+      await a.signIn(alice);
+      await b.signIn(bob);
+      const started = await startCheckout(a, 'orders.dlq');
+      expect(started.status).toBe(201);
+      return { a, b, id: started.body.checkout.id as string };
+    }
+
+    it.each(routes)('refuses %s %s to anyone but its owner, without its contents', async (method, route, body) => {
+      const { a, b, id } = await aliceAndBob();
+      const res = await b.request(method, route.replace(':id', id), body === undefined ? {} : { body });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('not_checkout_owner');
+      expect(JSON.stringify(res.body)).not.toMatch(/orders\.dlq|alice|payload|messages/i);
+
+      // Bob changed nothing: Alice's Checkout is still active, holding both Messages without Decisions.
+      const mine = await a.get(`/api/checkouts/${id}`);
+      expect(mine.status).toBe(200);
+      expect(mine.body.checkout).toMatchObject({ status: 'active', heldCount: 2 });
+      expect(mine.body.checkout.messages.every((m: any) => m.decision.kind === 'keep')).toBe(true);
+    });
+
+    it('lets its owner use every route', async () => {
+      const { a, id } = await aliceAndBob();
+      const handle = (await a.get(`/api/checkouts/${id}`)).body.checkout.messages[0].handle;
+      expect((await a.get(`/api/checkouts/${id}/messages/${handle}`)).status).toBe(200);
+      expect((await a.post(`/api/checkouts/${id}/heartbeat`)).status).toBe(200);
+      expect((await a.post(`/api/checkouts/${id}/matching`, { filter: [] })).status).toBe(200);
+      expect((await a.post(`/api/checkouts/${id}/decisions`, { handles: [handle], decision: { kind: 'discard', reason: 'Not needed' } })).status).toBe(200);
+      expect((await a.post(`/api/checkouts/${id}/end`)).status).toBe(200);
+      expect((await a.request('DELETE', `/api/checkouts/${id}`)).status).toBe(200);
+      expect(await readyCount('/', 'orders.dlq')).toBe(2);
+    });
+  });
+
   it('refuses a Checkout without a session', async () => {
     const res = await new TestBrowser(baseUrl).post(checkoutPath('orders.dlq'));
     expect(res.status).toBe(401);

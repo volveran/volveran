@@ -3,8 +3,9 @@
 // `volveran.checkout.<queue>`. Any other connection, from this or another
 // Volverán instance, gets RESOURCE_LOCKED declaring it, and the broker deletes
 // it when the holding connection dies. The lock queue's arguments record who
-// holds it and since when, so a refused Checkout and the queue list can name
-// the holder (read back through the management API).
+// holds it (display name and `Operator.id`) and since when, so a refused
+// Checkout and the queue list can name the holder (read back through the
+// management API).
 import { createHash } from 'node:crypto';
 
 const PREFIX = 'volveran.checkout.';
@@ -13,6 +14,7 @@ const MAX_QUEUE_NAME_BYTES = 255;
 
 const ARG_QUEUE = 'volveran-queue';
 const ARG_OPERATOR = 'volveran-operator';
+const ARG_OPERATOR_ID = 'volveran-operator-id';
 const ARG_SINCE = 'volveran-started-at';
 
 export interface CheckoutHolder {
@@ -40,20 +42,25 @@ export function isLockQueue(name: string): boolean {
   return name.startsWith(PREFIX);
 }
 
-/** The arguments the lock queue is declared with. */
-export function lockArguments(queue: string, holder: CheckoutHolder): Record<string, string> {
-  return { [ARG_QUEUE]: queue, [ARG_OPERATOR]: holder.operator, [ARG_SINCE]: holder.since };
+/** The arguments the lock queue is declared with; `operatorId` is the holder's `Operator.id`. */
+export function lockArguments(queue: string, holder: CheckoutHolder, operatorId: string): Record<string, string> {
+  return { [ARG_QUEUE]: queue, [ARG_OPERATOR]: holder.operator, [ARG_OPERATOR_ID]: operatorId, [ARG_SINCE]: holder.since };
 }
 
-/** The checked-out queue and its holder, from a lock queue's arguments; null if they aren't a lock's. */
+/**
+ * The checked-out queue, its holder and the holder's `Operator.id` (null
+ * from a lock without one), from a lock queue's arguments; null if they
+ * aren't a lock's.
+ */
 export function holderFromLockArguments(
   args: Record<string, unknown>,
-): { queue: string; holder: CheckoutHolder } | null {
+): { queue: string; holder: CheckoutHolder; operatorId: string | null } | null {
   const queue = args[ARG_QUEUE];
   const operator = args[ARG_OPERATOR];
+  const operatorId = args[ARG_OPERATOR_ID];
   const since = args[ARG_SINCE];
   if (typeof queue !== 'string' || typeof operator !== 'string' || typeof since !== 'string') return null;
-  return { queue, holder: { operator, since } };
+  return { queue, holder: { operator, since }, operatorId: typeof operatorId === 'string' ? operatorId : null };
 }
 
 /** Queue name → holder, for every Checkout lock queue in a vhost's queue list. */

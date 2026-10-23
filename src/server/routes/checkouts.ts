@@ -7,6 +7,11 @@
 //   POST   /api/checkouts/:id/heartbeat  the browser still shows it        → { checkout }
 //   DELETE /api/checkouts/:id                                            → { checkout }
 //   POST   /api/checkouts/:id/end   same as DELETE, for navigator.sendBeacon
+//
+// Every /api/checkouts/:id… route (these and routes/decisions.ts) is for the
+// Checkout's owner only: another Operator gets 403 `not_checkout_owner`
+// before the handler runs, so nothing of the Checkout leaks. In Solo Mode
+// there is only one Operator.
 import type { FastifyInstance } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { CheckoutError } from '../checkout/errors.js';
@@ -22,6 +27,13 @@ export interface CheckoutRouteDeps {
 }
 
 export function registerCheckoutRoutes(app: FastifyInstance, { checkouts, queueRef }: CheckoutRouteDeps) {
+  // Registered before the routes, so it covers every route under /api/checkouts/:id.
+  app.addHook('preHandler', async (req) => {
+    const url = req.routeOptions.url;
+    if (url !== '/api/checkouts/:id' && !url?.startsWith('/api/checkouts/:id/')) return;
+    checkouts.checkOwner((req.params as { id: string }).id, operatorOf(req));
+  });
+
   app.post<{ Params: { profile: string; vhost: string; queue: string }; Body: unknown }>(
     '/api/profiles/:profile/vhosts/:vhost/queues/:queue/checkouts',
     async (req, reply) => {
