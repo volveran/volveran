@@ -1,9 +1,11 @@
 // Root of the Volverán web app: pick a Broker Profile and vhost (remembered
 // in localStorage) and see its queues, dead-letter queues first; start a
-// Checkout on one, which replaces the queue list until it is over.
+// Checkout on one, which replaces the queue list until it is over. The Audit
+// view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
 import { useEffect, useState } from 'react';
 import { product } from '../shared/product.js';
 import { api, ApiError, signOut, type Profile, type Queue, type Session } from './api.js';
+import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
 
 const STORAGE_KEY = 'volveran.location';
@@ -46,6 +48,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
+  const [view, setView] = useState<'queues' | 'audit'>('queues');
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
@@ -136,6 +139,14 @@ export function App() {
     <div className={profile?.protected ? 'app protected' : 'app'}>
       <header className="topbar">
         <h1>{product.name}</h1>
+        <nav className="view-switch" aria-label="View">
+          <button type="button" aria-pressed={view === 'queues'} onClick={() => setView('queues')}>
+            Queues
+          </button>
+          <button type="button" aria-pressed={view === 'audit'} onClick={() => setView('audit')}>
+            Audit
+          </button>
+        </nav>
         <label>
           Broker Profile
           <select
@@ -183,70 +194,76 @@ export function App() {
       </header>
 
       <main>
-        <div className="controls">
-          <input
-            type="search"
-            placeholder="Search queues by name"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search queues by name"
-          />
-          <label className="checkbox">
-            <input
-              type="checkbox"
-              checked={onlyDeadLetterQueues}
-              onChange={(e) => setOnlyDeadLetterQueues(e.target.checked)}
-            />
-            Only dead-letter queues
-          </label>
-          <button onClick={() => setRefreshTick((n) => n + 1)} disabled={loading}>
-            Refresh
-          </button>
-        </div>
-
-        {error && (
-          <div className="error" role="alert">
-            <strong>{errorTitle(error)}</strong>
-            <p>{error.message}</p>
-            <code>{error.code}</code>
-          </div>
-        )}
-
-        {consumersWarning && !checkoutId && (
-          <div className="warning" role="alert">
-            <strong>
-              {consumersWarning.error.details.consumers === 1
-                ? '1 consumer is'
-                : `${String(consumersWarning.error.details.consumers)} consumers are`}{' '}
-              reading {consumersWarning.queue}
-            </strong>
-            <p>{consumersWarning.error.message}</p>
-            <button onClick={() => startCheckout(consumersWarning.queue, true)}>Check out anyway</button>{' '}
-            <button onClick={() => setConsumersWarning(undefined)}>Cancel</button>
-          </div>
-        )}
-
-        {checkoutId ? (
-          <CheckoutView
-            id={checkoutId}
-            onClose={() => {
-              setCheckoutId(null);
-              setRefreshTick((n) => n + 1);
-            }}
-          />
+        {view === 'audit' && !checkoutId ? (
+          <AuditView profiles={profiles} />
         ) : (
-          queues && (
-            <>
-              {profile?.protected && (
-                <p className="protected-banner" role="note">
-                  <span className="badge protected-badge">Protected Profile</span> Queues of{' '}
-                  <strong>{profile.name}</strong> · vhost {vhost}. Every Apply that changes where a Message ends up,
-                  and every Restore, needs the queue name typed.
-                </p>
-              )}
-              <QueueTable queues={queues} onCheckout={startCheckout} />
-            </>
-          )
+          <>
+            <div className="controls">
+              <input
+                type="search"
+                placeholder="Search queues by name"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                aria-label="Search queues by name"
+              />
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={onlyDeadLetterQueues}
+                  onChange={(e) => setOnlyDeadLetterQueues(e.target.checked)}
+                />
+                Only dead-letter queues
+              </label>
+              <button onClick={() => setRefreshTick((n) => n + 1)} disabled={loading}>
+                Refresh
+              </button>
+            </div>
+
+            {error && (
+              <div className="error" role="alert">
+                <strong>{errorTitle(error)}</strong>
+                <p>{error.message}</p>
+                <code>{error.code}</code>
+              </div>
+            )}
+
+            {consumersWarning && !checkoutId && (
+              <div className="warning" role="alert">
+                <strong>
+                  {consumersWarning.error.details.consumers === 1
+                    ? '1 consumer is'
+                    : `${String(consumersWarning.error.details.consumers)} consumers are`}{' '}
+                  reading {consumersWarning.queue}
+                </strong>
+                <p>{consumersWarning.error.message}</p>
+                <button onClick={() => startCheckout(consumersWarning.queue, true)}>Check out anyway</button>{' '}
+                <button onClick={() => setConsumersWarning(undefined)}>Cancel</button>
+              </div>
+            )}
+
+            {checkoutId ? (
+              <CheckoutView
+                id={checkoutId}
+                onClose={() => {
+                  setCheckoutId(null);
+                  setRefreshTick((n) => n + 1);
+                }}
+              />
+            ) : (
+              queues && (
+                <>
+                  {profile?.protected && (
+                    <p className="protected-banner" role="note">
+                      <span className="badge protected-badge">Protected Profile</span> Queues of{' '}
+                      <strong>{profile.name}</strong> · vhost {vhost}. Every Apply that changes where a Message ends up,
+                      and every Restore, needs the queue name typed.
+                    </p>
+                  )}
+                  <QueueTable queues={queues} onCheckout={startCheckout} />
+                </>
+              )
+            )}
+          </>
         )}
       </main>
     </div>

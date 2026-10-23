@@ -1,22 +1,32 @@
-// Audit Entry routes (read only; #10 adds browsing filters and Restore).
+// Audit Entry routes: browsing, Restore and the body store's size.
 //
-//   GET /api/audit-entries?queue=&messageId=&action=&checkoutId=&from=&to=&limit=
+//   GET /api/audit-entries?profile=&queue=&messageId=&action=&operator=&checkoutId=&from=&to=&limit=
 //       → { entries: AuditEntryJson[] }, newest first, without Message bodies
-//   GET /api/audit-entries/:id → { entry: AuditEntryJson } with the body (base64)
+//   GET /api/audit-entries/:id → { entry: AuditEntryJson } with the body (base64; null once expired)
+//   POST /api/audit-entries/:id/restore { confirm, queue?, confirmUncertain?, confirmQueueName? }
+//       → { entry: AuditEntryJson } the Restore's own Audit Entry (outcome done or failed)
+//   GET /api/audit-store → BodyStoreUsage (stored body bytes vs the size limit, for the UI warning)
+//
+// Anyone who may use Volverán may browse and Restore (no roles in v0.1); the
+// Restore is recorded as the requesting Operator's.
 //
 // Properties and headers use the lossless AMQP JSON of audit/amqp-json.ts
 // (byte arrays as { "$bytes": base64 }, 64-bit integers as { "$bigint": "..." }).
 import type { FastifyInstance } from 'fastify';
 import { toAmqpJson } from '../audit/amqp-json.js';
+import type { BodyStoreUsage } from '../audit/body-retention.js';
+import type { RestoreRequest, RestoreService } from '../audit/restore.js';
 import type { AuditAction, AuditEntry, AuditQuery, AuditStore } from '../audit/store.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
+import { operatorOf } from '../operator.js';
 
 /** An Audit Entry as JSON; `body` (base64) only when given. */
 export function auditEntryJson(entry: AuditEntry, body?: Buffer | null) {
-  const { message, at, ...rest } = entry;
+  const { message, at, bodyExpiredAt, ...rest } = entry;
   return {
     ...rest,
     at: at.toISOString(),
+    bodyExpiredAt: bodyExpiredAt?.toISOString() ?? null,
     message: message && {
       properties: toAmqpJson(message.properties),
       headers: toAmqpJson(message.headers),
@@ -27,7 +37,10 @@ export function auditEntryJson(entry: AuditEntry, body?: Buffer | null) {
 }
 
 export interface AuditSearchParams {
+  profile?: string;
   queue?: string;
+  /** The Operator's id or display name. */
+  operator?: string;
   messageId?: string;
   action?: string;
   checkoutId?: string;
@@ -45,7 +58,9 @@ const DEFAULT_LIMIT = 500;
 export function parseAuditSearch(params: AuditSearchParams): AuditQuery {
   const query: AuditQuery = { limit: DEFAULT_LIMIT };
   const given = (v: string | undefined) => (v === undefined || v.trim() === '' ? undefined : v.trim());
+  if (given(params.profile)) query.profile = given(params.profile);
   if (given(params.queue)) query.queue = given(params.queue);
+  if (given(params.operator)) query.operator = given(params.operator);
   if (given(params.messageId)) query.messageId = given(params.messageId);
   if (given(params.checkoutId)) query.checkoutId = given(params.checkoutId);
   const action = given(params.action);
@@ -80,7 +95,13 @@ function parseDate(name: string, value: string): Date {
   return date;
 }
 
-export function registerAuditRoutes(app: FastifyInstance, audit: AuditStore) {
+export interface AuditRouteDeps {
+  audit: AuditStore;
+  restore: RestoreService;
+  usage: () => BodyStoreUsage;
+}
+
+export function registerAuditRoutes(app: FastifyInstance, { audit, restore, usage }: AuditRouteDeps) {
   app.get<{ Querystring: AuditSearchParams }>('/api/audit-entries', async (req) => ({
     entries: audit.list(parseAuditSearch(req.query)).map((e) => auditEntryJson(e)),
   }));
@@ -91,4 +112,13 @@ export function registerAuditRoutes(app: FastifyInstance, audit: AuditStore) {
     if (!entry) throw new HttpError(404, 'audit_entry_not_found', `No Audit Entry ${req.params.id}.`);
     return { entry: auditEntryJson(entry, audit.body(id)) };
   });
+
+  app.post<{ Params: { id: string }; Body: RestoreRequest | undefined }>('/api/audit-entries/:id/restore', async (req) => {
+    const operator = operatorOf(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id)) throw new HttpError(404, 'audit_entry_not_found', `No Audit Entry ${req.params.id}.`);
+    return { entry: auditEntryJson(await restore.restore(id, req.body ?? undefined, operator)) };
+  });
+
+  app.get('/api/audit-store', async () => usage());
 }

@@ -8,8 +8,9 @@
 //
 // An entry is written as `pending` before its action touches the broker and
 // updated with the outcome afterwards. The body of a Discarded Message lives
-// in its own table (audit_message_bodies), so retention (#10) can evict
-// bodies while the entry, its properties and headers stay forever.
+// in its own table (audit_message_bodies), so retention can evict bodies
+// while the entry, its properties and headers stay forever: an evicted entry
+// keeps `body_bytes` and gets `body_expired_at` ("body expired").
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -63,11 +64,16 @@ export interface NewAuditEntry {
   destination: AuditDestination | null;
   checkoutId: string | null;
   message: MessageCopy | null;
+  /** A Restore: the Audit Entry of the Discard whose Message it republished. */
+  restoreOf?: number | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message'> {
+export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'restoreOf'> {
   id: number;
+  restoreOf: number | null;
+  /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
+  bodyExpiredAt: Date | null;
   operatorId: string;
   operatorName: string;
   outcome: AuditOutcome;
@@ -87,12 +93,27 @@ export interface AuditQuery {
   messageId?: string;
   action?: AuditAction;
   checkoutId?: string;
+  /** The Broker Profile. */
+  profile?: string;
+  /** The Operator: their stable id or their display name. */
+  operator?: string;
+  /** Restores of this Audit Entry. */
+  restoreOf?: number;
   /** Entries at or after this time. */
   from?: Date;
   /** Entries at or before this time. */
   to?: Date;
   /** At most this many entries (the newest). */
   limit?: number;
+}
+
+/** The limits retention applies to stored bodies (see audit/body-retention.ts). */
+export interface BodyEviction {
+  now: Date;
+  /** Bodies of entries older than this are evicted. */
+  maxAgeMs: number;
+  /** Once the stored bodies add up to more than this, the oldest are evicted until they fit. */
+  maxBodyBytes: number;
 }
 
 /** Append-only: each entry runs once, in order, recorded in PRAGMA user_version. */
@@ -128,6 +149,12 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_entries_destination_queue ON audit_entries (destination_queue);
    CREATE INDEX audit_entries_message_id ON audit_entries (message_id);
    CREATE INDEX audit_entries_checkout_id ON audit_entries (checkout_id);`,
+  // v2 (#10): Restore links to the Discard it republished; retention marks evicted bodies.
+  `ALTER TABLE audit_entries ADD COLUMN restore_of INTEGER REFERENCES audit_entries (id);
+   ALTER TABLE audit_entries ADD COLUMN body_expired_at INTEGER;
+   CREATE INDEX audit_entries_restore_of ON audit_entries (restore_of);
+   CREATE INDEX audit_entries_stored_bodies ON audit_entries (created_at, id)
+     WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -155,8 +182,8 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, restore_of)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -176,6 +203,7 @@ export class AuditStore {
           message ? JSON.stringify(toAmqpJson(message.properties)) : null,
           message ? JSON.stringify(toAmqpJson(message.headers)) : null,
           message?.body ? message.body.length : null,
+          entry.restoreOf ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -205,6 +233,9 @@ export class AuditStore {
     if (query.messageId !== undefined) match('message_id = ?', query.messageId);
     if (query.action !== undefined) match('action = ?', query.action);
     if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
+    if (query.profile !== undefined) match('profile = ?', query.profile);
+    if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
+    if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
     if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
     if (query.to !== undefined) match('created_at <= ?', query.to.getTime());
     let sql = 'SELECT * FROM audit_entries';
@@ -232,6 +263,51 @@ export class AuditStore {
       | { body: Uint8Array }
       | undefined;
     return row ? Buffer.from(row.body) : null;
+  }
+
+  /**
+   * Evicts stored bodies, oldest first: those older than `maxAgeMs`, then
+   * as many more as needed for the rest to fit in `maxBodyBytes`. Each
+   * evicted entry keeps everything else and is marked body expired at `now`.
+   */
+  evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction): { evicted: number } {
+    // `newer_bytes`: this body plus every newer one. The newest bodies that
+    // fit are kept; anything older, or older than the age limit, goes.
+    const ids = this.db
+      .prepare(
+        `SELECT id FROM (
+           SELECT id, created_at,
+                  SUM(body_bytes) OVER (ORDER BY created_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS newer_bytes
+           FROM audit_entries WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL
+         ) WHERE created_at < ? OR newer_bytes > ?`,
+      )
+      .all(now.getTime() - maxAgeMs, maxBodyBytes)
+      .map((row) => Number((row as { id: number }).id));
+    if (ids.length === 0) return { evicted: 0 };
+    this.db.exec('BEGIN');
+    try {
+      const mark = this.db.prepare('UPDATE audit_entries SET body_expired_at = ? WHERE id = ?');
+      const remove = this.db.prepare('DELETE FROM audit_message_bodies WHERE entry_id = ?');
+      for (const id of ids) {
+        mark.run(now.getTime(), id);
+        remove.run(id);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+      throw err;
+    }
+    return { evicted: ids.length };
+  }
+
+  /** The total size of the bodies stored now (what the size limit applies to). */
+  storedBodyBytes(): number {
+    const row = this.db
+      .prepare(
+        'SELECT COALESCE(SUM(body_bytes), 0) AS bytes FROM audit_entries WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL',
+      )
+      .get() as { bytes: number };
+    return Number(row.bytes);
   }
 
   close(): void {
@@ -275,6 +351,8 @@ interface Row {
   message_properties: string | null;
   message_headers: string | null;
   body_bytes: number | null;
+  restore_of: number | null;
+  body_expired_at: number | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -301,6 +379,8 @@ function toEntry(row: Row): AuditEntry {
     outcome: row.outcome,
     outcomeReason: row.outcome_reason,
     checkoutId: row.checkout_id,
+    restoreOf: row.restore_of,
+    bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
     message:
       row.message_properties === null
         ? null

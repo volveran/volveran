@@ -4,6 +4,8 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import { bodyStoreUsage, parseBodyRetention, type BodyRetention } from './audit/body-retention.js';
+import { RestoreService } from './audit/restore.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
@@ -18,7 +20,7 @@ import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetter
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
-import { registerAuditRoutes } from './routes/audit.js';
+import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { attachOperator, operatorOf } from './operator.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
@@ -41,6 +43,8 @@ export interface ServerOptions {
   checkoutTiming?: Partial<CheckoutTiming>;
   /** How long an ended or lost Checkout stays readable (default 15 min). */
   endedCheckoutRetentionMs?: number;
+  /** Overrides the body retention from VOLVERAN_BODY_RETENTION_DAYS / _MAX_BYTES / _INTERVAL_MINUTES. */
+  bodyRetention?: Partial<BodyRetention>;
   /** Test seams of the Checkout manager; unset in production. */
   checkoutTestHooks?: CheckoutTestHooks;
 }
@@ -58,6 +62,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   if (!limits.ok) throw new ConfigError(limits.error);
   const timing = parseCheckoutTiming(options.env);
   if (!timing.ok) throw new ConfigError(timing.error);
+  const parsedRetention = parseBodyRetention(options.env);
+  if (!parsedRetention.ok) throw new ConfigError(parsedRetention.error);
+  const retention = { ...parsedRetention.retention, ...options.bodyRetention };
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
   const audit = new AuditStore(options.dataDir);
   const checkouts = new CheckoutManager({
@@ -68,10 +75,31 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     testHooks: options.checkoutTestHooks,
   });
   const teamAuth = mode.mode.kind === 'team' ? await createTeamAuth(mode.mode.oidc, mode.mode.sessionSecret) : undefined;
-  const app = await buildApp(profiles, mode.mode, teamAuth, checkouts, audit, options);
+  const restore = new RestoreService(
+    audit,
+    (name) => profiles.find((p) => p.name === name),
+    (id) => checkouts.isRunning(id),
+  );
+  const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
+  const app = await buildApp(profiles, mode.mode, teamAuth, checkouts, { audit, restore, usage }, options);
+
+  // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
+  const evict = () => {
+    try {
+      const { evicted } = audit.evictBodies({ now: new Date(), ...retention });
+      if (evicted > 0) app.log.info({ evicted }, 'Retention evicted Discarded Message bodies');
+    } catch (err) {
+      app.log.error(err, 'Retention could not evict Discarded Message bodies');
+    }
+  };
+  evict();
+  const retentionTimer = setInterval(evict, retention.intervalMs);
+  retentionTimer.unref();
+
   // Every held Message goes back to its queue (an Apply in progress finishes
   // first) before the audit store closes and the process exits.
   app.addHook('onClose', async () => {
+    clearInterval(retentionTimer);
     await checkouts.endAll();
     audit.close();
   });
@@ -90,7 +118,7 @@ async function buildApp(
   mode: RunMode,
   teamAuth: TeamAuth | undefined,
   checkouts: CheckoutManager,
-  audit: AuditStore,
+  auditDeps: AuditRouteDeps,
   options: ServerOptions,
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false });
@@ -208,7 +236,7 @@ async function buildApp(
   });
   registerDecisionRoutes(app, checkouts);
   registerApplyRoutes(app, checkouts);
-  registerAuditRoutes(app, audit);
+  registerAuditRoutes(app, auditDeps);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {

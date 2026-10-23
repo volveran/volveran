@@ -19,6 +19,11 @@
 //   VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS
 //                           a Checkout without a browser heartbeat for this
 //                           long ends (default 120)
+//   VOLVERAN_BODY_RETENTION_DAYS, VOLVERAN_BODY_RETENTION_MAX_BYTES,
+//   VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES
+//                           retention of Discarded Message bodies (default
+//                           30 days or 1 GiB in total, checked hourly; see
+//                           audit/body-retention.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`).
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

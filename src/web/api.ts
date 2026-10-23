@@ -173,6 +173,62 @@ export interface Rejection {
   reason: string;
 }
 
+export type AuditAction = 'discard' | 'replay' | 'move' | 'restore';
+export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
+
+/** An Audit Entry as listed (src/server/routes/audit.ts auditEntryJson); properties and headers in lossless AMQP JSON. */
+export interface AuditEntry {
+  id: number;
+  at: string;
+  operatorId: string;
+  operatorName: string;
+  brokerUser: string;
+  profile: string;
+  vhost: string;
+  queue: string;
+  messageId: string | null;
+  action: AuditAction;
+  reason: string | null;
+  destination: { exchange: string; routingKey: string; queue: string | null } | null;
+  checkoutId: string | null;
+  /** A Restore: the Discard's Audit Entry. */
+  restoreOf: number | null;
+  outcome: AuditOutcome;
+  outcomeReason: string | null;
+  /** Set once retention evicted the Discarded body ("body expired"). */
+  bodyExpiredAt: string | null;
+  message: { properties: Record<string, unknown>; headers: Record<string, unknown>; bodyBytes: number | null } | null;
+}
+
+/** The Audit Entry search form; empty fields are ignored. */
+export interface AuditSearch {
+  profile?: string;
+  queue?: string;
+  messageId?: string;
+  action?: AuditAction | '';
+  operator?: string;
+  from?: string;
+  to?: string;
+}
+
+/** How full the store of Discarded bodies is (GET /api/audit-store). */
+export interface AuditStoreUsage {
+  storedBodyBytes: number;
+  maxBodyBytes: number;
+  maxAgeDays: number;
+  /** Near the size limit: the oldest bodies will soon be evicted. */
+  nearLimit: boolean;
+}
+
+export interface RestoreOptions {
+  /** Another existing queue; the source queue when omitted. */
+  queue?: string;
+  /** Accept a possible duplicate (the Discard's outcome is pending or uncertain). */
+  confirmUncertain?: boolean;
+  /** On a Protected Profile: the destination queue name as typed. */
+  confirmQueueName?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -264,6 +320,18 @@ export const api = {
    * Carries out every Decision, then ends the Checkout; one outcome per Message.
    * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
    */
+  auditEntries: (search: AuditSearch) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(search)) if (value?.trim()) params.set(key, value.trim());
+    const qs = params.size > 0 ? `?${params}` : '';
+    return getJson<{ entries: AuditEntry[] }>(`/api/audit-entries${qs}`).then((b) => b.entries);
+  },
+  auditStore: () => getJson<AuditStoreUsage>('/api/audit-store'),
+  /** Republishes the Discarded Message of Audit Entry `id`; returns the Restore's own Audit Entry. */
+  restore: (id: number, options: RestoreOptions) =>
+    getJson<{ entry: AuditEntry }>(`/api/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(
+      (b) => b.entry,
+    ),
   apply: (id: string, confirmQueueName?: string) =>
     getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,

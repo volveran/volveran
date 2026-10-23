@@ -10,6 +10,7 @@ import path from 'node:path';
 import tls from 'node:tls';
 import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
+import type { BodyRetention } from '../../src/server/audit/body-retention.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import { startServer } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
@@ -87,6 +88,8 @@ export interface StartAppOptions {
   checkoutTestHooks?: CheckoutTestHooks;
   /** The audit store's directory (kept by the caller); default in memory. */
   dataDir?: string;
+  /** Overrides the body retention limits and interval (ms) from the environment. */
+  bodyRetention?: Partial<BodyRetention>;
 }
 
 /**
@@ -119,6 +122,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
       dataDir: options.dataDir,
+      bodyRetention: options.bodyRetention,
     });
   } catch (err) {
     await rm(dir, { recursive: true, force: true });

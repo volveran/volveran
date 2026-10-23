@@ -175,6 +175,12 @@ export class CheckoutManager {
     return view(this.find(id));
   }
 
+  /** Whether Checkout `id` is active or still Applying in this process, so its pending Audit Entries may yet finish. */
+  isRunning(id: string): boolean {
+    const checkout = this.checkouts.get(id);
+    return checkout !== undefined && (checkout.status === 'active' || checkout.applying !== null);
+  }
+
   /** The Checkout itself, for the modules that work on its held Messages (staging.ts). */
   checkout(id: string): Checkout {
     return this.find(id);

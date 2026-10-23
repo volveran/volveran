@@ -437,3 +437,28 @@ td.select {
   font-family: ui-monospace, monospace;
   max-width: 100%;
 }
+
+/* Audit view (AuditView.tsx) */
+.view-switch {
+  display: flex;
+  gap: 4px;
+}
+.view-switch button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.audit .confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.error-text {
+  color: var(--danger);
+}
+.badge.outcome-failed,
+.badge.outcome-uncertain,
+.badge.outcome-pending {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
