@@ -13,12 +13,13 @@
 // channel close) makes it a Lost Checkout: the broker has returned
 // everything, at the cost of one delivery on quorum queues.
 //
-// In-process, an Operator has at most one active Checkout, and a queue at
+// In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
 import { ManagementClient } from '../management.js';
+import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import { checkoutSize, type CheckoutLimits } from '../triage/checkout-collection.js';
 import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage/checkout-lock.js';
@@ -58,7 +59,7 @@ export class CheckoutManager {
   private readonly checkouts = new Map<string, Checkout>();
   /** Lock key (broker + vhost + queue) → the Checkout holding it, from the moment it starts. */
   private readonly locks = new Map<string, Checkout>();
-  /** Operator → their Checkout, from the moment it starts until it is over. */
+  /** Operator id → their Checkout, from the moment it starts until it is over. */
   private readonly byOperator = new Map<string, Checkout>();
   private readonly hooks: CheckoutTestHooks;
   private readonly endedRetentionMs: number;
@@ -68,12 +69,12 @@ export class CheckoutManager {
     this.endedRetentionMs = options.endedRetentionMs ?? DEFAULT_ENDED_RETENTION_MS;
   }
 
-  async start(ref: QueueRef, operator: string): Promise<CheckoutView> {
-    const mine = this.byOperator.get(operator);
-    if (mine) throw operatorHasCheckout(operator, mine);
+  async start(ref: QueueRef, operator: Operator): Promise<CheckoutView> {
+    const mine = this.byOperator.get(operator.id);
+    if (mine) throw operatorHasCheckout(operator.displayName, mine);
     const lockKey = this.lockKey(ref);
     const other = this.locks.get(lockKey);
-    if (other) throw inCheckout(ref, { operator: other.operator, since: other.startedAt.toISOString() });
+    if (other) throw inCheckout(ref, { operator: other.operator.displayName, since: other.startedAt.toISOString() });
 
     const checkout: Checkout = {
       ...ref,
@@ -96,7 +97,7 @@ export class CheckoutManager {
       heldBytes: 0,
     };
     this.locks.set(lockKey, checkout);
-    this.byOperator.set(operator, checkout);
+    this.byOperator.set(operator.id, checkout);
     try {
       await this.open(checkout);
     } catch (err) {
@@ -112,9 +113,9 @@ export class CheckoutManager {
     return view(this.find(id));
   }
 
-  /** The Operator's active Checkout, if any. */
-  activeFor(operator: string): CheckoutView | null {
-    const c = this.byOperator.get(operator);
+  /** The active Checkout of the Operator with this id, if any. */
+  activeFor(operatorId: string): CheckoutView | null {
+    const c = this.byOperator.get(operatorId);
     return c && this.checkouts.has(c.id) ? view(c) : null;
   }
 
@@ -172,7 +173,7 @@ export class CheckoutManager {
   private release(checkout: Checkout) {
     const lockKey = this.lockKey(checkout);
     if (this.locks.get(lockKey) === checkout) this.locks.delete(lockKey);
-    if (this.byOperator.get(checkout.operator) === checkout) this.byOperator.delete(checkout.operator);
+    if (this.byOperator.get(checkout.operator.id) === checkout) this.byOperator.delete(checkout.operator.id);
     setTimeout(() => this.checkouts.delete(checkout.id), this.endedRetentionMs).unref();
   }
 
@@ -276,7 +277,7 @@ export class CheckoutManager {
         exclusive: true,
         autoDelete: true,
         durable: false,
-        arguments: lockArguments(checkout.queue, { operator: checkout.operator, since: checkout.startedAt.toISOString() }),
+        arguments: lockArguments(checkout.queue, { operator: checkout.operator.displayName, since: checkout.startedAt.toISOString() }),
       });
     } catch (err) {
       const code = (err as { code?: number }).code;

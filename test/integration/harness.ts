@@ -77,6 +77,8 @@ export interface StartAppOptions {
   env?: Record<string, string | undefined>;
   /** Listen address; default 127.0.0.1. */
   host?: string;
+  /** Listen port; default 0 (a free port). Team Mode tests pick one first, for the redirect URL. */
+  port?: number;
   checkoutLimits?: Partial<CheckoutLimits>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
@@ -106,7 +108,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       profilesFile,
       env,
       host: options.host ?? '127.0.0.1',
-      port: 0,
+      port: options.port ?? 0,
       checkoutLimits: options.checkoutLimits,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,

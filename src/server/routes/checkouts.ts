@@ -8,22 +8,21 @@
 import type { FastifyInstance } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { CheckoutError } from '../checkout/errors.js';
+import { operatorOf } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 
 export interface CheckoutRouteDeps {
   checkouts: CheckoutManager;
   /** The queue a request names, after checking its profile and vhost exist (throws an HttpError). */
   queueRef(profile: string, vhost: string, queue: string): QueueRef;
-  /** The Operator making the request. */
-  operator(): string;
 }
 
-export function registerCheckoutRoutes(app: FastifyInstance, { checkouts, queueRef, operator }: CheckoutRouteDeps) {
+export function registerCheckoutRoutes(app: FastifyInstance, { checkouts, queueRef }: CheckoutRouteDeps) {
   app.post<{ Params: { profile: string; vhost: string; queue: string } }>(
     '/api/profiles/:profile/vhosts/:vhost/queues/:queue/checkouts',
     async (req, reply) => {
       const { profile, vhost, queue } = req.params;
-      const checkout = await checkouts.start(queueRef(profile, vhost, queue), operator());
+      const checkout = await checkouts.start(queueRef(profile, vhost, queue), operatorOf(req));
       return reply.status(201).send({ checkout });
     },
   );

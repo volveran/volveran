@@ -24,9 +24,11 @@
     "broker:down": "node scripts/test-broker.mjs down"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.3",
     "@fastify/static": "^10.1.6",
     "amqplib": "^2.2.0",
     "fastify": "^5.12.7",
+    "openid-client": "^6.8.8",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

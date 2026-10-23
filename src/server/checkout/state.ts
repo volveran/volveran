@@ -1,5 +1,6 @@
 // The state of one Checkout, as the manager keeps it in memory.
 import type * as amqp from 'amqplib';
+import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
@@ -12,7 +13,8 @@ export type EndReason = 'operator' | 'shutdown';
 
 export interface Checkout extends QueueRef {
   id: string;
-  operator: string;
+  /** Who started it: `id` keys one active Checkout per Operator, `displayName` is shown. */
+  operator: Operator;
   queueType: CheckoutQueueType;
   /** The queue's effective delivery-limit (quorum); null when none. */
   deliveryLimit: number | null;

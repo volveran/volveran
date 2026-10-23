@@ -4,8 +4,11 @@
 //   VOLVERAN_HOST           listen address (default 127.0.0.1; Solo Mode refuses
 //                           anything but loopback, see run-mode.ts)
 //   VOLVERAN_PORT           listen port (default 8080)
-//   VOLVERAN_AUTH           none (Solo Mode, default); oidc (Team Mode) arrives in #11
+//   VOLVERAN_AUTH           none (Solo Mode, default) or oidc (Team Mode)
 //   VOLVERAN_OPERATOR       the Operator's name in Solo Mode (default $USER)
+//   VOLVERAN_OIDC_ISSUER, VOLVERAN_OIDC_CLIENT_ID, VOLVERAN_OIDC_CLIENT_SECRET,
+//   VOLVERAN_OIDC_REDIRECT_URL, VOLVERAN_OIDC_SCOPES, VOLVERAN_SESSION_SECRET
+//                           Team Mode sign-in (see run-mode.ts, auth.ts)
 //   VOLVERAN_WEB_ROOT       built web app (default dist/web next to this file)
 //   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
 //                           Checkout limits (default 1000 Messages, 100 MB)

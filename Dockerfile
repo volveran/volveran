@@ -9,8 +9,12 @@
 #     -v ./profiles.yaml:/config/profiles.yaml:ro \
 #     -e VOLVERAN_OPERATOR=$USER -e VOLVERAN_DEV_PASSWORD \
 #     volveran
-# Team Mode (VOLVERAN_AUTH=oidc, #11) is the only mode allowed to set
-# VOLVERAN_HOST=0.0.0.0 and use a published port (-p 8080:8080).
+# Team Mode (VOLVERAN_AUTH=oidc, see README "Team Mode") is the
+# only mode allowed to listen on the network:
+#   docker run --rm --read-only -p 8080:8080 -e VOLVERAN_HOST=0.0.0.0 \
+#     -e VOLVERAN_AUTH=oidc -e VOLVERAN_OIDC_ISSUER=... -e VOLVERAN_OIDC_CLIENT_ID=... \
+#     -e VOLVERAN_OIDC_CLIENT_SECRET -e VOLVERAN_OIDC_REDIRECT_URL=... \
+#     -e VOLVERAN_SESSION_SECRET ... volveran
 
 FROM node:24-slim AS build
 WORKDIR /app

@@ -1,11 +1,12 @@
-// Where the test broker of this checkout lives: its docker compose project
-// name and host ports. Shared by scripts/test-broker.mjs and the test helpers
+// Where the test broker (and mock OIDC provider) of this checkout lives: its
+// docker compose project name and host ports. Shared by scripts/test-broker.mjs and the test helpers
 // in test/broker/client.ts, so both find the same broker.
 //
 // Every checkout (worktree) gets its own compose project, named after its
 // directory plus a hash of its path, so brokers of several worktrees run side
 // by side. Host ports are left to Docker (random free ports, bound to
-// 127.0.0.1) unless VOLVERAN_TEST_AMQP_PORT / VOLVERAN_TEST_MGMT_PORT are set.
+// 127.0.0.1) unless VOLVERAN_TEST_AMQP_PORT / VOLVERAN_TEST_MGMT_PORT /
+// VOLVERAN_TEST_OIDC_PORT are set.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -22,12 +23,13 @@ export const composeFile = path.join(repoRoot, 'test/broker/docker-compose.yml')
  * @property {string} project compose project name
  * @property {string | undefined} amqpPort host AMQP port, undefined for a random free port
  * @property {string | undefined} mgmtPort host management port, undefined for a random free port
+ * @property {string | undefined} oidcPort host port of the mock OIDC provider, undefined for a random free port
  */
 
 /**
  * The compose project and host ports for the checkout at `root`, with
- * VOLVERAN_TEST_PROJECT, VOLVERAN_TEST_AMQP_PORT and VOLVERAN_TEST_MGMT_PORT
- * from `env` taking precedence.
+ * VOLVERAN_TEST_PROJECT, VOLVERAN_TEST_AMQP_PORT, VOLVERAN_TEST_MGMT_PORT and
+ * VOLVERAN_TEST_OIDC_PORT from `env` taking precedence.
  * @param {string} root
  * @param {Record<string, string | undefined>} env
  * @returns {TestBrokerSettings}
@@ -37,6 +39,7 @@ export function testBrokerSettings(root, env) {
     project: env.VOLVERAN_TEST_PROJECT || defaultProject(root),
     amqpPort: env.VOLVERAN_TEST_AMQP_PORT || undefined,
     mgmtPort: env.VOLVERAN_TEST_MGMT_PORT || undefined,
+    oidcPort: env.VOLVERAN_TEST_OIDC_PORT || undefined,
   };
 }
 
@@ -53,19 +56,19 @@ function defaultProject(root) {
 }
 
 /**
- * The host ports the running test broker of `project` was given, asked from
- * docker compose. Throws when the broker is not running.
+ * The host ports the running test broker and OIDC provider of `project` were
+ * given, asked from docker compose. Throws when they are not running.
  * @param {string} project
- * @returns {{ amqpPort: string, mgmtPort: string }}
+ * @returns {{ amqpPort: string, mgmtPort: string, oidcPort: string }}
  */
 export function publishedPorts(project) {
-  /** @param {number} containerPort */
-  const port = (containerPort) => {
+  /** @param {number} containerPort @param {string} [service] */
+  const port = (containerPort, service = 'rabbitmq') => {
     let out = '';
     try {
       out = execFileSync(
         'docker',
-        ['compose', '-p', project, '-f', composeFile, 'port', 'rabbitmq', String(containerPort)],
+        ['compose', '-p', project, '-f', composeFile, 'port', service, String(containerPort)],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       ).trim();
     } catch {
@@ -79,5 +82,5 @@ export function publishedPorts(project) {
     }
     return match[1];
   };
-  return { amqpPort: port(5672), mgmtPort: port(15672) };
+  return { amqpPort: port(5672), mgmtPort: port(15672), oidcPort: port(8080, 'oidc') };
 }

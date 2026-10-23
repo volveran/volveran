@@ -4,6 +4,7 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
@@ -13,12 +14,13 @@ import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-coll
 import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
+import { attachOperator, operatorOf } from './operator.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
   profilesFile: string;
-  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER. */
+  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET. */
   env: Record<string, string | undefined>;
   host: string;
   /** 0 picks a free port. */
@@ -51,7 +53,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
   });
-  const app = buildApp(profiles, mode.mode, checkouts, options);
+  const teamAuth = mode.mode.kind === 'team' ? await createTeamAuth(mode.mode.oidc, mode.mode.sessionSecret) : undefined;
+  const app = await buildApp(profiles, mode.mode, teamAuth, checkouts, options);
   // Every held Message goes back to its queue before the process exits.
   app.addHook('onClose', () => checkouts.endAll());
   await app.listen({ host: options.host, port: options.port });
@@ -64,12 +67,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
 }
 
-function buildApp(
+async function buildApp(
   profiles: BrokerProfile[],
   mode: RunMode,
+  teamAuth: TeamAuth | undefined,
   checkouts: CheckoutManager,
   options: ServerOptions,
-): FastifyInstance {
+): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -80,13 +84,30 @@ function buildApp(
     return reply.status(500).send({ error: { code: 'internal_error', message: (err as Error).message } });
   });
 
-  // Who is acting: in Solo Mode the configured Operator name.
+  // Every request carries its Operator (operator.ts); in Team Mode, /api/
+  // routes refuse requests without a session before any handler runs.
+  if (mode.kind === 'solo') {
+    const operator = { id: mode.operator, displayName: mode.operator };
+    attachOperator(app, () => operator);
+  } else {
+    await teamAuth!.register(app);
+  }
+
+  // Who is acting: in Solo Mode the configured name, in Team Mode the signed-in person.
   // `checkoutId` is the Operator's active Checkout, so the web app can return to it.
-  app.get('/api/session', async () => ({
-    mode: mode.kind,
-    operator: mode.operator,
-    checkoutId: checkouts.activeFor(mode.operator)?.id ?? null,
-  }));
+  app.get('/api/session', async (req) => {
+    const operator = operatorOf(req);
+    const checkoutId = checkouts.activeFor(operator.id)?.id ?? null;
+    if (mode.kind === 'solo') return { mode: 'solo', operator: operator.displayName, checkoutId };
+    return {
+      mode: 'team',
+      operator: operator.displayName,
+      operatorId: operator.id,
+      ...(operator.email !== undefined && { email: operator.email }),
+      ...(operator.name !== undefined && { name: operator.name }),
+      checkoutId,
+    };
+  });
 
   app.get('/api/profiles', async () => ({
     profiles: profiles.map((p) => ({
@@ -165,7 +186,6 @@ function buildApp(
       checkVhost(profile, vhost);
       return { profile, vhost, queue };
     },
-    operator: () => mode.operator,
   });
 
   app.setNotFoundHandler((req, reply) => {

@@ -16,7 +16,7 @@ const ARG_OPERATOR = 'volveran-operator';
 const ARG_SINCE = 'volveran-started-at';
 
 export interface CheckoutHolder {
-  /** The Operator who started the Checkout. */
+  /** The Operator who started the Checkout, as shown (display name). */
   operator: string;
   /** ISO time the Checkout started. */
   since: string;

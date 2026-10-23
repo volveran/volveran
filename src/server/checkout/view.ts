@@ -12,7 +12,7 @@ export interface CheckoutView {
   vhost: string;
   queue: string;
   queueType: CheckoutQueueType;
-  /** The Operator who started it. */
+  /** The Operator who started it, as shown (display name). */
   operator: string;
   startedAt: string;
   status: CheckoutStatus;
@@ -47,7 +47,7 @@ export function view(c: Checkout): CheckoutView {
     vhost: c.vhost,
     queue: c.queue,
     queueType: c.queueType,
-    operator: c.operator,
+    operator: c.operator.displayName,
     startedAt: c.startedAt.toISOString(),
     status: c.status,
     lostReason: c.lostReason,
