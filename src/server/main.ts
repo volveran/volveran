@@ -12,6 +12,11 @@
 //   VOLVERAN_WEB_ROOT       built web app (default dist/web next to this file)
 //   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
 //                           Checkout limits (default 1000 Messages, 100 MB)
+//   VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES
+//                           how long a Checkout may hold Messages (default 30)
+//   VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS
+//                           a Checkout without a browser heartbeat for this
+//                           long ends (default 120)
 // plus each Broker Profile's password variable (its `passwordEnv`).
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

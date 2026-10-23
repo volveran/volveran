@@ -9,6 +9,7 @@ export type CheckoutErrorCode =
   | 'queue_not_checkoutable'
   | 'checkout_in_progress'
   | 'operator_has_checkout'
+  | 'queue_has_consumers'
   | 'lock_not_permitted'
   | 'checkout_not_found'
   | 'checkout_not_active'
@@ -20,6 +21,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   queue_not_checkoutable: 409,
   checkout_in_progress: 409,
   operator_has_checkout: 409,
+  queue_has_consumers: 409,
   lock_not_permitted: 403,
   checkout_not_found: 404,
   checkout_not_active: 409,
@@ -51,6 +53,16 @@ export function operatorHasCheckout(operator: string, other: Queue & { id: strin
     'operator_has_checkout',
     `${operator} already has an active Checkout of queue "${other.queue}" in vhost "${other.vhost}". End it before starting another.`,
     { checkoutId: other.id, vhost: other.vhost, queue: other.queue },
+  );
+}
+
+/** Other consumers read the queue (count from a passive declare); the Operator may override. */
+export function hasConsumers({ vhost, queue }: Queue, consumers: number): CheckoutError {
+  const n = consumers === 1 ? '1 consumer is' : `${consumers} consumers are`;
+  return new CheckoutError(
+    'queue_has_consumers',
+    `${n} reading queue "${queue}" in vhost "${vhost}". A Checkout would compete with them for Messages, and they keep receiving the ones the Checkout does not hold. Stop them first, or start the Checkout with the consumer override to go ahead anyway.`,
+    { consumers },
   );
 }
 

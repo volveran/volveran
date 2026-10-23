@@ -1,8 +1,11 @@
 // A Checkout: how many Messages it holds, the list of held Messages and the
 // detail of the selected one. Ending it returns every Message to the queue;
 // leaving the page ends it too (a beacon), so nothing stays held by accident.
+// While the page shows the Checkout it sends heartbeats (without them the
+// server ends it), and it counts down to the Checkout's time limit.
 import { useEffect, useState } from 'react';
 import { formatBytes, heldLine } from '../shared/held-line.js';
+import { product } from '../shared/product.js';
 import { api, ApiError, type Checkout, type MessageDetail, type MessageSummary } from './api.js';
 
 export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
@@ -11,22 +14,40 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [detail, setDetail] = useState<MessageDetail>();
   const [error, setError] = useState<ApiError>();
   const [ending, setEnding] = useState(false);
+  /** Date.now() when `checkout` arrived: the countdown runs from its remainingMs. */
+  const [receivedAt, setReceivedAt] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
-    const load = () =>
-      api
-        .checkout(id)
-        .then((c) => !cancelled && setCheckout(c))
-        .catch((err) => !cancelled && setError(err));
-    load();
-    // Notices a Lost Checkout while the page is open.
-    const timer = setInterval(load, 5_000);
+    const received = (c: Checkout) => {
+      if (cancelled) return;
+      setCheckout(c);
+      setReceivedAt(Date.now());
+    };
+    const failed = (err: ApiError) => !cancelled && setError(err);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    api
+      .heartbeat(id)
+      .then((c) => {
+        received(c);
+        // The heartbeat also notices a Lost Checkout while the page is open.
+        timer = setInterval(
+          () => api.heartbeat(id).then(received).catch(failed),
+          Math.max(1_000, Math.min(5_000, c.heartbeatWindowMs / 4)),
+        );
+      })
+      .catch(failed);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
   }, [id]);
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(tick);
+  }, []);
 
   useEffect(() => {
     const end = () => navigator.sendBeacon(`/api/checkouts/${encodeURIComponent(id)}/end`);
@@ -73,6 +94,11 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             {new Date(checkout.startedAt).toLocaleTimeString()}
           </p>
           <p className="held">{heldLine(checkout)}</p>
+          {active && (
+            <p className="countdown" title={`Ends itself at ${new Date(checkout.expiresAt).toLocaleTimeString()}`}>
+              Ends in {formatCountdown(checkout.remainingMs - (now - receivedAt))}
+            </p>
+          )}
         </div>
         {active ? (
           <button onClick={end} disabled={ending} title="Every Message goes back to the queue in its original order">
@@ -87,9 +113,10 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
         <div className="error" role="alert">
           <strong>Lost Checkout</strong>
           <p>{checkout.lostReason}</p>
+          <p>Every Message is back in the queue; nothing of this Checkout was applied.</p>
         </div>
       )}
-      {checkout.status === 'ended' && <p className="empty">This Checkout has ended; its Messages are back in the queue.</p>}
+      {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}
       {error && <ErrorBox error={error} />}
 
       {active && (
@@ -105,6 +132,27 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
       )}
     </section>
   );
+}
+
+function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function endedLine(c: Checkout): string {
+  const back = 'its Messages are back in the queue, in their original order.';
+  switch (c.endReason) {
+    case 'time-limit':
+      return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes and ended; ${back}`;
+    case 'no-heartbeat':
+      return `This Checkout ended because this page stopped sending heartbeats; ${back}`;
+    case 'shutdown':
+      return `This Checkout ended because ${product.name} shut down; ${back}`;
+    default:
+      return `This Checkout has ended; ${back}`;
+  }
 }
 
 function ErrorBox({ error }: { error: ApiError }) {

@@ -46,6 +46,8 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
+  /** A start refused because other consumers read the queue, awaiting the Operator's override. */
+  const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
 
   const profile = profiles.find((p) => p.name === profileName);
@@ -117,13 +119,16 @@ export function App() {
     };
   }, [profileName, vhost, debouncedSearch, onlyDeadLetterQueues, refreshTick]);
 
-  const startCheckout = async (queue: string) => {
+  const startCheckout = async (queue: string, overrideConsumers = false) => {
     if (!profileName || !vhost) return;
     setError(undefined);
+    setConsumersWarning(undefined);
     try {
-      setCheckoutId((await api.startCheckout(profileName, vhost, queue)).id);
+      setCheckoutId((await api.startCheckout(profileName, vhost, queue, { overrideConsumers })).id);
     } catch (err) {
-      setError(err as ApiError);
+      const apiError = err as ApiError;
+      if (apiError.code === 'queue_has_consumers') setConsumersWarning({ queue, error: apiError });
+      else setError(apiError);
     }
   };
 
@@ -200,6 +205,20 @@ export function App() {
             <strong>{errorTitle(error)}</strong>
             <p>{error.message}</p>
             <code>{error.code}</code>
+          </div>
+        )}
+
+        {consumersWarning && !checkoutId && (
+          <div className="warning" role="alert">
+            <strong>
+              {consumersWarning.error.details.consumers === 1
+                ? '1 consumer is'
+                : `${String(consumersWarning.error.details.consumers)} consumers are`}{' '}
+              reading {consumersWarning.queue}
+            </strong>
+            <p>{consumersWarning.error.message}</p>
+            <button onClick={() => startCheckout(consumersWarning.queue, true)}>Check out anyway</button>{' '}
+            <button onClick={() => setConsumersWarning(undefined)}>Cancel</button>
           </div>
         )}
 
