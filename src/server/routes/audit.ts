@@ -16,20 +16,22 @@ import type { FastifyInstance } from 'fastify';
 import { toAmqpJson } from '../audit/amqp-json.js';
 import type { BodyStoreUsage } from '../audit/body-retention.js';
 import type { RestoreRequest, RestoreService } from '../audit/restore.js';
-import type { AuditAction, AuditEntry, AuditQuery, AuditStore } from '../audit/store.js';
+import type { AuditEntry, AuditQuery, AuditStore } from '../audit/store.js';
+import { AUDIT_ACTIONS, type AuditAction, type AuditEntryJson } from '../../shared/audit.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
 import { operatorOf } from '../operator.js';
 
 /** An Audit Entry as JSON; `body` (base64) only when given. */
-export function auditEntryJson(entry: AuditEntry, body?: Buffer | null) {
+export function auditEntryJson(entry: AuditEntry, body?: Buffer | null): AuditEntryJson {
   const { message, at, bodyExpiredAt, ...rest } = entry;
   return {
     ...rest,
     at: at.toISOString(),
     bodyExpiredAt: bodyExpiredAt?.toISOString() ?? null,
     message: message && {
-      properties: toAmqpJson(message.properties),
-      headers: toAmqpJson(message.headers),
+      // The lossless JSON of a table is an object.
+      properties: toAmqpJson(message.properties) as Record<string, unknown>,
+      headers: toAmqpJson(message.headers) as Record<string, unknown>,
       bodyBytes: message.bodyBytes,
       ...(body !== undefined && { body: body ? body.toString('base64') : null }),
     },
@@ -53,7 +55,6 @@ export interface AuditSearchParams {
   limit?: string;
 }
 
-const ACTIONS: AuditAction[] = ['discard', 'replay', 'move', 'restore'];
 const DEFAULT_LIMIT = 500;
 
 /** Turns the query string of GET /api/audit-entries into an AuditQuery; empty values are ignored. */
@@ -68,8 +69,8 @@ export function parseAuditSearch(params: AuditSearchParams): AuditQuery {
   if (given(params.replayId)) query.replayId = given(params.replayId);
   const action = given(params.action);
   if (action) {
-    if (!ACTIONS.includes(action as AuditAction)) {
-      throw new InvalidRequestError(`"action" must be one of ${ACTIONS.join(', ')}.`);
+    if (!(AUDIT_ACTIONS as readonly string[]).includes(action)) {
+      throw new InvalidRequestError(`"action" must be one of ${AUDIT_ACTIONS.join(', ')}.`);
     }
     query.action = action as AuditAction;
   }

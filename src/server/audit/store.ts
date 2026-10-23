@@ -16,24 +16,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import type { AuditAction, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 
-/** The triage action an Audit Entry records. #7 adds 'replay', #8 'move', #10 'restore' (the column is plain TEXT). */
-export type AuditAction = 'discard' | 'replay' | 'move' | 'restore';
-/**
- * pending: written before the broker was touched, never updated (the process
- * stopped mid-action: the Message may still be in the queue too). done /
- * failed: carried out / not carried out. uncertain: the broker may or may not
- * have carried it out (the connection dropped before it confirmed the ack).
- */
-export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
-
-/** Where a Replay, Move or Restore published the Message. */
-export interface AuditDestination {
-  exchange: string;
-  routingKey: string;
-  /** The queue the Message was sent to, when one was named (Replay, Move to a queue, Restore); null for an exchange. */
-  queue: string | null;
-}
+export type { AuditAction, AuditDestination, AuditOutcome };
 
 /**
  * A copy of a Message as amqplib decoded it. Discard keeps the body (so it can

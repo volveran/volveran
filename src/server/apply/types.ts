@@ -6,7 +6,10 @@ import type * as amqp from 'amqplib';
 import type { AuditAction, AuditDestination } from '../audit/store.js';
 import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
-import type { ActionDecision, Decision } from '../triage/decisions.js';
+import type { ActionDecision } from '../triage/decisions.js';
+import type { MessageOutcome, OutcomeStatus } from '../../shared/checkout.js';
+
+export type { MessageOutcome, OutcomeStatus };
 
 /** A Message held by a Checkout (an unacked delivery on the Checkout channel). */
 export type HeldMessage = amqp.ConsumeMessage;
@@ -71,24 +74,6 @@ export interface DecisionHandler<D extends ActionDecision> {
    * May throw; the executor reports a throw as failed.
    */
   execute(decision: D, message: HeldMessage, ctx: ApplyContext, details: AuditDetails): Promise<StepResult>;
-}
-
-/**
- * What happened to one Message in an Apply.
- * done: carried out. failed: not carried out, the Message goes back to the
- * queue (Keep). not-attempted: Apply did not try it (the Checkout stopped
- * being active, or this version cannot carry out its Decision); it goes back
- * to the queue. kept: its Decision was Keep.
- */
-export type OutcomeStatus = 'done' | 'failed' | 'not-attempted' | 'kept';
-
-export interface MessageOutcome {
-  handle: number;
-  messageId: string | null;
-  decision: Decision;
-  status: OutcomeStatus;
-  /** Why it failed or was not attempted; null otherwise. */
-  reason: string | null;
 }
 
 /**

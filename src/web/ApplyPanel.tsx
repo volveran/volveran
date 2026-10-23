@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import type { DecisionSummaryLine } from './api.js';
 import { decisionLabel } from '../shared/decisions.js';
+import type { CheckoutQueueType } from '../shared/checkout.js';
 import { returnOrder } from '../shared/return-order.js';
 
 export function ApplyPanel({
@@ -23,7 +24,7 @@ export function ApplyPanel({
   profile: string;
   protectedProfile: boolean;
   queue: string;
-  queueType: 'classic' | 'quorum';
+  queueType: CheckoutQueueType;
   typeQueueName: boolean;
   summary: DecisionSummaryLine[];
   summaryText: string;

@@ -4,26 +4,9 @@
 import { parseXDeath, type Delivery } from './message-view.js';
 import { matchesQueueFilter as matchesGlob } from './queue-list.js';
 import { parseKind } from './parse-kind.js';
+import type { Filter, FilterClause } from '../../shared/filters.js';
 
-export type FilterClause =
-  /** The routing key matches this glob (`*` and `?` wildcards). */
-  | { kind: 'routing-key'; value: string }
-  /** The header is present; with `value`, its scalar value as text matches this glob (equal when it has no wildcards). */
-  | { kind: 'header'; name: string; value?: string | undefined }
-  /** Any `x-death` entry has exactly this reason. */
-  | { kind: 'x-death-reason'; value: string }
-  /** The original queue (the most recent `x-death` entry's, as the list shows it) matches this glob. */
-  | { kind: 'original-queue'; value: string }
-  /** Case-insensitive substring of the body as sent (UTF-8, not compressed). */
-  | { kind: 'body-text'; value: string }
-  /**
-   * The body parses as JSON and the path reaches a value: any value when
-   * `value` is left out, otherwise a scalar whose text is exactly `value`.
-   */
-  | { kind: 'json-path'; path: string; value?: string | undefined };
-
-/** Every clause must match (AND). An empty filter matches every Message. */
-export type Filter = FilterClause[];
+export type { Filter, FilterClause };
 
 export type FilterKind = FilterClause['kind'];
 

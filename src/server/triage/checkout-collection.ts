@@ -11,13 +11,9 @@
 // expired) it could still receive Messages published after the start; once
 // the Checkout stops waiting, every further delivery is late and goes back
 // to the queue at once.
+import type { CheckoutLimits, LimitedBy } from '../../shared/checkout.js';
 
-export interface CheckoutLimits {
-  /** Most Messages one Checkout holds (default 1,000). */
-  maxMessages: number;
-  /** Most body bytes one Checkout holds (default 100 MB). */
-  maxBytes: number;
-}
+export type { CheckoutLimits, LimitedBy };
 
 const MB = 1024 * 1024;
 
@@ -46,8 +42,6 @@ export function parseCheckoutLimits(
   if (typeof maxMb === 'string') return { ok: false, error: maxMb };
   return { ok: true, limits: { maxMessages, maxBytes: maxMb * MB } };
 }
-
-export type LimitedBy = 'messages' | 'bytes';
 
 /**
  * How many Messages to take (N): every ready Message up to the Message

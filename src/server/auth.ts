@@ -11,7 +11,7 @@
 // Every /api/ route answers 401 `not_signed_in` without a session.
 import { randomBytes } from 'node:crypto';
 import fastifyCookie from '@fastify/cookie';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as oidc from 'openid-client';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';

@@ -1,9 +1,12 @@
 // Pure Message presentation (no I/O): the list entry and the detail view of a
 // held delivery, with its readable x-death history, its body rendered by
 // content type, and its Delivery Budget on quorum queues.
-import { deliveryBudget, type DeliveryBudget } from './delivery-budget.js';
+import { deliveryBudget } from './delivery-budget.js';
 import type { CheckoutQueueType } from './queue-list.js';
 import { isRecord } from '../is-record.js';
+import type { MessageDetail, MessageSummary, RenderedBody, XDeathEntry } from '../../shared/checkout.js';
+
+export type { MessageDetail, MessageSummary, RenderedBody, XDeathEntry };
 
 /** The source queue facts a Message's presentation depends on. */
 export interface QueueInfo {
@@ -26,22 +29,6 @@ export interface Delivery {
     contentEncoding?: unknown;
   };
   content: Buffer;
-}
-
-export interface MessageSummary {
-  /** Per-Checkout handle; Messages sharing a message_id still have distinct handles. */
-  handle: number;
-  messageId: string | null;
-  routingKey: string;
-  /** ISO time from the `timestamp` property, or null. */
-  timestamp: string | null;
-  deadLetterReason: string | null;
-  /** The queue of the most recent `x-death` entry: where the Message was dead-lettered from. */
-  originalQueue: string | null;
-  /** Body size in bytes. */
-  size: number;
-  /** Quorum queues with a delivery limit only; null otherwise. */
-  deliveryBudget: DeliveryBudget | null;
 }
 
 export function messageSummary(handle: number, d: Delivery, queue: QueueInfo): MessageSummary {
@@ -72,11 +59,6 @@ export function deliveryCount(headers: Record<string, unknown> | undefined, queu
   if (count !== null) return count;
   return queueType === 'quorum' ? 0 : null;
 }
-
-export type RenderedBody =
-  | { kind: 'json'; size: number; text: string }
-  | { kind: 'text'; size: number; text: string }
-  | { kind: 'binary'; size: number; hex: string; base64: string };
 
 /**
  * Picks how to show a body from its `content_type`, sniffing the content when
@@ -132,18 +114,6 @@ function looksLikeText(text: string): boolean {
   return !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text);
 }
 
-export interface XDeathEntry {
-  queue: string | null;
-  reason: string | null;
-  count: number | null;
-  /** First dead-lettering for this queue and reason, ISO time. */
-  time: string | null;
-  /** Exchange and routing keys the Message was published with before entering `queue`. */
-  exchange: string | null;
-  routingKeys: string[];
-  originalExpiration: string | null;
-}
-
 /**
  * Reads the `x-death` header, most recent entry first (the broker's order).
  * Tolerates a missing header and publisher-forged shapes: entries that are
@@ -181,18 +151,6 @@ function asNumber(v: unknown): number | null {
 function asTime(v: unknown): string | null {
   const seconds = isRecord(v) && v['!'] === 'timestamp' ? asNumber(v.value) : asNumber(v);
   return seconds === null ? null : new Date(seconds * 1000).toISOString();
-}
-
-export interface MessageDetail extends MessageSummary {
-  exchange: string;
-  redelivered: boolean;
-  deliveryCount: number | null;
-  deliveryLimit: number | null;
-  /** Every AMQP property that is set, except headers, as JSON-safe values. */
-  properties: Record<string, unknown>;
-  headers: Record<string, unknown>;
-  xDeath: XDeathEntry[];
-  body: RenderedBody;
 }
 
 export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): MessageDetail {

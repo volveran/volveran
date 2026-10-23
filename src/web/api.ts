@@ -1,205 +1,35 @@
-// Thin typed client over Volverán's HTTP JSON API. The types mirror the
-// server's JSON by hand (src/server/server.ts); keep them in sync.
-import type { Decision, DecisionSummaryLine } from '../shared/decisions.js';
+// Thin typed client over Volverán's HTTP JSON API. The response shapes are
+// the server's own, from src/shared/.
+import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
+import type { CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
+import type { Decision } from '../shared/decisions.js';
+import type { FilterClause } from '../shared/filters.js';
 import { product } from '../shared/product.js';
+import type { MoveDestinations, ProfileSummary, QueueRow, Session } from '../shared/queues.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
-
-export type Session = (
-  | {
-      mode: 'solo';
-      /** Who is acting: in Solo Mode, the configured name. */
-      operator: string;
-    }
-  | {
-      mode: 'team';
-      /** Who is acting: the signed-in person's email, else name, else `sub`. */
-      operator: string;
-      /** The provider's `sub`. */
-      operatorId: string;
-      email?: string;
-      name?: string;
-    }
-) & {
-  /** The Operator's active Checkout, if any. */
-  checkoutId: string | null;
-};
-
-export interface Profile {
-  name: string;
-  username: string;
-  managementUrl: string;
-  amqpUrl: string;
-  passwordEnv: string;
-  /** Whether the password variable is set; a profile without one cannot connect. */
-  passwordSet: boolean;
-  vhosts: 'all' | string[];
-  defaultQueueFilter: string | null;
-  protected: boolean;
-}
-
-/** A dead-letter set-up that silently loses Messages (src/server/triage/queue-list.ts). */
-export interface SetupWarning {
-  code: 'messages_dropped_at_delivery_limit';
-  deliveryLimit: number;
-  message: string;
-}
-
-export type CheckoutAvailability = { available: true } | { available: false; reason: string };
-
-export interface Queue {
-  name: string;
-  type: string;
-  /** From management statistics, which lag the broker by a few seconds. */
-  approximateMessages: number;
-  consumers: number;
-  /** Matches the profile's queue-name filter, or other queues dead-letter into it. */
-  deadLetterQueue: boolean;
-  matchesDefaultFilter: boolean;
-  deadLetteredFrom: string[];
-  checkout: CheckoutAvailability;
-  setupWarning: SetupWarning | null;
-  /** Who holds the queue in a Checkout, from any Volverán instance; null when nobody does. */
-  checkedOutBy: CheckoutHolder | null;
-}
-
-export interface CheckoutHolder {
-  operator: string;
-  since: string;
-}
-
-export interface DeliveryBudget {
-  remaining: number;
-  warning: string | null;
-}
-
-export interface MessageSummary {
-  handle: number;
-  messageId: string | null;
-  routingKey: string;
-  timestamp: string | null;
-  deadLetterReason: string | null;
-  originalQueue: string | null;
-  size: number;
-  deliveryBudget: DeliveryBudget | null;
-}
-
-export interface XDeathEntry {
-  queue: string | null;
-  reason: string | null;
-  count: number | null;
-  time: string | null;
-  exchange: string | null;
-  routingKeys: string[];
-  originalExpiration: string | null;
-}
-
-export type RenderedBody =
-  | { kind: 'json'; size: number; text: string }
-  | { kind: 'text'; size: number; text: string }
-  | { kind: 'binary'; size: number; hex: string; base64: string };
-
-export interface MessageDetail extends MessageSummary {
-  exchange: string;
-  redelivered: boolean;
-  deliveryCount: number | null;
-  deliveryLimit: number | null;
-  properties: Record<string, unknown>;
-  headers: Record<string, unknown>;
-  xDeath: XDeathEntry[];
-  body: RenderedBody;
-}
-
-export interface Checkout {
-  id: string;
-  profile: string;
-  protectedProfile: boolean;
-  vhost: string;
-  queue: string;
-  queueType: 'classic' | 'quorum';
-  operator: string;
-  startedAt: string;
-  timeLimitMs: number;
-  /** When the Checkout ends itself. */
-  expiresAt: string;
-  /** Time left when the server answered (server clock); 0 once over. */
-  remainingMs: number;
-  /** Send a heartbeat at least this often, or the Checkout ends. */
-  heartbeatWindowMs: number;
-  status: 'active' | 'ended' | 'lost';
-  lostReason: string | null;
-  endReason: 'operator' | 'applied' | 'shutdown' | 'time-limit' | 'no-heartbeat' | null;
-  readyAtStart: number;
-  heldCount: number;
-  heldBytes: number;
-  limits: { maxMessages: number; maxBytes: number };
-  limitedBy: 'messages' | 'bytes' | null;
-  deliveryLimit: number | null;
-  messages: MessageRow[];
-  decisionSummary: DecisionSummaryLine[];
-  /** e.g. "12 Discard, 40 Replay, 3 Move to orders.manual, 145 Keep" */
-  decisionSummaryText: string;
-  applyConfirmation: { typeQueueName: boolean };
-  /** The result of the Checkout's Apply, once it has run. */
-  lastApply: { at: string; outcomes: MessageOutcome[] } | null;
-}
-
-/** What happened to one Message in an Apply. */
-export interface MessageOutcome {
-  handle: number;
-  messageId: string | null;
-  decision: Decision;
-  /** failed and not-attempted Messages went back to the queue, like kept ones. */
-  status: 'done' | 'failed' | 'not-attempted' | 'kept';
-  reason: string | null;
-}
-
-export interface MessageRow extends MessageSummary {
-  decision: Decision;
-  replay: { available: true } | { available: false; reason: string };
-}
-
-/** One condition of a Message filter; every condition must hold. */
-export type FilterClause =
-  | { kind: 'routing-key'; value: string }
-  | { kind: 'header'; name: string; value?: string }
-  | { kind: 'x-death-reason'; value: string }
-  | { kind: 'original-queue'; value: string }
-  | { kind: 'body-text'; value: string }
-  | { kind: 'json-path'; path: string; value?: string };
+export type { AuditAction, AuditOutcome } from '../shared/audit.js';
+export type {
+  CheckoutHolder,
+  DeliveryBudget,
+  MessageDetail,
+  MessageOutcome,
+  MessageRow,
+  MessageSummary,
+  RenderedBody,
+  XDeathEntry,
+} from '../shared/checkout.js';
+export type { FilterClause } from '../shared/filters.js';
+export type { CheckoutAvailability, MoveDestinations, Session, SetupWarning } from '../shared/queues.js';
+export type Checkout = CheckoutView;
+export type Profile = ProfileSummary;
+export type Queue = QueueRow;
+export type AuditEntry = AuditEntryJson;
+export type AuditStoreUsage = BodyStoreUsage;
 
 export interface Rejection {
   handle: number;
   reason: string;
-}
-
-export type AuditAction = 'discard' | 'replay' | 'move' | 'restore';
-export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
-
-/** An Audit Entry as listed (src/server/routes/audit.ts auditEntryJson); properties and headers in lossless AMQP JSON. */
-export interface AuditEntry {
-  id: number;
-  at: string;
-  operatorId: string;
-  operatorName: string;
-  brokerUser: string;
-  profile: string;
-  vhost: string;
-  queue: string;
-  messageId: string | null;
-  action: AuditAction;
-  reason: string | null;
-  destination: { exchange: string; routingKey: string; queue: string | null } | null;
-  checkoutId: string | null;
-  /** A Restore: the Discard's Audit Entry. */
-  restoreOf: number | null;
-  /** Replay, Move, Restore: the `x-volveran-replay-id` the Message was published with. */
-  replayId: string | null;
-  outcome: AuditOutcome;
-  outcomeReason: string | null;
-  /** Set once retention evicted the Discarded body ("body expired"). */
-  bodyExpiredAt: string | null;
-  message: { properties: Record<string, unknown>; headers: Record<string, unknown>; bodyBytes: number | null } | null;
 }
 
 /** The Audit Entry search form; empty fields are ignored. */
@@ -213,15 +43,6 @@ export interface AuditSearch {
   replayId?: string;
   from?: string;
   to?: string;
-}
-
-/** How full the store of Discarded bodies is (GET /api/audit-store). */
-export interface AuditStoreUsage {
-  storedBodyBytes: number;
-  maxBodyBytes: number;
-  maxAgeDays: number;
-  /** Near the size limit: the oldest bodies will soon be evicted. */
-  nearLimit: boolean;
 }
 
 export interface RestoreOptions {
@@ -278,12 +99,6 @@ export function signIn(): void {
 export async function signOut(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
   signIn();
-}
-
-/** Where a Move can go in a vhost: its queues and the exchanges a client can publish to, by name. */
-export interface MoveDestinations {
-  queues: string[];
-  exchanges: Array<{ name: string; type: string }>;
 }
 
 export const api = {

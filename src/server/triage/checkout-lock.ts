@@ -7,6 +7,9 @@
 // Checkout and the queue list can name the holder (read back through the
 // management API).
 import { createHash } from 'node:crypto';
+import type { CheckoutHolder } from '../../shared/checkout.js';
+
+export type { CheckoutHolder };
 
 const PREFIX = 'volveran.checkout.';
 /** RabbitMQ's limit on queue names, in bytes. */
@@ -16,13 +19,6 @@ const ARG_QUEUE = 'volveran-queue';
 const ARG_OPERATOR = 'volveran-operator';
 const ARG_OPERATOR_ID = 'volveran-operator-id';
 const ARG_SINCE = 'volveran-started-at';
-
-export interface CheckoutHolder {
-  /** The Operator who started the Checkout, as shown (display name). */
-  operator: string;
-  /** ISO time the Checkout started. */
-  since: string;
-}
 
 /**
  * The lock queue's name. A queue name too long for the prefix is shortened

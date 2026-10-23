@@ -1,30 +1,14 @@
 // The state of one Checkout, as the manager keeps it in memory.
 import type * as amqp from 'amqplib';
-import type { MessageOutcome } from '../apply/types.js';
 import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
 import type { CheckoutTiming } from '../triage/checkout-timing.js';
 import type { ActionDecision } from '../triage/decisions.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
+import type { AppliedResult, CheckoutStatus, EndReason } from '../../shared/checkout.js';
 
-/** `lost`: the Checkout ended without Volverán ending it (a Lost Checkout). */
-export type CheckoutStatus = 'active' | 'ended' | 'lost';
-
-/**
- * Why an ended Checkout ended: the Operator ended it, it was Applied, the app
- * shut down, it reached its time limit, or the browser stopped sending
- * heartbeats.
- */
-export type EndReason = 'operator' | 'applied' | 'shutdown' | 'time-limit' | 'no-heartbeat';
-
-/** The result of a Checkout's Apply. */
-export interface AppliedResult {
-  /** When the Apply started (ISO 8601). */
-  at: string;
-  /** One per Message the Checkout held, in Checkout order. */
-  outcomes: MessageOutcome[];
-}
+export type { AppliedResult, CheckoutStatus, EndReason };
 
 export interface Checkout extends QueueRef {
   id: string;

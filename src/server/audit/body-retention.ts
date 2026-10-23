@@ -4,6 +4,9 @@
 // stay within VOLVERAN_BODY_RETENTION_MAX_BYTES (default 1 GiB), whichever
 // limit is reached first, oldest evicted first (AuditStore.evictBodies).
 // Retention runs at startup and every VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES.
+import type { BodyStoreUsage } from '../../shared/audit.js';
+
+export type { BodyStoreUsage };
 
 export interface BodyRetention {
   /** Bodies older than this are evicted. */
@@ -59,15 +62,6 @@ export function parseBodyRetention(
     maxBodyBytes = bytes;
   }
   return { ok: true, retention: { maxAgeMs: days * DAY, maxBodyBytes, intervalMs: minutes * MINUTE } };
-}
-
-/** How full the body store is, for GET /api/audit-store and the UI warning. */
-export interface BodyStoreUsage {
-  storedBodyBytes: number;
-  maxBodyBytes: number;
-  maxAgeDays: number;
-  /** The stored bodies have reached NEAR_LIMIT_RATIO of the size limit: the oldest will soon be evicted. */
-  nearLimit: boolean;
 }
 
 export function bodyStoreUsage(storedBodyBytes: number, retention: BodyRetention): BodyStoreUsage {

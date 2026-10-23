@@ -17,6 +17,7 @@ import {
   deadLetterSources,
 } from '../triage/queue-list.js';
 import type { ProfileLookup } from './profile-lookup.js';
+import type { MoveDestinations, ProfileSummary, QueueRow } from '../../shared/queues.js';
 
 export interface ProfileRouteDeps {
   profiles: BrokerProfile[];
@@ -24,7 +25,7 @@ export interface ProfileRouteDeps {
 }
 
 export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }: ProfileRouteDeps) {
-  app.get('/api/profiles', async () => ({
+  app.get('/api/profiles', async (): Promise<{ profiles: ProfileSummary[] }> => ({
     profiles: profiles.map((p) => ({
       name: p.name,
       username: p.username,
@@ -47,7 +48,7 @@ export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }
   // Where a Move can go (the Decision bar's picker): the queues and the
   // exchanges of the vhost a client can publish to, by name. Volverán's own
   // lock queues, the default exchange and internal exchanges are left out.
-  app.get<{ Params: { profile: string; vhost: string } }>('/api/profiles/:profile/vhosts/:vhost/move-destinations', async (req) => {
+  app.get<{ Params: { profile: string; vhost: string } }>('/api/profiles/:profile/vhosts/:vhost/move-destinations', async (req): Promise<MoveDestinations> => {
     const { vhost } = req.params;
     const { management } = lookup.vhost(req.params.profile, vhost);
     const [queues, exchanges] = await Promise.all([management.listQueues(vhost), management.listExchanges(vhost)]);
@@ -65,7 +66,7 @@ export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }
   app.get<{
     Params: { profile: string; vhost: string };
     Querystring: { search?: string; onlyDeadLetterQueues?: string };
-  }>('/api/profiles/:profile/vhosts/:vhost/queues', async (req) => {
+  }>('/api/profiles/:profile/vhosts/:vhost/queues', async (req): Promise<{ defaultQueueFilter: string | null; queues: QueueRow[] }> => {
     const { vhost } = req.params;
     const { profile, management } = lookup.vhost(req.params.profile, vhost);
     const [allQueues, bindings] = await Promise.all([management.listQueues(vhost), management.listBindings(vhost)]);

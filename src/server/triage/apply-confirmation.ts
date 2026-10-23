@@ -2,11 +2,9 @@
 //
 // Every Apply needs the Operator's single confirmation. On a Protected Profile,
 // an Apply with any Decision other than Keep also needs the queue name typed.
+import type { ApplyConfirmation } from '../../shared/checkout.js';
 
-export interface ApplyConfirmation {
-  /** The operator must type the queue name (`confirmQueueName`) to Apply. */
-  typeQueueName: boolean;
-}
+export type { ApplyConfirmation };
 
 export function applyConfirmationFor(input: { protectedProfile: boolean; actionCount: number }): ApplyConfirmation {
   return { typeQueueName: input.protectedProfile && input.actionCount > 0 };

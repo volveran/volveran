@@ -1,5 +1,9 @@
 // Pure queue-list logic (no I/O): which queues are dead-letter queues, the
 // order they are listed in, search, and Checkout availability by queue type.
+import type { CheckoutQueueType } from '../../shared/checkout.js';
+import type { CheckoutAvailability, SetupWarning } from '../../shared/queues.js';
+
+export type { CheckoutAvailability, CheckoutQueueType, SetupWarning };
 
 /**
  * Glob match on a whole queue name: `*` matches any run of characters
@@ -117,11 +121,6 @@ export function compareNames(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export type CheckoutAvailability = { available: true } | { available: false; reason: string };
-
-/** The queue types a Checkout can hold Messages from. */
-export type CheckoutQueueType = 'classic' | 'quorum';
-
 export function isCheckoutQueueType(queueType: string): queueType is CheckoutQueueType {
   return queueType === 'classic' || queueType === 'quorum';
 }
@@ -152,13 +151,6 @@ export interface DeliveryLimitSettings {
   effectivePolicy: Record<string, unknown>;
   /** The effective delivery-limit from the management API; null when unlimited or unknown. */
   deliveryLimit: number | null;
-}
-
-/** A dead-letter set-up that silently loses Messages. */
-export interface SetupWarning {
-  code: 'messages_dropped_at_delivery_limit';
-  deliveryLimit: number;
-  message: string;
 }
 
 /** The broker's default delivery-limit for quorum queues (RabbitMQ 4.0+). */

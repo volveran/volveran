@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { operatorOf } from '../operator.js';
+import type { Session } from '../../shared/queues.js';
 
 export interface SessionRouteDeps {
   mode: 'solo' | 'team';
@@ -13,7 +14,7 @@ export interface SessionRouteDeps {
 }
 
 export function registerSessionRoutes(app: FastifyInstance, { mode, checkouts }: SessionRouteDeps) {
-  app.get('/api/session', async (req) => {
+  app.get('/api/session', async (req): Promise<Session> => {
     const operator = operatorOf(req);
     const checkoutId = checkouts.activeFor(operator.id)?.id ?? null;
     if (mode === 'solo') return { mode: 'solo', operator: operator.displayName, checkoutId };

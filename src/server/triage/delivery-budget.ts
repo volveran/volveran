@@ -3,13 +3,9 @@
 // how many more abnormal returns (a crash, a lost connection, a rejection) it
 // survives. Ending a Checkout costs nothing (Keep is basic.nack with requeue),
 // but a Lost Checkout costs one, so a Message with 1 left is flagged.
+import type { DeliveryBudget } from '../../shared/checkout.js';
 
-export interface DeliveryBudget {
-  /** Abnormal returns left before the broker drops or dead-letters the Message; never negative. */
-  remaining: number;
-  /** Set when `remaining` is 1 or less. */
-  warning: string | null;
-}
+export type { DeliveryBudget };
 
 export function deliveryBudget(input: {
   /** `x-delivery-count` (0 when a quorum Message lacks it); null on classic queues, which don't count. */
