@@ -135,6 +135,57 @@ describe('queue list', () => {
     }
   });
 
+  it('flags a quorum dead-letter queue whose delivery limit drops Messages for lack of a dead-letter exchange', async () => {
+    const res = await app.get('/api/profiles/local/vhosts/%2F/queues');
+    const byName = Object.fromEntries(res.body.queues.map((q: any) => [q.name, q]));
+    expect(byName['orders.dlq.quorum'].setupWarning).toEqual({
+      code: 'messages_dropped_at_delivery_limit',
+      deliveryLimit: 20,
+      message: expect.stringMatching(/default delivery-limit \(20\).*dropped.*delivery-limit = -1.*dead-letter exchange/is),
+    });
+    expect(byName['orders.dlq.quorum-dlx'].setupWarning).toBeNull();
+    expect(byName['payments.dlq'].setupWarning).toMatchObject({ deliveryLimit: 5 });
+    expect(byName['payments.work'].setupWarning).toBeNull();
+    expect(byName['orders.dlq'].setupWarning).toBeNull();
+  });
+
+  it('sees a dead-letter exchange or an unlimited delivery limit set by a policy', async () => {
+    const vhost = encodeURIComponent('/');
+    const queues = ['setupcheck.dlx.dlq', 'setupcheck.unlimited.dlq'];
+    for (const q of queues) {
+      const put = await management(`/queues/${vhost}/${q}`, { method: 'PUT', body: { durable: true, arguments: { 'x-queue-type': 'quorum' } } });
+      expect(put.status).toBeLessThan(300);
+    }
+    const policies = {
+      'setupcheck-dlx': { pattern: '^setupcheck\\.dlx\\.dlq$', definition: { 'dead-letter-exchange': 'orders.dlx' } },
+      'setupcheck-unlimited': { pattern: '^setupcheck\\.unlimited\\.dlq$', definition: { 'delivery-limit': -1 } },
+    };
+    const filtered = await startApp({ profiles: [testProfile({ name: 'setupcheck', defaultQueueFilter: 'setupcheck.*' })] });
+    try {
+      // A new queue's delivery limit shows up with its first management statistics.
+      await eventually(async () => {
+        const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
+        expect(res.body.queues.map((q: any) => q.setupWarning?.deliveryLimit)).toEqual([20, 20]);
+      }, 20_000, 500);
+
+      for (const [name, { pattern, definition }] of Object.entries(policies)) {
+        const put = await management(`/policies/${vhost}/${name}`, { method: 'PUT', body: { pattern, 'apply-to': 'queues', definition } });
+        expect(put.status).toBeLessThan(300);
+      }
+      await eventually(async () => {
+        const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
+        expect(res.body.queues.map((q: any) => [q.name, q.setupWarning])).toEqual([
+          ['setupcheck.dlx.dlq', null],
+          ['setupcheck.unlimited.dlq', null],
+        ]);
+      }, 20_000, 500);
+    } finally {
+      await filtered.close();
+      for (const name of Object.keys(policies)) await management(`/policies/${vhost}/${name}`, { method: 'DELETE' });
+      for (const q of queues) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
   it('narrows the list to dead-letter queues on request', async () => {
     const res = await app.get('/api/profiles/filtered/vhosts/%2F/queues?onlyDeadLetterQueues=true');
     expect(names(onlyFixtures(res.body.queues))).toEqual([

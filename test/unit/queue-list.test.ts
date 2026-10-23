@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   arrangeQueues,
   checkoutAvailability,
+  deadLetterSetupWarning,
   deadLetterSources,
   matchesQueueFilter,
   type Binding,
@@ -143,5 +144,46 @@ describe('checkoutAvailability', () => {
       available: false,
       reason: expect.stringContaining('"rabbit_mqtt_qos0_queue"'),
     });
+  });
+});
+
+describe('deadLetterSetupWarning', () => {
+  const quorumDlq = {
+    deadLetterQueue: true,
+    type: 'quorum',
+    arguments: { 'x-queue-type': 'quorum' },
+    effectivePolicy: {},
+    deliveryLimit: 20,
+  };
+
+  it('warns that a quorum dead-letter queue with the default delivery limit and no dead-letter exchange drops Messages', () => {
+    expect(deadLetterSetupWarning(quorumDlq)).toEqual({
+      code: 'messages_dropped_at_delivery_limit',
+      deliveryLimit: 20,
+      message: expect.stringMatching(/dropped.*delivery-limit = -1.*dead-letter exchange/is),
+    });
+  });
+
+  it('also warns about a delivery limit set by an argument or a policy, naming that limit', () => {
+    const warning = deadLetterSetupWarning({ ...quorumDlq, arguments: { 'x-delivery-limit': 5 }, deliveryLimit: 5 });
+    expect(warning).toMatchObject({ deliveryLimit: 5, message: expect.stringContaining('a delivery-limit of 5') });
+    expect(deadLetterSetupWarning({ ...quorumDlq, effectivePolicy: { 'delivery-limit': 3 }, deliveryLimit: 3 })).toMatchObject({
+      deliveryLimit: 3,
+    });
+  });
+
+  it('does not warn when the queue has a dead-letter exchange, by argument or by policy', () => {
+    expect(deadLetterSetupWarning({ ...quorumDlq, arguments: { 'x-dead-letter-exchange': 'dlx' } })).toBeNull();
+    expect(deadLetterSetupWarning({ ...quorumDlq, effectivePolicy: { 'dead-letter-exchange': 'dlx' } })).toBeNull();
+  });
+
+  it('does not warn when the delivery limit is unlimited (the API reports "unlimited", read as null)', () => {
+    expect(deadLetterSetupWarning({ ...quorumDlq, effectivePolicy: { 'delivery-limit': -1 }, deliveryLimit: null })).toBeNull();
+    expect(deadLetterSetupWarning({ ...quorumDlq, deliveryLimit: -1 })).toBeNull();
+  });
+
+  it('only checks quorum dead-letter queues', () => {
+    expect(deadLetterSetupWarning({ ...quorumDlq, deadLetterQueue: false })).toBeNull();
+    expect(deadLetterSetupWarning({ ...quorumDlq, type: 'classic', deliveryLimit: null })).toBeNull();
   });
 });
