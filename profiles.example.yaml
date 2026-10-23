@@ -1,0 +1,23 @@
+# Volverán Broker Profiles. Mount this file into the container at
+# /config/profiles.yaml (or point VOLVERAN_PROFILES_FILE at it).
+# Passwords never go in this file: each profile names the environment
+# variable that holds its password.
+profiles:
+  - name: dev
+    managementUrl: http://localhost:15672   # http or https
+    amqpUrl: amqp://localhost:5672          # amqp or amqps
+    username: guest
+    passwordEnv: VOLVERAN_DEV_PASSWORD
+    vhosts: all                  # "all" or a list, e.g. ["/", "orders"]
+    defaultQueueFilter: "*.dlq"  # optional; matching queues count as dead-letter queues
+    protected: false
+
+  - name: prod
+    managementUrl: https://rabbit.prod.example.com:15671
+    amqpUrl: amqps://rabbit.prod.example.com:5671
+    caFile: /config/prod-ca.pem  # optional; PEM CA trusted for amqps and https (relative paths: next to this file)
+    username: volveran
+    passwordEnv: VOLVERAN_PROD_PASSWORD
+    vhosts: ["/"]
+    defaultQueueFilter: "*.dlq"
+    protected: true              # Apply and Restore need the queue name typed

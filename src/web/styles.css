@@ -1,0 +1,243 @@
+/* Volverán web app styles: plain CSS, light and dark through custom properties. */
+:root {
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --text: #1d1d20;
+  --muted: #6b6b75;
+  --border: #e2e2e6;
+  --accent: #ff6600;
+  --danger: #b42318;
+  --danger-bg: #fdecea;
+  --warning: #93370d;
+  --warning-bg: #fef6e7;
+  --match-bg: #fff6ee;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17171a;
+    --surface: #212126;
+    --text: #ececf1;
+    --muted: #9a9aa5;
+    --border: #34343c;
+    --danger: #ff8a80;
+    --danger-bg: #3a1d1b;
+    --warning: #fdb022;
+    --warning-bg: #33260f;
+    --match-bg: #2b2219;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.app {
+  min-height: 100vh;
+  border-top: 4px solid var(--accent);
+}
+
+.app.protected {
+  border-top: 6px solid var(--danger);
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 18px;
+  margin: 0 8px 0 0;
+}
+
+.topbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+select,
+input[type='search'],
+button {
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+}
+
+.who {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+main {
+  padding: 16px;
+  max-width: 1100px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.controls input[type='search'] {
+  flex: 1 1 240px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+
+.protected-badge {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
+
+.error {
+  border: 1px solid var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.error p {
+  margin: 4px 0;
+  color: var(--text);
+}
+
+.warning {
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.warning p {
+  margin: 4px 0;
+  color: var(--text);
+}
+
+.warning .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.badge.limit-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.held {
+  color: var(--warning);
+  font-size: 0.9em;
+}
+
+table.queues {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.queues th,
+.queues td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  vertical-align: top;
+}
+
+.queues th {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.queues tr.match td {
+  background: var(--match-bg);
+}
+
+.queues .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.queues .name {
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.muted,
+.empty {
+  color: var(--muted);
+}
+
+.unavailable {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.unavailable small {
+  color: var(--muted);
+  max-width: 360px;
+}
+
+
+.queues .dlq-source {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.queues th small {
+  font-weight: normal;
+}
+
+.badge.dlq {
+  border-color: var(--accent);
+  color: var(--accent);
+}
