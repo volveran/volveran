@@ -4,26 +4,26 @@ Volverán is pre-alpha: the domain model and the key decisions are written down 
 
 ## v0.1: Triage core and identity
 
-**Milestone 0: verify RabbitMQ 4.x behaviour.** Before the Checkout is built, a test suite in `test/broker-facts/` runs against a real `rabbitmq:4-management` and pins down the behaviour the design depends on. It stays in the repo as a regression suite for new RabbitMQ releases. Open decisions this milestone settles:
-
-1. Whether Volverán enforces its own Checkout time limit, and for which queue types (`consumer_timeout` behaviour on classic vs quorum queues, and what happens to held deliveries after a `basic.cancel`).
-2. How "one Checkout per queue" is enforced when quorum queues ignore exclusive consumers, including across two Volverán instances.
-3. How Keep returns a Message (`nack` with requeue, reject, or channel close), how each affects `x-delivery-count`, and what the delivery-limit warning warns about.
-4. Whether Replay, Move and Restore strip `CC`/`BCC` headers so a republish does not copy the Message to extra queues.
-5. Whether publishing uses a channel separate from the Checkout's, so a publish error never drops held Messages.
-6. How a Checkout learns its size N and its deadline, given that management API stats lag.
-7. Whether queue order matters after Keep (classic queues keep position, quorum queues move the Message to the back).
-8. Whether Replay keeps, resets or records the `x-death` history.
+**Milestone 0: broker behaviour test suite.** The RabbitMQ 4.4 behaviour the design depends on has been verified by hand ([`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md)) and turned into decisions ([ADR 0005](docs/adr/0005-replay-targets-the-dead-lettering-queue.md), [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). The first code is a test suite in `test/broker-facts/` that checks each of those facts against a real `rabbitmq:4-management`, so a new RabbitMQ release that changes them fails the build.
 
 **Triage**
 - Broker Profiles from a YAML file, with passwords from environment variables, amqp/amqps and http/https, and an optional CA file.
 - Protected Profiles: Apply and Restore require typing the queue name.
 - Queue list per vhost (depth, consumers, type), with dead-letter queues first. Streams are listed but cannot be checked out.
 - Checkout on classic and quorum queues: holds the oldest Messages, up to 1,000 Messages or 100 MB by default.
-- Message view: JSON pretty-printed, text as-is, everything else as hex and base64. Readable `x-death` history and remaining delivery budget.
+  - One Checkout per queue across every Volverán instance, enforced by a broker-side lock queue.
+  - One active Checkout per Operator.
+  - A time limit (30 minutes by default) and a browser heartbeat. A Checkout the broker cancels becomes a Lost Checkout and cannot be Applied.
+- Message view: JSON pretty-printed, text as-is, everything else as hex and base64. Readable `x-death` history and Delivery Budget, with a warning when a Lost Checkout would cost a Message its last attempt.
 - Filters on routing key, `x-death` reason, original queue, header value and body text. Select all matching.
-- Decisions: Discard (reason required), Replay, Move, Keep. One Apply, at-least-once ([ADR 0001](docs/adr/0001-apply-settles-each-message-at-least-once.md)), with a per-Message outcome.
-- Replayed and Moved Messages carry an `x-volveran-replay-id` header and provenance headers.
+- Decisions:
+  - Discard (reason required).
+  - Replay (back to the queue the Message was dead-lettered from).
+  - Move (to a named queue, or to an exchange with a routing key).
+  - Keep (returns the Message without using up Delivery Budget).
+- One Apply, at-least-once ([ADR 0001](docs/adr/0001-apply-settles-each-message-at-least-once.md)), with a per-Message outcome.
+- Replay, Move and Restore remove `CC`, `BCC` and dead-letter headers and add `x-volveran-replay-id` and `x-volveran-from`. The original headers are kept in the Audit Entry.
+- Set-up check: warn when a quorum dead-letter queue has the default `delivery-limit` and no dead-letter exchange, because the broker drops Messages that pass the limit.
 
 **Audit and Restore**
 - An Audit Entry for every action, recording the Operator, the broker user, the Broker Profile, the queue, the Message and the outcome. Audit Entries are kept indefinitely.
@@ -53,7 +53,7 @@ Volverán is pre-alpha: the domain model and the key decisions are written down 
 
 - Roles (viewer, operator, admin) mapped from an OIDC groups claim, per Broker Profile.
 - Four-eyes approval for Apply on Protected Profiles.
-- Per-profile option to connect to the broker with the Operator's own OAuth2 token instead of shared credentials.
+- Per-profile option to connect to the broker with the Operator's own OAuth2 token instead of shared credentials. This first needs verifying that `update-secret` really re-checks the token with the OAuth 2.0 backend; the internal backend accepts any password.
 - "Died again" detection: flag a Replayed Message that is dead-lettered again, matched by its replay id.
 - NDJSON export of a Checkout.
 - Filters on JSON paths inside the body.

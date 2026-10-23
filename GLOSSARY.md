@@ -15,8 +15,16 @@ _Avoid_: Prod mode, locked profile
 ## Triage
 
 **Checkout**:
-An exclusive hold on the Messages at the head of one queue when it started (all of them, up to the Checkout limit), so the user can act on each one. Messages that arrive later, or lie beyond the limit, wait for the next Checkout. Ending or losing a Checkout returns every Message that has no applied Decision to the queue.
+An exclusive hold on the Messages at the head of one queue when it started (all of them, up to the Checkout limit), so the user can act on each one. Messages that arrive later, or lie beyond the limit, wait for the next Checkout. A Checkout has a time limit. Ending or losing a Checkout returns every Message that has no applied Decision to the queue.
 _Avoid_: Session, lock, snapshot, browse
+
+**Lost Checkout**:
+A Checkout that ended without Volverán ending it, for example because the broker cancelled it. Its Messages are back in the queue and it can no longer be Applied.
+_Avoid_: Expired, timed out, dead Checkout
+
+**Delivery Budget**:
+How many more times a Message on a quorum queue can be returned abnormally (a crash, a lost connection, a rejection) before the broker drops it or dead-letters it again.
+_Avoid_: Retries left, delivery limit, attempts
 
 **Decision**:
 The action the user has assigned to one Message in a Checkout: Discard, Replay, Move or Keep. Every Message is Keep until told otherwise, and a Decision that fails during Apply falls back to Keep.
@@ -39,15 +47,15 @@ Removing a Message from its queue for good, keeping a full copy in its Audit Ent
 _Avoid_: Selective Purge, purge, delete, drop
 
 **Replay**:
-Sending a Message back to the exchange and routing key it was originally published to before it was dead-lettered.
-_Avoid_: Retry, requeue, resend
+Sending a Message back to the queue it was dead-lettered from, so that only the consumer that failed sees it again.
+_Avoid_: Retry, requeue, resend, re-route
 
 **Move**:
-Sending a Message to a queue the user names explicitly, then removing it from the source queue.
+Sending a Message to a queue the user names, or to an exchange with a routing key the user names, then removing it from the source queue.
 _Avoid_: Transfer, copy, shovel
 
 **Keep**:
-Returning a Message to its source queue unchanged at the end of a Checkout.
+Returning a Message to its source queue unchanged at the end of a Checkout, without using up any of its Delivery Budget.
 _Avoid_: Skip, requeue, ignore
 
 ## Accountability

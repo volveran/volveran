@@ -9,7 +9,7 @@ A factual snapshot of tools that work with RabbitMQ messages, taken from their p
 | How Messages are read | Fetched and requeued | Fetched and requeued (first 1,000) | Management API "get" with requeue | Held unacknowledged in a Checkout; nothing is requeued until you decide |
 | Others kept away while you work | No | No | No | Yes |
 | Per-Message delete / move | Yes / yes | Yes / yes | No / no | Yes / yes |
-| Replay to the original exchange and routing key | Yes | Not documented | No | Yes |
+| Replay using the `x-death` history | Yes (to the original exchange and routing key) | Not documented | No | Yes (to the queue it was dead-lettered from) |
 | Different decisions applied in one step | No (one action type at a time, with a dry run) | No | No | Yes |
 | Audit trail | Yes | No | No | Yes |
 | Restore discarded Messages | Yes (7 days, size-capped) | No | No | Yes (30 days or 1 GiB by default) |
