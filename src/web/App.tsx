@@ -138,11 +138,15 @@ export function App() {
         <h1>{product.name}</h1>
         <label>
           Broker Profile
-          <select value={profileName ?? ''} onChange={(e) => setProfileName(e.target.value)}>
+          <select
+            className={profile?.protected ? 'protected-select' : undefined}
+            value={profileName ?? ''}
+            onChange={(e) => setProfileName(e.target.value)}
+          >
             {profiles.map((p) => (
               <option key={p.name} value={p.name}>
                 {p.name}
-                {p.protected ? ' (protected)' : ''}
+                {p.protected ? ' — PROTECTED' : ''}
               </option>
             ))}
           </select>
@@ -231,7 +235,18 @@ export function App() {
             }}
           />
         ) : (
-          queues && <QueueTable queues={queues} onCheckout={startCheckout} />
+          queues && (
+            <>
+              {profile?.protected && (
+                <p className="protected-banner" role="note">
+                  <span className="badge protected-badge">Protected Profile</span> Queues of{' '}
+                  <strong>{profile.name}</strong> · vhost {vhost}. Every Apply that changes where a Message ends up,
+                  and every Restore, needs the queue name typed.
+                </p>
+              )}
+              <QueueTable queues={queues} onCheckout={startCheckout} />
+            </>
+          )
         )}
       </main>
     </div>
