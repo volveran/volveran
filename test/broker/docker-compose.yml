@@ -1,0 +1,24 @@
+# Test broker for the broker-facts and integration suites. Normally driven by
+# scripts/test-broker.mjs (npm run test:broker, test:integration, broker:up),
+# which sets:
+#   VOLVERAN_TEST_PROJECT    compose project name, one per checkout
+#   VOLVERAN_TEST_AMQP_PORT  host AMQP port        (empty: random free port)
+#   VOLVERAN_TEST_MGMT_PORT  host management port  (empty: random free port)
+#   VOLVERAN_TEST_RABBITMQ_IMAGE  image to test against (default: the pinned tag)
+name: ${VOLVERAN_TEST_PROJECT:-volveran-test}
+
+services:
+  rabbitmq:
+    image: ${VOLVERAN_TEST_RABBITMQ_IMAGE:-rabbitmq:4.4.0-management}
+    ports:
+      - "127.0.0.1:${VOLVERAN_TEST_AMQP_PORT:-}:5672"
+      - "127.0.0.1:${VOLVERAN_TEST_MGMT_PORT:-}:15672"
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/conf.d/90-volveran.conf:ro
+      - ./definitions.json:/etc/rabbitmq/definitions.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_port_connectivity && rabbitmqctl -q list_queues -p / name | grep -q orders.dlq"]
+      interval: 2s
+      timeout: 10s
+      retries: 60
+      start_period: 5s

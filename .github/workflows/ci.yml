@@ -1,0 +1,64 @@
+# Lint, unit tests and the broker-facts suite. Pushes and pull requests test
+# against the pinned RabbitMQ image (test/broker/docker-compose.yml). The
+# weekly run tests against the latest rabbitmq:4-management, so a RabbitMQ
+# release that changes a fact in docs/rabbitmq-behaviour.md opens an issue.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 5 * * 1' # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  broker:
+    name: Broker facts (${{ github.event_name == 'schedule' && 'rabbitmq:4-management latest' || 'pinned RabbitMQ' }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # Empty means the pinned tag in test/broker/docker-compose.yml.
+      VOLVERAN_TEST_RABBITMQ_IMAGE: ${{ github.event_name == 'schedule' && 'rabbitmq:4-management' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - if: github.event_name == 'schedule'
+        run: docker pull rabbitmq:4-management
+      - name: Broker-facts suite
+        run: npm run test:broker
+      - name: Integration suite
+        run: npm run test:integration
+      - name: Open an issue when a broker fact stops holding
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(docker run --rm --entrypoint sh rabbitmq:4-management -c 'echo $RABBITMQ_VERSION')
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Broker facts fail on RabbitMQ $version" \
+            --body "The weekly broker-facts run against \`rabbitmq:4-management\` (RabbitMQ $version) failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. A fact in docs/rabbitmq-behaviour.md may no longer hold."
