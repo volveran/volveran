@@ -37,6 +37,7 @@ describe('Apply executor', () => {
         target: { checkoutId: 'c-1', profile, vhost: '/', queue: 'orders.dlq', operator },
         startedAt: new Date(),
         ack,
+        publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),
       },
       audit,
       usable: () => true,
@@ -135,10 +136,7 @@ describe('Apply executor', () => {
     expect(audit.body(entry!.id)?.toString()).toBe('body-1');
   });
 
-  it.each([
-    ['Replay', { kind: 'replay' }],
-    ['Move', { kind: 'move', destination: { queue: 'triage.manual' } }],
-  ] as const)('does not attempt a %s, which this version cannot carry out yet, and still applies the rest', async (name, decision) => {
+  it.each([['Move', { kind: 'move', destination: { queue: 'triage.manual' } }]] as const)('does not attempt a %s, which this version cannot carry out yet, and still applies the rest', async (name, decision) => {
     const acked: number[] = [];
     const { outcomes } = run(
       { kept: [], steps: [{ handle: 1, decision }, { handle: 2, decision: DISCARD }] },

@@ -19,7 +19,7 @@ export function ApplyPanel({
   const count = (kind: DecisionSummaryLine['kind']) =>
     summary.filter((l) => l.kind === kind).reduce((n, l) => n + l.count, 0);
   const actions = summary.filter((l) => l.kind !== 'keep').length;
-  const notYet = count('replay') + count('move');
+  const notYet = count('move');
 
   return (
     <div className="apply-panel">
@@ -33,8 +33,10 @@ export function ApplyPanel({
             Apply {summaryText}?
             {count('discard') > 0 &&
               ' Discarded Messages are removed from the queue; a full copy of each is kept in its Audit Entry.'}
-            {notYet > 0 && ' Replay and Move are not available yet: those Messages go back to the queue.'}
-            {' '}Every Message not Discarded goes back to the queue in its original order, and the Checkout ends.
+            {count('replay') > 0 &&
+              ' Replayed Messages are sent to the queue that dead-lettered them, without their dead-letter headers; their Audit Entries keep the original headers.'}
+            {notYet > 0 && ' Move is not available yet: those Messages go back to the queue.'}
+            {' '}Every other Message goes back to the queue in its original order, and the Checkout ends.
           </span>
           <button
             className="danger"

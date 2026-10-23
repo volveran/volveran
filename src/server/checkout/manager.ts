@@ -24,6 +24,9 @@
 // failed, not attempted) goes back to the queue in order. While Apply runs,
 // nothing else ends the Checkout: the time limit, the heartbeat window and an
 // Operator's end wait for it. Only the broker can cut it short (Lost Checkout).
+// Replay and Move publish on a confirm channel of their own on the Checkout's
+// connection (apply/publisher.ts, ADR 0006), so a publish error never closes
+// the channel holding the Messages.
 //
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
@@ -39,6 +42,7 @@ import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import { isCheckoutQueueType, notCheckoutableReason } from '../triage/queue-list.js';
 import { executeApply } from '../apply/executor.js';
+import { ConfirmPublisher } from '../apply/publisher.js';
 import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
 import { buildApplyPlan } from '../triage/decisions.js';
@@ -199,6 +203,8 @@ export class CheckoutManager {
     const checkout = this.find(id);
     if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
+    // Opened on first use; closes with the Checkout's connection when Apply ends it.
+    let publisher: ConfirmPublisher | undefined;
     const ctx: ApplyContext = {
       target: {
         profile: checkout.profile,
@@ -209,6 +215,11 @@ export class CheckoutManager {
       },
       startedAt: new Date(),
       ack: (message) => ack(checkout, message),
+      publish: async (exchange, routingKey, content, options) => {
+        if (!checkout.connection) return { ok: false, reason: 'The Checkout has no connection to the broker any more.' };
+        publisher ??= new ConfirmPublisher(checkout.connection);
+        return publisher.publish(exchange, routingKey, content, options);
+      },
     };
     const running = executeApply({
       plan: buildApplyPlan([...checkout.held.keys()], checkout.decisions),

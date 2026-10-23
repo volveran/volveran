@@ -1,5 +1,5 @@
 // The contract between the Apply executor and the per-Decision handlers
-// (discard.ts; #7 adds replay.ts, #8 move.ts). Each handler owns one
+// (discard.ts, replay.ts; #8 adds move.ts). Each handler owns one
 // Decision kind: what its Audit Entry records and how it is carried out on
 // the broker.
 import type * as amqp from 'amqplib';
@@ -17,10 +17,10 @@ export interface ApplyTarget extends QueueRef {
   operator: Pick<Operator, 'id' | 'displayName'>;
 }
 
-/**
- * What a handler can do on the broker during Apply. #7 adds `publish` (a
- * confirm channel with `mandatory`, apply/publisher.ts).
- */
+/** The outcome of one publish: ok only when confirmed without a preceding basic.return. */
+export type PublishResult = { ok: true } | { ok: false; reason: string };
+
+/** What a handler can do on the broker during Apply. */
 export interface ApplyContext {
   target: ApplyTarget;
   /** When this Apply started. */
@@ -32,6 +32,13 @@ export interface ApplyContext {
    * but not confirmed.
    */
   ack(message: HeldMessage): Promise<void>;
+  /**
+   * Publishes on a confirm channel (apply/publisher.ts), separate from the
+   * Checkout channel, with the `mandatory` flag. Resolves `ok` only once the
+   * broker has confirmed the publish and not returned it as unroutable; never
+   * rejects.
+   */
+  publish(exchange: string, routingKey: string, content: Buffer, options: amqp.Options.Publish): Promise<PublishResult>;
 }
 
 export type StepResult = { status: 'done' } | { status: 'failed'; reason: string };
