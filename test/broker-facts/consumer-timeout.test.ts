@@ -145,7 +145,7 @@ describe.concurrent('Consumer timeout', () => {
   // Not a bullet of docs/rabbitmq-behaviour.md yet: ADR 0006 cancels the
   // Checkout's consumer once it holds N deliveries, and relies on the quorum
   // consumer timeout as a backstop. This pins down what the broker does then.
-  describe('Quorum timeout after the client cancelled its own consumer (ADR 0006 backstop)', () => {
+  describe('If the client has already cancelled its own consumer while still holding deliveries, the quorum timeout still fires, but as a channel close (`406 PRECONDITION_FAILED`), not `basic.cancel`. The Messages return in their original order with only `x-acquired-count` increased. Until then, a passive declare still counts the cancelled consumer. Classic queues never time out a cancelled consumer.', () => {
     it('still fires: the broker closes the channel with 406 PRECONDITION_FAILED, sends no basic.cancel, and requeues the Messages without counting a delivery', async (ctx) => {
       const s = await scratchFor(ctx);
       const q = await s.queue('ct-after-cancel', { 'x-queue-type': 'quorum' });
