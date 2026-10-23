@@ -60,8 +60,9 @@ export async function collect(channel: amqp.Channel, queue: string, options: Col
       await options.afterWait?.();
       if (!options.active()) throw new CheckoutError('checkout_failed', 'The Checkout was lost while collecting its Messages.');
     }
-    // Deliveries already on their way before the cancel-ok are offered too:
-    // past the byte limit they overflow, within this window.
+    // Unless the wait timed out, the window has been delivered: the consumer
+    // has no prefetch left and nothing is on its way. (A delivery after the
+    // cancel-ok would make amqplib fail the connection: "Unknown consumer".)
     await channel.cancel(consumerTag);
     if (last) break;
   }
@@ -72,9 +73,9 @@ export async function collect(channel: amqp.Channel, queue: string, options: Col
 }
 
 /**
- * Consumes with prefetch `window` until the window is delivered, the
- * collection is done, or no delivery came for COLLECT_TIMEOUT_MS. The
- * consumer stays registered: the caller cancels it.
+ * Consumes with prefetch `window` until the window is delivered, or no
+ * delivery came for COLLECT_TIMEOUT_MS. The consumer stays registered: the
+ * caller cancels it.
  */
 async function consumeWindow(
   channel: amqp.Channel,
@@ -117,7 +118,8 @@ async function consumeWindow(
         }
         collection.offer(m, m.content.length);
         delivered++;
-        if (delivered >= window || collection.done) finish();
+        // Past the byte limit the rest of the window still arrives, as overflow.
+        if (delivered >= window) finish();
         else wait();
       },
       {
