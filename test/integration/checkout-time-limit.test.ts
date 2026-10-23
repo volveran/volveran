@@ -47,7 +47,7 @@ describe('Checkout time limit', () => {
     expect(started.status).toBe(201);
     const { checkout } = started.body;
     expect(checkout.timeLimitMs).toBe(2_000);
-    expect(Date.parse(checkout.expiresAt) - Date.parse(checkout.startedAt)).toBe(2_000);
+    expect(Date.parse(checkout.endsAt) - Date.parse(checkout.startedAt)).toBe(2_000);
     expect(checkout.remainingMs).toBeGreaterThan(0);
     expect(checkout.remainingMs).toBeLessThanOrEqual(2_000);
 

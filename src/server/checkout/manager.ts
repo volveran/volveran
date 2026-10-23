@@ -100,7 +100,7 @@ export class CheckoutManager {
       deadLetterExchange: false,
       startedAt,
       timing: this.timing,
-      expiresAt: new Date(startedAt.getTime() + this.timing.timeLimitMs),
+      endsAt: new Date(startedAt.getTime() + this.timing.timeLimitMs),
       timeLimitTimer: undefined,
       heartbeatTimer: undefined,
       status: 'active',
@@ -263,7 +263,7 @@ export class CheckoutManager {
   }
 
   private startTimers(checkout: Checkout) {
-    const left = checkout.expiresAt.getTime() - Date.now();
+    const left = checkout.endsAt.getTime() - Date.now();
     checkout.timeLimitTimer = setTimeout(async () => {
       await this.hooks.beforeTimeLimitEnd?.(checkout);
       await this.end(checkout.id, 'time-limit').catch(() => {});

@@ -142,8 +142,8 @@ export interface CheckoutView {
   /** How long the Checkout may hold Messages. */
   timeLimitMs: number;
   /** When the Checkout ends itself (startedAt plus timeLimitMs). */
-  expiresAt: string;
-  /** Milliseconds left until expiresAt, measured by the server (immune to browser clock skew); 0 once over. */
+  endsAt: string;
+  /** Milliseconds left until endsAt, measured by the server (immune to browser clock skew); 0 once over. */
   remainingMs: number;
   /** The browser must POST /api/checkouts/:id/heartbeat at least this often, or the Checkout ends. */
   heartbeatWindowMs: number;

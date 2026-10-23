@@ -22,8 +22,8 @@ export interface Checkout extends QueueRef {
   startedAt: Date;
   timing: CheckoutTiming;
   /** startedAt plus the time limit: the Checkout ends itself then. */
-  expiresAt: Date;
-  /** Ends the Checkout at expiresAt; cleared once it is over. */
+  endsAt: Date;
+  /** Ends the Checkout at endsAt; cleared once it is over. */
   timeLimitTimer: NodeJS.Timeout | undefined;
   /** Ends the Checkout when no heartbeat arrives for the heartbeat window; refreshed by each heartbeat. */
   heartbeatTimer: NodeJS.Timeout | undefined;

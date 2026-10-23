@@ -41,11 +41,11 @@ describe('consumerTimeoutMs', () => {
 });
 
 describe('remainingMs', () => {
-  const expiresAt = new Date('2026-10-23T12:30:00Z');
-  it('counts down to the expiry', () => {
-    expect(remainingMs(expiresAt, new Date('2026-10-23T12:29:30Z'))).toBe(30_000);
+  const endsAt = new Date('2026-10-23T12:30:00Z');
+  it('counts down to the end of the time limit', () => {
+    expect(remainingMs(endsAt, new Date('2026-10-23T12:29:30Z'))).toBe(30_000);
   });
   it('never goes below 0', () => {
-    expect(remainingMs(expiresAt, new Date('2026-10-23T12:31:00Z'))).toBe(0);
+    expect(remainingMs(endsAt, new Date('2026-10-23T12:31:00Z'))).toBe(0);
   });
 });

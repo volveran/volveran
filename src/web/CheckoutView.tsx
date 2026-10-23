@@ -187,7 +187,7 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
           </p>
           <p className="held">{heldLine(checkout)}</p>
           {active && (
-            <p className="countdown" title={`Ends itself at ${new Date(checkout.expiresAt).toLocaleTimeString()}`}>
+            <p className="countdown" title={`Ends itself at ${new Date(checkout.endsAt).toLocaleTimeString()}`}>
               Ends in {formatCountdown(checkout.remainingMs - (now - receivedAt))}
             </p>
           )}

@@ -53,7 +53,7 @@ export function consumerTimeoutMs(timing: CheckoutTiming): number {
   return timing.timeLimitMs + timing.consumerTimeoutMarginMs;
 }
 
-/** Milliseconds left until `expiresAt` at `now`, never below 0. */
-export function remainingMs(expiresAt: Date, now: Date): number {
-  return Math.max(0, expiresAt.getTime() - now.getTime());
+/** Milliseconds left until `endsAt` at `now`, never below 0. */
+export function remainingMs(endsAt: Date, now: Date): number {
+  return Math.max(0, endsAt.getTime() - now.getTime());
 }
