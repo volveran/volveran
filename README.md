@@ -19,6 +19,8 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message.
 4. **Audit and Restore.** Every action is recorded with who did it. Discarded Messages are kept so they can be Restored.
 
+Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
+
 There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. A Helm chart for Kubernetes and Flux CD is planned for v0.2.
 
 ## Quick start

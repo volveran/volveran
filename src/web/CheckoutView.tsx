@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { formatBytes, heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
+import { returnOrder } from '../shared/return-order.js';
 import {
   api,
   ApiError,
@@ -192,7 +193,7 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
           )}
         </div>
         {active ? (
-          <button onClick={end} disabled={ending} title="Every Message goes back to the queue in its original order">
+          <button onClick={end} disabled={ending} title={`Every held Message goes back to the queue ${returnOrder(checkout.queueType)}`}>
             End Checkout
           </button>
         ) : (
@@ -224,6 +225,7 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             profile={checkout.profile}
             protectedProfile={checkout.protectedProfile}
             queue={checkout.queue}
+            queueType={checkout.queueType}
             typeQueueName={checkout.applyConfirmation.typeQueueName}
             summary={checkout.decisionSummary}
             summaryText={checkout.decisionSummaryText}
@@ -283,14 +285,14 @@ function formatCountdown(ms: number): string {
 }
 
 function endedLine(c: Checkout): string {
-  const back = 'its Messages are back in the queue, in their original order.';
+  const back = `its Messages are back in the queue ${returnOrder(c.queueType)}.`;
   switch (c.endReason) {
     case 'time-limit':
       return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes and ended; ${back}`;
     case 'no-heartbeat':
       return `This Checkout ended because this page stopped sending heartbeats; ${back}`;
     case 'applied':
-      return `This Checkout was Applied; every Message not done is back in the queue, in its original order.`;
+      return `This Checkout was Applied; the Messages not done are back in the queue ${returnOrder(c.queueType)}.`;
     case 'shutdown':
       return `This Checkout ended because ${product.name} shut down; ${back}`;
     default:
