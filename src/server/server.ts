@@ -11,7 +11,7 @@ import { ManagementClient } from './management.js';
 import { loadProfilesFile, type BrokerProfile } from './profiles.js';
 import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
 import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
-import { arrangeQueues, checkoutAvailability, deadLetterSources } from './triage/queue-list.js';
+import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
@@ -142,14 +142,19 @@ function buildApp(
       checkout: checkoutAvailability(q.type),
       checkedOutBy: holders.get(q.name) ?? null,
     }));
+    const arranged = arrangeQueues(rows, {
+      defaultQueueFilter: profile.defaultQueueFilter,
+      deadLetterSources: deadLetterSources(queues, bindings),
+      onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true',
+      search: req.query.search,
+    });
+    const byName = new Map(queues.map((q) => [q.name, q]));
     return {
       defaultQueueFilter: profile.defaultQueueFilter ?? null,
-      queues: arrangeQueues(rows, {
-        defaultQueueFilter: profile.defaultQueueFilter,
-        deadLetterSources: deadLetterSources(queues, bindings),
-        onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true',
-        search: req.query.search,
-      }),
+      queues: arranged.map((row) => ({
+        ...row,
+        setupWarning: deadLetterSetupWarning({ ...byName.get(row.name)!, deadLetterQueue: row.deadLetterQueue }),
+      })),
     };
   });
 

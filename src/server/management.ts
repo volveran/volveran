@@ -20,7 +20,7 @@ export interface ManagementQueue {
   arguments: Record<string, unknown>;
   /** Definition of the policies in effect (operator policy merged in), {} for none. */
   effectivePolicy: Record<string, unknown>;
-  /** Effective delivery-limit of a quorum queue; null for other types or none. */
+  /** Effective delivery-limit of a quorum queue (arguments and policies applied); null for other types or unlimited. */
   deliveryLimit: number | null;
   /** Total body bytes of the ready Messages, from management statistics (lags); null when not reported. */
   messageBytesReady: number | null;

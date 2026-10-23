@@ -23,6 +23,13 @@ export interface Profile {
   protected: boolean;
 }
 
+/** A dead-letter set-up that silently loses Messages (src/server/triage/queue-list.ts). */
+export interface SetupWarning {
+  code: 'messages_dropped_at_delivery_limit';
+  deliveryLimit: number;
+  message: string;
+}
+
 export type CheckoutAvailability = { available: true } | { available: false; reason: string };
 
 export interface Queue {
@@ -36,6 +43,7 @@ export interface Queue {
   matchesDefaultFilter: boolean;
   deadLetteredFrom: string[];
   checkout: CheckoutAvailability;
+  setupWarning: SetupWarning | null;
   /** Who holds the queue in a Checkout, from any Volverán instance; null when nobody does. */
   checkedOutBy: CheckoutHolder | null;
 }

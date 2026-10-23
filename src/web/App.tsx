@@ -258,6 +258,12 @@ function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue:
               {q.deadLetteredFrom.length > 0 && (
                 <span className="dlq-source">dead-lettered from {q.deadLetteredFrom.join(', ')}</span>
               )}
+              {q.setupWarning && (
+                <span className="setup-warning" role="note">
+                  <span className="badge limit-warning">Drops Messages after {q.setupWarning.deliveryLimit} deliveries</span>
+                  <small>{q.setupWarning.message}</small>
+                </span>
+              )}
             </td>
             <td>
               <span className={`badge type-${q.type}`}>{q.type}</span>
