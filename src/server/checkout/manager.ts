@@ -13,6 +13,11 @@
 // channel close) makes it a Lost Checkout: the broker has returned
 // everything, at the cost of one delivery on quorum queues.
 //
+// A Checkout never holds Messages forever: it ends itself at its time limit,
+// and when the browser has sent no heartbeat for the heartbeat window
+// (checkout-timing.ts). On quorum queues its consumer carries
+// `x-consumer-timeout` a margin past the time limit, as a backstop.
+//
 // In-process, an Operator has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
@@ -21,11 +26,12 @@ import { openAmqpConnection } from '../amqp-connection.js';
 import { ManagementClient } from '../management.js';
 import type { QueueRef } from '../profiles.js';
 import { checkoutSize, type CheckoutLimits } from '../triage/checkout-collection.js';
+import { consumerTimeoutMs, DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage/checkout-lock.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import { isCheckoutQueueType, notCheckoutableReason } from '../triage/queue-list.js';
 import { collect } from './collect.js';
-import { CheckoutError, inCheckout, lockNotPermitted, operatorHasCheckout, queueNotFound } from './errors.js';
+import { CheckoutError, hasConsumers, inCheckout, lockNotPermitted, operatorHasCheckout, queueNotFound } from './errors.js';
 import type { Checkout, EndReason } from './state.js';
 import { queueInfo, view, type CheckoutView } from './view.js';
 
@@ -38,10 +44,14 @@ export interface CheckoutTestHooks {
   afterLock?(ref: { vhost: string; queue: string }): Promise<void>;
   /** A start has stopped waiting for deliveries; next it cancels its consumer. */
   afterCollectWait?(ref: { vhost: string; queue: string }): Promise<void>;
+  /** A Checkout reached its time limit; next it ends itself. */
+  beforeTimeLimitEnd?(ref: { vhost: string; queue: string }): Promise<void>;
 }
 
 export interface CheckoutManagerOptions {
   limits: CheckoutLimits;
+  /** Time limit, heartbeat window and quorum backstop margin (default DEFAULT_CHECKOUT_TIMING). */
+  timing?: CheckoutTiming;
   /** How long an ended or lost Checkout stays readable before it is forgotten. */
   endedRetentionMs?: number;
   testHooks?: CheckoutTestHooks;
@@ -54,6 +64,11 @@ export function checkoutConnectionName(vhost: string, queue: string): string {
   return `volveran checkout ${vhost} ${queue}`;
 }
 
+export interface StartOptions {
+  /** Start even though other consumers read the queue (the Operator overrode the live-consumer warning). */
+  overrideConsumers?: boolean;
+}
+
 export class CheckoutManager {
   private readonly checkouts = new Map<string, Checkout>();
   /** Lock key (broker + vhost + queue) → the Checkout holding it, from the moment it starts. */
@@ -62,19 +77,22 @@ export class CheckoutManager {
   private readonly byOperator = new Map<string, Checkout>();
   private readonly hooks: CheckoutTestHooks;
   private readonly endedRetentionMs: number;
+  private readonly timing: CheckoutTiming;
 
   constructor(private readonly options: CheckoutManagerOptions) {
     this.hooks = options.testHooks ?? {};
+    this.timing = options.timing ?? DEFAULT_CHECKOUT_TIMING;
     this.endedRetentionMs = options.endedRetentionMs ?? DEFAULT_ENDED_RETENTION_MS;
   }
 
-  async start(ref: QueueRef, operator: string): Promise<CheckoutView> {
+  async start(ref: QueueRef, operator: string, options: StartOptions = {}): Promise<CheckoutView> {
     const mine = this.byOperator.get(operator);
     if (mine) throw operatorHasCheckout(operator, mine);
     const lockKey = this.lockKey(ref);
     const other = this.locks.get(lockKey);
     if (other) throw inCheckout(ref, { operator: other.operator, since: other.startedAt.toISOString() });
 
+    const startedAt = new Date();
     const checkout: Checkout = {
       ...ref,
       id: randomUUID(),
@@ -82,7 +100,11 @@ export class CheckoutManager {
       queueType: 'classic',
       deliveryLimit: null,
       deadLetterExchange: false,
-      startedAt: new Date(),
+      startedAt,
+      timing: this.timing,
+      expiresAt: new Date(startedAt.getTime() + this.timing.timeLimitMs),
+      timeLimitTimer: undefined,
+      heartbeatTimer: undefined,
       status: 'active',
       lostReason: null,
       endReason: null,
@@ -98,13 +120,21 @@ export class CheckoutManager {
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator, checkout);
     try {
-      await this.open(checkout);
+      await this.open(checkout, options);
     } catch (err) {
       this.release(checkout);
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
     this.checkouts.set(checkout.id, checkout);
+    if (checkout.status === 'active') this.startTimers(checkout);
+    return view(checkout);
+  }
+
+  /** The browser still shows the Checkout: it stays until the next heartbeat window passes. */
+  heartbeat(id: string): CheckoutView {
+    const checkout = this.find(id);
+    if (checkout.status === 'active') checkout.heartbeatTimer?.refresh();
     return view(checkout);
   }
 
@@ -173,7 +203,23 @@ export class CheckoutManager {
     const lockKey = this.lockKey(checkout);
     if (this.locks.get(lockKey) === checkout) this.locks.delete(lockKey);
     if (this.byOperator.get(checkout.operator) === checkout) this.byOperator.delete(checkout.operator);
+    clearTimeout(checkout.timeLimitTimer);
+    clearTimeout(checkout.heartbeatTimer);
     setTimeout(() => this.checkouts.delete(checkout.id), this.endedRetentionMs).unref();
+  }
+
+  private startTimers(checkout: Checkout) {
+    const left = checkout.expiresAt.getTime() - Date.now();
+    checkout.timeLimitTimer = setTimeout(async () => {
+      await this.hooks.beforeTimeLimitEnd?.(checkout);
+      await this.end(checkout.id, 'time-limit').catch(() => {});
+    }, Math.max(0, left));
+    checkout.heartbeatTimer = setTimeout(
+      () => this.end(checkout.id, 'no-heartbeat').catch(() => {}),
+      checkout.timing.heartbeatWindowMs,
+    );
+    checkout.timeLimitTimer.unref();
+    checkout.heartbeatTimer.unref();
   }
 
   private markLost(checkout: Checkout, reason: string) {
@@ -186,7 +232,7 @@ export class CheckoutManager {
     checkout.connection?.close().catch(() => {});
   }
 
-  private async open(checkout: Checkout): Promise<void> {
+  private async open(checkout: Checkout, options: StartOptions): Promise<void> {
     const { vhost, queue } = checkout;
     const management = new ManagementClient(checkout.profile);
     const info = await management.getQueue(vhost, queue);
@@ -225,12 +271,15 @@ export class CheckoutManager {
     );
 
     let ready: number;
+    let consumers: number;
     try {
-      ready = (await channel.checkQueue(queue)).messageCount;
+      ({ messageCount: ready, consumerCount: consumers } = await channel.checkQueue(queue));
     } catch (err) {
       if ((err as { code?: number }).code === 404) throw queueNotFound(checkout);
       throw err;
     }
+    // Exact, unlike the management API's count; the lock queue is not a consumer of the queue.
+    if (consumers > 0 && !options.overrideConsumers) throw hasConsumers(checkout, consumers);
     checkout.readyAtStart = ready;
     const { take, limitedBy } = checkoutSize({
       ready,
@@ -246,6 +295,7 @@ export class CheckoutManager {
       collected = await collect(channel, queue, {
         expected: take,
         maxBytes: checkout.limits.maxBytes,
+        consumerTimeoutMs: checkout.queueType === 'quorum' ? consumerTimeoutMs(checkout.timing) : undefined,
         active: () => checkout.status === 'active',
         afterWait: this.hooks.afterCollectWait && (() => this.hooks.afterCollectWait!(checkout)),
         onBrokerCancel: () =>

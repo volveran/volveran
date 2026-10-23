@@ -13,6 +13,7 @@ import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import { startServer } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
+import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
 import { brokerUsers, management, testBroker } from '../broker/client.js';
 
 export * from '../broker/client.js';
@@ -78,6 +79,8 @@ export interface StartAppOptions {
   /** Listen address; default 127.0.0.1. */
   host?: string;
   checkoutLimits?: Partial<CheckoutLimits>;
+  /** Time limit, heartbeat window and quorum backstop margin, in ms (tests use seconds, not the 30/2 minute defaults). */
+  checkoutTiming?: Partial<CheckoutTiming>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
 }
@@ -108,6 +111,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       host: options.host ?? '127.0.0.1',
       port: 0,
       checkoutLimits: options.checkoutLimits,
+      checkoutTiming: options.checkoutTiming,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
     });

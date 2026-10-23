@@ -173,6 +173,11 @@ main {
   font-size: 0.9em;
 }
 
+.countdown {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 table.queues {
   width: 100%;
   border-collapse: collapse;

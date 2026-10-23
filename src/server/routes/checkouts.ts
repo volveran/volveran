@@ -1,13 +1,17 @@
 // Checkout routes: start a Checkout on a queue, read it and its Messages, end it.
 //
 //   POST   /api/profiles/:profile/vhosts/:vhost/queues/:queue/checkouts  → 201 { checkout }
+//          body { overrideConsumers?: boolean }: start even though other consumers read the queue
 //   GET    /api/checkouts/:id                                            → { checkout }
 //   GET    /api/checkouts/:id/messages/:handle                           → { message }
+//   POST   /api/checkouts/:id/heartbeat  the browser still shows it        → { checkout }
 //   DELETE /api/checkouts/:id                                            → { checkout }
 //   POST   /api/checkouts/:id/end   same as DELETE, for navigator.sendBeacon
 import type { FastifyInstance } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { CheckoutError } from '../checkout/errors.js';
+import { InvalidRequestError } from '../http-error.js';
+import { isRecord } from '../is-record.js';
 import type { QueueRef } from '../profiles.js';
 
 export interface CheckoutRouteDeps {
@@ -19,11 +23,15 @@ export interface CheckoutRouteDeps {
 }
 
 export function registerCheckoutRoutes(app: FastifyInstance, { checkouts, queueRef, operator }: CheckoutRouteDeps) {
-  app.post<{ Params: { profile: string; vhost: string; queue: string } }>(
+  app.post<{ Params: { profile: string; vhost: string; queue: string }; Body: unknown }>(
     '/api/profiles/:profile/vhosts/:vhost/queues/:queue/checkouts',
     async (req, reply) => {
       const { profile, vhost, queue } = req.params;
-      const checkout = await checkouts.start(queueRef(profile, vhost, queue), operator());
+      const body = req.body ?? {};
+      if (!isRecord(body)) throw new InvalidRequestError('The request body must be a JSON object.');
+      const { overrideConsumers = false } = body;
+      if (typeof overrideConsumers !== 'boolean') throw new InvalidRequestError('"overrideConsumers" must be true or false.');
+      const checkout = await checkouts.start(queueRef(profile, vhost, queue), operator(), { overrideConsumers });
       return reply.status(201).send({ checkout });
     },
   );
@@ -37,6 +45,12 @@ export function registerCheckoutRoutes(app: FastifyInstance, { checkouts, queueR
     }
     return { message: checkouts.message(req.params.id, handle) };
   });
+
+  // Only a heartbeat keeps a Checkout alive: reading it does not, so a stray
+  // poll cannot keep Messages held after the browser is gone.
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/heartbeat', async (req) => ({
+    checkout: checkouts.heartbeat(req.params.id),
+  }));
 
   app.delete<{ Params: { id: string } }>('/api/checkouts/:id', async (req) => ({
     checkout: await checkouts.end(req.params.id),

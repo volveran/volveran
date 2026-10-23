@@ -10,6 +10,7 @@ import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import { loadProfilesFile, type BrokerProfile } from './profiles.js';
 import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
+import { parseCheckoutTiming, type CheckoutTiming } from './triage/checkout-timing.js';
 import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
@@ -28,6 +29,8 @@ export interface ServerOptions {
   logger?: boolean;
   /** Overrides the Checkout limits from VOLVERAN_CHECKOUT_MAX_MESSAGES / VOLVERAN_CHECKOUT_MAX_MB. */
   checkoutLimits?: Partial<CheckoutLimits>;
+  /** Overrides the Checkout timing from VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES / VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS. */
+  checkoutTiming?: Partial<CheckoutTiming>;
   /** How long an ended or lost Checkout stays readable (default 15 min). */
   endedCheckoutRetentionMs?: number;
   /** Test seams of the Checkout manager; unset in production. */
@@ -45,9 +48,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   if (!mode.ok) throw new ConfigError(mode.error);
   const limits = parseCheckoutLimits(options.env);
   if (!limits.ok) throw new ConfigError(limits.error);
+  const timing = parseCheckoutTiming(options.env);
+  if (!timing.ok) throw new ConfigError(timing.error);
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
   const checkouts = new CheckoutManager({
     limits: { ...limits.limits, ...options.checkoutLimits },
+    timing: { ...timing.timing, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
   });

@@ -1,6 +1,7 @@
 // What the API returns for a Checkout.
 import { messageSummary, type MessageSummary, type QueueInfo } from '../triage/message-view.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
+import { remainingMs } from '../triage/checkout-timing.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 import type { Checkout, CheckoutStatus, EndReason } from './state.js';
 
@@ -15,6 +16,14 @@ export interface CheckoutView {
   /** The Operator who started it. */
   operator: string;
   startedAt: string;
+  /** How long the Checkout may hold Messages. */
+  timeLimitMs: number;
+  /** When the Checkout ends itself (startedAt plus timeLimitMs). */
+  expiresAt: string;
+  /** Milliseconds left until expiresAt, measured by the server (immune to browser clock skew); 0 once over. */
+  remainingMs: number;
+  /** The browser must POST /api/checkouts/:id/heartbeat at least this often, or the Checkout ends. */
+  heartbeatWindowMs: number;
   status: CheckoutStatus;
   /** Why the Checkout was lost; null unless status is "lost". */
   lostReason: string | null;
@@ -49,6 +58,10 @@ export function view(c: Checkout): CheckoutView {
     queueType: c.queueType,
     operator: c.operator,
     startedAt: c.startedAt.toISOString(),
+    timeLimitMs: c.timing.timeLimitMs,
+    expiresAt: c.expiresAt.toISOString(),
+    remainingMs: c.status === 'active' ? remainingMs(c.expiresAt, new Date()) : 0,
+    heartbeatWindowMs: c.timing.heartbeatWindowMs,
     status: c.status,
     lostReason: c.lostReason,
     endReason: c.endReason,

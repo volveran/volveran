@@ -1,8 +1,9 @@
 // A Checkout that ends without Volverán ending it (a Lost Checkout): the
 // process killed, its connection dropped, or its channel closed by the
-// broker's quorum consumer timeout (a channel close once the consumer is
-// cancelled, ADR 0006). In every case the broker returns the Messages and
-// releases the lock queue, and the app reports the Checkout as lost.
+// Checkout's quorum x-consumer-timeout backstop (a channel close once the
+// consumer is cancelled, ADR 0006). In every case the broker returns the
+// Messages and releases the lock queue, and the app reports the Checkout as
+// lost.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -83,34 +84,52 @@ describe('Lost Checkout', () => {
     await app.delete(`/api/checkouts/${again.body.checkout.id}`);
   });
 
-  describe('when the broker times out the quorum consumer (a channel close, since the Checkout cancelled it)', () => {
+  describe("when the broker's x-consumer-timeout backstop fires on a quorum queue (a channel close, since the Checkout cancelled its consumer)", () => {
     let queue: string;
+    let backstopApp: TestApp;
+    /** Holds the app's own time-limit end back, so the broker's backstop fires first. */
+    let releaseTimeLimit: () => void = () => {};
     beforeAll(async () => {
       queue = uniqueName('lost-checkout');
-      await withChannel('/', (ch) => ch.assertQueue(queue, { arguments: { 'x-queue-type': 'quorum', 'x-consumer-timeout': 1_000 } }));
+      // A queue-level timeout of an hour: only the Checkout's own consumer argument can fire within the test.
+      await withChannel('/', (ch) =>
+        ch.assertQueue(queue, { arguments: { 'x-queue-type': 'quorum', 'x-consumer-timeout': 3_600_000 } }),
+      );
+      backstopApp = await startApp({
+        profiles: [testProfile({ name: 'local' })],
+        checkoutTiming: { timeLimitMs: 1_000, consumerTimeoutMarginMs: 1_000, heartbeatWindowMs: 60_000 },
+        checkoutTestHooks: {
+          beforeTimeLimitEnd: () => new Promise<void>((resolve) => (releaseTimeLimit = resolve)),
+        },
+      });
     });
     afterAll(async () => {
+      releaseTimeLimit();
+      await backstopApp?.close();
       await withChannel('/', (ch) => ch.deleteQueue(queue));
     });
 
     it('reports the Checkout lost, returns the Messages in order and frees the queue', async () => {
       await seedMessages('/', queue, 3);
-      const { checkout } = (await app.post(checkoutPath(queue))).body;
+      const { checkout } = (await backstopApp.post(checkoutPath(queue))).body;
       expect(checkout.heldCount).toBe(3);
 
       const lost = await eventually(async () => {
-        const res = await app.get(`/api/checkouts/${checkout.id}`);
+        const res = await backstopApp.get(`/api/checkouts/${checkout.id}`);
         expect(res.body.checkout.status).toBe('lost');
         return res.body.checkout;
       }, 20_000);
+      releaseTimeLimit();
 
-      expect(lost.lostReason).toMatch(/closed the channel/);
+      expect(lost.lostReason).toMatch(/closed the channel.*back in the queue/);
+      expect(lost.endReason).toBeNull();
       expect((await readyMessages(queue)).map((m) => m.id)).toEqual([0, 1, 2].map((i) => `${queue}-${i}`));
-      // Ending a lost Checkout is harmless.
-      expect((await app.delete(`/api/checkouts/${checkout.id}`)).body.checkout.status).toBe('lost');
-      const again = await app.post(checkoutPath(queue));
+      // Neither a heartbeat nor ending it revives or ends a Lost Checkout.
+      expect((await backstopApp.post(`/api/checkouts/${checkout.id}/heartbeat`)).body.checkout.status).toBe('lost');
+      expect((await backstopApp.delete(`/api/checkouts/${checkout.id}`)).body.checkout.status).toBe('lost');
+      const again = await backstopApp.post(checkoutPath(queue));
       expect(again.status).toBe(201);
-      await app.delete(`/api/checkouts/${again.body.checkout.id}`);
+      await backstopApp.delete(`/api/checkouts/${again.body.checkout.id}`);
     });
   });
 

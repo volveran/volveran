@@ -104,9 +104,16 @@ export interface Checkout {
   queueType: 'classic' | 'quorum';
   operator: string;
   startedAt: string;
+  timeLimitMs: number;
+  /** When the Checkout ends itself. */
+  expiresAt: string;
+  /** Time left when the server answered (server clock); 0 once over. */
+  remainingMs: number;
+  /** Send a heartbeat at least this often, or the Checkout ends. */
+  heartbeatWindowMs: number;
   status: 'active' | 'ended' | 'lost';
   lostReason: string | null;
-  endReason: 'operator' | 'shutdown' | null;
+  endReason: 'operator' | 'shutdown' | 'time-limit' | 'no-heartbeat' | null;
   readyAtStart: number;
   heldCount: number;
   heldBytes: number;
@@ -128,19 +135,23 @@ export class ApiError extends Error {
   }
 }
 
-async function getJson<T>(path: string, method = 'GET'): Promise<T> {
+async function getJson<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { method, headers: { accept: 'application/json' } });
+    res = await fetch(path, {
+      method,
+      headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   } catch (err) {
     throw new ApiError(0, 'app_unreachable', `Cannot reach ${product.name}: ${(err as Error).message}`);
   }
-  const body = await res.json().catch(() => undefined);
+  const json = await res.json().catch(() => undefined);
   if (!res.ok) {
-    const { code, message, ...details } = (body?.error ?? {}) as { code?: string; message?: string };
+    const { code, message, ...details } = (json?.error ?? {}) as { code?: string; message?: string };
     throw new ApiError(res.status, code ?? 'http_error', message ?? `Request failed with ${res.status}`, details);
   }
-  return body as T;
+  return json as T;
 }
 
 const segment = encodeURIComponent;
@@ -161,11 +172,16 @@ export const api = {
       (b) => b.queues,
     );
   },
-  startCheckout: (profile: string, vhost: string, queue: string) =>
+  /** `overrideConsumers` starts it even though other consumers read the queue (error `queue_has_consumers` otherwise). */
+  startCheckout: (profile: string, vhost: string, queue: string, opts: { overrideConsumers?: boolean } = {}) =>
     getJson<{ checkout: Checkout }>(
       `/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/checkouts`,
       'POST',
+      { overrideConsumers: opts.overrideConsumers === true },
     ).then((b) => b.checkout),
+  /** Keeps the Checkout alive (the page still shows it) and returns its state. */
+  heartbeat: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/heartbeat`, 'POST').then((b) => b.checkout),
   checkout: (id: string) => getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`).then((b) => b.checkout),
   message: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),

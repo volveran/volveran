@@ -2,7 +2,9 @@
 // with prefetch N, then cancel the consumer so later arrivals stay in the
 // queue. Deliveries the Checkout must not hold (late ones, see
 // CheckoutCollection) go straight back with basic.nack(requeue), which costs
-// a quorum Message no Delivery Budget.
+// a quorum Message no Delivery Budget. On quorum queues the consumer carries
+// `x-consumer-timeout`, the backstop past the Checkout's own time limit;
+// classic queues reject the argument (and never time a consumer out).
 import type * as amqp from 'amqplib';
 import { CheckoutCollection } from '../triage/checkout-collection.js';
 import { CheckoutError } from './errors.js';
@@ -22,6 +24,8 @@ export interface CollectOptions {
   /** How many Messages to take (N); at least 1. */
   expected: number;
   maxBytes: number;
+  /** The consumer's `x-consumer-timeout` (quorum queues only); undefined sets none. */
+  consumerTimeoutMs?: number;
   /** Called when the broker cancels the consumer (queue deleted, consumer timeout). */
   onBrokerCancel(): void;
   /** False once the Checkout is lost: its channel or connection is gone. */
@@ -54,7 +58,12 @@ export async function collect(channel: amqp.Channel, queue: string, options: Col
           collection.offer(m, m.content.length);
           if (collection.complete) stopWaiting();
         },
-        { noAck: false },
+        {
+          noAck: false,
+          ...(options.consumerTimeoutMs === undefined
+            ? {}
+            : { arguments: { 'x-consumer-timeout': options.consumerTimeoutMs } }),
+        },
       )
       .then((ok) => (consumerTag = ok.consumerTag))
       .catch((err: Error) => {
