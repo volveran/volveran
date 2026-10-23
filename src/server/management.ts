@@ -22,8 +22,6 @@ export interface ManagementQueue {
   effectivePolicy: Record<string, unknown>;
   /** Effective delivery-limit of a quorum queue (arguments and policies applied); null for other types or unlimited. */
   deliveryLimit: number | null;
-  /** Total body bytes of the ready Messages, from management statistics (lags); null when not reported. */
-  messageBytesReady: number | null;
 }
 
 export interface ManagementBinding {
@@ -181,7 +179,6 @@ function toQueue(q: any): ManagementQueue {
     // The API sends [] rather than {} when no policy applies.
     effectivePolicy: isRecord(q.effective_policy_definition) ? q.effective_policy_definition : {},
     deliveryLimit: typeof q.delivery_limit === 'number' && Number.isFinite(q.delivery_limit) ? q.delivery_limit : null,
-    messageBytesReady: typeof q.message_bytes_ready === 'number' ? q.message_bytes_ready : null,
   };
 }
 

@@ -2,33 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { CheckoutCollection, checkoutSize, parseCheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 
 const MB = 1024 * 1024;
-const limits = { maxMessages: 1000, maxBytes: 100 * MB };
 
 describe('checkoutSize', () => {
-  it('takes every ready Message when the queue is within the limits', () => {
-    expect(checkoutSize({ ready: 3, readyBytes: 300, ...limits })).toEqual({ take: 3, limitedBy: null });
+  it('takes every ready Message when the queue is within the Message limit', () => {
+    expect(checkoutSize({ ready: 3, maxMessages: 1000 })).toEqual({ take: 3, limitedBy: null });
   });
 
   it('takes at most the Message limit', () => {
-    expect(checkoutSize({ ready: 4500, readyBytes: 4500, ...limits })).toEqual({ take: 1000, limitedBy: 'messages' });
-  });
-
-  it('takes fewer when the average Message size would pass the byte limit', () => {
-    // 500 Messages of ~1 MB: 100 fit in 100 MB.
-    expect(checkoutSize({ ready: 500, readyBytes: 500 * MB, ...limits })).toEqual({ take: 100, limitedBy: 'bytes' });
-  });
-
-  it('takes at least one Message, however large', () => {
-    expect(checkoutSize({ ready: 2, readyBytes: 400 * MB, ...limits })).toEqual({ take: 1, limitedBy: 'bytes' });
-  });
-
-  it('relies on the Message limit alone without a size estimate', () => {
-    expect(checkoutSize({ ready: 10, readyBytes: null, ...limits })).toEqual({ take: 10, limitedBy: null });
-    expect(checkoutSize({ ready: 10, readyBytes: 0, ...limits })).toEqual({ take: 10, limitedBy: null });
+    expect(checkoutSize({ ready: 4500, maxMessages: 1000 })).toEqual({ take: 1000, limitedBy: 'messages' });
   });
 
   it('takes nothing from an empty queue', () => {
-    expect(checkoutSize({ ready: 0, readyBytes: null, ...limits })).toEqual({ take: 0, limitedBy: null });
+    expect(checkoutSize({ ready: 0, maxMessages: 1000 })).toEqual({ take: 0, limitedBy: null });
   });
 });
 

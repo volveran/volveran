@@ -386,11 +386,7 @@ export class CheckoutManager {
     // Exact, unlike the management API's count; the lock queue is not a consumer of the queue.
     if (consumers > 0 && !options.overrideConsumers) throw hasConsumers(checkout, consumers);
     checkout.readyAtStart = ready;
-    const { take, limitedBy } = checkoutSize({
-      ready,
-      readyBytes: info.messageBytesReady,
-      ...checkout.limits,
-    });
+    const { take, limitedBy } = checkoutSize({ ready, maxMessages: checkout.limits.maxMessages });
     checkout.limitedBy = limitedBy;
     if (take === 0) return;
 

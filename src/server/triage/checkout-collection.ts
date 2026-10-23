@@ -2,9 +2,9 @@
 // which deliveries it holds (ADR 0006).
 //
 // A Checkout takes the N oldest ready Messages, capped by a Message limit and
-// a byte limit. The byte limit can only be estimated up front (management
-// statistics), so it is enforced again while collecting: once it is reached,
-// the rest of the N deliveries overflow. They are not shown, and go back to
+// a byte limit. N comes from the Message limit alone; the byte limit is
+// enforced on the exact body sizes while collecting: once it is reached, the
+// rest of the N deliveries overflow. They are not shown, and go back to
 // the queue right after the held ones when the Checkout ends, which keeps the
 // queue's order on both classic and quorum queues. The consumer has a
 // prefetch of N, so after a shortfall (another consumer took some, some
@@ -50,25 +50,19 @@ export function parseCheckoutLimits(
 export type LimitedBy = 'messages' | 'bytes';
 
 /**
- * How many Messages to take. `ready` is the exact ready count (passive
- * declare); `readyBytes` the management API's estimate of their total size,
- * null when unknown.
+ * How many Messages to take (N): every ready Message up to the Message
+ * limit. `ready` is the exact ready count (passive declare). The byte limit
+ * does not shrink N: the management API's size estimate is stale and, on
+ * quorum queues, counts more than the bodies, so it would hold fewer than
+ * the limit allows. The byte limit is applied to each body as it arrives
+ * (CheckoutCollection): past it, the rest of the N overflow.
  */
-export function checkoutSize(input: CheckoutLimits & { ready: number; readyBytes: number | null }): {
+export function checkoutSize(input: { ready: number; maxMessages: number }): {
   take: number;
   limitedBy: LimitedBy | null;
 } {
-  const { ready, readyBytes, maxMessages, maxBytes } = input;
-  let take = Math.min(ready, maxMessages);
-  let limitedBy: LimitedBy | null = take < ready ? 'messages' : null;
-  if (take > 0 && readyBytes !== null && readyBytes > 0) {
-    const fit = Math.max(1, Math.floor(maxBytes / (readyBytes / ready)));
-    if (fit < take) {
-      take = fit;
-      limitedBy = 'bytes';
-    }
-  }
-  return { take, limitedBy };
+  const take = Math.min(input.ready, input.maxMessages);
+  return { take, limitedBy: take < input.ready ? 'messages' : null };
 }
 
 export type Collected = 'held' | 'overflow' | 'late';

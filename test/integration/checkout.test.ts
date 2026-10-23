@@ -17,6 +17,9 @@ import {
   deadLetter,
   deadLetterRoutes,
   testOperator,
+  eventually,
+  management,
+  vhostPath,
   type TestApp,
 } from './harness.js';
 
@@ -33,6 +36,14 @@ async function readyMessages(queue: string): Promise<Array<{ id: string; deliver
     await ch.checkQueue(queue);
     return taken.map((m) => ({ id: String(m.properties.messageId), deliveryCount: m.properties.headers?.['x-delivery-count'] }));
   });
+}
+
+/** Waits until the management API reports `count` ready Messages of `queue`, with their size. */
+async function waitForReadyStats(queue: string, count: number): Promise<void> {
+  await eventually(async () => {
+    const { body } = await management(`/queues/${vhostPath('/')}/${encodeURIComponent(queue)}`);
+    expect([body.messages_ready, body.message_bytes_ready > 0]).toEqual([count, true]);
+  }, 25_000);
 }
 
 const checkoutPath = (queue: string, vhost = '/') =>
@@ -175,6 +186,9 @@ describe('Checkout', () => {
       // Not read before the Checkout: Messages returned to a quorum queue go
       // ahead of the rest, so looking would change the order under test.
       await seedMessages('/', queue, 5);
+      // With fresh management statistics, so the result never depends on how
+      // stale they are: a quorum queue reports more bytes than the bodies hold.
+      await waitForReadyStats(queue, 5);
 
       const { checkout } = (await startCheckout(queue, limited)).body;
 
