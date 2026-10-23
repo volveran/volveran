@@ -260,9 +260,13 @@ export const api = {
       handles,
       decision,
     }),
-  /** Carries out every Decision, then ends the Checkout; one outcome per Message. */
-  apply: (id: string) =>
+  /**
+   * Carries out every Decision, then ends the Checkout; one outcome per Message.
+   * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
+   */
+  apply: (id: string, confirmQueueName?: string) =>
     getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
+      ...(confirmQueueName !== undefined && { confirmQueueName }),
     }),
 };

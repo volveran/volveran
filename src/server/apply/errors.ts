@@ -1,7 +1,7 @@
 // Errors from asking for an Apply the server will not carry out as asked.
 import { HttpError } from '../http-error.js';
 
-/** #9 adds 'queue_name_confirmation_required' (Protected Profiles). */
+/** A missing typed queue name on a Protected Profile is a TypedConfirmationError (protected-profile.ts), shared with Restore. */
 export type ApplyErrorCode = 'confirmation_required';
 
 const STATUS: Record<ApplyErrorCode, number> = {

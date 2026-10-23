@@ -123,11 +123,11 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
-  const apply = async () => {
+  const apply = async (confirmQueueName?: string) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      const res = await api.apply(id);
+      const res = await api.apply(id, confirmQueueName);
       setCheckout(res.checkout);
       setReceivedAt(Date.now());
       setSelection(new Set());
@@ -143,9 +143,15 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const active = checkout.status === 'active';
 
   return (
-    <section className="checkout">
+    <section className={checkout.protectedProfile ? 'checkout protected' : 'checkout'}>
       <div className="checkout-head">
         <div>
+          {checkout.protectedProfile && (
+            <p className="protected-banner" role="note">
+              <span className="badge protected-badge">Protected Profile</span> {checkout.profile}: changes here need
+              the queue name typed to Apply.
+            </p>
+          )}
           <h2>
             Checkout of {checkout.queue} <span className={`badge type-${checkout.queueType}`}>{checkout.queueType}</span>
           </h2>
@@ -190,6 +196,10 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             <strong>Decisions:</strong> {checkout.decisionSummaryText}
           </p>
           <ApplyPanel
+            profile={checkout.profile}
+            protectedProfile={checkout.protectedProfile}
+            queue={checkout.queue}
+            typeQueueName={checkout.applyConfirmation.typeQueueName}
             summary={checkout.decisionSummary}
             summaryText={checkout.decisionSummaryText}
             busy={busy}
