@@ -306,3 +306,63 @@ table.queues {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* Selection, filters and Decisions */
+.decision-bar,
+.decision-group,
+.filter-clause,
+.filter-actions,
+.filter-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.decision-bar {
+  margin: 0.5rem 0;
+}
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.filter-clause input[type='search'] {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.filter-result {
+  margin: 0.5rem 0;
+}
+button.link {
+  border: none;
+  background: none;
+  text-decoration: underline;
+}
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+th.select,
+td.select {
+  width: 2rem;
+  text-align: center;
+}
+.decision {
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+.decision-keep {
+  color: var(--muted);
+}
+.decision-discard {
+  color: var(--danger);
+  font-weight: 600;
+}
+.notice {
+  color: var(--muted);
+}

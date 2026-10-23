@@ -2,6 +2,7 @@
 import type * as amqp from 'amqplib';
 import type { QueueRef } from '../profiles.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
+import type { ActionDecision } from '../triage/decisions.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 
 /** `lost`: the Checkout ended without Volverán ending it (a Lost Checkout). */
@@ -35,4 +36,6 @@ export interface Checkout extends QueueRef {
   /** Deliveries past the byte limit: not shown, returned right after the held ones. */
   overflow: amqp.ConsumeMessage[];
   heldBytes: number;
+  /** Decisions other than Keep, by Message handle (staging.ts); a Message missing here is Keep. */
+  decisions: Map<number, ActionDecision>;
 }

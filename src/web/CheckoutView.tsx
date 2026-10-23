@@ -1,9 +1,13 @@
-// A Checkout: how many Messages it holds, the list of held Messages and the
-// detail of the selected one. Ending it returns every Message to the queue;
+// A Checkout: how many Messages it holds, the list of held Messages with
+// their Decisions, the Selection (ticked by hand or "Select all matching" a
+// filter) and the detail of the Message being looked at. Ending it returns every Message to the queue;
 // leaving the page ends it too (a beacon), so nothing stays held by accident.
 import { useEffect, useState } from 'react';
 import { formatBytes, heldLine } from '../shared/held-line.js';
-import { api, ApiError, type Checkout, type MessageDetail, type MessageSummary } from './api.js';
+import { api, ApiError, type Checkout, type Decision, type FilterClause, type MessageDetail, type MessageRow } from './api.js';
+import { DecisionBar } from './DecisionBar.js';
+import { DecisionBadge } from './decisions.js';
+import { FilterBar } from './FilterBar.js';
 
 export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
@@ -11,6 +15,12 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [detail, setDetail] = useState<MessageDetail>();
   const [error, setError] = useState<ApiError>();
   const [ending, setEnding] = useState(false);
+  /** The Selection: handles of the ticked Messages. */
+  const [selection, setSelection] = useState<ReadonlySet<number>>(new Set());
+  /** Handles matching the current filter; null when no filter is set. */
+  const [matched, setMatched] = useState<ReadonlySet<number> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +68,35 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
+  const filter = async (clauses: FilterClause[]) => {
+    setBusy(true);
+    try {
+      setMatched(new Set((await api.matching(id, clauses)).handles));
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decide = async (decision: Decision) => {
+    setBusy(true);
+    setNotice(undefined);
+    try {
+      const res = await api.setDecisions(id, [...selection], decision);
+      setCheckout(res.checkout);
+      setError(undefined);
+      if (res.rejected.length > 0) {
+        setNotice(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
+      }
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!checkout) return error ? <ErrorBox error={error} /> : <p className="empty">Loading the Checkout…</p>;
   const active = checkout.status === 'active';
 
@@ -92,13 +131,46 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
       {checkout.status === 'ended' && <p className="empty">This Checkout has ended; its Messages are back in the queue.</p>}
       {error && <ErrorBox error={error} />}
 
+      {active && checkout.messages.length > 0 && (
+        <>
+          <p className="decision-summary">
+            <strong>Decisions:</strong> {checkout.decisionSummaryText}
+          </p>
+          <DecisionBar
+            selected={selection.size}
+            replayUnavailable={checkout.messages.filter((m) => selection.has(m.handle) && !m.replay.available).length}
+            busy={busy}
+            onDecide={decide}
+            onClearSelection={() => setSelection(new Set())}
+          />
+          {notice && <p className="notice">{notice}</p>}
+          <FilterBar active={matched !== null} busy={busy} onFilter={filter} onClear={() => setMatched(null)} />
+          {matched && (
+            <div className="filter-result">
+              <span>
+                {matched.size} of {checkout.messages.length} Messages match the filter
+              </span>
+              <button
+                disabled={matched.size === 0}
+                onClick={() => setSelection((s) => new Set([...s, ...matched]))}
+              >
+                Select all {matched.size} matching
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
       {active && (
         <div className="checkout-body">
           <MessageTable
-            messages={checkout.messages}
+            messages={matched ? checkout.messages.filter((m) => matched.has(m.handle)) : checkout.messages}
+            empty={matched ? 'No Message matches the filter.' : 'The queue had no ready Messages.'}
             quorum={checkout.queueType === 'quorum' && checkout.deliveryLimit !== null}
             selected={selected}
             onSelect={setSelected}
+            selection={selection}
+            onSelection={setSelection}
           />
           {detail && <MessageDetailView message={detail} />}
         </div>
@@ -117,16 +189,37 @@ function ErrorBox({ error }: { error: ApiError }) {
 }
 
 function MessageTable(props: {
-  messages: MessageSummary[];
+  messages: MessageRow[];
+  empty: string;
   quorum: boolean;
   selected: number | undefined;
   onSelect(handle: number): void;
+  selection: ReadonlySet<number>;
+  onSelection(selection: ReadonlySet<number>): void;
 }) {
-  if (props.messages.length === 0) return <p className="empty">The queue had no ready Messages.</p>;
+  if (props.messages.length === 0) return <p className="empty">{props.empty}</p>;
+  const allTicked = props.messages.every((m) => props.selection.has(m.handle));
+  const tick = (handles: number[], on: boolean) => {
+    const next = new Set(props.selection);
+    for (const h of handles) {
+      if (on) next.add(h);
+      else next.delete(h);
+    }
+    props.onSelection(next);
+  };
   return (
     <table className="queues messages">
       <thead>
         <tr>
+          <th className="select">
+            <input
+              type="checkbox"
+              aria-label="Select all shown Messages"
+              checked={allTicked}
+              onChange={() => tick(props.messages.map((m) => m.handle), !allTicked)}
+            />
+          </th>
+          <th>Decision</th>
           <th>message_id</th>
           <th>Routing key</th>
           <th>Timestamp</th>
@@ -142,6 +235,22 @@ function MessageTable(props: {
             className={m.handle === props.selected ? 'match selected' : undefined}
             onClick={() => props.onSelect(m.handle)}
           >
+            <td className="select" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                aria-label={`Select ${m.messageId ?? 'Message'}`}
+                checked={props.selection.has(m.handle)}
+                onChange={(e) => tick([m.handle], e.target.checked)}
+              />
+            </td>
+            <td>
+              <DecisionBadge decision={m.decision} />
+              {!m.replay.available && (
+                <span className="badge" title={m.replay.reason}>
+                  no Replay
+                </span>
+              )}
+            </td>
             <td className="name">{m.messageId ?? <em>none</em>}</td>
             <td>{m.routingKey}</td>
             <td>{m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}</td>

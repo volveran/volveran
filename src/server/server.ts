@@ -13,6 +13,7 @@ import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-coll
 import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
+import { registerDecisionRoutes } from './routes/decisions.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
 export interface ServerOptions {
@@ -167,6 +168,7 @@ function buildApp(
     },
     operator: () => mode.operator,
   });
+  registerDecisionRoutes(app, checkouts);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {
