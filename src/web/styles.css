@@ -241,3 +241,55 @@ table.queues {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Checkout */
+.checkout-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.checkout-head h2 {
+  margin: 0 0 0.25rem;
+}
+.checkout-body {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1rem;
+  align-items: start;
+}
+.messages tr {
+  cursor: pointer;
+}
+.messages tr.selected td {
+  outline: 1px solid var(--accent);
+}
+.message-detail {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow: auto;
+}
+.message-detail dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+.message-detail dt {
+  color: var(--muted);
+}
+.message-detail dd {
+  margin: 0;
+}
+.message-detail pre {
+  background: var(--bg);
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 24rem;
+}
+.message-detail pre.wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
+}

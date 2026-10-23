@@ -1,8 +1,10 @@
 // Root of the Volverán web app: pick a Broker Profile and vhost (remembered
-// in localStorage) and see its queues, dead-letter queues first.
+// in localStorage) and see its queues, dead-letter queues first; start a
+// Checkout on one, which replaces the queue list until it is over.
 import { useEffect, useState } from 'react';
 import { product } from '../shared/product.js';
 import { api, ApiError, type Profile, type Queue, type Session } from './api.js';
+import { CheckoutView } from './CheckoutView.js';
 
 const STORAGE_KEY = 'volveran.location';
 
@@ -43,6 +45,7 @@ export function App() {
   const [error, setError] = useState<ApiError>();
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [checkoutId, setCheckoutId] = useState<string | null>(null);
   const debouncedSearch = useDebounced(search, 200);
 
   const profile = profiles.find((p) => p.name === profileName);
@@ -53,7 +56,13 @@ export function App() {
   }, [profile?.name, profile?.protected]);
 
   useEffect(() => {
-    api.session().then(setSession).catch(setError);
+    api
+      .session()
+      .then((s) => {
+        setSession(s);
+        setCheckoutId(s.checkoutId);
+      })
+      .catch(setError);
     api
       .profiles()
       .then((list) => {
@@ -107,6 +116,16 @@ export function App() {
       cancelled = true;
     };
   }, [profileName, vhost, debouncedSearch, onlyDeadLetterQueues, refreshTick]);
+
+  const startCheckout = async (queue: string) => {
+    if (!profileName || !vhost) return;
+    setError(undefined);
+    try {
+      setCheckoutId((await api.startCheckout(profileName, vhost, queue)).id);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
 
   return (
     <div className={profile?.protected ? 'app protected' : 'app'}>
@@ -176,7 +195,17 @@ export function App() {
           </div>
         )}
 
-        {queues && <QueueTable queues={queues} />}
+        {checkoutId ? (
+          <CheckoutView
+            id={checkoutId}
+            onClose={() => {
+              setCheckoutId(null);
+              setRefreshTick((n) => n + 1);
+            }}
+          />
+        ) : (
+          queues && <QueueTable queues={queues} onCheckout={startCheckout} />
+        )}
       </main>
     </div>
   );
@@ -195,12 +224,18 @@ function errorTitle(error: ApiError): string {
       return 'Missing permissions';
     case 'password_not_set':
       return 'Password not configured';
+    case 'checkout_in_progress':
+      return 'Already checked out';
+    case 'operator_has_checkout':
+      return 'You already have a Checkout';
+    case 'lock_not_permitted':
+      return 'Missing permission for the Checkout lock';
     default:
       return 'Something went wrong';
   }
 }
 
-function QueueTable({ queues }: { queues: Queue[] }) {
+function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue: string): void }) {
   if (queues.length === 0) return <p className="empty">No queues match.</p>;
   return (
     <table className="queues">
@@ -230,8 +265,15 @@ function QueueTable({ queues }: { queues: Queue[] }) {
             <td className="num">≈ {q.approximateMessages}</td>
             <td className="num">{q.consumers}</td>
             <td>
-              {q.checkout.available ? (
-                <span>Available</span>
+              {q.checkedOutBy ? (
+                <span className="unavailable">
+                  Checked out
+                  <small>
+                    by {q.checkedOutBy.operator} since {new Date(q.checkedOutBy.since).toLocaleTimeString()}
+                  </small>
+                </span>
+              ) : q.checkout.available ? (
+                <button onClick={() => onCheckout(q.name)}>Check out</button>
               ) : (
                 <span className="unavailable" title={q.checkout.reason}>
                   Not available

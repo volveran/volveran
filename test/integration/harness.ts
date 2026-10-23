@@ -10,8 +10,10 @@ import path from 'node:path';
 import tls from 'node:tls';
 import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
+import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import { startServer } from '../../src/server/server.js';
-import { brokerUsers, testBroker } from '../broker/client.js';
+import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
+import { brokerUsers, management, testBroker } from '../broker/client.js';
 
 export * from '../broker/client.js';
 
@@ -75,6 +77,9 @@ export interface StartAppOptions {
   env?: Record<string, string | undefined>;
   /** Listen address; default 127.0.0.1. */
   host?: string;
+  checkoutLimits?: Partial<CheckoutLimits>;
+  endedCheckoutRetentionMs?: number;
+  checkoutTestHooks?: CheckoutTestHooks;
 }
 
 /**
@@ -97,7 +102,15 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
 
   let server;
   try {
-    server = await startServer({ profilesFile, env, host: options.host ?? '127.0.0.1', port: 0 });
+    server = await startServer({
+      profilesFile,
+      env,
+      host: options.host ?? '127.0.0.1',
+      port: 0,
+      checkoutLimits: options.checkoutLimits,
+      endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
+      checkoutTestHooks: options.checkoutTestHooks,
+    });
   } catch (err) {
     await rm(dir, { recursive: true, force: true });
     throw err;
@@ -185,4 +198,15 @@ export async function closedPort(): Promise<number> {
   const { port } = server.address() as net.AddressInfo;
   await new Promise((resolve) => server.close(resolve));
   return port;
+}
+
+/**
+ * The broker's names of the AMQP connections Checkouts of `queue` hold open
+ * (named "volveran checkout <vhost> <queue>"), for closing them in tests.
+ * The management API lists a new connection within a second or so.
+ */
+export async function checkoutConnectionNames(queue: string, vhost = '/'): Promise<string[]> {
+  const res = await management('/connections?columns=name,user_provided_name');
+  const list = res.body as Array<{ name: string; user_provided_name?: string }>;
+  return list.filter((c) => c.user_provided_name === `volveran checkout ${vhost} ${queue}`).map((c) => c.name);
 }

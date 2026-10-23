@@ -7,6 +7,8 @@
 //   VOLVERAN_AUTH           none (Solo Mode, default); oidc (Team Mode) arrives in #11
 //   VOLVERAN_OPERATOR       the Operator's name in Solo Mode (default $USER)
 //   VOLVERAN_WEB_ROOT       built web app (default dist/web next to this file)
+//   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
+//                           Checkout limits (default 1000 Messages, 100 MB)
 // plus each Broker Profile's password variable (its `passwordEnv`).
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

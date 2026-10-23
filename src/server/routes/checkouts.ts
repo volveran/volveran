@@ -1,0 +1,47 @@
+// Checkout routes: start a Checkout on a queue, read it and its Messages, end it.
+//
+//   POST   /api/profiles/:profile/vhosts/:vhost/queues/:queue/checkouts  → 201 { checkout }
+//   GET    /api/checkouts/:id                                            → { checkout }
+//   GET    /api/checkouts/:id/messages/:handle                           → { message }
+//   DELETE /api/checkouts/:id                                            → { checkout }
+//   POST   /api/checkouts/:id/end   same as DELETE, for navigator.sendBeacon
+import type { FastifyInstance } from 'fastify';
+import type { CheckoutManager } from '../checkout/manager.js';
+import { CheckoutError } from '../checkout/errors.js';
+import type { QueueRef } from '../profiles.js';
+
+export interface CheckoutRouteDeps {
+  checkouts: CheckoutManager;
+  /** The queue a request names, after checking its profile and vhost exist (throws an HttpError). */
+  queueRef(profile: string, vhost: string, queue: string): QueueRef;
+  /** The Operator making the request. */
+  operator(): string;
+}
+
+export function registerCheckoutRoutes(app: FastifyInstance, { checkouts, queueRef, operator }: CheckoutRouteDeps) {
+  app.post<{ Params: { profile: string; vhost: string; queue: string } }>(
+    '/api/profiles/:profile/vhosts/:vhost/queues/:queue/checkouts',
+    async (req, reply) => {
+      const { profile, vhost, queue } = req.params;
+      const checkout = await checkouts.start(queueRef(profile, vhost, queue), operator());
+      return reply.status(201).send({ checkout });
+    },
+  );
+
+  app.get<{ Params: { id: string } }>('/api/checkouts/:id', async (req) => ({ checkout: checkouts.get(req.params.id) }));
+
+  app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
+    const handle = Number(req.params.handle);
+    if (!Number.isSafeInteger(handle)) {
+      throw new CheckoutError('message_not_found', `"${req.params.handle}" is not a Message handle.`);
+    }
+    return { message: checkouts.message(req.params.id, handle) };
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/checkouts/:id', async (req) => ({
+    checkout: await checkouts.end(req.params.id),
+  }));
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', async (req) => ({
+    checkout: await checkouts.end(req.params.id),
+  }));
+}

@@ -49,6 +49,10 @@ Why `--network host`: a container's own loopback cannot be reached through a pub
 | `VOLVERAN_AUTH` | `none` | `none` is Solo Mode; `oidc` (Team Mode) is not available yet |
 | `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
 | `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
+| `VOLVERAN_CHECKOUT_MAX_MESSAGES` | `1000` | most Messages one Checkout holds (up to 65,535) |
+| `VOLVERAN_CHECKOUT_MAX_MB` | `100` | most body megabytes one Checkout holds |
+
+A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)).
 
 ## Learn more
 

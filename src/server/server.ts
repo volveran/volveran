@@ -4,11 +4,15 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import { loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
+import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSources } from './triage/queue-list.js';
+import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
 export interface ServerOptions {
@@ -22,6 +26,12 @@ export interface ServerOptions {
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot?: string;
   logger?: boolean;
+  /** Overrides the Checkout limits from VOLVERAN_CHECKOUT_MAX_MESSAGES / VOLVERAN_CHECKOUT_MAX_MB. */
+  checkoutLimits?: Partial<CheckoutLimits>;
+  /** How long an ended or lost Checkout stays readable (default 15 min). */
+  endedCheckoutRetentionMs?: number;
+  /** Test seams of the Checkout manager; unset in production. */
+  checkoutTestHooks?: CheckoutTestHooks;
 }
 
 export interface RunningServer {
@@ -33,8 +43,17 @@ export interface RunningServer {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const mode = resolveRunMode(options.env, options.host);
   if (!mode.ok) throw new ConfigError(mode.error);
+  const limits = parseCheckoutLimits(options.env);
+  if (!limits.ok) throw new ConfigError(limits.error);
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
-  const app = buildApp(profiles, mode.mode, options);
+  const checkouts = new CheckoutManager({
+    limits: { ...limits.limits, ...options.checkoutLimits },
+    endedRetentionMs: options.endedCheckoutRetentionMs,
+    testHooks: options.checkoutTestHooks,
+  });
+  const app = buildApp(profiles, mode.mode, checkouts, options);
+  // Every held Message goes back to its queue before the process exits.
+  app.addHook('onClose', () => checkouts.endAll());
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
@@ -45,7 +64,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
 }
 
-function buildApp(profiles: BrokerProfile[], mode: RunMode, options: ServerOptions): FastifyInstance {
+function buildApp(
+  profiles: BrokerProfile[],
+  mode: RunMode,
+  checkouts: CheckoutManager,
+  options: ServerOptions,
+): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? false });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -57,7 +81,12 @@ function buildApp(profiles: BrokerProfile[], mode: RunMode, options: ServerOptio
   });
 
   // Who is acting: in Solo Mode the configured Operator name.
-  app.get('/api/session', async () => ({ mode: mode.kind, operator: mode.operator }));
+  // `checkoutId` is the Operator's active Checkout, so the web app can return to it.
+  app.get('/api/session', async () => ({
+    mode: mode.kind,
+    operator: mode.operator,
+    checkoutId: checkouts.activeFor(mode.operator)?.id ?? null,
+  }));
 
   app.get('/api/profiles', async () => ({
     profiles: profiles.map((p) => ({
@@ -101,13 +130,17 @@ function buildApp(profiles: BrokerProfile[], mode: RunMode, options: ServerOptio
     const { vhost } = req.params;
     checkVhost(profile, vhost);
     const client = new ManagementClient(profile);
-    const [queues, bindings] = await Promise.all([client.listQueues(vhost), client.listBindings(vhost)]);
+    const [allQueues, bindings] = await Promise.all([client.listQueues(vhost), client.listBindings(vhost)]);
+    // Checkout lock queues are Volverán's own: not listed, but they say who holds which queue.
+    const holders = checkoutHolders(allQueues);
+    const queues = allQueues.filter((q) => !isLockQueue(q.name));
     const rows = queues.map((q) => ({
       name: q.name,
       type: q.type,
       approximateMessages: q.messages,
       consumers: q.consumers,
       checkout: checkoutAvailability(q.type),
+      checkedOutBy: holders.get(q.name) ?? null,
     }));
     return {
       defaultQueueFilter: profile.defaultQueueFilter ?? null,
@@ -118,6 +151,16 @@ function buildApp(profiles: BrokerProfile[], mode: RunMode, options: ServerOptio
         search: req.query.search,
       }),
     };
+  });
+
+  registerCheckoutRoutes(app, {
+    checkouts,
+    queueRef: (profileName, vhost, queue) => {
+      const profile = findProfile(profileName);
+      checkVhost(profile, vhost);
+      return { profile, vhost, queue };
+    },
+    operator: () => mode.operator,
   });
 
   app.setNotFoundHandler((req, reply) => {
