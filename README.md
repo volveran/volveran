@@ -52,25 +52,10 @@ Why `--network host`: a container's own loopback cannot be reached through a pub
 
 ### Team Mode
 
-Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service that signs every Operator in through an OIDC provider. It is the only mode that may listen on the network, so it runs with `-e VOLVERAN_HOST=0.0.0.0 -p 8080:8080` instead of `--network host`. It is not available yet: its settings will be documented here when Team Mode (#11) lands.
-
-### Configuration
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `VOLVERAN_PROFILES_FILE` | `./profiles.yaml` (`/config/profiles.yaml` in the image) | Broker Profiles file |
-| `VOLVERAN_HOST` | `127.0.0.1` | listen address; Solo Mode accepts loopback only |
-| `VOLVERAN_PORT` | `8080` | listen port |
-| `VOLVERAN_AUTH` | `none` | `none` is Solo Mode; `oidc` is [Team Mode](#running-in-team-mode) |
-| `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
-| `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
-
-## Running in Team Mode
-
-Team Mode is a shared service: Operators sign in through your OIDC provider (Keycloak, JumpCloud, Okta, Entra ID, ...) and every API call needs a session. The Operator recorded for an action is the signed-in person (the provider's `sub`, shown as their email or name); brokers are still reached with each Broker Profile's shared credentials.
+Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service: Operators sign in through your OIDC provider (Keycloak, JumpCloud, Okta, Entra ID, ...) and every API call needs a session. The Operator recorded for an action is the signed-in person (the provider's `sub`, shown as their email or name); brokers are still reached with each Broker Profile's shared credentials.
 
 1. Register Volverán at your provider as a confidential client using the authorization code flow, with redirect URL `https://<volveran-host>/auth/callback`. [docs/team-mode.md](docs/team-mode.md) has a generic guide and a worked example for Keycloak brokering JumpCloud.
-2. Run the image listening on the network, behind your TLS-terminating proxy or load balancer:
+2. Run the image listening on the network (`-e VOLVERAN_HOST=0.0.0.0 -p 8080:8080` instead of `--network host`; only Team Mode may), behind your TLS-terminating proxy or load balancer:
 
 ```sh
 docker run --rm --read-only -p 8080:8080 \
@@ -83,7 +68,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  volveran
+  ghcr.io/volveran/volveran:0.1.0
 ```
 
 | Variable | Default | Meaning |
@@ -98,6 +83,17 @@ docker run --rm --read-only -p 8080:8080 \
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
 
 The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VOLVERAN_PROFILES_FILE` | `./profiles.yaml` (`/config/profiles.yaml` in the image) | Broker Profiles file |
+| `VOLVERAN_HOST` | `127.0.0.1` | listen address; Solo Mode accepts loopback only |
+| `VOLVERAN_PORT` | `8080` | listen port |
+| `VOLVERAN_AUTH` | `none` | `none` is Solo Mode; `oidc` is [Team Mode](#team-mode) |
+| `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
+| `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
 
 ## Learn more
 

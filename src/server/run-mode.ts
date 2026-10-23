@@ -76,7 +76,7 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
   if (missing.length > 0) {
     return {
       ok: false,
-      error: `Team Mode (VOLVERAN_AUTH=oidc) signs Operators in through your OIDC provider and needs ${missing.join(', ')}. See README "Running in Team Mode".`,
+      error: `Team Mode (VOLVERAN_AUTH=oidc) signs Operators in through your OIDC provider and needs ${missing.join(', ')}. See README "Team Mode" and docs/team-mode.md.`,
     };
   }
 
