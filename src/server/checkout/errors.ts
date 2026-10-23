@@ -14,6 +14,7 @@ export type CheckoutErrorCode =
   | 'checkout_not_found'
   | 'checkout_not_active'
   | 'message_not_found'
+  | 'decision_not_allowed'
   | 'checkout_failed';
 
 const STATUS: Record<CheckoutErrorCode, number> = {
@@ -26,6 +27,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   checkout_not_found: 404,
   checkout_not_active: 409,
   message_not_found: 404,
+  decision_not_allowed: 422,
   checkout_failed: 502,
 };
 

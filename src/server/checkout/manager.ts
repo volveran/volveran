@@ -117,6 +117,7 @@ export class CheckoutManager {
       held: new Map(),
       overflow: [],
       heldBytes: 0,
+      decisions: new Map(),
     };
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
@@ -141,6 +142,11 @@ export class CheckoutManager {
 
   get(id: string): CheckoutView {
     return view(this.find(id));
+  }
+
+  /** The Checkout itself, for the modules that work on its held Messages (staging.ts). */
+  checkout(id: string): Checkout {
+    return this.find(id);
   }
 
   /** The active Checkout of the Operator with this id, if any. */

@@ -1,9 +1,24 @@
-// What the API returns for a Checkout.
+// What the API returns for a Checkout: its held Messages, each with its
+// Decision, and the summary of the Decisions shown before Apply.
+import { summaryText, type Decision, type DecisionSummaryLine } from '../../shared/decisions.js';
+import { applyConfirmationFor, type ApplyConfirmation } from '../triage/apply-confirmation.js';
+import { summarizeDecisions } from '../triage/decisions.js';
 import { messageSummary, type MessageSummary, type QueueInfo } from '../triage/message-view.js';
+import { replayOrigin } from '../triage/replay-origin.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
 import { remainingMs } from '../triage/checkout-timing.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 import type { Checkout, CheckoutStatus, EndReason } from './state.js';
+
+/** Whether a Message can be given Replay; when not, why (shown to the Operator). */
+export type ReplayAvailability = { available: true } | { available: false; reason: string };
+
+/** A row of the Message list. */
+export interface MessageRow extends MessageSummary {
+  /** The Message's Decision; Keep until told otherwise. */
+  decision: Decision;
+  replay: ReplayAvailability;
+}
 
 export interface CheckoutView {
   id: string;
@@ -40,7 +55,13 @@ export interface CheckoutView {
   /** The queue's effective delivery-limit (quorum); null when none. */
   deliveryLimit: number | null;
   /** Held Messages in queue order. */
-  messages: MessageSummary[];
+  messages: MessageRow[];
+  /** Messages per Decision (Discard, Replay, Move per destination, Keep last), for the Apply confirmation. */
+  decisionSummary: DecisionSummaryLine[];
+  /** The summary on one line, e.g. "12 Discard, 40 Replay, 3 Move to orders.manual, 145 Keep". */
+  decisionSummaryText: string;
+  /** The confirmation an Apply of the current Decisions needs. */
+  applyConfirmation: ApplyConfirmation;
 }
 
 export function queueInfo(c: Checkout): QueueInfo {
@@ -49,6 +70,8 @@ export function queueInfo(c: Checkout): QueueInfo {
 
 export function view(c: Checkout): CheckoutView {
   const info = queueInfo(c);
+  const handles = [...c.held.keys()];
+  const decisionSummary = summarizeDecisions(handles, c.decisions);
   return {
     id: c.id,
     profile: c.profile.name,
@@ -71,6 +94,19 @@ export function view(c: Checkout): CheckoutView {
     limits: c.limits,
     limitedBy: c.limitedBy,
     deliveryLimit: c.deliveryLimit,
-    messages: [...c.held.entries()].map(([handle, m]) => messageSummary(handle, m, info)),
+    messages: [...c.held.entries()].map(([handle, m]) => {
+      const origin = replayOrigin(m.properties.headers);
+      return {
+        ...messageSummary(handle, m, info),
+        decision: c.decisions.get(handle) ?? { kind: 'keep' },
+        replay: origin.ok ? { available: true } : { available: false, reason: origin.reason },
+      };
+    }),
+    decisionSummary,
+    decisionSummaryText: summaryText(decisionSummary),
+    applyConfirmation: applyConfirmationFor({
+      protectedProfile: c.profile.protected,
+      actionCount: handles.filter((h) => c.decisions.has(h)).length,
+    }),
   };
 }

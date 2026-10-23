@@ -1,6 +1,9 @@
 // Thin typed client over Volverán's HTTP JSON API. The types mirror the
 // server's JSON by hand (src/server/server.ts); keep them in sync.
+import type { Decision, DecisionSummaryLine } from '../shared/decisions.js';
 import { product } from '../shared/product.js';
+
+export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 
 export type Session = (
   | {
@@ -132,7 +135,30 @@ export interface Checkout {
   limits: { maxMessages: number; maxBytes: number };
   limitedBy: 'messages' | 'bytes' | null;
   deliveryLimit: number | null;
-  messages: MessageSummary[];
+  messages: MessageRow[];
+  decisionSummary: DecisionSummaryLine[];
+  /** e.g. "12 Discard, 40 Replay, 3 Move to orders.manual, 145 Keep" */
+  decisionSummaryText: string;
+  applyConfirmation: { typeQueueName: boolean };
+}
+
+export interface MessageRow extends MessageSummary {
+  decision: Decision;
+  replay: { available: true } | { available: false; reason: string };
+}
+
+/** One condition of a Message filter; every condition must hold. */
+export type FilterClause =
+  | { kind: 'routing-key'; value: string }
+  | { kind: 'header'; name: string; value?: string }
+  | { kind: 'x-death-reason'; value: string }
+  | { kind: 'original-queue'; value: string }
+  | { kind: 'body-text'; value: string }
+  | { kind: 'json-path'; path: string; value?: string };
+
+export interface Rejection {
+  handle: number;
+  reason: string;
 }
 
 export class ApiError extends Error {
@@ -213,4 +239,13 @@ export const api = {
     getJson<{ message: MessageDetail }>(`/api/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),
   endCheckout: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`, 'DELETE').then((b) => b.checkout),
+  /** The handles of the held Messages matching `filter`. */
+  matching: (id: string, filter: FilterClause[]) =>
+    getJson<{ handles: number[]; count: number }>(`/api/checkouts/${segment(id)}/matching`, 'POST', { filter }),
+  /** Gives the Messages `handles` a Decision (Keep clears it); nothing reaches the broker until Apply. */
+  setDecisions: (id: string, handles: number[], decision: Decision) =>
+    getJson<{ checkout: Checkout; rejected: Rejection[] }>(`/api/checkouts/${segment(id)}/decisions`, 'POST', {
+      handles,
+      decision,
+    }),
 };

@@ -15,6 +15,7 @@ import { parseCheckoutTiming, type CheckoutTiming } from './triage/checkout-timi
 import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
+import { registerDecisionRoutes } from './routes/decisions.js';
 import { attachOperator, operatorOf } from './operator.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
@@ -193,6 +194,7 @@ async function buildApp(
       return { profile, vhost, queue };
     },
   });
+  registerDecisionRoutes(app, checkouts);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {
