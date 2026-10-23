@@ -21,25 +21,40 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 
 There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. A Helm chart for Kubernetes and Flux CD is planned for v0.2.
 
-## Running in Solo Mode
+## Quick start
+
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.1.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+
+### Solo Mode
 
 Solo Mode is for one Operator on their own machine. It has no sign-in, so it only listens on a loopback address and refuses to start on anything else (`0.0.0.0`, a LAN address).
 
-1. Write a profiles file from [`profiles.example.yaml`](profiles.example.yaml). Each Broker Profile names the environment variable holding its password (`passwordEnv`); passwords never go in the file. An optional `caFile` adds a PEM CA for `amqps://` and `https://` brokers signed by a private CA.
-2. Run the image with the host's network, so Volverán's loopback address is your machine's loopback address:
+1. Write `profiles.yaml` from [`profiles.example.yaml`](profiles.example.yaml). Each Broker Profile names the environment variable holding its password (`passwordEnv`); passwords never go in the file. An optional `caFile` adds a PEM CA for `amqps://` and `https://` brokers signed by a private CA.
+2. Export each password variable your profiles name, for example `export VOLVERAN_DEV_PASSWORD=guest`.
+3. Run the image with the host's network, so Volverán's loopback address is your machine's loopback address:
 
 ```sh
-docker build -t volveran .
 docker run --rm --read-only --network host \
   -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  volveran
+  ghcr.io/volveran/volveran:0.1.0
 ```
 
-3. Open <http://127.0.0.1:8080>.
+4. Open <http://127.0.0.1:8080>.
+
+With Docker Compose, copy [`docker-compose.example.yml`](docker-compose.example.yml) to `docker-compose.yml` next to `profiles.yaml` and run `docker compose up`.
+
+<!-- TODO(#6): add the /data volume for the audit log and discarded Messages here and in docker-compose.example.yml once #6 lands. -->
+Volverán writes nothing to disk yet, so the image runs `--read-only` with only the profiles file mounted. Once the audit log lands (#6), a volume at `/data` will hold it.
 
 Why `--network host`: a container's own loopback cannot be reached through a published port (`-p`), and listening on `0.0.0.0` inside the container would rely on every `docker run` publishing the port on `127.0.0.1` only. With the host's network, `127.0.0.1` inside is `127.0.0.1` on your machine, and brokers on `localhost` work as written. On Docker Desktop (macOS, Windows), turn on host networking in Settings → Resources → Network (Docker Desktop 4.34 or later). Listening on the network with a published port is reserved for Team Mode (`VOLVERAN_AUTH=oidc`), which signs every Operator in.
+
+### Team Mode
+
+Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service that signs every Operator in through an OIDC provider. It is the only mode that may listen on the network, so it runs with `-e VOLVERAN_HOST=0.0.0.0 -p 8080:8080` instead of `--network host`. It is not available yet: its settings will be documented here when Team Mode (#11) lands.
+
+### Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -69,9 +84,12 @@ npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
 npm run test:integration  # same for test/integration/
 npm run build          # dist/server and dist/web
+docker build -t volveran .   # the image, as the release workflow builds it
 ```
 
 `npm run dev` needs a `profiles.yaml` in the checkout (ignored by git) and the password variables it names. Integration tests start the app in-process through `startApp` in `test/integration/harness.ts`, on a random loopback port with a generated profiles file; `testProfile` points a Broker Profile at the checkout's test broker. TLS tests put `startTlsProxy` (certificates in `test/fixtures/tls/`) in front of a broker port.
+
+**Releases.** Pushing a tag `v<version>` that matches `package.json` runs `.github/workflows/release.yml`: lint and unit tests, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations. Before tagging, move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version and bump the version in `package.json`, the README quick start and `docker-compose.example.yml` (a unit test checks they agree).
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
