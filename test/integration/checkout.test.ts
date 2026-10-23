@@ -312,6 +312,8 @@ describe('Checkout', () => {
           originalQueue: 'payments.work',
           size: 13,
           deliveryBudget: { remaining: 5, warning: null },
+          decision: { kind: 'keep' },
+          replay: { available: true },
         },
       ]);
 
