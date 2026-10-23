@@ -1,10 +1,7 @@
-// Checkout manager (ADR 0006): the lifecycle of every Checkout. A Checkout
-// opens its own AMQP connection, takes the queue's lock queue
-// `volveran.checkout.<queue>` on it (exclusive, auto-delete: one Checkout per
-// queue across every Volverán instance, released by the broker when the
-// connection dies), reads the ready count N with a passive declare, collects
-// those N deliveries (collect.ts, capped by the Checkout limits) and holds
-// them unacknowledged in memory, keyed by delivery tag (the Message handle).
+// Checkout manager (ADR 0006): the registry and lifecycle of every Checkout.
+// Starting one opens its connection, takes the lock queue and collects the
+// Messages (open.ts); Apply runs in apply.ts. The manager keeps the
+// Checkouts, the in-process locks, the timers, and how a Checkout ends.
 //
 // Ending a Checkout nack-requeues every held Message one at a time in queue
 // order, then the overflow, before closing the channel: on quorum queues that
@@ -18,38 +15,29 @@
 // (checkout-timing.ts). On quorum queues its consumer carries
 // `x-consumer-timeout` a margin past the time limit, as a backstop.
 //
-// Apply (ADR 0001) carries out the Decisions one Message at a time
-// (apply/executor.ts), asking before every step whether the Checkout is still
-// active, then ends the Checkout ('applied'): what is still held (Keep,
-// failed, not attempted) goes back to the queue in order. While Apply runs,
-// nothing else ends the Checkout: the time limit, the heartbeat window and an
-// Operator's end wait for it. Only the broker can cut it short (Lost Checkout).
-// Replay and Move publish on a confirm channel of their own on the Checkout's
-// connection (apply/publisher.ts, ADR 0006), so a publish error never closes
-// the channel holding the Messages.
+// Apply (ADR 0001) ends the Checkout ('applied') once it has run: what is
+// still held (Keep, failed, not attempted) goes back to the queue in order.
+// While Apply runs, nothing else ends the Checkout: the time limit, the
+// heartbeat window and an Operator's end wait for it. Only the broker can
+// cut it short (Lost Checkout).
 //
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
-import type * as amqp from 'amqplib';
-import { openAmqpConnection } from '../amqp-connection.js';
-import { ManagementClient } from '../management.js';
 import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
-import { checkoutSize, type CheckoutLimits } from '../triage/checkout-collection.js';
-import { consumerTimeoutMs, DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
-import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage/checkout-lock.js';
+import type { CheckoutLimits } from '../triage/checkout-collection.js';
+import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
-import { isCheckoutQueueType, notCheckoutableReason } from '../triage/queue-list.js';
-import { executeApply } from '../apply/executor.js';
-import { ConfirmPublisher } from '../apply/publisher.js';
-import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../apply/types.js';
+import type { MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
-import { buildApplyPlan } from '../triage/decisions.js';
-import { collect } from './collect.js';
-import { applyInProgress, CheckoutError, checkoutNotActive, hasConsumers, inCheckout, lockNotPermitted, notCheckoutOwner, operatorHasCheckout, queueNotFound } from './errors.js';
+import { runApply } from './apply.js';
+import { applyInProgress, CheckoutError, checkoutNotActive, inCheckout, notCheckoutOwner, operatorHasCheckout } from './errors.js';
+import { openCheckout, type StartOptions } from './open.js';
 import type { Checkout, EndReason } from './state.js';
 import { queueInfo, view, type CheckoutView } from './view.js';
+
+export { checkoutConnectionName, type StartOptions } from './open.js';
 
 /**
  * Test seams: awaited where a race with the broker or another request
@@ -57,11 +45,11 @@ import { queueInfo, view, type CheckoutView } from './view.js';
  */
 export interface CheckoutTestHooks {
   /** A start holds the queue's lock queue; next it reads the ready count and collects. */
-  afterLock?(ref: { vhost: string; queue: string }): Promise<void>;
+  afterLock?(ref: QueueRef): Promise<void>;
   /** A start has stopped waiting for deliveries; next it cancels its consumer. */
-  afterCollectWait?(ref: { vhost: string; queue: string }): Promise<void>;
+  afterCollectWait?(ref: QueueRef): Promise<void>;
   /** A Checkout reached its time limit; next it ends itself. */
-  beforeTimeLimitEnd?(ref: { vhost: string; queue: string }): Promise<void>;
+  beforeTimeLimitEnd?(ref: QueueRef): Promise<void>;
   /** An Apply step's `pending` Audit Entry is committed; next the step touches the broker (e.g. the ack of a Discard). */
   beforeApplyStep?(entryId: number): Promise<void>;
 }
@@ -78,16 +66,6 @@ export interface CheckoutManagerOptions {
 }
 
 const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
-
-/** The AMQP connection name of a Checkout, so the broker's connection list shows what it is for. */
-export function checkoutConnectionName(vhost: string, queue: string): string {
-  return `volveran checkout ${vhost} ${queue}`;
-}
-
-export interface StartOptions {
-  /** Start even though other consumers read the queue (the Operator overrode the live-consumer warning). */
-  overrideConsumers?: boolean;
-}
 
 export class CheckoutManager {
   private readonly checkouts = new Map<string, Checkout>();
@@ -143,7 +121,11 @@ export class CheckoutManager {
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
-      await this.open(checkout, options);
+      await openCheckout(checkout, options, {
+        onLost: (reason) => this.markLost(checkout, reason),
+        afterLock: this.hooks.afterLock,
+        afterCollectWait: this.hooks.afterCollectWait,
+      });
     } catch (err) {
       this.release(checkout);
       await checkout.connection?.close().catch(() => {});
@@ -209,44 +191,11 @@ export class CheckoutManager {
     const checkout = this.find(id);
     if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
-    // Opened on first use; closes with the Checkout's connection when Apply ends it.
-    let publisher: ConfirmPublisher | undefined;
-    const ctx: ApplyContext = {
-      target: {
-        profile: checkout.profile,
-        vhost: checkout.vhost,
-        queue: checkout.queue,
-        checkoutId: checkout.id,
-        operator: checkout.operator,
-      },
-      startedAt: new Date(),
-      ack: (message) => ack(checkout, message),
-      publish: async (exchange, routingKey, content, options) => {
-        if (!checkout.connection) return { ok: false, reason: 'The Checkout has no connection to the broker any more.' };
-        publisher ??= new ConfirmPublisher(checkout.connection);
-        return publisher.publish(exchange, routingKey, content, options);
-      },
-    };
-    const running = executeApply({
-      plan: buildApplyPlan([...checkout.held.keys()], checkout.decisions),
-      messages: new Map(checkout.held),
-      ctx,
+    const { startedAt, outcomes } = await runApply(checkout, {
       audit: this.options.audit,
-      usable: () => checkout.status === 'active',
       beforeStep: this.hooks.beforeApplyStep,
-      onDone: (handle) => {
-        checkout.held.delete(handle);
-        checkout.decisions.delete(handle);
-      },
     });
-    checkout.applying = running;
-    let outcomes: MessageOutcome[];
-    try {
-      outcomes = await running;
-    } finally {
-      checkout.applying = null;
-    }
-    checkout.lastApply = { at: ctx.startedAt.toISOString(), outcomes };
+    checkout.lastApply = { at: startedAt.toISOString(), outcomes };
     // Straight to finish (no await first): an end() that waited for this
     // Apply then finds the Checkout already ended as 'applied'.
     await this.finish(checkout, 'applied');
@@ -335,137 +284,5 @@ export class CheckoutManager {
     checkout.overflow = [];
     this.release(checkout);
     checkout.connection?.close().catch(() => {});
-  }
-
-  private async open(checkout: Checkout, options: StartOptions): Promise<void> {
-    const { vhost, queue } = checkout;
-    const management = new ManagementClient(checkout.profile);
-    const info = await management.getQueue(vhost, queue);
-    if (!info) throw queueNotFound(checkout);
-    if (!isCheckoutQueueType(info.type)) throw new CheckoutError('queue_not_checkoutable', notCheckoutableReason(info.type));
-    checkout.queueType = info.type;
-    checkout.deliveryLimit = info.deliveryLimit;
-    checkout.deadLetterExchange =
-      typeof info.arguments['x-dead-letter-exchange'] === 'string' ||
-      typeof info.effectivePolicy['dead-letter-exchange'] === 'string';
-
-    const connection = await openAmqpConnection(checkout.profile, vhost, checkoutConnectionName(vhost, queue));
-    checkout.connection = connection;
-    connection.on('close', (err?: Error) =>
-      this.markLost(
-        checkout,
-        `The connection to the broker was closed${err ? ` (${err.message})` : ''}. The broker has returned every Message to the queue` +
-          (checkout.queueType === 'quorum' ? ', which used up 1 of the Delivery Budget of each.' : '.'),
-      ),
-    );
-
-    await this.takeLock(checkout, connection, management);
-    await this.hooks.afterLock?.(checkout);
-
-    const channel = await connection.createChannel();
-    checkout.channel = channel;
-    // A quorum queue's consumer timeout arrives as a channel close once the
-    // consumer is cancelled (ADR 0006); the Messages are back in order. A
-    // channel closed with its connection has no error of its own: the
-    // connection's close reports that.
-    channel.on('error', (err: Error) =>
-      this.markLost(
-        checkout,
-        `The broker closed the channel holding the Messages (${err.message}). Every Message is back in the queue.`,
-      ),
-    );
-
-    let ready: number;
-    let consumers: number;
-    try {
-      ({ messageCount: ready, consumerCount: consumers } = await channel.checkQueue(queue));
-    } catch (err) {
-      if ((err as { code?: number }).code === 404) throw queueNotFound(checkout);
-      throw err;
-    }
-    // Exact, unlike the management API's count; the lock queue is not a consumer of the queue.
-    if (consumers > 0 && !options.overrideConsumers) throw hasConsumers(checkout, consumers);
-    checkout.readyAtStart = ready;
-    const { take, limitedBy } = checkoutSize({ ready, maxMessages: checkout.limits.maxMessages });
-    checkout.limitedBy = limitedBy;
-    if (take === 0) return;
-
-    const lost = () => new CheckoutError('checkout_failed', checkout.lostReason ?? 'The Checkout was lost.');
-    let collected;
-    try {
-      collected = await collect(channel, queue, {
-        expected: take,
-        maxBytes: checkout.limits.maxBytes,
-        consumerTimeoutMs: checkout.queueType === 'quorum' ? consumerTimeoutMs(checkout.timing) : undefined,
-        active: () => checkout.status === 'active',
-        afterWait: this.hooks.afterCollectWait && (() => this.hooks.afterCollectWait!(checkout)),
-        onBrokerCancel: () =>
-          this.markLost(checkout, 'The broker cancelled the Checkout consumer. Every Message is back in the queue.'),
-      });
-    } catch (err) {
-      // A cancel or nack on a closed channel fails with a plain error; the cause is the lost Checkout.
-      throw checkout.status === 'active' ? err : lost();
-    }
-    if (checkout.status !== 'active') throw lost();
-    checkout.held = new Map(collected.held.map((m) => [m.fields.deliveryTag, m]));
-    checkout.overflow = collected.overflow;
-    checkout.heldBytes = collected.heldBytes;
-    if (collected.overflow.length > 0) checkout.limitedBy = 'bytes';
-  }
-
-  /**
-   * Declares the queue's lock queue on the Checkout's connection, on a
-   * channel of its own (a refused declare closes the channel). Another
-   * connection holding it gives RESOURCE_LOCKED; its arguments name the holder.
-   */
-  private async takeLock(checkout: Checkout, connection: amqp.ChannelModel, management: ManagementClient) {
-    const lockQueue = lockQueueName(checkout.queue);
-    const channel = await connection.createChannel();
-    channel.on('error', () => {});
-    try {
-      await channel.assertQueue(lockQueue, {
-        exclusive: true,
-        autoDelete: true,
-        durable: false,
-        arguments: lockArguments(
-          checkout.queue,
-          { operator: checkout.operator.displayName, since: checkout.startedAt.toISOString() },
-          checkout.operator.id,
-        ),
-      });
-    } catch (err) {
-      const code = (err as { code?: number }).code;
-      if (code === 405) {
-        const lock = await management.getQueue(checkout.vhost, lockQueue).catch(() => null);
-        throw inCheckout(checkout, lock ? (holderFromLockArguments(lock.arguments)?.holder ?? null) : null);
-      }
-      if (code === 403) throw lockNotPermitted(checkout);
-      throw new CheckoutError(
-        'checkout_failed',
-        `Cannot declare the Checkout lock queue "${lockQueue}": ${(err as Error).message}`,
-      );
-    }
-    await channel.close().catch(() => {});
-  }
-}
-
-/**
- * Acks a held Message and waits until the broker has processed the ack (a
- * round trip on the same channel: the broker handles the ack before replying).
- */
-async function ack(checkout: Checkout, message: amqp.ConsumeMessage): Promise<void> {
-  const channel = checkout.channel;
-  if (checkout.status !== 'active' || !channel) {
-    throw new Error('The Checkout stopped being active, so the Message was left in the queue.');
-  }
-  try {
-    channel.ack(message);
-  } catch (err) {
-    throw new Error(`Could not ack the Message, so it was left in the queue: ${(err as Error).message}`);
-  }
-  try {
-    await channel.prefetch(Math.max(1, checkout.held.size));
-  } catch (err) {
-    throw new AckUncertainError((err as Error).message);
   }
 }

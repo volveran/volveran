@@ -41,6 +41,11 @@ export interface QueueRef {
   queue: string;
 }
 
+/** Just the queue reference of something that carries one (a Checkout, an Apply target). */
+export function queueRefOf({ profile, vhost, queue }: QueueRef): QueueRef {
+  return { profile, vhost, queue };
+}
+
 export class ProfilesConfigError extends ConfigError {
   constructor(message: string) {
     super(message);
