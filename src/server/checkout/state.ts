@@ -1,5 +1,6 @@
 // The state of one Checkout, as the manager keeps it in memory.
 import type * as amqp from 'amqplib';
+import type { MessageOutcome } from '../apply/types.js';
 import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
@@ -11,10 +12,19 @@ import type { CheckoutQueueType } from '../triage/queue-list.js';
 export type CheckoutStatus = 'active' | 'ended' | 'lost';
 
 /**
- * Why an ended Checkout ended: the Operator ended it, the app shut down, it
- * reached its time limit, or the browser stopped sending heartbeats.
+ * Why an ended Checkout ended: the Operator ended it, it was Applied, the app
+ * shut down, it reached its time limit, or the browser stopped sending
+ * heartbeats.
  */
-export type EndReason = 'operator' | 'shutdown' | 'time-limit' | 'no-heartbeat';
+export type EndReason = 'operator' | 'applied' | 'shutdown' | 'time-limit' | 'no-heartbeat';
+
+/** The result of a Checkout's Apply. */
+export interface AppliedResult {
+  /** When the Apply started (ISO 8601). */
+  at: string;
+  /** One per Message the Checkout held, in Checkout order. */
+  outcomes: MessageOutcome[];
+}
 
 export interface Checkout extends QueueRef {
   id: string;
@@ -51,4 +61,12 @@ export interface Checkout extends QueueRef {
   heldBytes: number;
   /** Decisions other than Keep, by Message handle (staging.ts); a Message missing here is Keep. */
   decisions: Map<number, ActionDecision>;
+  /**
+   * The Apply in progress, if any. Ending the Checkout (the Operator, its
+   * time limit, a missing heartbeat, shutdown) waits for it, so a Message
+   * whose step is done is never returned and a step is never cut short.
+   */
+  applying: Promise<unknown> | null;
+  /** The Apply's result, once it has run. */
+  lastApply: AppliedResult | null;
 }

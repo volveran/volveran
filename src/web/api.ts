@@ -128,7 +128,7 @@ export interface Checkout {
   heartbeatWindowMs: number;
   status: 'active' | 'ended' | 'lost';
   lostReason: string | null;
-  endReason: 'operator' | 'shutdown' | 'time-limit' | 'no-heartbeat' | null;
+  endReason: 'operator' | 'applied' | 'shutdown' | 'time-limit' | 'no-heartbeat' | null;
   readyAtStart: number;
   heldCount: number;
   heldBytes: number;
@@ -140,6 +140,18 @@ export interface Checkout {
   /** e.g. "12 Discard, 40 Replay, 3 Move to orders.manual, 145 Keep" */
   decisionSummaryText: string;
   applyConfirmation: { typeQueueName: boolean };
+  /** The result of the Checkout's Apply, once it has run. */
+  lastApply: { at: string; outcomes: MessageOutcome[] } | null;
+}
+
+/** What happened to one Message in an Apply. */
+export interface MessageOutcome {
+  handle: number;
+  messageId: string | null;
+  decision: Decision;
+  /** failed and not-attempted Messages went back to the queue, like kept ones. */
+  status: 'done' | 'failed' | 'not-attempted' | 'kept';
+  reason: string | null;
 }
 
 export interface MessageRow extends MessageSummary {
@@ -247,5 +259,10 @@ export const api = {
     getJson<{ checkout: Checkout; rejected: Rejection[] }>(`/api/checkouts/${segment(id)}/decisions`, 'POST', {
       handles,
       decision,
+    }),
+  /** Carries out every Decision, then ends the Checkout; one outcome per Message. */
+  apply: (id: string) =>
+    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
+      confirm: true,
     }),
 };

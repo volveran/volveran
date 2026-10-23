@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
 # Volverán: one Node process serving the web app and the JSON API.
-# Runs as the non-root "node" user and writes nothing outside mounted
-# volumes, so it works with `docker run --read-only`.
+# Runs as the non-root "node" user and writes only to the /data volume (the
+# audit store), so it works with `docker run --read-only`.
 #
 # Solo Mode (the default) listens on 127.0.0.1 only and refuses any other
 # address, so run it with the host's network:
 #   docker run --rm --read-only --network host \
-#     -v ./profiles.yaml:/config/profiles.yaml:ro \
+#     -v ./profiles.yaml:/config/profiles.yaml:ro -v volveran-data:/data \
 #     -e VOLVERAN_OPERATOR=$USER -e VOLVERAN_DEV_PASSWORD \
 #     volveran
 # Team Mode (VOLVERAN_AUTH=oidc, see README "Team Mode") is the
 # only mode allowed to listen on the network:
-#   docker run --rm --read-only -p 8080:8080 -e VOLVERAN_HOST=0.0.0.0 \
+#   docker run --rm --read-only -p 8080:8080 -v volveran-data:/data -e VOLVERAN_HOST=0.0.0.0 \
 #     -e VOLVERAN_AUTH=oidc -e VOLVERAN_OIDC_ISSUER=... -e VOLVERAN_OIDC_CLIENT_ID=... \
 #     -e VOLVERAN_OIDC_CLIENT_SECRET -e VOLVERAN_OIDC_REDIRECT_URL=... \
 #     -e VOLVERAN_SESSION_SECRET ... volveran
@@ -29,10 +29,14 @@ WORKDIR /app
 ENV NODE_ENV=production \
     VOLVERAN_PROFILES_FILE=/config/profiles.yaml \
     VOLVERAN_HOST=127.0.0.1 \
-    VOLVERAN_PORT=8080
+    VOLVERAN_PORT=8080 \
+    VOLVERAN_DATA_DIR=/data
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+# Owned by node, so a new named volume mounted here is writable by it.
+RUN mkdir /data && chown node:node /data
+VOLUME /data
 USER node
 EXPOSE 8080
 CMD ["node", "dist/server/main.js"]

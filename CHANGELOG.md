@@ -17,6 +17,8 @@ Work towards v0.1 (see the [roadmap](ROADMAP.md)).
 - Docker image: multi-stage, runs as a non-root user and works with `--read-only`; Solo Mode runs with `--network host`. (#2)
 - Release workflow: a tag `v<version>` publishes a multi-arch image (`linux/amd64`, `linux/arm64`) to `ghcr.io/volveran/volveran` as `<version>` and `latest`, with an SBOM and provenance attestations. (#13)
 - README quick start and `docker-compose.example.yml`. (#13)
+- Apply with Discard: each Discarded Message is written in full (body, properties, headers) to the audit store with a durable commit, then acked; every other Message goes back to the queue in order. Each Message gets its own outcome (done, failed and kept, not attempted); there is no rollback, and Apply is refused on a Lost Checkout. (#6)
+- Audit store: SQLite with schema migrations in `VOLVERAN_DATA_DIR` (`/data` volume in the image); an Audit Entry per action records the Operator, broker user, Broker Profile, vhost, queue, `message_id`, action, reason, outcome and time. Read through `GET /api/audit-entries` and `GET /api/audit-entries/:id`. (#6)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
 [Unreleased]: https://github.com/volveran/volveran/commits/main

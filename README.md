@@ -36,6 +36,7 @@ Solo Mode is for one Operator on their own machine. It has no sign-in, so it onl
 ```sh
 docker run --rm --read-only --network host \
   -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
+  -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
   ghcr.io/volveran/volveran:0.1.0
@@ -45,8 +46,7 @@ docker run --rm --read-only --network host \
 
 With Docker Compose, copy [`docker-compose.example.yml`](docker-compose.example.yml) to `docker-compose.yml` next to `profiles.yaml` and run `docker compose up`.
 
-<!-- TODO(#6): add the /data volume for the audit log and discarded Messages here and in docker-compose.example.yml once #6 lands. -->
-Volverán writes nothing to disk yet, so the image runs `--read-only` with only the profiles file mounted. Once the audit log lands (#6), a volume at `/data` will hold it.
+The volume at `/data` holds the audit store (`audit.sqlite`): every Audit Entry and the full copy of every Discarded Message. Keep it across upgrades and back it up; it is the only thing Volverán writes, so the rest of the container stays `--read-only`. A named volume (`volveran-data` above) is writable by the image's `node` user out of the box; to bind-mount a host directory instead, make it writable by uid 1000.
 
 Why `--network host`: a container's own loopback cannot be reached through a published port (`-p`), and listening on `0.0.0.0` inside the container would rely on every `docker run` publishing the port on `127.0.0.1` only. With the host's network, `127.0.0.1` inside is `127.0.0.1` on your machine, and brokers on `localhost` work as written. On Docker Desktop (macOS, Windows), turn on host networking in Settings → Resources → Network (Docker Desktop 4.34 or later). Listening on the network with a published port is reserved for Team Mode (`VOLVERAN_AUTH=oidc`), which signs every Operator in.
 
@@ -60,6 +60,7 @@ Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service: Operators sign in through 
 ```sh
 docker run --rm --read-only -p 8080:8080 \
   -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
+  -v volveran-data:/data \
   -e VOLVERAN_HOST=0.0.0.0 \
   -e VOLVERAN_AUTH=oidc \
   -e VOLVERAN_OIDC_ISSUER=https://sso.example.com/realms/ops \
@@ -94,6 +95,7 @@ The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`.
 | `VOLVERAN_AUTH` | `none` | `none` is Solo Mode; `oidc` is [Team Mode](#team-mode) |
 | `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
 | `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
+| `VOLVERAN_DATA_DIR` | `./data` (`/data` in the image) | the audit store: Audit Entries and Discarded Messages, written with a durable commit before each Discard's ack |
 | `VOLVERAN_CHECKOUT_MAX_MESSAGES` | `1000` | most Messages one Checkout holds (up to 65,535) |
 | `VOLVERAN_CHECKOUT_MAX_MB` | `100` | most body megabytes one Checkout holds |
 | `VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES` | `30` | how long a Checkout may hold Messages before it ends itself (1 to 1440); on quorum queues the broker's `x-consumer-timeout` backstop is set 1 minute later |

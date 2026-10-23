@@ -10,6 +10,8 @@
 //   VOLVERAN_OIDC_REDIRECT_URL, VOLVERAN_OIDC_SCOPES, VOLVERAN_SESSION_SECRET
 //                           Team Mode sign-in (see run-mode.ts, auth.ts)
 //   VOLVERAN_WEB_ROOT       built web app (default dist/web next to this file)
+//   VOLVERAN_DATA_DIR       the audit store (Audit Entries, Discarded Messages);
+//                           default ./data, /data in the Docker image
 //   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
 //                           Checkout limits (default 1000 Messages, 100 MB)
 //   VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES
@@ -33,6 +35,7 @@ async function main() {
     host: process.env.VOLVERAN_HOST ?? '127.0.0.1',
     port: Number(process.env.VOLVERAN_PORT ?? 8080),
     webRoot: process.env.VOLVERAN_WEB_ROOT ?? path.resolve(here, '../web'),
+    dataDir: path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'),
     logger: true,
   });
   console.log(`${product.name} ${product.version} listening on ${server.url}`);

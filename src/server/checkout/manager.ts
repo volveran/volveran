@@ -18,6 +18,13 @@
 // (checkout-timing.ts). On quorum queues its consumer carries
 // `x-consumer-timeout` a margin past the time limit, as a backstop.
 //
+// Apply (ADR 0001) carries out the Decisions one Message at a time
+// (apply/executor.ts), asking before every step whether the Checkout is still
+// active, then ends the Checkout ('applied'): what is still held (Keep,
+// failed, not attempted) goes back to the queue in order. While Apply runs,
+// nothing else ends the Checkout: the time limit, the heartbeat window and an
+// Operator's end wait for it. Only the broker can cut it short (Lost Checkout).
+//
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
@@ -31,8 +38,12 @@ import { consumerTimeoutMs, DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from 
 import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage/checkout-lock.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import { isCheckoutQueueType, notCheckoutableReason } from '../triage/queue-list.js';
+import { executeApply } from '../apply/executor.js';
+import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../apply/types.js';
+import type { AuditStore } from '../audit/store.js';
+import { buildApplyPlan } from '../triage/decisions.js';
 import { collect } from './collect.js';
-import { CheckoutError, hasConsumers, inCheckout, lockNotPermitted, notCheckoutOwner, operatorHasCheckout, queueNotFound } from './errors.js';
+import { applyInProgress, CheckoutError, checkoutNotActive, hasConsumers, inCheckout, lockNotPermitted, notCheckoutOwner, operatorHasCheckout, queueNotFound } from './errors.js';
 import type { Checkout, EndReason } from './state.js';
 import { queueInfo, view, type CheckoutView } from './view.js';
 
@@ -47,9 +58,13 @@ export interface CheckoutTestHooks {
   afterCollectWait?(ref: { vhost: string; queue: string }): Promise<void>;
   /** A Checkout reached its time limit; next it ends itself. */
   beforeTimeLimitEnd?(ref: { vhost: string; queue: string }): Promise<void>;
+  /** An Apply step's `pending` Audit Entry is committed; next the step touches the broker (e.g. the ack of a Discard). */
+  beforeApplyStep?(entryId: number): Promise<void>;
 }
 
 export interface CheckoutManagerOptions {
+  /** Where Apply writes its Audit Entries. */
+  audit: AuditStore;
   limits: CheckoutLimits;
   /** Time limit, heartbeat window and quorum backstop margin (default DEFAULT_CHECKOUT_TIMING). */
   timing?: CheckoutTiming;
@@ -118,6 +133,8 @@ export class CheckoutManager {
       overflow: [],
       heldBytes: 0,
       decisions: new Map(),
+      applying: null,
+      lastApply: null,
     };
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
@@ -172,9 +189,63 @@ export class CheckoutManager {
     return messageDetail(handle, m, queueInfo(checkout));
   }
 
+  /**
+   * Carries out every Decision of the Checkout (ADR 0001), then ends it:
+   * Messages whose Decision is Keep, failed or was not attempted go back to
+   * the queue in order. Returns the outcome for each Message. Throws
+   * `checkout_not_active` on a Checkout that is over or lost.
+   */
+  async apply(id: string): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+    const checkout = this.find(id);
+    if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
+    if (checkout.applying) throw applyInProgress(checkout);
+    const ctx: ApplyContext = {
+      target: {
+        profile: checkout.profile,
+        vhost: checkout.vhost,
+        queue: checkout.queue,
+        checkoutId: checkout.id,
+        operator: checkout.operator,
+      },
+      startedAt: new Date(),
+      ack: (message) => ack(checkout, message),
+    };
+    const running = executeApply({
+      plan: buildApplyPlan([...checkout.held.keys()], checkout.decisions),
+      messages: new Map(checkout.held),
+      ctx,
+      audit: this.options.audit,
+      usable: () => checkout.status === 'active',
+      beforeStep: this.hooks.beforeApplyStep,
+      onDone: (handle) => {
+        checkout.held.delete(handle);
+        checkout.decisions.delete(handle);
+      },
+    });
+    checkout.applying = running;
+    let outcomes: MessageOutcome[];
+    try {
+      outcomes = await running;
+    } finally {
+      checkout.applying = null;
+    }
+    checkout.lastApply = { at: ctx.startedAt.toISOString(), outcomes };
+    // Straight to finish (no await first): an end() that waited for this
+    // Apply then finds the Checkout already ended as 'applied'.
+    await this.finish(checkout, 'applied');
+    return { checkout: view(checkout), outcomes };
+  }
+
   /** Ends the Checkout: every held Message goes back to the queue untouched, in its original order. */
   async end(id: string, reason: EndReason = 'operator'): Promise<CheckoutView> {
     const checkout = this.find(id);
+    // An Apply in progress finishes first (it ends the Checkout itself), so
+    // a done step is never returned and no step is cut short.
+    await checkout.applying?.catch(() => {});
+    return this.finish(checkout, reason);
+  }
+
+  private async finish(checkout: Checkout, reason: EndReason): Promise<CheckoutView> {
     if (checkout.status !== 'active') return view(checkout);
     checkout.status = 'ended';
     checkout.endReason = reason;
@@ -362,5 +433,26 @@ export class CheckoutManager {
       );
     }
     await channel.close().catch(() => {});
+  }
+}
+
+/**
+ * Acks a held Message and waits until the broker has processed the ack (a
+ * round trip on the same channel: the broker handles the ack before replying).
+ */
+async function ack(checkout: Checkout, message: amqp.ConsumeMessage): Promise<void> {
+  const channel = checkout.channel;
+  if (checkout.status !== 'active' || !channel) {
+    throw new Error('The Checkout stopped being active, so the Message was left in the queue.');
+  }
+  try {
+    channel.ack(message);
+  } catch (err) {
+    throw new Error(`Could not ack the Message, so it was left in the queue: ${(err as Error).message}`);
+  }
+  try {
+    await channel.prefetch(Math.max(1, checkout.held.size));
+  } catch (err) {
+    throw new AckUncertainError((err as Error).message);
   }
 }

@@ -1,0 +1,313 @@
+// Audit store: one Audit Entry per triage action, in SQLite (built-in
+// node:sqlite) on the data volume, with numbered schema migrations.
+//
+// ADR 0001: a Discard writes the full Message here *before* the ack, so the
+// copy must be on disk when record() returns. The store runs WAL with
+// `synchronous = FULL`: every commit fsyncs the WAL (NORMAL would only fsync
+// at checkpoints, and a power loss could take a committed copy with it).
+//
+// An entry is written as `pending` before its action touches the broker and
+// updated with the outcome afterwards. The body of a Discarded Message lives
+// in its own table (audit_message_bodies), so retention (#10) can evict
+// bodies while the entry, its properties and headers stay forever.
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import type { Operator } from '../operator.js';
+import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+
+/** The triage action an Audit Entry records. #7 adds 'replay', #8 'move', #10 'restore' (the column is plain TEXT). */
+export type AuditAction = 'discard' | 'replay' | 'move' | 'restore';
+/**
+ * pending: written before the broker was touched, never updated (the process
+ * stopped mid-action: the Message may still be in the queue too). done /
+ * failed: carried out / not carried out. uncertain: the broker may or may not
+ * have carried it out (the connection dropped before it confirmed the ack).
+ */
+export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
+
+/** Where a Replay, Move or Restore published the Message. */
+export interface AuditDestination {
+  exchange: string;
+  routingKey: string;
+  /** The queue the Message was sent to, when one was named (Replay, Move to a queue, Restore); null for an exchange. */
+  queue: string | null;
+}
+
+/**
+ * A copy of a Message as amqplib decoded it. Discard keeps the body (so it can
+ * be Restored); Replay and Move keep only the original properties and headers
+ * (ADR 0005), with `body: null`.
+ */
+export interface MessageCopy {
+  body: Buffer | null;
+  /** AMQP properties except headers (amqplib names: contentType, messageId, ...). */
+  properties: Record<string, unknown>;
+  headers: Record<string, unknown>;
+}
+
+export interface NewAuditEntry {
+  at: Date;
+  /** Who acted: `id` is the stable identity, `displayName` what people see. */
+  operator: Pick<Operator, 'id' | 'displayName'>;
+  /** The Broker Profile's RabbitMQ user, often a shared service account. */
+  brokerUser: string;
+  profile: string;
+  vhost: string;
+  /** The queue the Message was taken from. */
+  queue: string;
+  messageId: string | null;
+  action: AuditAction;
+  /** Why (required for a Discard); null when the action takes none. */
+  reason: string | null;
+  destination: AuditDestination | null;
+  checkoutId: string | null;
+  message: MessageCopy | null;
+}
+
+/** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
+export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message'> {
+  id: number;
+  operatorId: string;
+  operatorName: string;
+  outcome: AuditOutcome;
+  outcomeReason: string | null;
+  message: {
+    properties: Record<string, unknown>;
+    headers: Record<string, unknown>;
+    /** Size of the stored body; null when none was stored. */
+    bodyBytes: number | null;
+  } | null;
+}
+
+/** A search over Audit Entries; every given field must match. */
+export interface AuditQuery {
+  /** The queue a Message was taken from or sent to. */
+  queue?: string;
+  messageId?: string;
+  action?: AuditAction;
+  checkoutId?: string;
+  /** Entries at or after this time. */
+  from?: Date;
+  /** Entries at or before this time. */
+  to?: Date;
+  /** At most this many entries (the newest). */
+  limit?: number;
+}
+
+/** Append-only: each entry runs once, in order, recorded in PRAGMA user_version. */
+const MIGRATIONS: string[] = [
+  `CREATE TABLE audit_entries (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     created_at INTEGER NOT NULL,
+     operator_id TEXT NOT NULL,
+     operator_name TEXT NOT NULL,
+     broker_user TEXT NOT NULL,
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     message_id TEXT,
+     action TEXT NOT NULL,
+     reason TEXT,
+     destination_exchange TEXT,
+     destination_routing_key TEXT,
+     destination_queue TEXT,
+     outcome TEXT NOT NULL,
+     outcome_reason TEXT,
+     checkout_id TEXT,
+     message_properties TEXT,
+     message_headers TEXT,
+     body_bytes INTEGER
+   );
+   CREATE TABLE audit_message_bodies (
+     entry_id INTEGER PRIMARY KEY REFERENCES audit_entries (id),
+     body BLOB NOT NULL
+   );
+   CREATE INDEX audit_entries_created_at ON audit_entries (created_at);
+   CREATE INDEX audit_entries_queue ON audit_entries (vhost, queue);
+   CREATE INDEX audit_entries_destination_queue ON audit_entries (destination_queue);
+   CREATE INDEX audit_entries_message_id ON audit_entries (message_id);
+   CREATE INDEX audit_entries_checkout_id ON audit_entries (checkout_id);`,
+];
+
+export const AUDIT_DB_FILE = 'audit.sqlite';
+
+export class AuditStore {
+  private readonly db: DatabaseSync;
+
+  /**
+   * Opens (creating if needed) the audit store in `dataDir`. Without a
+   * directory the store lives in memory only (tests).
+   */
+  constructor(dataDir?: string) {
+    if (dataDir) mkdirSync(dataDir, { recursive: true });
+    this.db = new DatabaseSync(dataDir ? path.join(dataDir, AUDIT_DB_FILE) : ':memory:');
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    this.migrate();
+  }
+
+  /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
+  record(entry: NewAuditEntry): number {
+    const { message, destination } = entry;
+    this.db.exec('BEGIN');
+    try {
+      const result = this.db
+        .prepare(
+          `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
+             message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
+             outcome, checkout_id, message_properties, message_headers, body_bytes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+        )
+        .run(
+          entry.at.getTime(),
+          entry.operator.id,
+          entry.operator.displayName,
+          entry.brokerUser,
+          entry.profile,
+          entry.vhost,
+          entry.queue,
+          entry.messageId,
+          entry.action,
+          entry.reason,
+          destination?.exchange ?? null,
+          destination?.routingKey ?? null,
+          destination?.queue ?? null,
+          entry.checkoutId,
+          message ? JSON.stringify(toAmqpJson(message.properties)) : null,
+          message ? JSON.stringify(toAmqpJson(message.headers)) : null,
+          message?.body ? message.body.length : null,
+        );
+      const id = Number(result.lastInsertRowid);
+      if (message?.body) {
+        this.db.prepare('INSERT INTO audit_message_bodies (entry_id, body) VALUES (?, ?)').run(id, message.body);
+      }
+      this.db.exec('COMMIT');
+      return id;
+    } catch (err) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): void {
+    this.db.prepare('UPDATE audit_entries SET outcome = ?, outcome_reason = ? WHERE id = ?').run(outcome, reason, id);
+  }
+
+  /** The entries matching `query` (every entry by default), newest first. */
+  list(query: AuditQuery = {}): AuditEntry[] {
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    const match = (sql: string, ...values: Array<string | number>) => {
+      where.push(sql);
+      params.push(...values);
+    };
+    if (query.queue !== undefined) match('(queue = ? OR destination_queue = ?)', query.queue, query.queue);
+    if (query.messageId !== undefined) match('message_id = ?', query.messageId);
+    if (query.action !== undefined) match('action = ?', query.action);
+    if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
+    if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
+    if (query.to !== undefined) match('created_at <= ?', query.to.getTime());
+    let sql = 'SELECT * FROM audit_entries';
+    if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
+    sql += ' ORDER BY created_at DESC, id DESC';
+    if (query.limit !== undefined) {
+      sql += ' LIMIT ?';
+      params.push(query.limit);
+    }
+    return this.db
+      .prepare(sql)
+      .all(...params)
+      .map((row) => toEntry(row as unknown as Row));
+  }
+
+  /** One entry, or null. */
+  get(id: number): AuditEntry | null {
+    const row = this.db.prepare('SELECT * FROM audit_entries WHERE id = ?').get(id);
+    return row ? toEntry(row as unknown as Row) : null;
+  }
+
+  /** The stored body of entry `id`'s Message, byte for byte; null when none is stored. */
+  body(id: number): Buffer | null {
+    const row = this.db.prepare('SELECT body FROM audit_message_bodies WHERE entry_id = ?').get(id) as
+      | { body: Uint8Array }
+      | undefined;
+    return row ? Buffer.from(row.body) : null;
+  }
+
+  close(): void {
+    if (this.db.isOpen) this.db.close();
+  }
+
+  private migrate() {
+    const version = Number((this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+    for (let v = version; v < MIGRATIONS.length; v++) {
+      this.db.exec('BEGIN');
+      try {
+        this.db.exec(MIGRATIONS[v]!);
+        this.db.exec(`PRAGMA user_version = ${v + 1}`);
+        this.db.exec('COMMIT');
+      } catch (err) {
+        this.db.exec('ROLLBACK');
+        throw err;
+      }
+    }
+  }
+}
+
+interface Row {
+  id: number;
+  created_at: number;
+  operator_id: string;
+  operator_name: string;
+  broker_user: string;
+  profile: string;
+  vhost: string;
+  queue: string;
+  message_id: string | null;
+  action: AuditAction;
+  reason: string | null;
+  destination_exchange: string | null;
+  destination_routing_key: string | null;
+  destination_queue: string | null;
+  outcome: AuditOutcome;
+  outcome_reason: string | null;
+  checkout_id: string | null;
+  message_properties: string | null;
+  message_headers: string | null;
+  body_bytes: number | null;
+}
+
+function toEntry(row: Row): AuditEntry {
+  return {
+    id: row.id,
+    at: new Date(row.created_at),
+    operatorId: row.operator_id,
+    operatorName: row.operator_name,
+    brokerUser: row.broker_user,
+    profile: row.profile,
+    vhost: row.vhost,
+    queue: row.queue,
+    messageId: row.message_id,
+    action: row.action,
+    reason: row.reason,
+    destination:
+      row.destination_routing_key === null
+        ? null
+        : {
+            exchange: row.destination_exchange ?? '',
+            routingKey: row.destination_routing_key,
+            queue: row.destination_queue,
+          },
+    outcome: row.outcome,
+    outcomeReason: row.outcome_reason,
+    checkoutId: row.checkout_id,
+    message:
+      row.message_properties === null
+        ? null
+        : {
+            properties: fromAmqpJson(JSON.parse(row.message_properties)) as Record<string, unknown>,
+            headers: fromAmqpJson(JSON.parse(row.message_headers ?? '{}')) as Record<string, unknown>,
+            bodyBytes: row.body_bytes,
+          },
+  };
+}

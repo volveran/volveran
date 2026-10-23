@@ -8,7 +8,7 @@ import { replayOrigin } from '../triage/replay-origin.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
 import { remainingMs } from '../triage/checkout-timing.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
-import type { Checkout, CheckoutStatus, EndReason } from './state.js';
+import type { AppliedResult, Checkout, CheckoutStatus, EndReason } from './state.js';
 
 /** Whether a Message can be given Replay; when not, why (shown to the Operator). */
 export type ReplayAvailability = { available: true } | { available: false; reason: string };
@@ -62,6 +62,8 @@ export interface CheckoutView {
   decisionSummaryText: string;
   /** The confirmation an Apply of the current Decisions needs. */
   applyConfirmation: ApplyConfirmation;
+  /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
+  lastApply: AppliedResult | null;
 }
 
 export function queueInfo(c: Checkout): QueueInfo {
@@ -108,5 +110,6 @@ export function view(c: Checkout): CheckoutView {
       protectedProfile: c.profile.protected,
       actionCount: handles.filter((h) => c.decisions.has(h)).length,
     }),
+    lastApply: c.lastApply,
   };
 }

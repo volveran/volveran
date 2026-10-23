@@ -3,7 +3,7 @@
 // page reads them back); nothing reaches the broker until Apply.
 import { decisionNotAllowed, messageCannotTake, type Decision } from '../triage/decisions.js';
 import { matchesFilter, type Filter } from '../triage/filters.js';
-import { CheckoutError } from './errors.js';
+import { applyInProgress, CheckoutError, checkoutNotActive } from './errors.js';
 import type { Checkout } from './state.js';
 
 /** A Message that can't take a Decision, and why. */
@@ -15,7 +15,8 @@ export interface Rejection {
 /**
  * Gives `decision` to the Messages `handles` (Keep clears their Decision).
  * Messages that can't take it keep their previous Decision and are returned.
- * Throws `checkout_not_active` once the Checkout is over, and
+ * Throws `checkout_not_active` once the Checkout is over, `apply_in_progress`
+ * while it is being Applied, and
  * `decision_not_allowed` when no Message could take it (a Move to the queue
  * being triaged).
  */
@@ -45,9 +46,6 @@ export function matchingHandles(checkout: Checkout, filter: Filter): number[] {
 }
 
 function assertActive(checkout: Checkout) {
-  if (checkout.status === 'active') return;
-  throw new CheckoutError(
-    'checkout_not_active',
-    `The Checkout of "${checkout.queue}" in vhost "${checkout.vhost}" is ${checkout.status === 'lost' ? 'lost' : 'over'}: its Messages are back in the queue, so they can no longer take Decisions. Start a new Checkout.`,
-  );
+  if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'its Messages can no longer take Decisions');
+  if (checkout.applying) throw applyInProgress(checkout);
 }

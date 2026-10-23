@@ -66,6 +66,15 @@ describe('release quick start', () => {
     expect(solo?.volumes?.some((v) => v.split(':')[1] === profilesFile)).toBe(true);
   });
 
+  it('the compose example keeps the audit store on a volume where the image writes it', () => {
+    const dataDir = imageEnv('VOLVERAN_DATA_DIR');
+    expect(dataDir).toBe('/data');
+    expect(dockerfile).toMatch(/^VOLUME \/data$/m);
+    expect(solo?.volumes?.some((v) => v.split(':')[1] === dataDir)).toBe(true);
+    expect(readme).toContain(`-v volveran-data:${dataDir}`);
+    expect(readme).not.toContain('TODO(#6)');
+  });
+
   it('the compose example passes the password variable profiles.example.yaml names for dev', () => {
     const profiles = parse(read('profiles.example.yaml')) as { profiles: Array<{ name: string; passwordEnv: string }> };
     const dev = profiles.profiles.find((p) => p.name === 'dev')!;

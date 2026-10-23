@@ -4,6 +4,7 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { ConfigError } from './config-error.js';
@@ -16,6 +17,8 @@ import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
 import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
+import { registerApplyRoutes } from './routes/apply.js';
+import { registerAuditRoutes } from './routes/audit.js';
 import { attachOperator, operatorOf } from './operator.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
@@ -29,6 +32,8 @@ export interface ServerOptions {
   port: number;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot?: string;
+  /** Directory of the audit store (VOLVERAN_DATA_DIR); omitted means in memory only (tests). */
+  dataDir?: string;
   logger?: boolean;
   /** Overrides the Checkout limits from VOLVERAN_CHECKOUT_MAX_MESSAGES / VOLVERAN_CHECKOUT_MAX_MB. */
   checkoutLimits?: Partial<CheckoutLimits>;
@@ -54,16 +59,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const timing = parseCheckoutTiming(options.env);
   if (!timing.ok) throw new ConfigError(timing.error);
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
+  const audit = new AuditStore(options.dataDir);
   const checkouts = new CheckoutManager({
+    audit,
     limits: { ...limits.limits, ...options.checkoutLimits },
     timing: { ...timing.timing, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
   });
   const teamAuth = mode.mode.kind === 'team' ? await createTeamAuth(mode.mode.oidc, mode.mode.sessionSecret) : undefined;
-  const app = await buildApp(profiles, mode.mode, teamAuth, checkouts, options);
-  // Every held Message goes back to its queue before the process exits.
-  app.addHook('onClose', () => checkouts.endAll());
+  const app = await buildApp(profiles, mode.mode, teamAuth, checkouts, audit, options);
+  // Every held Message goes back to its queue (an Apply in progress finishes
+  // first) before the audit store closes and the process exits.
+  app.addHook('onClose', async () => {
+    await checkouts.endAll();
+    audit.close();
+  });
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
@@ -79,6 +90,7 @@ async function buildApp(
   mode: RunMode,
   teamAuth: TeamAuth | undefined,
   checkouts: CheckoutManager,
+  audit: AuditStore,
   options: ServerOptions,
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false });
@@ -195,6 +207,8 @@ async function buildApp(
     },
   });
   registerDecisionRoutes(app, checkouts);
+  registerApplyRoutes(app, checkouts);
+  registerAuditRoutes(app, audit);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {

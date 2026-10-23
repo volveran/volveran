@@ -85,6 +85,8 @@ export interface StartAppOptions {
   checkoutTiming?: Partial<CheckoutTiming>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
+  /** The audit store's directory (kept by the caller); default in memory. */
+  dataDir?: string;
 }
 
 /**
@@ -116,6 +118,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTiming: options.checkoutTiming,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
+      dataDir: options.dataDir,
     });
   } catch (err) {
     await rm(dir, { recursive: true, force: true });

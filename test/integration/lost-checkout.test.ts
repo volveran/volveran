@@ -131,6 +131,28 @@ describe('Lost Checkout', () => {
       expect(again.status).toBe(201);
       await backstopApp.delete(`/api/checkouts/${again.body.checkout.id}`);
     });
+
+    it('Apply returns an error after the quorum backstop fires', async () => {
+      await withChannel('/', (ch) => ch.purgeQueue(queue));
+      await seedMessages('/', queue, 2);
+      const { checkout } = (await backstopApp.post(checkoutPath(queue))).body;
+      const decided = await backstopApp.post(`/api/checkouts/${checkout.id}/decisions`, {
+        handles: [checkout.messages[0].handle],
+        decision: { kind: 'discard', reason: 'poison' },
+      });
+      expect(decided.status).toBe(200);
+      await eventually(async () => {
+        expect((await backstopApp.get(`/api/checkouts/${checkout.id}`)).body.checkout.status).toBe('lost');
+      }, 20_000);
+      releaseTimeLimit();
+
+      const applied = await backstopApp.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true });
+
+      expect([applied.status, applied.body.error.code]).toEqual([409, 'checkout_not_active']);
+      expect(applied.body.error.message).toMatch(/was lost: The broker closed the channel/);
+      expect((await readyMessages(queue)).map((m) => m.id)).toEqual([0, 1].map((i) => `${queue}-${i}`));
+      expect((await backstopApp.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body.entries).toEqual([]);
+    });
   });
 
   describe('when the process is killed', () => {

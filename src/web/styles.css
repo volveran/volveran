@@ -371,3 +371,19 @@ td.select {
 .notice {
   color: var(--muted);
 }
+.apply-panel {
+  margin: 0.5rem 0;
+}
+.apply-panel .confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.outcomes {
+  margin: 1rem 0;
+}
+.outcome-failed td,
+.outcome-not-attempted td {
+  color: var(--danger);
+}

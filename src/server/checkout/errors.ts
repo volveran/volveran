@@ -14,6 +14,7 @@ export type CheckoutErrorCode =
   | 'checkout_not_found'
   | 'not_checkout_owner'
   | 'checkout_not_active'
+  | 'apply_in_progress'
   | 'message_not_found'
   | 'decision_not_allowed'
   | 'checkout_failed';
@@ -28,6 +29,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   checkout_not_found: 404,
   not_checkout_owner: 403,
   checkout_not_active: 409,
+  apply_in_progress: 409,
   message_not_found: 404,
   decision_not_allowed: 422,
   checkout_failed: 502,
@@ -88,4 +90,27 @@ export function notCheckoutOwner(id: string): CheckoutError {
     'not_checkout_owner',
     `Checkout ${id} belongs to another Operator. Only the Operator who started a Checkout can see or use it.`,
   );
+}
+
+/**
+ * The Checkout is over or lost, so `consequence` (e.g. "nothing can be
+ * Applied") holds. A Lost Checkout's message says why it was lost.
+ */
+export function checkoutNotActive(
+  checkout: Queue & { status: 'active' | 'ended' | 'lost'; lostReason: string | null },
+  consequence: string,
+): CheckoutError {
+  const which = `The Checkout of "${checkout.queue}" in vhost "${checkout.vhost}"`;
+  const state =
+    checkout.status === 'lost'
+      ? `${which} was lost${checkout.lostReason ? `: ${checkout.lostReason}` : '.'}`
+      : `${which} is over: its Messages are back in the queue.`;
+  return new CheckoutError('checkout_not_active', `${state} So ${consequence}. Start a new Checkout.`, {
+    status: checkout.status,
+    lostReason: checkout.lostReason,
+  });
+}
+
+export function applyInProgress({ id }: { id: string }): CheckoutError {
+  return new CheckoutError('apply_in_progress', `Checkout ${id} is being Applied. Wait for that Apply to finish.`);
 }

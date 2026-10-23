@@ -3,11 +3,15 @@
 // filter) and the detail of the Message being looked at. Ending it returns every Message to the queue;
 // leaving the page ends it too (a beacon), so nothing stays held by accident.
 // While the page shows the Checkout it sends heartbeats (without them the
-// server ends it), and it counts down to the Checkout's time limit.
+// server ends it), and it counts down to the Checkout's time limit. Apply
+// carries out the Decisions and ends the Checkout; the page then shows what
+// happened to each Message.
 import { useEffect, useState } from 'react';
 import { formatBytes, heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
 import { api, ApiError, type Checkout, type Decision, type FilterClause, type MessageDetail, type MessageRow } from './api.js';
+import { ApplyOutcomes } from './ApplyOutcomes.js';
+import { ApplyPanel } from './ApplyPanel.js';
 import { DecisionBar } from './DecisionBar.js';
 import { DecisionBadge } from './decisions.js';
 import { FilterBar } from './FilterBar.js';
@@ -119,6 +123,22 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
+  const apply = async () => {
+    setBusy(true);
+    setNotice(undefined);
+    try {
+      const res = await api.apply(id);
+      setCheckout(res.checkout);
+      setReceivedAt(Date.now());
+      setSelection(new Set());
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!checkout) return error ? <ErrorBox error={error} /> : <p className="empty">Loading the Checkout…</p>;
   const active = checkout.status === 'active';
 
@@ -153,17 +173,28 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
         <div className="error" role="alert">
           <strong>Lost Checkout</strong>
           <p>{checkout.lostReason}</p>
-          <p>Every Message is back in the queue; nothing of this Checkout was applied.</p>
+          <p>
+            {checkout.lastApply
+              ? 'Every Message whose Decision was not done is back in the queue.'
+              : 'Every Message is back in the queue; nothing of this Checkout was applied.'}
+          </p>
         </div>
       )}
       {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}
       {error && <ErrorBox error={error} />}
+      {checkout.lastApply && <ApplyOutcomes outcomes={checkout.lastApply.outcomes} />}
 
       {active && checkout.messages.length > 0 && (
         <>
           <p className="decision-summary">
             <strong>Decisions:</strong> {checkout.decisionSummaryText}
           </p>
+          <ApplyPanel
+            summary={checkout.decisionSummary}
+            summaryText={checkout.decisionSummaryText}
+            busy={busy}
+            onApply={apply}
+          />
           <DecisionBar
             selected={selection.size}
             replayUnavailable={checkout.messages.filter((m) => selection.has(m.handle) && !m.replay.available).length}
@@ -221,6 +252,8 @@ function endedLine(c: Checkout): string {
       return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes and ended; ${back}`;
     case 'no-heartbeat':
       return `This Checkout ended because this page stopped sending heartbeats; ${back}`;
+    case 'applied':
+      return `This Checkout was Applied; every Message not done is back in the queue, in its original order.`;
     case 'shutdown':
       return `This Checkout ended because ${product.name} shut down; ${back}`;
     default:

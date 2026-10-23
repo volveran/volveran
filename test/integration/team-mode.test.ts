@@ -234,6 +234,7 @@ describe('Checkout in Team Mode', () => {
       ['POST', '/api/checkouts/:id/heartbeat', {}],
       ['POST', '/api/checkouts/:id/matching', { filter: [] }],
       ['POST', '/api/checkouts/:id/decisions', { handles: [1], decision: { kind: 'discard', reason: 'Not needed' } }],
+      ['POST', '/api/checkouts/:id/apply', { confirm: true }],
       ['POST', '/api/checkouts/:id/end', {}],
       ['DELETE', '/api/checkouts/:id'],
     ];
@@ -273,6 +274,20 @@ describe('Checkout in Team Mode', () => {
       expect((await a.post(`/api/checkouts/${id}/end`)).status).toBe(200);
       expect((await a.request('DELETE', `/api/checkouts/${id}`)).status).toBe(200);
       expect(await readyCount('/', 'orders.dlq')).toBe(2);
+    });
+
+    it("records the signed-in Operator's identity and display name in the Audit Entry of an Apply", async () => {
+      const { a, id } = await aliceAndBob();
+      const handle = (await a.get(`/api/checkouts/${id}`)).body.checkout.messages[0].handle;
+      await a.post(`/api/checkouts/${id}/decisions`, { handles: [handle], decision: { kind: 'discard', reason: 'Not needed' } });
+
+      expect((await a.post(`/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(200);
+
+      const { entries } = (await a.get(`/api/audit-entries?checkoutId=${id}`)).body;
+      expect(entries).toEqual([
+        expect.objectContaining({ operatorId: alice.sub, operatorName: alice.email, action: 'discard', outcome: 'done' }),
+      ]);
+      expect(await readyCount('/', 'orders.dlq')).toBe(1);
     });
   });
 
