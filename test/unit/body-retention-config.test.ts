@@ -1,3 +1,5 @@
+// Retention of Discarded bodies: the VOLVERAN_BODY_RETENTION_* settings and
+// the store usage warning at 90 % of the size limit.
 import { describe, expect, it } from 'vitest';
 import { bodyStoreUsage, parseBodyRetention } from '../../src/server/audit/body-retention.js';
 

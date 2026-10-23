@@ -1,3 +1,5 @@
+// Checkout time limit, heartbeat window and quorum x-consumer-timeout
+// backstop: settings from the environment and the countdown.
 import { describe, expect, it } from 'vitest';
 import { consumerTimeoutMs, parseCheckoutTiming, remainingMs } from '../../src/server/triage/checkout-timing.js';
 

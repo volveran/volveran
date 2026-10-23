@@ -1,3 +1,6 @@
+// Broker Profiles and vhosts through the HTTP API against the test broker:
+// listing profiles without passwords, missing password variables, and the
+// vhosts a profile may use.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { brokerUsers, startApp, testProfile, type TestApp } from './harness.js';
 

@@ -1,3 +1,5 @@
+// Delivery Budget on quorum queues (delivery_limit minus x-delivery-count)
+// and the warning for Messages with 1 left.
 import { describe, expect, it } from 'vitest';
 import { deliveryBudget } from '../../src/server/triage/delivery-budget.js';
 

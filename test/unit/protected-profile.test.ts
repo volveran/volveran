@@ -1,3 +1,4 @@
+// The typed queue name a Protected Profile requires for Apply and Restore.
 import { describe, expect, it } from 'vitest';
 import { requireTypedQueueName, TypedConfirmationError } from '../../src/server/protected-profile.js';
 

@@ -1,3 +1,4 @@
+// The "N of ~M held" line of a Checkout, naming the limit that applied.
 import { describe, expect, it } from 'vitest';
 import { heldLine } from '../../src/shared/held-line.js';
 

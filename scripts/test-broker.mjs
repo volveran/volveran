@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Brings this checkout's docker-compose test broker and mock OIDC provider up
 // or down (see README "Development"). The compose project name and host ports
 // come from scripts/test-broker-env.mjs: one broker per checkout, on random

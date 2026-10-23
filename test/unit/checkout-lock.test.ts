@@ -1,3 +1,5 @@
+// The Checkout lock queue: its name, the holder carried in its arguments,
+// and reading holders back.
 import { describe, expect, it } from 'vitest';
 import {
   checkoutHolders,

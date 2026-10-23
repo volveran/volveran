@@ -1,3 +1,4 @@
+// Which listen addresses count as loopback (Solo Mode listens on loopback only).
 import { describe, expect, it } from 'vitest';
 import { isLoopback } from '../../src/server/is-loopback.js';
 

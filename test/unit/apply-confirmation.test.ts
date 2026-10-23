@@ -1,3 +1,5 @@
+// What the Apply confirmation asks for: a typed queue name only on a
+// Protected Profile with a Decision other than Keep.
 import { describe, expect, it } from 'vitest';
 import { applyConfirmationFor, confirmationProblem } from '../../src/server/triage/apply-confirmation.js';
 

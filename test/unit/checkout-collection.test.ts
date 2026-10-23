@@ -1,3 +1,5 @@
+// How many Messages a Checkout takes (the Message limit) and which
+// deliveries it holds, overflows past the byte limit, or returns as late.
 import { describe, expect, it } from 'vitest';
 import { CheckoutCollection, checkoutSize, parseCheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 

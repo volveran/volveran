@@ -1,3 +1,5 @@
+// The queue list: name filters, dead-letter sources, ordering, which queue
+// types can be checked out, and the dead-letter set-up warning.
 import { describe, expect, it } from 'vitest';
 import {
   arrangeQueues,

@@ -1,3 +1,5 @@
+// Where a Replay sends a Message: the queue of its most recent x-death
+// entry, or why it cannot be Replayed.
 import { describe, expect, it } from 'vitest';
 import { replayOrigin } from '../../src/server/triage/replay-origin.js';
 
