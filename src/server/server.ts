@@ -9,7 +9,7 @@ import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import { loadProfilesFile, type BrokerProfile } from './profiles.js';
-import { arrangeQueues, checkoutAvailability, deadLetterSources } from './triage/queue-list.js';
+import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
 import { attachOperator, operatorOf } from './operator.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 
@@ -136,14 +136,19 @@ async function buildApp(
       consumers: q.consumers,
       checkout: checkoutAvailability(q.type),
     }));
+    const arranged = arrangeQueues(rows, {
+      defaultQueueFilter: profile.defaultQueueFilter,
+      deadLetterSources: deadLetterSources(queues, bindings),
+      onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true',
+      search: req.query.search,
+    });
+    const byName = new Map(queues.map((q) => [q.name, q]));
     return {
       defaultQueueFilter: profile.defaultQueueFilter ?? null,
-      queues: arrangeQueues(rows, {
-        defaultQueueFilter: profile.defaultQueueFilter,
-        deadLetterSources: deadLetterSources(queues, bindings),
-        onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true',
-        search: req.query.search,
-      }),
+      queues: arranged.map((row) => ({
+        ...row,
+        setupWarning: deadLetterSetupWarning({ ...byName.get(row.name)!, deadLetterQueue: row.deadLetterQueue }),
+      })),
     };
   });
 
