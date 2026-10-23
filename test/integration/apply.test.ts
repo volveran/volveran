@@ -2,12 +2,10 @@
 // a Discarded Message is stored durably, then acked; every other Message goes
 // back to the queue in order; a Checkout that stops being active mid-Apply
 // stops the Apply there.
-import { spawn, type ChildProcess } from 'node:child_process';
-import { rm, writeFile } from 'node:fs/promises';
+import type { ChildProcess } from 'node:child_process';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { stringify } from 'yaml';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import {
   brokerUsers,
   checkoutConnectionNames,
@@ -21,6 +19,7 @@ import {
   readyMessageIds,
   seedMessages,
   sleep,
+  spawnServer,
   startApp,
   testOperator,
   testProfile,
@@ -262,37 +261,23 @@ describe('Apply with Discard', () => {
     });
 
     /** Runs test/integration/die-before-ack-server.ts; resolves with its URL. */
-    async function spawnServer(dataDir: string): Promise<string> {
-      const profilesFile = path.join(dir, 'profiles.yaml');
-      await writeFile(profilesFile, stringify({ profiles: [testProfile({ name: 'local', passwordEnv: 'LOCAL_PW' })] }));
-      child = spawn(process.execPath, ['--import', 'tsx', 'test/integration/die-before-ack-server.ts'], {
-        cwd: repoRoot,
-        env: {
-          PATH: process.env.PATH,
-          VOLVERAN_PROFILES_FILE: profilesFile,
-          VOLVERAN_DATA_DIR: dataDir,
-          VOLVERAN_OPERATOR: 'killed-operator',
-          LOCAL_PW: brokerUsers.admin.password,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
+    async function startChild(dataDir: string): Promise<string> {
+      const spawned = await spawnServer({
+        script: 'test/integration/die-before-ack-server.ts',
+        dir,
+        dataDir,
+        profiles: [testProfile({ name: 'local', passwordEnv: 'LOCAL_PW' })],
+        env: { VOLVERAN_OPERATOR: 'killed-operator', LOCAL_PW: brokerUsers.admin.password },
       });
-      return new Promise((resolve, reject) => {
-        let out = '';
-        child!.stdout!.on('data', (chunk: Buffer) => {
-          out += chunk.toString();
-          const url = /listening on (http:\/\/\S+)/.exec(out)?.[1];
-          if (url) resolve(url);
-        });
-        child!.stderr!.on('data', (chunk: Buffer) => (out += chunk.toString()));
-        child!.on('exit', (code) => reject(new Error(`server exited with ${code}: ${out}`)));
-      });
+      child = spawned.child;
+      return spawned.url;
     }
 
     it('leaves the Message in the queue and in the store, never lost', async () => {
       dir = await makeTempDir('killed-apply');
       const dataDir = path.join(dir, 'data');
       await seedMessages('/', 'orders.dlq', 2);
-      const url = await spawnServer(dataDir);
+      const url = await startChild(dataDir);
       const post = (urlPath: string, body: unknown) =>
         fetch(url + urlPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const { checkout } = await (await post(checkoutPath('orders.dlq'), {})).json();
@@ -316,6 +301,7 @@ describe('Apply with Discard', () => {
       } finally {
         await restarted.close();
       }
-    });
+      // Starting a child process (tsx) takes longer than the default.
+    }, 60_000);
   });
 });

@@ -4,6 +4,7 @@
 // The broker helpers (withChannel, seedMessages, management, ...) live in
 // test/broker/client.ts, shared with the broker-facts suite, and are
 // re-exported here so test files import everything from one place.
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
@@ -156,6 +157,62 @@ export async function makeTempDir(prefix: string): Promise<string> {
   const tmpRoot = path.join(repoRoot, '.test-tmp');
   await mkdir(tmpRoot, { recursive: true });
   return mkdtemp(path.join(tmpRoot, `${prefix}-`));
+}
+
+export interface SpawnServerOptions {
+  /** Entry point relative to the repository root, e.g. `src/server/main.ts`. */
+  script: string;
+  /** Directory for the profiles file; also the audit store's data directory (`<dir>/data`) unless `dataDir` is given. */
+  dir: string;
+  dataDir?: string;
+  /** Extra environment (VOLVERAN_OPERATOR, password variables, ...). */
+  env: Record<string, string>;
+  profiles: ProfileFixture[];
+  /** How long to wait for "listening on" before killing the child (default 20 s). */
+  timeoutMs?: number;
+}
+
+/**
+ * Runs a server entry point as a child process with its own profiles file,
+ * data directory and a random port; resolves with the child and its URL
+ * once it listens. Never waits longer than `timeoutMs`: a child that has
+ * not started by then is killed and the promise rejects with its output.
+ */
+export async function spawnServer(options: SpawnServerOptions): Promise<{ child: ChildProcess; url: string }> {
+  const profilesFile = path.join(options.dir, 'profiles.yaml');
+  await writeFile(profilesFile, stringify({ profiles: options.profiles }));
+  const child = spawn(process.execPath, ['--import', 'tsx', options.script], {
+    cwd: repoRoot,
+    env: {
+      PATH: process.env.PATH,
+      VOLVERAN_PROFILES_FILE: profilesFile,
+      VOLVERAN_PORT: '0',
+      VOLVERAN_DATA_DIR: options.dataDir ?? path.join(options.dir, 'data'),
+      ...options.env,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  return new Promise((resolve, reject) => {
+    let out = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`${options.script} did not start listening within ${timeoutMs} ms: ${out}`));
+    }, timeoutMs);
+    child.stdout!.on('data', (chunk: Buffer) => {
+      out += chunk.toString();
+      const url = /listening on (http:\/\/\S+)/.exec(out)?.[1];
+      if (url) {
+        clearTimeout(timer);
+        resolve({ child, url });
+      }
+    });
+    child.stderr!.on('data', (chunk: Buffer) => (out += chunk.toString()));
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`${options.script} exited with ${code}: ${out}`));
+    });
+  });
 }
 
 /**

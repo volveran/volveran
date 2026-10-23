@@ -4,13 +4,10 @@
 // consumer is cancelled, ADR 0006). In every case the broker returns the
 // Messages and releases the lock queue, and the app reports the Checkout as
 // lost.
-import { spawn, type ChildProcess } from 'node:child_process';
-import { rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import type { ChildProcess } from 'node:child_process';
+import { rm } from 'node:fs/promises';
 import * as amqp from 'amqplib';
-import { stringify } from 'yaml';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import {
   brokerUsers,
   checkoutConnectionNames,
@@ -20,6 +17,7 @@ import {
   purgeQueues,
   readyCount,
   seedMessages,
+  spawnServer,
   startApp,
   testProfile,
   uniqueName,
@@ -163,38 +161,23 @@ describe('Lost Checkout', () => {
       if (dir) await rm(dir, { recursive: true, force: true });
     });
 
-    /** Runs the real server entry point (src/server/main.ts) as a child process; resolves with its URL. */
-    async function spawnServer(): Promise<string> {
+    /** Runs the real server entry point (src/server/main.ts) as a child process, with a temporary data directory; resolves with its URL. */
+    async function startChild(): Promise<string> {
       dir = await makeTempDir('killed');
-      const profilesFile = path.join(dir, 'profiles.yaml');
-      await writeFile(profilesFile, stringify({ profiles: [testProfile({ name: 'local', passwordEnv: 'LOCAL_PW' })] }));
-      child = spawn(process.execPath, ['--import', 'tsx', 'src/server/main.ts'], {
-        cwd: repoRoot,
-        env: {
-          PATH: process.env.PATH,
-          VOLVERAN_PROFILES_FILE: profilesFile,
-          VOLVERAN_PORT: '0',
-          VOLVERAN_OPERATOR: 'killed-operator',
-          LOCAL_PW: brokerUsers.admin.password,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
+      const spawned = await spawnServer({
+        script: 'src/server/main.ts',
+        dir,
+        profiles: [testProfile({ name: 'local', passwordEnv: 'LOCAL_PW' })],
+        env: { VOLVERAN_OPERATOR: 'killed-operator', LOCAL_PW: brokerUsers.admin.password },
       });
-      return new Promise((resolve, reject) => {
-        let out = '';
-        child!.stdout!.on('data', (chunk: Buffer) => {
-          out += chunk.toString();
-          const url = /listening on (http:\/\/\S+)/.exec(out)?.[1];
-          if (url) resolve(url);
-        });
-        child!.stderr!.on('data', (chunk: Buffer) => (out += chunk.toString()));
-        child!.on('exit', (code) => reject(new Error(`server exited with ${code}: ${out}`)));
-      });
+      child = spawned.child;
+      return spawned.url;
     }
 
     it.each(queues)('returns every Message to %s (quorum: x-delivery-count +1, as documented)', async (queue) => {
       await seedMessages('/', queue, 3);
       const before = await readyMessages(queue);
-      const url = await spawnServer();
+      const url = await startChild();
       const started = await fetch(url + checkoutPath(queue), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -214,6 +197,7 @@ describe('Lost Checkout', () => {
       const again = await app.post(checkoutPath(queue));
       expect(again.status).toBe(201);
       await app.delete(`/api/checkouts/${again.body.checkout.id}`);
-    });
+      // Starting a child process (tsx) and waiting for the broker to notice it died take longer than the default.
+    }, 60_000);
   });
 });
