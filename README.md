@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: pre-alpha.** The design is written down and checked against RabbitMQ by the broker-facts suite. The application runs in Solo Mode or Team Mode (OIDC sign-in) and lists queues; Checkout, Decisions and Apply have not landed yet. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** The design is written down and checked against RabbitMQ by the broker-facts suite. The v0.1 feature set is in place but not yet released: Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
 
 ## Why
 
@@ -15,7 +15,7 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 ## How it works
 
 1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue.
-2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to a queue you name) or **Keep**.
+2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**.
 3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message.
 4. **Audit and Restore.** Every action is recorded with who did it. Discarded Messages are kept so they can be Restored.
 
