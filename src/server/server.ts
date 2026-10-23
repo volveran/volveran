@@ -4,25 +4,25 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import { bodyStoreUsage, parseBodyRetention, type BodyRetention } from './audit/body-retention.js';
+import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { RestoreService } from './audit/restore.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
+import { loadConfig } from './config.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
-import { ManagementClient } from './management.js';
 import { loadProfilesFile, type BrokerProfile } from './profiles.js';
-import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
-import { parseCheckoutTiming, type CheckoutTiming } from './triage/checkout-timing.js';
-import { checkoutHolders, isLockQueue } from './triage/checkout-lock.js';
-import { arrangeQueues, checkoutAvailability, deadLetterSetupWarning, deadLetterSources } from './triage/queue-list.js';
+import type { CheckoutLimits } from './triage/checkout-collection.js';
+import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
-import { attachOperator, operatorOf } from './operator.js';
-import { resolveRunMode, type RunMode } from './run-mode.js';
+import { profileLookup } from './routes/profile-lookup.js';
+import { registerProfileRoutes } from './routes/profiles.js';
+import { registerSessionRoutes } from './routes/session.js';
+import { attachOperator } from './operator.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
@@ -56,32 +56,37 @@ export interface RunningServer {
 
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
-  const mode = resolveRunMode(options.env, options.host);
-  if (!mode.ok) throw new ConfigError(mode.error);
-  const limits = parseCheckoutLimits(options.env);
-  if (!limits.ok) throw new ConfigError(limits.error);
-  const timing = parseCheckoutTiming(options.env);
-  if (!timing.ok) throw new ConfigError(timing.error);
-  const parsedRetention = parseBodyRetention(options.env);
-  if (!parsedRetention.ok) throw new ConfigError(parsedRetention.error);
-  const retention = { ...parsedRetention.retention, ...options.bodyRetention };
+  const loaded = loadConfig(options.env, options.host);
+  if (!loaded.ok) throw new ConfigError(loaded.error);
+  const { config } = loaded;
+  const retention = { ...config.bodyRetention, ...options.bodyRetention };
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
   const audit = new AuditStore(options.dataDir);
   const checkouts = new CheckoutManager({
     audit,
-    limits: { ...limits.limits, ...options.checkoutLimits },
-    timing: { ...timing.timing, ...options.checkoutTiming },
+    limits: { ...config.checkoutLimits, ...options.checkoutLimits },
+    timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
   });
-  const teamAuth = mode.mode.kind === 'team' ? await createTeamAuth(mode.mode.oidc, mode.mode.sessionSecret) : undefined;
+  const access: Access =
+    config.mode.kind === 'solo'
+      ? { kind: 'solo', operator: config.mode.operator }
+      : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret) };
   const restore = new RestoreService(
     audit,
     (name) => profiles.find((p) => p.name === name),
     (id) => checkouts.isRunning(id),
   );
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
-  const app = await buildApp(profiles, mode.mode, teamAuth, checkouts, { audit, restore, usage }, options);
+  const app = await buildApp({
+    profiles,
+    access,
+    checkouts,
+    audit: { audit, restore, usage },
+    webRoot: options.webRoot,
+    logger: options.logger ?? false,
+  });
 
   // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
   const evict = () => {
@@ -113,15 +118,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
 }
 
-async function buildApp(
-  profiles: BrokerProfile[],
-  mode: RunMode,
-  teamAuth: TeamAuth | undefined,
-  checkouts: CheckoutManager,
-  auditDeps: AuditRouteDeps,
-  options: ServerOptions,
-): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ?? false });
+/** Who acts: Solo Mode's configured Operator, or Team Mode's sign-in. */
+type Access = { kind: 'solo'; operator: string } | { kind: 'team'; auth: TeamAuth };
+
+interface AppOptions {
+  profiles: BrokerProfile[];
+  access: Access;
+  checkouts: CheckoutManager;
+  audit: AuditRouteDeps;
+  /** Directory with the built web app; omitted or missing means API only. */
+  webRoot: string | undefined;
+  logger: boolean;
+}
+
+async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+  const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HttpError) {
@@ -133,140 +144,31 @@ async function buildApp(
 
   // Every request carries its Operator (operator.ts); in Team Mode, /api/
   // routes refuse requests without a session before any handler runs.
-  if (mode.kind === 'solo') {
-    const operator = { id: mode.operator, displayName: mode.operator };
+  if (access.kind === 'solo') {
+    const operator = { id: access.operator, displayName: access.operator };
     attachOperator(app, () => operator);
   } else {
-    await teamAuth!.register(app);
+    await access.auth.register(app);
   }
 
-  // Who is acting: in Solo Mode the configured name, in Team Mode the signed-in person.
-  // `checkoutId` is the Operator's active Checkout, so the web app can return to it.
-  app.get('/api/session', async (req) => {
-    const operator = operatorOf(req);
-    const checkoutId = checkouts.activeFor(operator.id)?.id ?? null;
-    if (mode.kind === 'solo') return { mode: 'solo', operator: operator.displayName, checkoutId };
-    return {
-      mode: 'team',
-      operator: operator.displayName,
-      operatorId: operator.id,
-      ...(operator.email !== undefined && { email: operator.email }),
-      ...(operator.name !== undefined && { name: operator.name }),
-      checkoutId,
-    };
-  });
-
-  app.get('/api/profiles', async () => ({
-    profiles: profiles.map((p) => ({
-      name: p.name,
-      username: p.username,
-      managementUrl: p.managementUrl,
-      amqpUrl: p.amqpUrl,
-      passwordEnv: p.passwordEnv,
-      passwordSet: p.password !== undefined,
-      vhosts: p.vhosts,
-      defaultQueueFilter: p.defaultQueueFilter ?? null,
-      protected: p.protected,
-    })),
-  }));
-
-  const findProfile = (name: string): BrokerProfile => {
-    const profile = profiles.find((p) => p.name === name);
-    if (!profile) throw new HttpError(404, 'profile_not_found', `No Broker Profile named "${name}".`);
-    return profile;
-  };
-
-  const checkVhost = (profile: BrokerProfile, vhost: string) => {
-    if (profile.vhosts !== 'all' && !profile.vhosts.includes(vhost)) {
-      throw new HttpError(404, 'vhost_not_in_profile', `Vhost "${vhost}" is not configured for Broker Profile "${profile.name}".`);
-    }
-  };
-
-  app.get<{ Params: { profile: string } }>('/api/profiles/:profile/vhosts', async (req) => {
-    const profile = findProfile(req.params.profile);
-    const names = profile.vhosts === 'all' ? await new ManagementClient(profile).listVhosts() : profile.vhosts;
-    return { vhosts: names.map((name) => ({ name })) };
-  });
-
-  // Where a Move can go (the Decision bar's picker): the queues and the
-  // exchanges of the vhost a client can publish to, by name. Volverán's own
-  // lock queues, the default exchange and internal exchanges are left out.
-  app.get<{ Params: { profile: string; vhost: string } }>('/api/profiles/:profile/vhosts/:vhost/move-destinations', async (req) => {
-    const profile = findProfile(req.params.profile);
-    const { vhost } = req.params;
-    checkVhost(profile, vhost);
-    const client = new ManagementClient(profile);
-    const [queues, exchanges] = await Promise.all([client.listQueues(vhost), client.listExchanges(vhost)]);
-    const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-    return {
-      queues: queues.map((q) => q.name).filter((name) => !isLockQueue(name)).sort(byName),
-      exchanges: exchanges
-        .filter((e) => !e.internal)
-        .map(({ name, type }) => ({ name, type }))
-        .sort((a, b) => byName(a.name, b.name)),
-    };
-  });
-
-  // Depth and consumer counts come from management statistics, which lag the
-  // broker by a few seconds: the list calls the depth approximate.
-  app.get<{
-    Params: { profile: string; vhost: string };
-    Querystring: { search?: string; onlyDeadLetterQueues?: string };
-  }>('/api/profiles/:profile/vhosts/:vhost/queues', async (req) => {
-    const profile = findProfile(req.params.profile);
-    const { vhost } = req.params;
-    checkVhost(profile, vhost);
-    const client = new ManagementClient(profile);
-    const [allQueues, bindings] = await Promise.all([client.listQueues(vhost), client.listBindings(vhost)]);
-    // Checkout lock queues are Volverán's own: not listed, but they say who holds which queue.
-    const holders = checkoutHolders(allQueues);
-    const queues = allQueues.filter((q) => !isLockQueue(q.name));
-    const rows = queues.map((q) => ({
-      name: q.name,
-      type: q.type,
-      approximateMessages: q.messages,
-      consumers: q.consumers,
-      checkout: checkoutAvailability(q.type),
-      checkedOutBy: holders.get(q.name) ?? null,
-    }));
-    const arranged = arrangeQueues(rows, {
-      defaultQueueFilter: profile.defaultQueueFilter,
-      deadLetterSources: deadLetterSources(queues, bindings),
-      onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true',
-      search: req.query.search,
-    });
-    const byName = new Map(queues.map((q) => [q.name, q]));
-    return {
-      defaultQueueFilter: profile.defaultQueueFilter ?? null,
-      queues: arranged.map((row) => ({
-        ...row,
-        setupWarning: deadLetterSetupWarning({ ...byName.get(row.name)!, deadLetterQueue: row.deadLetterQueue }),
-      })),
-    };
-  });
-
-  registerCheckoutRoutes(app, {
-    checkouts,
-    queueRef: (profileName, vhost, queue) => {
-      const profile = findProfile(profileName);
-      checkVhost(profile, vhost);
-      return { profile, vhost, queue };
-    },
-  });
+  const lookup = profileLookup(profiles);
+  registerSessionRoutes(app, { mode: access.kind, checkouts });
+  registerProfileRoutes(app, { profiles, lookup });
+  registerCheckoutRoutes(app, { checkouts, queueRef: lookup.queueRef });
   registerDecisionRoutes(app, checkouts);
   registerApplyRoutes(app, checkouts);
-  registerAuditRoutes(app, auditDeps);
+  registerAuditRoutes(app, audit);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {
       return reply.status(404).send({ error: { code: 'not_found', message: `No route ${req.method} ${req.url}` } });
     }
-    if (options.webRoot && existsSync(options.webRoot)) return reply.sendFile('index.html');
+    if (webRoot && existsSync(webRoot)) return reply.sendFile('index.html');
     return reply.status(404).send('Web app not built');
   });
 
-  if (options.webRoot && existsSync(options.webRoot)) {
-    app.register(fastifyStatic, { root: options.webRoot });
+  if (webRoot && existsSync(webRoot)) {
+    app.register(fastifyStatic, { root: webRoot });
   }
 
   return app;

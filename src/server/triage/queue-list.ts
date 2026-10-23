@@ -57,7 +57,7 @@ export function deadLetterSources(queues: DeadLetterSettings[], bindings: Bindin
       for (const target of queuesReachableFrom(exchange, bindings)) add(target, q.name);
     }
   }
-  return new Map([...out].map(([target, sources]) => [target, [...sources].sort(byName)]));
+  return new Map([...out].map(([target, sources]) => [target, [...sources].sort(compareNames)]));
 }
 
 function queuesReachableFrom(exchange: string, bindings: Binding[]): Set<string> {
@@ -109,10 +109,11 @@ export function arrangeQueues<Q extends { name: string }>(queues: Q[], options: 
     })
     .filter((q) => !options.onlyDeadLetterQueues || q.deadLetterQueue)
     .filter((q) => !search || q.name.toLowerCase().includes(search))
-    .sort((a, b) => (a.deadLetterQueue !== b.deadLetterQueue ? (a.deadLetterQueue ? -1 : 1) : byName(a.name, b.name)));
+    .sort((a, b) => (a.deadLetterQueue !== b.deadLetterQueue ? (a.deadLetterQueue ? -1 : 1) : compareNames(a.name, b.name)));
 }
 
-function byName(a: string, b: string): number {
+/** Orders names by code unit (as the broker lists them), not by locale. */
+export function compareNames(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 

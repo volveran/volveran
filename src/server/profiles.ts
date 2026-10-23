@@ -29,6 +29,11 @@ export interface BrokerProfile {
   protected: boolean;
 }
 
+/** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
+export function profileHasVhost(profile: BrokerProfile, vhost: string): boolean {
+  return profile.vhosts === 'all' || profile.vhosts.includes(vhost);
+}
+
 /** One queue as seen through a Broker Profile. */
 export interface QueueRef {
   profile: BrokerProfile;

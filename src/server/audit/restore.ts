@@ -19,7 +19,7 @@ import { republishOptions } from '../apply/republish.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
 import { ManagementClient } from '../management.js';
 import type { Operator } from '../operator.js';
-import type { BrokerProfile, QueueRef } from '../profiles.js';
+import { profileHasVhost, type BrokerProfile, type QueueRef } from '../profiles.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import type { AuditEntry, AuditStore } from './store.js';
 
@@ -136,8 +136,7 @@ export class RestoreService {
     // Claimed before the first await, so a second request for the same entry is refused.
     this.running.add(id);
     try {
-      const inProfile = profile.vhosts === 'all' || profile.vhosts.includes(discard.vhost);
-      if (!inProfile || !(await new ManagementClient(profile).getQueue(discard.vhost, queue))) {
+      if (!profileHasVhost(profile, discard.vhost) || !(await new ManagementClient(profile).getQueue(discard.vhost, queue))) {
         throw new RestoreError(
           'queue_not_found',
           `Queue "${queue}" does not exist in vhost "${discard.vhost}" (or Broker Profile "${profile.name}" cannot see it). Pick an existing queue.`,
