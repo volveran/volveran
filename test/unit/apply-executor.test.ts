@@ -135,27 +135,4 @@ describe('Apply executor', () => {
     expect(entry).toMatchObject({ outcome: 'uncertain', messageId: 'm-1' });
     expect(audit.body(entry!.id)?.toString()).toBe('body-1');
   });
-
-  it.each([['Move', { kind: 'move', destination: { queue: 'triage.manual' } }]] as const)('does not attempt a %s, which this version cannot carry out yet, and still applies the rest', async (name, decision) => {
-    const acked: number[] = [];
-    const { outcomes } = run(
-      { kept: [], steps: [{ handle: 1, decision }, { handle: 2, decision: DISCARD }] },
-      async (m) => {
-        acked.push(m.fields.deliveryTag);
-      },
-    );
-
-    expect(await outcomes).toEqual([
-      {
-        handle: 1,
-        messageId: 'm-1',
-        decision,
-        status: 'not-attempted',
-        reason: `${name} is not available yet in this version of Volverán. The Message goes back to the queue.`,
-      },
-      expect.objectContaining({ handle: 2, status: 'done' }),
-    ]);
-    expect(acked).toEqual([2]);
-    expect(audit.list().map((e) => e.messageId)).toEqual(['m-2']);
-  });
 });

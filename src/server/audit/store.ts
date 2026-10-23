@@ -63,11 +63,18 @@ export interface NewAuditEntry {
   destination: AuditDestination | null;
   checkoutId: string | null;
   message: MessageCopy | null;
+  /**
+   * The `x-volveran-replay-id` header a Replay or Move published the Message
+   * with, so a Message that dies again can be traced back here; null (or
+   * left out) for the other actions.
+   */
+  replayId?: string | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message'> {
+export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'replayId'> {
   id: number;
+  replayId: string | null;
   operatorId: string;
   operatorName: string;
   outcome: AuditOutcome;
@@ -87,6 +94,8 @@ export interface AuditQuery {
   messageId?: string;
   action?: AuditAction;
   checkoutId?: string;
+  /** The replay id a Replay or Move published the Message with (its x-volveran-replay-id header). */
+  replayId?: string;
   /** Entries at or after this time. */
   from?: Date;
   /** Entries at or before this time. */
@@ -128,6 +137,9 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_entries_destination_queue ON audit_entries (destination_queue);
    CREATE INDEX audit_entries_message_id ON audit_entries (message_id);
    CREATE INDEX audit_entries_checkout_id ON audit_entries (checkout_id);`,
+  // v2 (#8): the replay id of a Replay or Move, to link a Message that dies again back to its entry.
+  `ALTER TABLE audit_entries ADD COLUMN replay_id TEXT;
+   CREATE INDEX audit_entries_replay_id ON audit_entries (replay_id);`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -155,8 +167,8 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -176,6 +188,7 @@ export class AuditStore {
           message ? JSON.stringify(toAmqpJson(message.properties)) : null,
           message ? JSON.stringify(toAmqpJson(message.headers)) : null,
           message?.body ? message.body.length : null,
+          entry.replayId ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -205,6 +218,7 @@ export class AuditStore {
     if (query.messageId !== undefined) match('message_id = ?', query.messageId);
     if (query.action !== undefined) match('action = ?', query.action);
     if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
+    if (query.replayId !== undefined) match('replay_id = ?', query.replayId);
     if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
     if (query.to !== undefined) match('created_at <= ?', query.to.getTime());
     let sql = 'SELECT * FROM audit_entries';
@@ -275,6 +289,7 @@ interface Row {
   message_properties: string | null;
   message_headers: string | null;
   body_bytes: number | null;
+  replay_id: string | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -301,6 +316,7 @@ function toEntry(row: Row): AuditEntry {
     outcome: row.outcome,
     outcomeReason: row.outcome_reason,
     checkoutId: row.checkout_id,
+    replayId: row.replay_id,
     message:
       row.message_properties === null
         ? null

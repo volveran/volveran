@@ -1,6 +1,6 @@
 // Audit Entry routes (read only; #10 adds browsing filters and Restore).
 //
-//   GET /api/audit-entries?queue=&messageId=&action=&checkoutId=&from=&to=&limit=
+//   GET /api/audit-entries?queue=&messageId=&action=&checkoutId=&replayId=&from=&to=&limit=
 //       → { entries: AuditEntryJson[] }, newest first, without Message bodies
 //   GET /api/audit-entries/:id → { entry: AuditEntryJson } with the body (base64)
 //
@@ -31,6 +31,8 @@ export interface AuditSearchParams {
   messageId?: string;
   action?: string;
   checkoutId?: string;
+  /** The x-volveran-replay-id of a Replayed or Moved Message. */
+  replayId?: string;
   /** ISO 8601 date or date-time; entries at or after it. */
   from?: string;
   /** ISO 8601 date or date-time; entries at or before it (a bare date includes that whole day). */
@@ -48,6 +50,7 @@ export function parseAuditSearch(params: AuditSearchParams): AuditQuery {
   if (given(params.queue)) query.queue = given(params.queue);
   if (given(params.messageId)) query.messageId = given(params.messageId);
   if (given(params.checkoutId)) query.checkoutId = given(params.checkoutId);
+  if (given(params.replayId)) query.replayId = given(params.replayId);
   const action = given(params.action);
   if (action) {
     if (!ACTIONS.includes(action as AuditAction)) {

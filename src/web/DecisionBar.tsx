@@ -1,17 +1,24 @@
 // The Selection count and the Decisions that can be given to it: Discard
 // (with a reason), Replay, Move and Keep (which clears a Decision). The Move
-// destination is typed for now: a queue, or an exchange with a routing key.
+// destination is picked from what exists in the Checkout's vhost: another
+// queue, or an exchange plus a routing key.
 import { useState } from 'react';
-import type { Decision, MoveDestination } from './api.js';
+import type { Decision, MoveDestination, MoveDestinations } from './api.js';
 
 export function DecisionBar({
   selected,
+  sourceQueue,
+  destinations,
   replayUnavailable,
   busy,
   onDecide,
   onClearSelection,
 }: {
   selected: number;
+  /** The queue being triaged: not a Move destination. */
+  sourceQueue: string;
+  /** The picker's choices; undefined while loading, a string when they could not be loaded. */
+  destinations: MoveDestinations | string | undefined;
   /** Selected Messages that can't be given Replay (no x-death history). */
   replayUnavailable: number;
   busy: boolean;
@@ -25,13 +32,16 @@ export function DecisionBar({
   const [exchange, setExchange] = useState('');
   const [routingKey, setRoutingKey] = useState('');
 
+  const loaded = typeof destinations === 'object' ? destinations : null;
+  const queues = loaded?.queues.filter((q) => q !== sourceQueue) ?? [];
+  const exchanges = loaded?.exchanges ?? [];
   const destination: MoveDestination | null =
     moveTo === 'queue'
-      ? queue.trim()
-        ? { queue: queue.trim() }
+      ? queues.includes(queue)
+        ? { queue }
         : null
-      : exchange.trim()
-        ? { exchange: exchange.trim(), routingKey }
+      : exchanges.some((e) => e.name === exchange)
+        ? { exchange, routingKey }
         : null;
 
   return (
@@ -70,15 +80,43 @@ export function DecisionBar({
           <option value="queue">Move to queue</option>
           <option value="exchange">Move to exchange</option>
         </select>
-        {moveTo === 'queue' ? (
-          <input type="text" aria-label="Destination queue" placeholder="queue name" value={queue} onChange={(e) => setQueue(e.target.value)} />
+        {typeof destinations === 'string' ? (
+          <span className="muted" title={destinations}>
+            Cannot list the destinations
+          </span>
+        ) : moveTo === 'queue' ? (
+          <select aria-label="Destination queue" value={queue} onChange={(e) => setQueue(e.target.value)}>
+            <option value="">{loaded ? 'Pick a queue' : 'Loading…'}</option>
+            {queues.map((q) => (
+              <option key={q} value={q}>
+                {q}
+              </option>
+            ))}
+          </select>
         ) : (
           <>
-            <input type="text" aria-label="Destination exchange" placeholder="exchange" value={exchange} onChange={(e) => setExchange(e.target.value)} />
-            <input type="text" aria-label="Routing key" placeholder="routing key" value={routingKey} onChange={(e) => setRoutingKey(e.target.value)} />
+            <select aria-label="Destination exchange" value={exchange} onChange={(e) => setExchange(e.target.value)}>
+              <option value="">{loaded ? 'Pick an exchange' : 'Loading…'}</option>
+              {exchanges.map((x) => (
+                <option key={x.name} value={x.name}>
+                  {x.name} ({x.type})
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              aria-label="Routing key"
+              placeholder="routing key"
+              value={routingKey}
+              onChange={(e) => setRoutingKey(e.target.value)}
+            />
           </>
         )}
-        <button disabled={disabled || destination === null} onClick={() => destination && onDecide({ kind: 'move', destination })}>
+        <button
+          disabled={disabled || destination === null}
+          onClick={() => destination && onDecide({ kind: 'move', destination })}
+          title="Publishes the Messages to the destination on Apply, with the same header rules as Replay; a destination that cannot route them leaves them in the queue"
+        >
           Move
         </button>
       </span>

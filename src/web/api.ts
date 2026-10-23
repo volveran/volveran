@@ -220,6 +220,12 @@ export async function signOut(): Promise<void> {
   signIn();
 }
 
+/** Where a Move can go in a vhost: its queues and the exchanges a client can publish to, by name. */
+export interface MoveDestinations {
+  queues: string[];
+  exchanges: Array<{ name: string; type: string }>;
+}
+
 export const api = {
   session: () => getJson<Session>('/api/session'),
   profiles: () => getJson<{ profiles: Profile[] }>('/api/profiles').then((b) => b.profiles),
@@ -236,6 +242,8 @@ export const api = {
       (b) => b.queues,
     );
   },
+  moveDestinations: (profile: string, vhost: string) =>
+    getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
   /** `overrideConsumers` starts it even though other consumers read the queue (error `queue_has_consumers` otherwise). */
   startCheckout: (profile: string, vhost: string, queue: string, opts: { overrideConsumers?: boolean } = {}) =>
     getJson<{ checkout: Checkout }>(

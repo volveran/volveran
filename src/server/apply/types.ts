@@ -1,5 +1,5 @@
 // The contract between the Apply executor and the per-Decision handlers
-// (discard.ts, replay.ts; #8 adds move.ts). Each handler owns one
+// (discard.ts, replay.ts, move.ts). Each handler owns one
 // Decision kind: what its Audit Entry records and how it is carried out on
 // the broker.
 import type * as amqp from 'amqplib';
@@ -54,16 +54,23 @@ export interface AuditDetails {
    * headers: the original properties and headers only (Replay, Move, ADR 0005).
    */
   copy: 'full' | 'headers';
+  /**
+   * The replay id the Message will be published with (Replay, Move), chosen
+   * before the Audit Entry is written so the entry records it; null when the
+   * action publishes nothing.
+   */
+  replayId: string | null;
 }
 
 export interface DecisionHandler<D extends ActionDecision> {
   audit(decision: D, message: HeldMessage, target: ApplyTarget): AuditDetails;
   /**
-   * Carries out the Decision. Resolves `done` only once the broker has
+   * Carries out the Decision, with the `details` its Audit Entry was written
+   * with (a publish uses their replay id). Resolves `done` only once the broker has
    * confirmed it; a failure leaves the Message held, so it falls back to Keep.
    * May throw; the executor reports a throw as failed.
    */
-  execute(decision: D, message: HeldMessage, ctx: ApplyContext): Promise<StepResult>;
+  execute(decision: D, message: HeldMessage, ctx: ApplyContext, details: AuditDetails): Promise<StepResult>;
 }
 
 /**

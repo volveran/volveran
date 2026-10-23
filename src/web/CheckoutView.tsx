@@ -9,7 +9,16 @@
 import { useEffect, useState } from 'react';
 import { formatBytes, heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
-import { api, ApiError, type Checkout, type Decision, type FilterClause, type MessageDetail, type MessageRow } from './api.js';
+import {
+  api,
+  ApiError,
+  type Checkout,
+  type Decision,
+  type FilterClause,
+  type MessageDetail,
+  type MessageRow,
+  type MoveDestinations,
+} from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
 import { DecisionBar } from './DecisionBar.js';
@@ -31,6 +40,22 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [matched, setMatched] = useState<ReadonlySet<number> | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>();
+  /** The Move destination picker's choices; a string says why they could not be loaded. */
+  const [destinations, setDestinations] = useState<MoveDestinations | string>();
+  const profile = checkout?.profile;
+  const vhost = checkout?.vhost;
+
+  useEffect(() => {
+    if (profile === undefined || vhost === undefined) return;
+    let cancelled = false;
+    api
+      .moveDestinations(profile, vhost)
+      .then((d) => !cancelled && setDestinations(d))
+      .catch((err: ApiError) => !cancelled && setDestinations(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [profile, vhost]);
 
   useEffect(() => {
     let cancelled = false;
@@ -207,6 +232,8 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
           />
           <DecisionBar
             selected={selection.size}
+            sourceQueue={checkout.queue}
+            destinations={destinations}
             replayUnavailable={checkout.messages.filter((m) => selection.has(m.handle) && !m.replay.available).length}
             busy={busy}
             onDecide={decide}

@@ -13,7 +13,7 @@
 import type { AuditStore } from '../audit/store.js';
 import type { ActionDecision, ApplyPlan, Decision } from '../triage/decisions.js';
 import { handlerFor } from './handlers.js';
-import { AckUncertainError, type ApplyContext, type HeldMessage, type MessageOutcome, type StepResult } from './types.js';
+import { AckUncertainError, type ApplyContext, type AuditDetails, type HeldMessage, type MessageOutcome, type StepResult } from './types.js';
 
 const KIND_LABEL: Record<ActionDecision['kind'], string> = { discard: 'Discard', replay: 'Replay', move: 'Move' };
 
@@ -63,8 +63,9 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     }
 
     let entryId: number;
+    let details: AuditDetails;
     try {
-      const details = handler.audit(decision, message, target);
+      details = handler.audit(decision, message, target);
       entryId = audit.record({
         at: new Date(),
         operator: target.operator,
@@ -77,6 +78,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         reason: details.reason,
         destination: details.destination,
         checkoutId: target.checkoutId,
+        replayId: details.replayId,
         message: {
           body: details.copy === 'full' ? message.content : null,
           properties: propertiesWithoutHeaders(message),
@@ -93,7 +95,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     let uncertain = false;
     try {
       await run.beforeStep?.(entryId);
-      result = await handler.execute(decision, message, ctx);
+      result = await handler.execute(decision, message, ctx, details);
     } catch (err) {
       uncertain = err instanceof AckUncertainError;
       result = { status: 'failed', reason: (err as Error).message };
