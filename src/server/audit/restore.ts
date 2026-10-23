@@ -8,8 +8,8 @@
 // `x-volveran-from`; published through the default exchange on a confirm
 // channel with `mandatory`, on a connection of its own, so a Message the
 // broker cannot route (or refuses) is reported as failed. The Restore writes
-// its own Audit Entry (action `restore`, `restoreOf` the Discard), `pending`
-// before the publish. A Discard whose body retention evicted cannot be
+// its own Audit Entry (action `restore`, `restoreOf` the Discard, and the
+// replay id it published with), `pending` before the publish. A Discard whose body retention evicted cannot be
 // Restored.
 import { randomUUID } from 'node:crypto';
 import type * as amqp from 'amqplib';
@@ -149,6 +149,7 @@ export class RestoreService {
         throw new RestoreError('body_expired', `The body of the Message of Audit Entry ${id} is no longer stored, so it cannot be Restored.`);
       }
 
+      const replayId = randomUUID();
       const entryId = this.audit.record({
         at: new Date(),
         operator,
@@ -162,11 +163,12 @@ export class RestoreService {
         destination: { exchange: '', routingKey: queue, queue },
         checkoutId: null,
         restoreOf: id,
+        replayId,
         message: null,
       });
       const options = republishOptions(
         { ...message.properties, headers: message.headers },
-        { replayId: randomUUID(), from: discard.queue },
+        { replayId, from: discard.queue },
       );
       const failure = await publish({ profile, vhost: discard.vhost, queue }, body, options);
       this.audit.setOutcome(entryId, failure ? 'failed' : 'done', failure);

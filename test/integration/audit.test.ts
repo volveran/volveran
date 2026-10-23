@@ -128,6 +128,10 @@ describe('Audit browsing and Restore', () => {
       'x-volveran-from': 'orders.dlq',
       'x-volveran-replay-id': expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
+    // The Restore's Audit Entry records the replay id it published with, so a Message that dies again traces back.
+    expect(restored.body.entry.replayId).toBe(headers!['x-volveran-replay-id']);
+    const traced = (await app.get(`/api/audit-entries?replayId=${restored.body.entry.replayId}`)).body.entries;
+    expect(traced.map((e: any) => e.id)).toEqual([restored.body.entry.id]);
     // CC is not re-applied: nothing reached triage.manual.
     expect(await readyMessageIds('/', 'triage.manual')).toEqual([]);
 

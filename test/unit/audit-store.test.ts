@@ -3,8 +3,9 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AuditStore, type NewAuditEntry } from '../../src/server/audit/store.js';
+import { AUDIT_DB_FILE, AuditStore, type NewAuditEntry } from '../../src/server/audit/store.js';
 
 function entry(overrides: Partial<NewAuditEntry> = {}): NewAuditEntry {
   return {
@@ -138,5 +139,37 @@ describe('AuditStore', () => {
     store = new AuditStore(dir);
     expect(store.get(id)).toMatchObject({ messageId: 'm-1', outcome: 'pending' });
     expect(store.body(id)!.toString()).toBe('hello');
+  });
+  it('records the replay id of a Replay or Move and finds entries by it', () => {
+    store = new AuditStore();
+    const discarded = store.record(entry());
+    const moved = store.record(entry({ action: 'move', reason: null, replayId: 'r-1' }));
+    store.record(entry({ action: 'replay', reason: null, replayId: 'r-2' }));
+
+    expect(store.get(discarded)?.replayId).toBeNull();
+    expect(store.get(moved)?.replayId).toBe('r-1');
+    expect(store.list({ replayId: 'r-1' }).map((e) => e.id)).toEqual([moved]);
+    expect(store.list({ replayId: 'nope' })).toEqual([]);
+  });
+
+  it('upgrades a store written before replay ids existed, keeping its entries', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'audit-store-'));
+    new AuditStore(dir).close();
+    // Turn it back into a version 1 store holding one entry.
+    const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
+    db.exec(`DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;
+             ALTER TABLE audit_entries DROP COLUMN restore_of; ALTER TABLE audit_entries DROP COLUMN body_expired_at;
+             DROP INDEX audit_entries_replay_id; ALTER TABLE audit_entries DROP COLUMN replay_id; PRAGMA user_version = 1;`);
+    db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
+             VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);
+    db.close();
+
+    store = new AuditStore(dir);
+
+    expect(store.list()).toEqual([expect.objectContaining({ queue: 'orders.dlq', action: 'replay', replayId: null })]);
+    const id = store.record(entry({ action: 'move', reason: null, replayId: 'r-9' }));
+    expect(store.list({ replayId: 'r-9' }).map((e) => e.id)).toEqual([id]);
+    // Version 3 (#10) came along too.
+    expect(store.list()[1]).toMatchObject({ restoreOf: null, bodyExpiredAt: null });
   });
 });

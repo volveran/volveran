@@ -1,6 +1,7 @@
 // Audit view: browse and search Audit Entries ("what happened to message
-// X?") by Broker Profile, queue, message_id, action, Operator and date, and
-// Restore a Discarded Message to its source queue or another existing one.
+// X?") by Broker Profile, queue, message_id, action, Operator, replay id and
+// date, and Restore a Discarded Message to its source queue or another
+// existing one.
 // A Discard whose body retention evicted shows "body expired" and offers no
 // Restore. Warns when the store of Discarded bodies is near its size limit.
 import { useEffect, useState } from 'react';
@@ -13,7 +14,7 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   restore: 'Restore',
 };
 
-const EMPTY_SEARCH: AuditSearch = { profile: '', queue: '', messageId: '', action: '', operator: '', from: '', to: '' };
+const EMPTY_SEARCH: AuditSearch = { profile: '', queue: '', messageId: '', action: '', operator: '', replayId: '', from: '', to: '' };
 
 function formatBytes(bytes: number): string {
   const units = ['bytes', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -99,6 +100,12 @@ export function AuditView({ profiles }: { profiles: Profile[] }) {
           ))}
         </select>
         <input type="search" placeholder="Operator" aria-label="Operator" {...field('operator')} />
+        <input
+          type="search"
+          placeholder="Replay id (x-volveran-replay-id)"
+          aria-label="Replay id"
+          {...field('replayId')}
+        />
         <label>
           From <input type="date" {...field('from')} />
         </label>
@@ -233,6 +240,12 @@ function EntryRow({
       </td>
       <td className="name">
         {entry.destination ? (entry.destination.queue ?? `${entry.destination.exchange} ${entry.destination.routingKey}`) : ''}
+        {entry.replayId && (
+          <small className="muted" title="x-volveran-replay-id">
+            {' '}
+            replay id <code>{entry.replayId}</code>
+          </small>
+        )}
       </td>
       <td title={entry.operatorId}>
         {entry.operatorName}

@@ -188,6 +188,25 @@ async function buildApp(
     return { vhosts: names.map((name) => ({ name })) };
   });
 
+  // Where a Move can go (the Decision bar's picker): the queues and the
+  // exchanges of the vhost a client can publish to, by name. Volverán's own
+  // lock queues, the default exchange and internal exchanges are left out.
+  app.get<{ Params: { profile: string; vhost: string } }>('/api/profiles/:profile/vhosts/:vhost/move-destinations', async (req) => {
+    const profile = findProfile(req.params.profile);
+    const { vhost } = req.params;
+    checkVhost(profile, vhost);
+    const client = new ManagementClient(profile);
+    const [queues, exchanges] = await Promise.all([client.listQueues(vhost), client.listExchanges(vhost)]);
+    const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+    return {
+      queues: queues.map((q) => q.name).filter((name) => !isLockQueue(name)).sort(byName),
+      exchanges: exchanges
+        .filter((e) => !e.internal)
+        .map(({ name, type }) => ({ name, type }))
+        .sort((a, b) => byName(a.name, b.name)),
+    };
+  });
+
   // Depth and consumer counts come from management statistics, which lag the
   // broker by a few seconds: the list calls the depth approximate.
   app.get<{

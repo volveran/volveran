@@ -124,7 +124,7 @@ describe('Replay', () => {
     },
   );
 
-  it('gives every Replayed Message its own replay id', async () => {
+  it('gives every Replayed Message its own replay id, recorded in its Audit Entry', async () => {
     await deadLetter(deadLetterRoutes.classic, [
       { body: 'a', options: { messageId: 'a' } },
       { body: 'b', options: { messageId: 'b' } },
@@ -138,6 +138,12 @@ describe('Replay', () => {
     expect(arrived.map((m) => m.properties.messageId)).toEqual(['a', 'b']);
     const ids = arrived.map((m) => m.properties.headers?.['x-volveran-replay-id']);
     expect(new Set(ids).size).toBe(2);
+    // The Audit Entry of each Replay names its replay id, and can be found by it.
+    for (const m of arrived) {
+      const replayId = m.properties.headers?.['x-volveran-replay-id'];
+      const { entries } = (await app.get(`/api/audit-entries?replayId=${replayId}`)).body;
+      expect(entries).toEqual([expect.objectContaining({ checkoutId: id, messageId: m.properties.messageId, action: 'replay', replayId })]);
+    }
   });
 
   it('records the original headers, not the body, in the Audit Entry', async () => {

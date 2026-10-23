@@ -193,6 +193,8 @@ export interface AuditEntry {
   checkoutId: string | null;
   /** A Restore: the Discard's Audit Entry. */
   restoreOf: number | null;
+  /** Replay, Move, Restore: the `x-volveran-replay-id` the Message was published with. */
+  replayId: string | null;
   outcome: AuditOutcome;
   outcomeReason: string | null;
   /** Set once retention evicted the Discarded body ("body expired"). */
@@ -207,6 +209,8 @@ export interface AuditSearch {
   messageId?: string;
   action?: AuditAction | '';
   operator?: string;
+  /** The `x-volveran-replay-id` header of a Message that came back. */
+  replayId?: string;
   from?: string;
   to?: string;
 }
@@ -276,6 +280,12 @@ export async function signOut(): Promise<void> {
   signIn();
 }
 
+/** Where a Move can go in a vhost: its queues and the exchanges a client can publish to, by name. */
+export interface MoveDestinations {
+  queues: string[];
+  exchanges: Array<{ name: string; type: string }>;
+}
+
 export const api = {
   session: () => getJson<Session>('/api/session'),
   profiles: () => getJson<{ profiles: Profile[] }>('/api/profiles').then((b) => b.profiles),
@@ -292,6 +302,8 @@ export const api = {
       (b) => b.queues,
     );
   },
+  moveDestinations: (profile: string, vhost: string) =>
+    getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
   /** `overrideConsumers` starts it even though other consumers read the queue (error `queue_has_consumers` otherwise). */
   startCheckout: (profile: string, vhost: string, queue: string, opts: { overrideConsumers?: boolean } = {}) =>
     getJson<{ checkout: Checkout }>(

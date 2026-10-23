@@ -34,6 +34,15 @@ export interface ManagementBinding {
   routingKey: string;
 }
 
+export interface ManagementExchange {
+  /** Never "" (the default exchange is not listed). */
+  name: string;
+  /** direct, fanout, topic, headers, or a plugin's type. */
+  type: string;
+  /** An internal exchange only receives from other exchanges: clients cannot publish to it. */
+  internal: boolean;
+}
+
 const REQUEST_TIMEOUT_MS = 5_000;
 
 export class ManagementClient {
@@ -54,6 +63,22 @@ export class ManagementClient {
   async getQueue(vhost: string, queue: string): Promise<ManagementQueue | null> {
     try {
       return toQueue(await this.request(`/api/queues/${encodeURIComponent(vhost)}/${encodeURIComponent(queue)}`));
+    } catch (err) {
+      if (err instanceof NotFound) return null;
+      throw err;
+    }
+  }
+
+  /** The named exchanges of `vhost`, the default exchange left out. */
+  async listExchanges(vhost: string): Promise<ManagementExchange[]> {
+    const body = await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal`);
+    return (body as any[]).map(toExchange).filter((e) => e.name !== '');
+  }
+
+  /** One exchange, or null when it does not exist. */
+  async getExchange(vhost: string, exchange: string): Promise<ManagementExchange | null> {
+    try {
+      return toExchange(await this.request(`/api/exchanges/${encodeURIComponent(vhost)}/${encodeURIComponent(exchange)}`));
     } catch (err) {
       if (err instanceof NotFound) return null;
       throw err;
@@ -158,4 +183,8 @@ function toQueue(q: any): ManagementQueue {
     deliveryLimit: typeof q.delivery_limit === 'number' && Number.isFinite(q.delivery_limit) ? q.delivery_limit : null,
     messageBytesReady: typeof q.message_bytes_ready === 'number' ? q.message_bytes_ready : null,
   };
+}
+
+function toExchange(e: any): ManagementExchange {
+  return { name: String(e.name ?? ''), type: String(e.type ?? 'direct'), internal: e.internal === true };
 }

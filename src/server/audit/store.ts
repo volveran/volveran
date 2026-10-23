@@ -64,13 +64,20 @@ export interface NewAuditEntry {
   destination: AuditDestination | null;
   checkoutId: string | null;
   message: MessageCopy | null;
+  /**
+   * The `x-volveran-replay-id` header a Replay, Move or Restore published the
+   * Message with, so a Message that dies again can be traced back here; null
+   * (or left out) for the other actions.
+   */
+  replayId?: string | null;
   /** A Restore: the Audit Entry of the Discard whose Message it republished. */
   restoreOf?: number | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'restoreOf'> {
+export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'replayId' | 'restoreOf'> {
   id: number;
+  replayId: string | null;
   restoreOf: number | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
@@ -93,6 +100,8 @@ export interface AuditQuery {
   messageId?: string;
   action?: AuditAction;
   checkoutId?: string;
+  /** The replay id a Replay, Move or Restore published the Message with (its x-volveran-replay-id header). */
+  replayId?: string;
   /** The Broker Profile. */
   profile?: string;
   /** The Operator: their stable id or their display name. */
@@ -149,7 +158,10 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_entries_destination_queue ON audit_entries (destination_queue);
    CREATE INDEX audit_entries_message_id ON audit_entries (message_id);
    CREATE INDEX audit_entries_checkout_id ON audit_entries (checkout_id);`,
-  // v2 (#10): Restore links to the Discard it republished; retention marks evicted bodies.
+  // v2 (#8): the replay id of a Replay or Move, to link a Message that dies again back to its entry.
+  `ALTER TABLE audit_entries ADD COLUMN replay_id TEXT;
+   CREATE INDEX audit_entries_replay_id ON audit_entries (replay_id);`,
+  // v3 (#10): Restore links to the Discard it republished; retention marks evicted bodies.
   `ALTER TABLE audit_entries ADD COLUMN restore_of INTEGER REFERENCES audit_entries (id);
    ALTER TABLE audit_entries ADD COLUMN body_expired_at INTEGER;
    CREATE INDEX audit_entries_restore_of ON audit_entries (restore_of);
@@ -182,8 +194,8 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes, restore_of)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -203,6 +215,7 @@ export class AuditStore {
           message ? JSON.stringify(toAmqpJson(message.properties)) : null,
           message ? JSON.stringify(toAmqpJson(message.headers)) : null,
           message?.body ? message.body.length : null,
+          entry.replayId ?? null,
           entry.restoreOf ?? null,
         );
       const id = Number(result.lastInsertRowid);
@@ -233,6 +246,7 @@ export class AuditStore {
     if (query.messageId !== undefined) match('message_id = ?', query.messageId);
     if (query.action !== undefined) match('action = ?', query.action);
     if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
+    if (query.replayId !== undefined) match('replay_id = ?', query.replayId);
     if (query.profile !== undefined) match('profile = ?', query.profile);
     if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
     if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
@@ -351,6 +365,7 @@ interface Row {
   message_properties: string | null;
   message_headers: string | null;
   body_bytes: number | null;
+  replay_id: string | null;
   restore_of: number | null;
   body_expired_at: number | null;
 }
@@ -379,6 +394,7 @@ function toEntry(row: Row): AuditEntry {
     outcome: row.outcome,
     outcomeReason: row.outcome_reason,
     checkoutId: row.checkout_id,
+    replayId: row.replay_id,
     restoreOf: row.restore_of,
     bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
     message:
