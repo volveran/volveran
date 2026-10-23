@@ -4,13 +4,15 @@
 // A Checkout takes the N oldest ready Messages, capped by a Message limit and
 // a byte limit. N comes from the Message limit alone; the byte limit is
 // enforced on the exact body sizes while collecting: once it is reached, the
-// rest of the N deliveries overflow. They are not shown, and go back to
-// the queue right after the held ones when the Checkout ends, which keeps the
-// queue's order on both classic and quorum queues. The consumer has a
-// prefetch of N, so after a shortfall (another consumer took some, some
-// expired) it could still receive Messages published after the start; once
-// the Checkout stops waiting, every further delivery is late and goes back
-// to the queue at once.
+// deliveries past it overflow. They are not shown, and go back to the queue
+// right after the held ones when the Checkout ends, which keeps the queue's
+// order on both classic and quorum queues. The broker is asked for the N in
+// windows (collectionWindow), so only the window in flight when the limit is
+// reached overflows; the rest of the N never leave the queue. The windows add
+// up to N, so after a shortfall (another consumer took some, some expired)
+// the Checkout could still receive Messages published after the start; once
+// it stops waiting, every further delivery is late and goes back to the
+// queue at once.
 import type { CheckoutLimits, LimitedBy } from '../../shared/checkout.js';
 
 export type { CheckoutLimits, LimitedBy };
@@ -19,7 +21,7 @@ const MB = 1024 * 1024;
 
 export const DEFAULT_CHECKOUT_LIMITS: CheckoutLimits = { maxMessages: 1000, maxBytes: 100 * MB };
 
-/** AMQP's prefetch count is 16 bits, and a Checkout takes all N with one prefetch. */
+/** AMQP's prefetch count is 16 bits, and a Checkout's window can be all of N. */
 const MAX_PREFETCH = 65_535;
 
 /**
@@ -59,15 +61,39 @@ export function checkoutSize(input: { ready: number; maxMessages: number }): {
   return { take, limitedBy: take < input.ready ? 'messages' : null };
 }
 
+/**
+ * How many more deliveries to ask the broker for (the next consumer's
+ * prefetch): as many as the remaining bytes fit at the average body size
+ * delivered so far, never more than double what was delivered (the first
+ * bodies may be unusually small), nor more than the Messages still to take.
+ * At least 1 while any remain: one delivery past the byte limit shows it is
+ * reached. Bounds the deliveries in memory beyond the byte limit to one
+ * window, rather than the whole N.
+ */
+export function collectionWindow(input: {
+  remaining: number;
+  remainingBytes: number;
+  delivered: number;
+  deliveredBytes: number;
+}): number {
+  const { remaining, remainingBytes, delivered, deliveredBytes } = input;
+  if (remaining <= 0) return 0;
+  if (delivered === 0) return 1;
+  const average = deliveredBytes / delivered;
+  const byBytes = average === 0 ? remaining : Math.floor(Math.max(0, remainingBytes) / average);
+  return Math.max(1, Math.min(byBytes, delivered, remaining));
+}
+
 export type Collected = 'held' | 'overflow' | 'late';
 
 export class CheckoutCollection<M> {
   readonly held: M[] = [];
-  /** Deliveries of the N past the byte limit; returned after the held ones when the Checkout ends. */
+  /** Deliveries of the N past the byte limit (at most one window); returned after the held ones when the Checkout ends. */
   readonly overflow: M[] = [];
   /** Deliveries the Checkout must not hold; the caller returns them to the queue at once. */
   readonly late: M[] = [];
   heldBytes = 0;
+  private deliveredBytes = 0;
   private waiting = true;
 
   /** `expected`: how many Messages the Checkout takes (N). */
@@ -82,6 +108,7 @@ export class CheckoutCollection<M> {
       this.late.push(delivery);
       return 'late';
     }
+    this.deliveredBytes += size;
     const fits = this.held.length === 0 || (this.overflow.length === 0 && this.heldBytes + size <= this.maxBytes);
     if (fits) {
       this.held.push(delivery);
@@ -95,6 +122,23 @@ export class CheckoutCollection<M> {
 
   get complete(): boolean {
     return this.held.length + this.overflow.length >= this.expected;
+  }
+
+  /** Holds all N, or the byte limit is reached: ask the broker for no more. */
+  get done(): boolean {
+    return this.complete || this.overflow.length > 0;
+  }
+
+  /** How many more deliveries to ask for (collectionWindow); 0 once done. */
+  nextWindow(): number {
+    if (this.done) return 0;
+    const delivered = this.held.length + this.overflow.length;
+    return collectionWindow({
+      remaining: this.expected - delivered,
+      remainingBytes: this.maxBytes - this.heldBytes,
+      delivered,
+      deliveredBytes: this.deliveredBytes,
+    });
   }
 
   /** Stops waiting (for fewer than N): anything delivered from now on is late. */

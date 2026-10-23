@@ -200,6 +200,51 @@ describe('Checkout', () => {
     });
   });
 
+  describe('large Messages', () => {
+    const MB = 1024 * 1024;
+    let limited: TestApp;
+    afterEach(async () => {
+      await limited?.close();
+    });
+
+    async function seedLargeMessages(queue: string, count: number) {
+      await withChannel('/', async (ch) => {
+        for (let i = 0; i < count; i++) {
+          ch.sendToQueue(queue, Buffer.alloc(MB, i % 256), { messageId: `${queue}-${i}`, persistent: true });
+          await ch.waitForConfirms();
+        }
+      });
+    }
+
+    it.each(queues)(
+      'takes from %s no more than a window of Messages past the byte limit, and returns them all in order',
+      async (queue) => {
+        let collected: { windows: number[]; overflow: number } | undefined;
+        limited = await startApp({
+          profiles: [testProfile({ name: 'local' })],
+          checkoutLimits: { maxBytes: 5 * MB },
+          checkoutTestHooks: { afterCollect: async (_ref, c) => void (collected = c) },
+        });
+        await seedLargeMessages(queue, 50);
+
+        const { checkout } = (await startCheckout(queue, limited)).body;
+
+        expect(checkout).toMatchObject({ readyAtStart: 50, heldCount: 5, heldBytes: 5 * MB, limitedBy: 'bytes' });
+        expect(checkout.messages.map((m: any) => m.messageId)).toEqual([0, 1, 2, 3, 4].map((i) => `${queue}-${i}`));
+        // Past the byte limit, at most the last window was delivered; the rest never left the queue.
+        const lastWindow = collected!.windows.at(-1)!;
+        expect(collected!.overflow).toBeGreaterThan(0);
+        expect(collected!.overflow).toBeLessThanOrEqual(lastWindow);
+        expect(Math.max(...collected!.windows)).toBeLessThanOrEqual(5);
+        expect(await readyCount('/', queue)).toBe(50 - 5 - collected!.overflow);
+
+        await endCheckout(checkout.id, limited);
+        expect(await readyMessageIds('/', queue)).toEqual(Array.from({ length: 50 }, (_, i) => `${queue}-${i}`));
+      },
+      60_000,
+    );
+  });
+
   describe('one Checkout per queue', () => {
     it.each(queues)('refuses a second Checkout of %s in the same instance and names the holder', async (queue) => {
       await seedMessages('/', queue, 1);

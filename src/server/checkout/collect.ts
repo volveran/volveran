@@ -1,23 +1,35 @@
 // Collecting a Checkout's Messages (ADR 0006): consume the N oldest Messages
-// with prefetch N, then cancel the consumer so later arrivals stay in the
-// queue. Deliveries the Checkout must not hold (late ones, see
-// CheckoutCollection) go straight back with basic.nack(requeue), which costs
-// a quorum Message no Delivery Budget. On quorum queues the consumer carries
+// in windows, then cancel the consumer so later arrivals stay in the queue.
+//
+// Each window is a consumer of its own with the window as its prefetch, on
+// the same channel, cancelled once it has delivered: RabbitMQ does not widen
+// a running consumer's prefetch, and a new consumer continues with the next
+// ready Messages in order (docs/rabbitmq-behaviour.md, "Prefetch"). The
+// window comes from the remaining bytes at the average body size so far
+// (collectionWindow), so past the byte limit at most one window of bodies
+// sits in memory as overflow, not the whole N. The windows add up to at most
+// N, so the Checkout never takes more than N.
+//
+// Deliveries the Checkout must not hold (late ones, see CheckoutCollection)
+// go straight back with basic.nack(requeue), which costs a quorum Message no
+// Delivery Budget. On quorum queues each consumer carries
 // `x-consumer-timeout`, the backstop past the Checkout's own time limit;
 // classic queues reject the argument (and never time a consumer out).
 import type * as amqp from 'amqplib';
 import { CheckoutCollection } from '../triage/checkout-collection.js';
 import { CheckoutError } from './errors.js';
 
-/** How long to wait for the N deliveries before settling for fewer (the queue may shrink meanwhile). */
+/** How long to wait for a window's next delivery before settling for fewer (the queue may shrink meanwhile). */
 const COLLECT_TIMEOUT_MS = 5_000;
 
 export interface Collected {
   /** Held deliveries in queue order. */
   held: amqp.ConsumeMessage[];
-  /** Deliveries past the byte limit, in queue order; returned after the held ones. */
+  /** Deliveries past the byte limit, in queue order; returned after the held ones. At most one window. */
   overflow: amqp.ConsumeMessage[];
   heldBytes: number;
+  /** The prefetch of each window, in order. */
+  windows: number[];
 }
 
 export interface CollectOptions {
@@ -36,46 +48,92 @@ export interface CollectOptions {
 
 export async function collect(channel: amqp.Channel, queue: string, options: CollectOptions): Promise<Collected> {
   const collection = new CheckoutCollection<amqp.ConsumeMessage>(options.expected, options.maxBytes);
-  await channel.prefetch(options.expected);
-  let consumerTag: string | undefined;
-  await new Promise<void>((resolve, reject) => {
-    const stopWaiting = () => {
-      clearTimeout(timer);
-      collection.close();
-      resolve();
-    };
-    const timer = setTimeout(stopWaiting, COLLECT_TIMEOUT_MS);
-    channel
-      .consume(
-        queue,
-        (m) => {
-          if (m === null) {
-            clearTimeout(timer);
-            options.onBrokerCancel();
-            return reject(new CheckoutError('checkout_failed', `The broker cancelled the Checkout's consumer on "${queue}".`));
-          }
-          // A late delivery is returned only after the cancel: returned now, it would come straight back.
-          collection.offer(m, m.content.length);
-          if (collection.complete) stopWaiting();
-        },
-        {
-          noAck: false,
-          ...(options.consumerTimeoutMs === undefined
-            ? {}
-            : { arguments: { 'x-consumer-timeout': options.consumerTimeoutMs } }),
-        },
-      )
-      .then((ok) => (consumerTag = ok.consumerTag))
-      .catch((err: Error) => {
-        clearTimeout(timer);
-        reject(new CheckoutError('checkout_failed', `Cannot consume from "${queue}": ${err.message}`));
-      });
-  });
-
-  await options.afterWait?.();
-  if (!options.active()) throw new CheckoutError('checkout_failed', 'The Checkout was lost while collecting its Messages.');
-  if (consumerTag) await channel.cancel(consumerTag);
+  const windows: number[] = [];
+  for (;;) {
+    const window = collection.nextWindow();
+    windows.push(window);
+    const { consumerTag, timedOut } = await consumeWindow(channel, queue, collection, window, options);
+    const last = timedOut || collection.done;
+    // A late delivery is returned only after the cancel: returned now, it would come straight back.
+    if (timedOut) collection.close();
+    if (last) {
+      await options.afterWait?.();
+      if (!options.active()) throw new CheckoutError('checkout_failed', 'The Checkout was lost while collecting its Messages.');
+    }
+    // Deliveries already on their way before the cancel-ok are offered too:
+    // past the byte limit they overflow, within this window.
+    await channel.cancel(consumerTag);
+    if (last) break;
+  }
+  collection.close();
   for (const m of collection.late) channel.nack(m, false, true);
 
-  return { held: collection.held, overflow: collection.overflow, heldBytes: collection.heldBytes };
+  return { held: collection.held, overflow: collection.overflow, heldBytes: collection.heldBytes, windows };
+}
+
+/**
+ * Consumes with prefetch `window` until the window is delivered, the
+ * collection is done, or no delivery came for COLLECT_TIMEOUT_MS. The
+ * consumer stays registered: the caller cancels it.
+ */
+async function consumeWindow(
+  channel: amqp.Channel,
+  queue: string,
+  collection: CheckoutCollection<amqp.ConsumeMessage>,
+  window: number,
+  options: CollectOptions,
+): Promise<{ consumerTag: string; timedOut: boolean }> {
+  await channel.prefetch(window);
+  let delivered = 0;
+  let timedOut = false;
+  let timer: NodeJS.Timeout | undefined;
+  let finish!: () => void;
+  let fail!: (err: Error) => void;
+  const windowDone = new Promise<void>((resolve, reject) => {
+    finish = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    fail = (err) => {
+      clearTimeout(timer);
+      reject(err);
+    };
+  });
+  const wait = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      finish();
+    }, COLLECT_TIMEOUT_MS);
+  };
+  wait();
+  const consuming = channel
+    .consume(
+      queue,
+      (m) => {
+        if (m === null) {
+          options.onBrokerCancel();
+          return fail(new CheckoutError('checkout_failed', `The broker cancelled the Checkout's consumer on "${queue}".`));
+        }
+        collection.offer(m, m.content.length);
+        delivered++;
+        if (delivered >= window || collection.done) finish();
+        else wait();
+      },
+      {
+        noAck: false,
+        ...(options.consumerTimeoutMs === undefined ? {} : { arguments: { 'x-consumer-timeout': options.consumerTimeoutMs } }),
+      },
+    )
+    .catch((err: Error) => {
+      const failure = new CheckoutError('checkout_failed', `Cannot consume from "${queue}": ${err.message}`);
+      fail(failure);
+      throw failure;
+    });
+  await windowDone.catch((err: Error) => {
+    consuming.catch(() => {});
+    throw err;
+  });
+  const { consumerTag } = await consuming;
+  return { consumerTag, timedOut };
 }

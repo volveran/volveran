@@ -1,7 +1,7 @@
 // How many Messages a Checkout takes (the Message limit) and which
 // deliveries it holds, overflows past the byte limit, or returns as late.
 import { describe, expect, it } from 'vitest';
-import { CheckoutCollection, checkoutSize, parseCheckoutLimits } from '../../src/server/triage/checkout-collection.js';
+import { CheckoutCollection, checkoutSize, collectionWindow, parseCheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 
 const MB = 1024 * 1024;
 
@@ -16,6 +16,32 @@ describe('checkoutSize', () => {
 
   it('takes nothing from an empty queue', () => {
     expect(checkoutSize({ ready: 0, maxMessages: 1000 })).toEqual({ take: 0, limitedBy: null });
+  });
+});
+
+describe('collectionWindow', () => {
+  it('asks for one delivery first, before any body size is known', () => {
+    expect(collectionWindow({ remaining: 1000, remainingBytes: 100 * MB, delivered: 0, deliveredBytes: 0 })).toBe(1);
+  });
+
+  it('asks for as many as the remaining bytes fit at the average body size so far', () => {
+    // 4 of ~1 MB delivered, 6 MB left: 6 more.
+    expect(collectionWindow({ remaining: 46, remainingBytes: 6 * MB, delivered: 4, deliveredBytes: 4 * MB })).toBe(4);
+    expect(collectionWindow({ remaining: 46, remainingBytes: 6 * MB, delivered: 8, deliveredBytes: 8 * MB })).toBe(6);
+  });
+
+  it('at most doubles what was delivered, in case the first bodies were unusually small', () => {
+    expect(collectionWindow({ remaining: 999, remainingBytes: 100 * MB, delivered: 1, deliveredBytes: 7 })).toBe(1);
+    expect(collectionWindow({ remaining: 990, remainingBytes: 100 * MB, delivered: 10, deliveredBytes: 70 })).toBe(10);
+  });
+
+  it('never asks for more than the Messages still to take', () => {
+    expect(collectionWindow({ remaining: 3, remainingBytes: 100 * MB, delivered: 10, deliveredBytes: 70 })).toBe(3);
+  });
+
+  it('asks for at least one, which tells whether the next body still fits', () => {
+    expect(collectionWindow({ remaining: 40, remainingBytes: 0, delivered: 10, deliveredBytes: 10 * MB })).toBe(1);
+    expect(collectionWindow({ remaining: 40, remainingBytes: 10, delivered: 2, deliveredBytes: 0 })).toBe(2);
   });
 });
 
@@ -66,6 +92,43 @@ describe('CheckoutCollection', () => {
     expect(c.held).toEqual(['a']);
     expect(c.overflow).toEqual(['b', 'c', 'd']);
     expect(c.offer('e', 1)).toBe('late');
+  });
+
+  it('asks for the next window from what it holds so far, and for nothing once done', () => {
+    const c = new CheckoutCollection<string>(50, 5 * MB);
+    expect(c.nextWindow()).toBe(1);
+    c.offer('m1', MB);
+    expect(c.nextWindow()).toBe(1);
+    c.offer('m2', MB);
+    expect(c.nextWindow()).toBe(2);
+    c.offer('m3', MB);
+    c.offer('m4', MB);
+    // 1 MB left at 1 MB each.
+    expect(c.nextWindow()).toBe(1);
+    c.offer('m5', MB);
+    expect(c.done).toBe(false);
+    expect(c.nextWindow()).toBe(1);
+
+    expect(c.offer('m6', MB)).toBe('overflow');
+
+    expect(c.done).toBe(true);
+    expect(c.nextWindow()).toBe(0);
+  });
+
+  it('keeps deliveries already on their way after the byte limit as overflow, in order', () => {
+    const c = new CheckoutCollection<string>(50, 10);
+    c.offer('a', 8);
+    c.offer('b', 8);
+
+    expect(c.offer('c', 1)).toBe('overflow');
+    expect(c.overflow).toEqual(['b', 'c']);
+  });
+
+  it('is done once it has all N', () => {
+    const c = new CheckoutCollection<string>(1, 10);
+    c.offer('a', 1);
+    expect(c.done).toBe(true);
+    expect(c.nextWindow()).toBe(0);
   });
 
   it('holds a first Message larger than the byte limit', () => {

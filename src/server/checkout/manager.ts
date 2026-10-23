@@ -48,6 +48,8 @@ export interface CheckoutTestHooks {
   afterLock?(ref: QueueRef): Promise<void>;
   /** A start has stopped waiting for deliveries; next it cancels its consumer. */
   afterCollectWait?(ref: QueueRef): Promise<void>;
+  /** A start has collected its Messages: the prefetch of each window, and how many deliveries overflowed the byte limit. */
+  afterCollect?(ref: QueueRef, collected: { windows: number[]; overflow: number }): Promise<void>;
   /** A Checkout reached its time limit; next it ends itself. */
   beforeTimeLimitEnd?(ref: QueueRef): Promise<void>;
   /** An Apply step's `pending` Audit Entry is committed; next the step touches the broker (e.g. the ack of a Discard). */
@@ -125,6 +127,7 @@ export class CheckoutManager {
         onLost: (reason) => this.markLost(checkout, reason),
         afterLock: this.hooks.afterLock,
         afterCollectWait: this.hooks.afterCollectWait,
+        afterCollect: this.hooks.afterCollect,
       });
     } catch (err) {
       this.release(checkout);

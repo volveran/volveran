@@ -47,6 +47,11 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 - Management API counts lag a confirmed publish by roughly 4–9 seconds. The API can also show 0 consumers on a quorum queue that has one.
 - A passive `queue.declare` returns exact counts at once. Its `message_count` counts ready Messages only, not unacknowledged ones.
 
+## Prefetch
+
+- A new prefetch (`basic.qos`, global or not) does not apply to a consumer that already exists, on classic or quorum queues.
+- A new consumer on the same channel, after one holding deliveries was cancelled, gets the next ready Messages in queue order.
+
 ## Order after a return
 
 - Classic queues put a returned Message back in its original position.

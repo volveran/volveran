@@ -2,8 +2,9 @@
 // queue `volveran.checkout.<queue>` on it (exclusive, auto-delete: one
 // Checkout per queue across every Volverán instance, released by the broker
 // when the connection dies), the ready count N from a passive declare, and
-// the N deliveries collected (collect.ts, capped by the Checkout limits) and
-// held unacknowledged in memory, keyed by delivery tag (the Message handle).
+// the N deliveries collected in windows (collect.ts, capped by the Checkout
+// limits) and held unacknowledged in memory, keyed by delivery tag (the
+// Message handle).
 //
 // A closed channel or connection, or a consumer the broker cancels, is
 // reported through `onLost`: the broker has returned everything, at the cost
@@ -37,6 +38,8 @@ export interface OpenHooks {
   afterLock?(ref: QueueRef): Promise<void>;
   /** Test seam: collection stopped waiting; next the consumer is cancelled. */
   afterCollectWait?(ref: QueueRef): Promise<void>;
+  /** Test seam: the Messages are collected (the window sizes, and how many deliveries overflowed). */
+  afterCollect?(ref: QueueRef, collected: { windows: number[]; overflow: number }): Promise<void>;
 }
 
 /**
@@ -112,6 +115,7 @@ export async function openCheckout(checkout: Checkout, options: StartOptions, ho
   checkout.overflow = collected.overflow;
   checkout.heldBytes = collected.heldBytes;
   if (collected.overflow.length > 0) checkout.limitedBy = 'bytes';
+  await hooks.afterCollect?.(checkout, { windows: collected.windows, overflow: collected.overflow.length });
 }
 
 /**
