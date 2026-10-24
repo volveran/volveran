@@ -6,6 +6,7 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 
 - Classic queues no longer time out consumers. `x-consumer-timeout` is rejected on them.
 - Quorum queues send `basic.cancel` when a consumer's timeout passes. The channel stays open, the Messages become ready again, and later acks or nacks of their delivery tags are silently ignored.
+- If the client has already cancelled its own consumer while still holding deliveries, the quorum timeout still fires, but as a channel close (`406 PRECONDITION_FAILED`), not `basic.cancel`. The Messages return in their original order with only `x-acquired-count` increased. Until then, a passive declare still counts the cancelled consumer. Classic queues never time out a cancelled consumer.
 - On quorum queues the timeout can be set by consumer argument, queue argument or policy (`consumer-timeout`). The consumer argument wins.
 - The management API's `/api/consumers` `consumer_timeout` field does not reflect the consumer argument, and is shown for classic consumers too.
 
@@ -45,6 +46,11 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 
 - Management API counts lag a confirmed publish by roughly 4–9 seconds. The API can also show 0 consumers on a quorum queue that has one.
 - A passive `queue.declare` returns exact counts at once. Its `message_count` counts ready Messages only, not unacknowledged ones.
+
+## Prefetch
+
+- A new prefetch (`basic.qos`, global or not) does not apply to a consumer that already exists, on classic or quorum queues.
+- A new consumer on the same channel, after one holding deliveries was cancelled, gets the next ready Messages in queue order.
 
 ## Order after a return
 

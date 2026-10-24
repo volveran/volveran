@@ -1,0 +1,28 @@
+# Volverán in Solo Mode with Docker Compose. Copy this file to
+# docker-compose.yml, write profiles.yaml next to it (see
+# profiles.example.yaml), export the password variables your profiles name,
+# then run `docker compose up`. Open http://127.0.0.1:8080.
+#
+# Solo Mode has no sign-in, so it listens on 127.0.0.1 only and uses the
+# host's network (no `ports:`): see README "Quick start".
+services:
+  volveran:
+    image: ghcr.io/volveran/volveran:0.1.0
+    network_mode: host
+    read_only: true
+    restart: unless-stopped
+    volumes:
+      - ./profiles.yaml:/config/profiles.yaml:ro
+      # The audit store: every Audit Entry and the full copy of every
+      # Discarded Message. Keep it across upgrades and back it up.
+      - volveran-data:/data
+    environment:
+      # Recorded as the Operator on every action. Docker sets no USER inside
+      # the container, so it comes from your shell: VOLVERAN_OPERATOR, else USER.
+      VOLVERAN_OPERATOR: ${VOLVERAN_OPERATOR:-${USER}}
+      # One line per passwordEnv in profiles.yaml; a name without a value is
+      # passed through from your shell.
+      VOLVERAN_DEV_PASSWORD:
+
+volumes:
+  volveran-data:

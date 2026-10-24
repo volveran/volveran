@@ -1,0 +1,43 @@
+# Test broker (and the OIDC provider of the Team Mode tests) for the
+# broker-facts and integration suites. Normally driven by
+# scripts/test-broker.mjs (npm run test:broker, test:integration, broker:up),
+# which sets:
+#   VOLVERAN_TEST_PROJECT    compose project name, one per checkout
+#   VOLVERAN_TEST_AMQP_PORT  host AMQP port        (empty: random free port)
+#   VOLVERAN_TEST_MGMT_PORT  host management port  (empty: random free port)
+#   VOLVERAN_TEST_OIDC_PORT  host port of the mock OIDC provider (empty: random free port)
+#   VOLVERAN_TEST_RABBITMQ_IMAGE  image to test against (default: the pinned tag)
+name: ${VOLVERAN_TEST_PROJECT:-volveran-test}
+
+services:
+  rabbitmq:
+    image: ${VOLVERAN_TEST_RABBITMQ_IMAGE:-rabbitmq:4.4.0-management}
+    ports:
+      - "127.0.0.1:${VOLVERAN_TEST_AMQP_PORT:-}:5672"
+      - "127.0.0.1:${VOLVERAN_TEST_MGMT_PORT:-}:15672"
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/conf.d/90-volveran.conf:ro
+      - ./definitions.json:/etc/rabbitmq/definitions.json:ro
+    # The healthcheck runs as root: if rabbitmq-diagnostics ran before the
+    # server had written its Erlang cookie, it would create the cookie as root
+    # and the server (user rabbitmq) would fail to read it (eacces) and exit.
+    # So it waits for the cookie first.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/rabbitmq/.erlang.cookie && rabbitmq-diagnostics -q check_port_connectivity && rabbitmqctl -q list_queues -p / name | grep -q orders.dlq"]
+      interval: 2s
+      timeout: 10s
+      retries: 60
+      start_period: 5s
+
+  # Mock OIDC provider for the Team Mode tests. Issuer:
+  # http://127.0.0.1:<VOLVERAN_TEST_OIDC_PORT>/default (the issuer follows the
+  # Host header). With interactiveLogin, its authorize endpoint accepts a form
+  # POST of `username` (becomes `sub`) and `claims` (JSON merged into the ID
+  # token), so tests sign in as anyone. The image has no shell, so there is no
+  # healthcheck: scripts/test-broker.mjs waits for its discovery document.
+  oidc:
+    image: ${VOLVERAN_TEST_OIDC_IMAGE:-ghcr.io/navikt/mock-oauth2-server:2.1.10}
+    ports:
+      - "127.0.0.1:${VOLVERAN_TEST_OIDC_PORT:-}:8080"
+    environment:
+      JSON_CONFIG: '{"interactiveLogin":true}'

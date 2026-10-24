@@ -6,3 +6,7 @@ The tool started as a localhost-only tool with no login, but it must also run as
 
 - **Team Mode only**: rejected, running against a dev broker on a laptop should not need an identity provider.
 - **SAML**: rejected for now; JumpCloud, Keycloak, Okta and Entra all speak OIDC, and SAML can be added if someone needs it.
+
+## Consequences
+
+- In Docker, Solo Mode runs with `--network host`: the container's loopback is then the machine's loopback. Listening on `0.0.0.0` behind a published port is Team Mode only, because nothing inside the container can check that the port is published on loopback.

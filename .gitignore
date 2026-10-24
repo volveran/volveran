@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+.data/
+.test-tmp/
+*.sqlite
+*.sqlite-*
+.env
+.claude/
+/profiles.yaml
