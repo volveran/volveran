@@ -88,6 +88,9 @@ describe('Lost Checkout', () => {
     let backstopApp: TestApp;
     /** Holds the app's own time-limit end back, so the broker's backstop fires first. */
     let releaseTimeLimit: () => void = () => {};
+    const timing = { timeLimitMs: 1_000, consumerTimeoutMarginMs: 1_000, heartbeatWindowMs: 60_000 };
+    /** The x-consumer-timeout of the Checkout consumer: time limit + margin. */
+    const backstopMs = timing.timeLimitMs + timing.consumerTimeoutMarginMs;
     beforeAll(async () => {
       queue = uniqueName('lost-checkout');
       // A queue-level timeout of an hour: only the Checkout's own consumer argument can fire within the test.
@@ -96,7 +99,7 @@ describe('Lost Checkout', () => {
       );
       backstopApp = await startApp({
         profiles: [testProfile({ name: 'local' })],
-        checkoutTiming: { timeLimitMs: 1_000, consumerTimeoutMarginMs: 1_000, heartbeatWindowMs: 60_000 },
+        checkoutTiming: timing,
         checkoutTestHooks: {
           beforeTimeLimitEnd: () => new Promise<void>((resolve) => (releaseTimeLimit = resolve)),
         },
@@ -109,8 +112,6 @@ describe('Lost Checkout', () => {
       await withChannel('/', (ch) => ch.deleteQueue(queue));
     });
 
-    /** The x-consumer-timeout of the Checkout consumer: time limit + margin. */
-    const backstopMs = 2_000;
     const nudgePolicyPath = () => `/policies/%2F/${encodeURIComponent(queue)}`;
 
     /**
