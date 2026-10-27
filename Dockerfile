@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 # Volverán: one Node process serving the web app and the JSON API.
-# Runs as the non-root "node" user and writes only to the /data volume (the
-# audit store), so it works with `docker run --read-only`.
+# Runs as the non-root numeric user 1000:1000 (the image's "node" user, numeric
+# so Kubernetes can verify runAsNonRoot) and writes only to the /data volume
+# (the audit store), so it works with `docker run --read-only`. GET /healthz
+# and GET /readyz answer probes without a session.
 #
 # Solo Mode (the default) listens on 127.0.0.1 only and refuses any other
 # address, so run it with the host's network:
@@ -34,9 +36,9 @@ ENV NODE_ENV=production \
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-# Owned by node, so a new named volume mounted here is writable by it.
-RUN mkdir /data && chown node:node /data
+# Owned by 1000:1000 (node), so a new named volume mounted here is writable by it.
+RUN mkdir /data && chown 1000:1000 /data
 VOLUME /data
-USER node
+USER 1000:1000
 EXPOSE 8080
 CMD ["node", "dist/server/main.js"]
