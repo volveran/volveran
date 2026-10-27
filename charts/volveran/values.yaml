@@ -1,0 +1,56 @@
+# Values for the volveran chart. Every value is documented in README.md.
+# The chart always runs Team Mode (OIDC sign-in), one replica, Recreate.
+
+# -- Must be 1. Volverán runs exactly one replica (docs/adr/0003-single-replica-on-kubernetes.md).
+replicaCount: 1
+
+image:
+  repository: ghcr.io/volveran/volveran
+  # -- Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# OIDC sign-in (Team Mode). issuer, clientId, redirectUrl and existingSecret are required.
+oidc:
+  # issuer: https://login.example.com/realms/ops
+  # clientId: volveran
+  # -- The public callback URL the OIDC client registers; its path ends in /auth/callback.
+  # redirectUrl: https://volveran.example.com/auth/callback
+  scopes: openid email profile
+  # -- An existing Secret holding the OIDC client secret and the session secret.
+  # existingSecret: volveran-oidc
+  clientSecretKey: client-secret
+  # -- At least 32 characters; it signs the session cookies.
+  sessionSecretKey: session-secret
+
+brokerProfiles:
+  # -- Broker Profiles, in the same shape as the profiles YAML (see profiles.example.yaml).
+  # Rendered to a chart-managed ConfigMap. At least one is required.
+  profiles: []
+  # -- An existing Secret whose keys become environment variables. Each profile's
+  # passwordEnv names one of its keys.
+  passwordsSecret: ""
+
+# The audit store (Audit Entries and Discarded Message bodies, SQLite).
+persistence:
+  size: 1Gi
+  # -- Empty uses the cluster's default StorageClass.
+  storageClass: ""
+  accessMode: ReadWriteOnce
+
+service:
+  port: 8080
+
+pod:
+  # -- Time for SIGTERM to end every active Checkout before SIGKILL.
+  terminationGracePeriodSeconds: 60
+  # -- Sized for the default Checkout limit (100 MB of held Message bodies).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # -- Volverán never talks to the Kubernetes API.
+  automountServiceAccountToken: false

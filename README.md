@@ -130,13 +130,15 @@ npm run lint           # typecheck server, web app and tests
 npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
 npm run test:integration  # same for test/integration/
+npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
+scripts/validate-chart.sh  # validates the rendered manifests with kubeconform (needs Helm and kubeconform)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it
 ```
 
 `npm run dev` needs a `profiles.yaml` in the checkout (ignored by git) and the password variables it names. Integration tests start the app in-process through `startApp` in `test/integration/harness.ts`, on a random loopback port with a generated profiles file; `testProfile` points a Broker Profile at the checkout's test broker. TLS tests put `startTlsProxy` (certificates in `test/fixtures/tls/`) in front of a broker port.
 
-**Releases.** Pushing a tag `v<version>` that matches `package.json` runs `.github/workflows/release.yml`: lint and unit tests, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations. Before tagging, move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version and bump the version in `package.json`, the README quick start and `docker-compose.example.yml` (a unit test checks they agree).
+**Releases.** Pushing a tag `v<version>` that matches `package.json` runs `.github/workflows/release.yml`: lint and unit tests, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations. Before tagging, move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version and bump the version in `package.json`, `charts/volveran/Chart.yaml` (`version` and `appVersion`; `npm run test:chart` checks them), the README quick start and `docker-compose.example.yml` (a unit test checks they agree).
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
