@@ -21,7 +21,7 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 
 Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
 
-There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. A Helm chart for Kubernetes and Flux CD is planned for v0.2.
+There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. Team Mode also runs on Kubernetes, from a Helm chart or with Flux CD ([Kubernetes guide](docs/kubernetes.md)).
 
 ## Quick start
 
@@ -87,6 +87,23 @@ docker run --rm --read-only -p 8080:8080 \
 
 The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
 
+### Kubernetes
+
+The Helm chart `oci://ghcr.io/volveran/charts/volveran` runs Team Mode as a shared service: one replica, a PersistentVolumeClaim for the audit store, a pod that passes the `restricted` Pod Security Standard, and an optional `HTTPRoute` or `Ingress`. The chart version equals the Volverán version, and the chart is signed with keyless cosign like the image. Create the Secrets it references, write the values (OIDC settings, Broker Profiles, the route), and install:
+
+```sh
+kubectl create namespace volveran
+kubectl -n volveran create secret generic volveran-oidc \
+  --from-literal=client-secret='<OIDC client secret>' \
+  --from-literal=session-secret="$(openssl rand -base64 48)"
+kubectl -n volveran create secret generic volveran-broker-passwords \
+  --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.1.0 \
+  --namespace volveran -f values.yaml
+```
+
+The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposure, secrets, private CAs, upgrades and backups; every value is in the [chart README](charts/volveran/README.md). For GitOps, [`examples/flux/`](examples/flux/) is a Flux CD layout with a cosign-verified `OCIRepository`, a `HelmRelease` and SOPS-encrypted Secrets.
+
 ### Health checks
 
 `GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open) and `503` before. Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
@@ -131,7 +148,7 @@ npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
 npm run test:integration  # same for test/integration/
 npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
-scripts/validate-chart.sh  # validates the rendered manifests with kubeconform (needs Helm and kubeconform)
+scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it
 ```
