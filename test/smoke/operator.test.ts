@@ -68,11 +68,11 @@ describe('Volverán on kind', () => {
   let discardEntryId: number;
 
   it('runs Ready in a namespace that enforces the restricted Pod Security Standard', () => {
-    const labels = JSON.parse(kubectl('get', 'namespace', appNamespace, '-o', 'json')).metadata.labels;
+    const labels = JSON.parse(kubectl(['get', 'namespace', appNamespace, '-o', 'json'])).metadata.labels;
     expect(labels['pod-security.kubernetes.io/enforce']).toBe('restricted');
     expect(readyPod().ready).toBe(true);
     // A pod the admission controller refused leaves FailedCreate events on its ReplicaSet.
-    const refused = JSON.parse(kubectl('-n', appNamespace, 'get', 'events', '--field-selector', 'reason=FailedCreate', '-o', 'json'));
+    const refused = JSON.parse(kubectl(['-n', appNamespace, 'get', 'events', '--field-selector', 'reason=FailedCreate', '-o', 'json']));
     expect(refused.items.map((e: any) => e.message)).toEqual([]);
   });
 
@@ -116,7 +116,7 @@ describe('Volverán on kind', () => {
 
   it('keeps the Audit Entry and the Discarded body when the pod is deleted', async () => {
     const before = readyPod();
-    kubectl('-n', appNamespace, 'delete', 'pod', before.name, '--wait=true');
+    kubectl(['-n', appNamespace, 'delete', 'pod', before.name, '--wait=true']);
     await replacementOf(before);
     await forwardApp();
 
