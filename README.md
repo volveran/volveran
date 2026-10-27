@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: pre-alpha.** The design is written down and checked against RabbitMQ by the broker-facts suite. The v0.1 feature set is in place but not yet released: Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
+> **Status: v0.1.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore. Kubernetes deployment (Helm chart and Flux CD) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
 
 ## Why
 

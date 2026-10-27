@@ -1,10 +1,10 @@
 # Roadmap
 
-Volverán is pre-alpha: the domain model and the key decisions are written down ([`GLOSSARY.md`](GLOSSARY.md), [`docs/adr/`](docs/adr/)), and code comes next. Versions are ordered by priority. Dates are not promised.
+Volverán **v0.1.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.1.0`; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
-## v0.1: Triage core and identity
+## v0.1: Triage core and identity (released in 0.1.0)
 
-**Milestone 0: broker behaviour test suite.** The RabbitMQ 4.4 behaviour the design depends on has been verified by hand ([`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md)) and turned into decisions ([ADR 0005](docs/adr/0005-replay-targets-the-dead-lettering-queue.md), [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). The first code is a test suite in `test/broker-facts/` that checks each of those facts against a real `rabbitmq:4-management`, so a new RabbitMQ release that changes them fails the build.
+**Broker behaviour test suite.** Every RabbitMQ 4.4 behaviour the design depends on ([`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md), [ADR 0005](docs/adr/0005-replay-targets-the-dead-lettering-queue.md), [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)) is checked by a test in `test/broker-facts/` against a real broker. CI runs it on every change against a pinned version, and weekly against the latest `rabbitmq:4-management`, so a RabbitMQ release that changes one of them is caught.
 
 **Triage**
 - Broker Profiles from a YAML file, with passwords from environment variables, amqp/amqps and http/https, and an optional CA file.
@@ -15,7 +15,7 @@ Volverán is pre-alpha: the domain model and the key decisions are written down 
   - One active Checkout per Operator.
   - A time limit (30 minutes by default) and a browser heartbeat. A Checkout the broker cancels becomes a Lost Checkout and cannot be Applied.
 - Message view: JSON pretty-printed, text as-is, everything else as hex and base64. Readable `x-death` history and Delivery Budget, with a warning when a Lost Checkout would cost a Message its last attempt.
-- Filters on routing key, `x-death` reason, original queue, header value and body text. Select all matching.
+- Filters on routing key, `x-death` reason, original queue, header value, body text and JSON path. Select all matching.
 - Decisions:
   - Discard (reason required).
   - Replay (back to the queue the Message was dead-lettered from).
@@ -23,12 +23,13 @@ Volverán is pre-alpha: the domain model and the key decisions are written down 
   - Keep (returns the Message without using up Delivery Budget).
 - One Apply, at-least-once ([ADR 0001](docs/adr/0001-apply-settles-each-message-at-least-once.md)), with a per-Message outcome.
 - Replay, Move and Restore remove `CC`, `BCC` and dead-letter headers and add `x-volveran-replay-id` and `x-volveran-from`. The original headers are kept in the Audit Entry.
-- Set-up check: warn when a quorum dead-letter queue has the default `delivery-limit` and no dead-letter exchange, because the broker drops Messages that pass the limit.
+- Set-up check: warn when a quorum dead-letter queue has a finite `delivery-limit` (including the default of 20) and no dead-letter exchange, because the broker drops Messages that pass the limit.
 
 **Audit and Restore**
 - An Audit Entry for every action, recording the Operator, the broker user, the Broker Profile, the queue, the Message and the outcome. Audit Entries are kept indefinitely.
 - Discarded Message bodies are kept for 30 days or until the store reaches 1 GiB, whichever comes first, oldest evicted first. Both limits are configurable.
 - Restore to the source queue, or to another existing queue.
+- Search Audit Entries by Broker Profile, queue, `message_id`, action, Operator, date and replay id. Every Replay, Move and Restore records the replay id it published with.
 
 **Running**
 - One Docker image with two modes ([ADR 0002](docs/adr/0002-solo-and-team-modes.md)):
@@ -36,6 +37,7 @@ Volverán is pre-alpha: the domain model and the key decisions are written down 
   - Team Mode: sign-in through any OIDC provider (JumpCloud, Keycloak, Okta, Entra…).
 - Broker access uses each Broker Profile's shared credentials ([ADR 0004](docs/adr/0004-shared-broker-credentials-first.md)).
 - Audit store in SQLite on a mounted volume.
+- Release image `ghcr.io/volveran/volveran` for amd64 and arm64, with an SBOM and provenance attestation.
 
 ## v0.2: Deployable on Kubernetes
 
@@ -54,10 +56,9 @@ Volverán is pre-alpha: the domain model and the key decisions are written down 
 - Roles (viewer, operator, admin) mapped from an OIDC groups claim, per Broker Profile.
 - Four-eyes approval for Apply on Protected Profiles.
 - Per-profile option to connect to the broker with the Operator's own OAuth2 token instead of shared credentials. This first needs verifying that `update-secret` really re-checks the token with the OAuth 2.0 backend; the internal backend accepts any password.
-- "Died again" detection: flag a Replayed Message that is dead-lettered again, matched by its replay id.
+- "Died again" detection: flag a Replayed Message that is dead-lettered again, matched by its replay id (already recorded in every Audit Entry since v0.1).
 - NDJSON export of a Checkout.
-- Filters on JSON paths inside the body.
-- Dead-letter set-up checks, for example warning when a quorum dead-letter queue has a finite `delivery-limit`.
+- More dead-letter set-up checks, beyond the delivery-limit check that shipped in v0.1.
 - Keyboard navigation.
 
 ## v0.4: Replay at scale
