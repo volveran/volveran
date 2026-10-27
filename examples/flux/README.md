@@ -7,7 +7,7 @@ A layout to copy into your fleet repository. Flux fetches the signed chart from 
 cluster/volveran.yaml       # Flux Kustomization: applies app/ and decrypts its Secrets
 app/
   kustomization.yaml        # the objects below
-  namespace.yaml            # namespace volveran, enforcing restricted pod security
+  namespace.yaml            # namespace volveran, enforcing restricted pod security, never pruned
   secrets.yaml              # TEMPLATE: OIDC and broker secrets, to fill in and encrypt
   ocirepository.yaml        # the chart, semver 0.2.x, cosign-verified
   helmrelease.yaml          # OIDC, inline Broker Profiles, persistence, HTTPRoute
@@ -60,3 +60,7 @@ app/
 ## Upgrades
 
 `ref.semver: "0.2.x"` installs every 0.2 patch release once it is published and signed. To move to a new minor version, change the range after reading the [changelog](../../CHANGELOG.md). A deploy signs everyone out and ends open Checkouts (their Messages go back to their queues without costing Delivery Budget), so `flux suspend helmrelease volveran -n volveran` holds upgrades back during triage work and `flux resume` releases them.
+
+## Removing it
+
+`cluster/volveran.yaml` has `prune: true`: deleting it, or `app/`, from Git uninstalls Volverán. The namespace carries `kustomize.toolkit.fluxcd.io/prune: disabled`, so Flux leaves it in place, and with it the audit store's claim, which Helm keeps on uninstall. Delete the namespace by hand to delete the audit trail with it.

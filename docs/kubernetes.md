@@ -188,7 +188,7 @@ A change to inline `brokerProfiles.profiles` rolls the pod by itself. A change t
 
 ## Backup and restore of the audit store
 
-The audit store is one SQLite database, `/data/audit.sqlite`, on the chart's PersistentVolumeClaim (`volveran-data` for a release named `volveran`). It holds every Audit Entry and the full copy of every Discarded Message, which Restore republishes. The claim carries `helm.sh/resource-policy: keep`, so `helm uninstall` and a Flux prune leave it in place; delete it by hand to delete the audit trail.
+The audit store is one SQLite database, `/data/audit.sqlite`, on the chart's PersistentVolumeClaim (`volveran-data` for a release named `volveran`). It holds every Audit Entry and the full copy of every Discarded Message, which Restore republishes. The claim carries `helm.sh/resource-policy: keep`, so `helm uninstall`, and Flux uninstalling a pruned `HelmRelease`, leave it in place; delete it by hand to delete the audit trail. The keep policy does not survive deleting the namespace, which deletes every claim in it. The Flux example's namespace carries `kustomize.toolkit.fluxcd.io/prune: disabled`, so removing the example's Flux `Kustomization` (which has `prune: true`) uninstalls Volverán but leaves the namespace and the claim; delete the namespace by hand when you mean to. If you manage the namespace some other way, keep it out of anything that prunes it.
 
 The database runs in WAL mode, so a copy of the file alone, taken while Volverán runs, can miss recent commits. Use one of these:
 
@@ -204,10 +204,10 @@ The database runs in WAL mode, so a copy of the file alone, taken while Volverá
 
   The copy needs as much free space on the volume as the database takes.
 
-To restore, put the copy on a claim and point the release at it:
+To bring a backup back, put the copy on a claim and point the release at it:
 
 1. Stop Volverán: with Flux, `flux suspend helmrelease volveran -n volveran` first, then `kubectl -n volveran scale deployment/volveran --replicas=0`.
-2. Restore the snapshot into a new claim (`dataSource` pointing at the `VolumeSnapshot`), or create an empty claim and copy the file onto it from a pod that mounts it, named `audit.sqlite` and owned by uid 1000. Remove any `audit.sqlite-wal` and `audit.sqlite-shm` left on that volume.
-3. Set `persistence.existingClaim` to the restored claim and upgrade (with Flux: commit it and `flux resume helmrelease volveran -n volveran`). Volverán migrates an older database's schema at startup.
+2. Create a new claim from the snapshot (`dataSource` pointing at the `VolumeSnapshot`), or create an empty claim and copy the file onto it from a pod that mounts it, named `audit.sqlite` and owned by uid 1000. Remove any `audit.sqlite-wal` and `audit.sqlite-shm` left on that volume.
+3. Set `persistence.existingClaim` to the new claim and upgrade (with Flux: commit it and `flux resume helmrelease volveran -n volveran`). Volverán migrates an older database's schema at startup.
 
-A Discarded Message whose body was evicted by retention before the backup stays "body expired" after a restore. Restoring a backup does not undo anything done on the brokers since: Messages Restored or Replayed after the backup was taken are not marked so in the restored Audit Entries.
+A Discarded Message whose body was evicted by retention before the backup stays "body expired" after restoring a backup. Restoring a backup does not undo anything done on the brokers since: Messages Restored or Replayed after the backup was taken are not marked so in the Audit Entries from the backup.
