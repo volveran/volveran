@@ -1,5 +1,5 @@
-// Credentials only ever come from Secrets the user names. The chart references
-// them and never renders a Secret of its own.
+// Credentials only ever come from Secrets the platform engineer names. The
+// chart references them and never renders a Secret of its own.
 import { describe, expect, it } from 'vitest';
 import { container, env, render } from './render.js';
 

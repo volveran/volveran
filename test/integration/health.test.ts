@@ -4,9 +4,21 @@
 // Profiles, queues or Operators.
 import type { ChildProcess } from 'node:child_process';
 import { rm } from 'node:fs/promises';
+import { connect, type Socket } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { product } from '../../src/shared/product.js';
-import { brokerUsers, closedPort, makeTempDir, spawnServer, startApp, testOperator, testProfile, type TestApp } from './harness.js';
+import {
+  brokerUsers,
+  closedPort,
+  makeTempDir,
+  purgeQueues,
+  seedMessages,
+  spawnServer,
+  startApp,
+  testOperator,
+  testProfile,
+  type TestApp,
+} from './harness.js';
 import { teamModeEnv, TestBrowser } from './oidc-provider.js';
 
 const probes = ['/healthz', '/readyz'];
@@ -79,6 +91,67 @@ describe('health endpoints in Solo Mode', () => {
     app = await startApp({ profiles: [testProfile({ name: 'secret-profile' })] });
     const text = await (await fetch(app.baseUrl + path)).text();
     for (const leak of ['secret-profile', 'dlq', testOperator, product.version]) expect(text).not.toContain(leak);
+  });
+});
+
+describe('/readyz during shutdown', () => {
+  const QUEUE = 'orders.dlq';
+  afterEach(async () => {
+    await purgeQueues('/', [QUEUE]);
+  });
+
+  /** Raw HTTP/1.1 on one socket, so a request can be sent on a connection that shutdown has not closed yet. */
+  function rawClient(baseUrl: string) {
+    const url = new URL(baseUrl);
+    const socket: Socket = connect(Number(url.port), url.hostname);
+    let received = '';
+    socket.on('data', (chunk: Buffer) => (received += chunk.toString()));
+    return {
+      send: (request: string) => socket.write(request),
+      received: () => received,
+      destroy: () => socket.destroy(),
+    };
+  }
+
+  it('answers 503 once shutdown has begun', async () => {
+    // A Checkout start that waits at its lock keeps one connection busy, so
+    // shutdown cannot close it while the probe is sent on it.
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => (locked = resolve));
+    let release!: () => void;
+    const app = await startApp({
+      profiles: [testProfile({ name: 'local' })],
+      checkoutTestHooks: {
+        afterLock: () => {
+          locked();
+          return new Promise<void>((resolve) => (release = resolve));
+        },
+      },
+    });
+    await seedMessages('/', QUEUE, 1);
+    const client = rawClient(app.baseUrl);
+    const statuses = () => [...client.received().matchAll(/HTTP\/1\.1 (\d{3}) /g)].map((m) => Number(m[1]));
+    let closing: Promise<void> | undefined;
+    try {
+      client.send(
+        `POST /api/profiles/local/vhosts/%2F/queues/${QUEUE}/checkouts HTTP/1.1\r\n` +
+          'Host: volveran\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}',
+      );
+      await isLocked;
+      closing = app.close();
+      // Shutdown has begun once the server stops accepting connections.
+      await expect
+        .poll(() => fetch(app.baseUrl + '/healthz').then(() => 'accepted', () => 'refused'), { timeout: 5_000 })
+        .toBe('refused');
+      client.send('GET /readyz HTTP/1.1\r\nHost: volveran\r\n\r\n');
+      release();
+
+      await expect.poll(statuses, { timeout: 5_000 }).toEqual([201, 503]);
+    } finally {
+      client.destroy();
+      release?.();
+      await (closing ?? app.close());
+    }
   });
 });
 

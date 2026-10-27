@@ -31,3 +31,10 @@ caBundles:
       configMap: smoke-oidc-ca
   oidcTrust:
     bundle: smoke-oidc
+
+# kindnet (kind v0.24 and later) enforces NetworkPolicy. With no ingressFrom
+# peers the policy admits nothing from the pod network, so the pod becoming
+# ready shows the kubelet probes get through, and the smoke test reaches the
+# app through port-forward, which does not cross the pod network.
+networkPolicy:
+  enabled: true

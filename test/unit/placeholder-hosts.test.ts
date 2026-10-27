@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-/** The files users copy from or read for set-up. */
+/** The files platform engineers and Operators copy from or read for set-up. */
 const scanned = ['README.md', 'GLOSSARY.md', 'profiles.example.yaml', 'docker-compose.example.yml', 'docs', 'charts', 'examples'];
 
 /** Public hosts the docs may name, and any of their subdomains. */

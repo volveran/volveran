@@ -96,9 +96,20 @@ export function run(command, args) {
 }
 
 /**
- * kubectl against the smoke cluster; returns its stdout.
+ * kubectl against the smoke cluster; throws when it fails. By default returns
+ * its stdout (and puts its stderr in the error); with `stdio: 'inherit'` its
+ * output goes to this process's instead and it returns ''. `input` is piped to
+ * its stdin.
  * @param {string[]} args
+ * @param {{ stdio?: 'pipe' | 'inherit', input?: string }} [options]
+ * @returns {string}
  */
-export function kubectl(...args) {
-  return run('kubectl', [...kubectlFlags, ...args]);
+export function kubectl(args, { stdio = 'pipe', input } = {}) {
+  const stdin = input === undefined ? 'ignore' : 'pipe';
+  const output = execFileSync('kubectl', [...kubectlFlags, ...args], {
+    encoding: 'utf8',
+    input,
+    stdio: [stdin, stdio, stdio],
+  });
+  return output ?? '';
 }

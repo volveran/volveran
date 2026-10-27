@@ -126,7 +126,7 @@ spec:
               value: {{ .Values.oidc.redirectUrl | quote }}
             - name: VOLVERAN_OIDC_SCOPES
               value: {{ .Values.oidc.scopes | quote }}
-            # Credentials come only from Secrets the user names.
+            # Credentials come only from Secrets the platform engineer names.
             - name: VOLVERAN_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

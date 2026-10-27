@@ -70,7 +70,7 @@ export interface VolveranPod {
 /** The release's pods that are not being deleted. */
 export function volveranPods(): VolveranPod[] {
   const list = JSON.parse(
-    kubectl('-n', appNamespace, 'get', 'pods', '-l', `app.kubernetes.io/instance=${releaseName}`, '-o', 'json'),
+    kubectl(['-n', appNamespace, 'get', 'pods', '-l', `app.kubernetes.io/instance=${releaseName}`, '-o', 'json']),
   );
   return list.items
     .filter((p: any) => !p.metadata.deletionTimestamp)

@@ -2,7 +2,7 @@
 // read-only root filesystem, no privilege escalation, no capabilities,
 // RuntimeDefault seccomp. Only the audit store and /tmp are writable.
 import { describe, expect, it } from 'vitest';
-import { container, podSpec, render } from './render.js';
+import { container, podSpec, render, volumeAt } from './render.js';
 
 describe('pod security', () => {
   it('runs the pod as the non-root user and group 1000, with fsGroup 1000 so the audit store is writable', () => {
@@ -29,9 +29,8 @@ describe('pod security', () => {
 
   it('mounts a small emptyDir at /tmp', () => {
     const chart = render();
-    const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === '/tmp');
+    const { mount, volume } = volumeAt(chart, '/tmp');
     expect(mount).toBeDefined();
-    const volume = podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
     expect(volume.emptyDir).toEqual({ sizeLimit: '64Mi' });
   });
 

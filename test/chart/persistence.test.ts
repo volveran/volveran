@@ -1,13 +1,10 @@
 // The audit store (SQLite Audit Entries and Discarded Message bodies) lives on
 // a PersistentVolumeClaim that outlives the release.
 import { describe, expect, it } from 'vitest';
-import { container, env, podSpec, render, renderNotes, renderRefusal, type Rendered } from './render.js';
+import { env, render, renderNotes, renderRefusal, volumeAt, type Rendered } from './render.js';
 
 /** The volume mounted at the audit store directory. */
-const dataVolume = (chart: Rendered) => {
-  const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === '/data');
-  return podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
-};
+const dataVolume = (chart: Rendered) => volumeAt(chart, '/data').volume;
 
 describe('persistence with an existing claim', () => {
   it('mounts the existing claim and creates no PersistentVolumeClaim', () => {
@@ -51,9 +48,7 @@ describe('persistence', () => {
   it('mounts a PersistentVolumeClaim at the audit store directory', () => {
     const chart = render();
     expect(env(chart, 'VOLVERAN_DATA_DIR').value).toBe('/data');
-    const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === '/data');
-    const volume = podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
-    expect(volume.persistentVolumeClaim.claimName).toBe(chart.one('PersistentVolumeClaim').metadata.name);
+    expect(dataVolume(chart).persistentVolumeClaim.claimName).toBe(chart.one('PersistentVolumeClaim').metadata.name);
   });
 
   it('keeps the claim when the release is uninstalled', () => {

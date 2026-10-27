@@ -2,7 +2,7 @@
 // mounted where the image reads it, and a change to them rolls the pod.
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { container, env, podSpec, render, type Rendered } from './render.js';
+import { env, render, volumeAt, type Rendered } from './render.js';
 
 const prod = {
   name: 'prod',
@@ -15,8 +15,8 @@ const prod = {
   protected: true,
 };
 
-const checksum = (chart: Rendered) =>
-  chart.one('Deployment').spec.template.metadata.annotations['checksum/broker-profiles'];
+/** The pod template's annotations: Kubernetes rolls the pod when they change. */
+const podAnnotations = (chart: Rendered) => chart.one('Deployment').spec.template.metadata.annotations ?? {};
 
 describe('Broker Profiles', () => {
   it('renders the inline profiles as profiles.yaml, in the same shape as the profiles YAML', () => {
@@ -27,24 +27,21 @@ describe('Broker Profiles', () => {
   it('mounts profiles.yaml read-only where Volverán reads it', () => {
     const chart = render();
     expect(env(chart, 'VOLVERAN_PROFILES_FILE').value).toBe('/config/profiles.yaml');
-    const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === '/config');
+    const { mount, volume } = volumeAt(chart, '/config');
     expect(mount.readOnly).toBe(true);
-    const volume = podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
     expect(volume.configMap.name).toBe(chart.one('ConfigMap').metadata.name);
   });
 
-  it('changes the pod checksum annotation when a profile changes, so the pod rolls', () => {
-    const before = checksum(render());
-    const after = checksum(
+  it('changes the pod template annotations when a profile changes, so the pod rolls', () => {
+    const before = podAnnotations(render());
+    const after = podAnnotations(
       render({ brokerProfiles: { profiles: [{ ...prod, defaultQueueFilter: '*.dead' }] } }),
     );
-    expect(before).toMatch(/^[0-9a-f]{64}$/);
-    expect(after).toMatch(/^[0-9a-f]{64}$/);
-    expect(after).not.toBe(before);
+    expect(after).not.toEqual(before);
   });
 
-  it('keeps the checksum when nothing about the profiles changes', () => {
-    expect(checksum(render({ service: { port: 80 } }))).toBe(checksum(render()));
+  it('keeps the pod template annotations when nothing about the profiles changes', () => {
+    expect(podAnnotations(render({ service: { port: 80 } }))).toEqual(podAnnotations(render()));
   });
 });
 
@@ -54,15 +51,14 @@ describe('Broker Profiles from an existing ConfigMap', () => {
   it('mounts the existing ConfigMap at /config instead of rendering one', () => {
     const chart = render(existing);
     expect(chart.ofKind('ConfigMap')).toEqual([]);
-    const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === '/config');
+    const { mount, volume } = volumeAt(chart, '/config');
     expect(mount.readOnly).toBe(true);
-    const volume = podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
     expect(volume.configMap.name).toBe('team-broker-profiles');
     expect(env(chart, 'VOLVERAN_PROFILES_FILE').value).toBe('/config/profiles.yaml');
   });
 
-  it('puts no profiles checksum on the pod, since the chart cannot see that ConfigMap', () => {
-    const annotations = render(existing).one('Deployment').spec.template.metadata.annotations ?? {};
-    expect(annotations['checksum/broker-profiles']).toBeUndefined();
+  it('puts nothing about that ConfigMap in the pod template annotations, since the chart cannot see its content', () => {
+    const renamed = { brokerProfiles: { profiles: [], existingConfigMap: 'team-broker-profiles-v2' } };
+    expect(podAnnotations(render(renamed))).toEqual(podAnnotations(render(existing)));
   });
 });

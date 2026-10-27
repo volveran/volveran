@@ -1,6 +1,6 @@
-// The optional NetworkPolicy: it admits only the peers the user names, and
-// restricts egress only when the user supplies egress rules, always keeping
-// DNS to the cluster resolver open then.
+// The optional NetworkPolicy: it admits only the peers the platform engineer
+// names, and restricts egress only when the platform engineer supplies egress
+// rules, always keeping DNS to the cluster resolver open then.
 import { describe, expect, it } from 'vitest';
 import { render } from './render.js';
 

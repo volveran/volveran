@@ -68,4 +68,18 @@ describe('Flux example HelmRelease values', () => {
     expect(helmRelease.spec.chartRef).toEqual({ kind: 'OCIRepository', name: 'volveran' });
     for (const secret of secrets) expect(secret.metadata.namespace).toBe(namespace.metadata.name);
   });
+
+  it('keep the Namespace, and the audit claim in it, when Flux prunes the example', () => {
+    // The Flux Kustomization prunes what it applied. Deleting the Namespace
+    // would delete the audit store's claim with it, whatever Helm's keep
+    // policy says, so the Namespace opts out of pruning.
+    const fluxKustomization = parseAllDocuments(
+      readFileSync(path.join(repoRoot, 'examples/flux/cluster/volveran.yaml'), 'utf8'),
+    )[0]!.toJS();
+    expect(fluxKustomization.spec.prune).toBe(true);
+    const namespace = manifests('namespace.yaml')[0];
+    expect(namespace.metadata.annotations?.['kustomize.toolkit.fluxcd.io/prune']).toBe('disabled');
+    const claim = chart().one('PersistentVolumeClaim');
+    expect(claim.metadata.annotations?.['helm.sh/resource-policy']).toBe('keep');
+  });
 });
