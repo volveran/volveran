@@ -30,9 +30,21 @@ Sign-in only works at the host of that URL, so expose Volverán there.
 WARNING: the host of oidc.redirectUrl ({{ $redirectHost }}) is not a route host ({{ join ", " $routeHosts }}).
 Sign-in will fail: set oidc.redirectUrl to https://<route host>/auth/callback, or add its host to the route.
 {{- end }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is off, so the audit store is an emptyDir.
+Audit Entries and Discarded Message bodies are lost on every restart
+(deploy, upgrade, eviction or node drain). Do not run a shared instance
+this way: set persistence.enabled=true.
+{{- else if .Values.persistence.existingClaim }}
+
+Audit store: PersistentVolumeClaim {{ .Values.persistence.existingClaim }} (existing; this release
+does not manage it).
+{{- else }}
 
 Audit store: PersistentVolumeClaim {{ include "volveran.dataClaimName" . }}. It is kept when the
 release is uninstalled; delete it by hand to delete the audit trail.
+{{- end }}
 
 A deploy or pod restart signs every Operator out and ends open Checkouts
 (their Messages return to their queues without costing Delivery Budget).
