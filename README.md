@@ -149,6 +149,7 @@ npm run test:broker    # starts the test broker, runs test/broker-facts/, stops 
 npm run test:integration  # same for test/integration/
 npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
 scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
+npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator (needs kind, kubectl, Helm)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it
 ```
@@ -176,6 +177,8 @@ The test helpers find the running broker of the checkout on their own. Environme
 | `VOLVERAN_TEST_OIDC_PORT` | random free port | host port of the mock OIDC provider |
 | `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
 | `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against |
+
+**kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard. `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).
 
 ## License
 

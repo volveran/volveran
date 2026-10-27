@@ -1,4 +1,5 @@
-# Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform) and
+# Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform), the
+# kind smoke test (pushes and pull requests only) and
 # the broker-facts suite. Pushes and pull requests test
 # against the pinned RabbitMQ image (test/broker/docker-compose.yml). The
 # weekly run tests against the latest rabbitmq:4-management, so a RabbitMQ
@@ -58,6 +59,34 @@ jobs:
         run: npm run test:chart
       - name: kubeconform (Kubernetes and CRD catalog schemas)
         run: scripts/validate-chart.sh
+
+  smoke:
+    name: kind smoke test
+    # The chart, image and server together; the weekly run is only for broker facts.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KIND_VERSION: v0.33.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.20.2
+      - name: Install kind
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfL -o "$RUNNER_TEMP/bin/kind" "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
+          chmod +x "$RUNNER_TEMP/bin/kind"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      # A failed step prints the pods, events and logs (scripts/kind-smoke.mjs).
+      - name: Smoke test
+        run: npm run test:smoke
 
   broker:
     name: Broker facts (${{ github.event_name == 'schedule' && 'rabbitmq:4-management latest' || 'pinned RabbitMQ' }})
