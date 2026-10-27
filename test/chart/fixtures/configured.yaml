@@ -1,0 +1,68 @@
+# A complete install that uses every configuration option of #22: Broker
+# Profiles from an existing ConfigMap, CA bundles with an OIDC trust bundle,
+# named settings and extraEnv, an existing claim, a digest-pinned image from a
+# mirror, and pod scheduling. scripts/validate-chart.sh validates its render.
+oidc:
+  issuer: https://login.internal.example.com/realms/ops
+  clientId: volveran
+  redirectUrl: https://volveran.example.com/auth/callback
+  existingSecret: volveran-oidc
+
+image:
+  repository: registry.example.com/mirror/volveran
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  pullSecrets: [mirror-pull]
+
+brokerProfiles:
+  existingConfigMap: team-broker-profiles
+  passwordsSecret: volveran-broker-passwords
+
+caBundles:
+  bundles:
+    - name: broker-ca
+      configMap: rabbit-internal-ca
+    - name: corporate-ca
+      secret: corporate-root-ca
+  oidcTrust:
+    bundle: corporate-ca
+
+settings:
+  checkoutMaxMessages: 5000
+  checkoutMaxMb: 200
+  checkoutTimeLimitMinutes: 60
+  checkoutHeartbeatSeconds: 300
+  bodyRetentionDays: 90
+  bodyRetentionMaxBytes: 20GiB
+  bodyRetentionIntervalMinutes: 30
+
+extraEnv:
+  - name: HTTPS_PROXY
+    valueFrom:
+      secretKeyRef:
+        name: proxy
+        key: url
+
+persistence:
+  existingClaim: volveran-restored
+
+pod:
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: tools
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values: [a]
+  priorityClassName: ops-tools
+  labels:
+    team: ops
+  annotations:
+    backup.example.com/include: "true"

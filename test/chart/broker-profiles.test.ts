@@ -47,3 +47,22 @@ describe('Broker Profiles', () => {
     expect(checksum(render({ service: { port: 80 } }))).toBe(checksum(render()));
   });
 });
+
+describe('Broker Profiles from an existing ConfigMap', () => {
+  const existing = { brokerProfiles: { profiles: [], existingConfigMap: 'team-broker-profiles' } };
+
+  it('mounts the existing ConfigMap at /config instead of rendering one', () => {
+    const chart = render(existing);
+    expect(chart.ofKind('ConfigMap')).toEqual([]);
+    const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === '/config');
+    expect(mount.readOnly).toBe(true);
+    const volume = podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
+    expect(volume.configMap.name).toBe('team-broker-profiles');
+    expect(env(chart, 'VOLVERAN_PROFILES_FILE').value).toBe('/config/profiles.yaml');
+  });
+
+  it('puts no profiles checksum on the pod, since the chart cannot see that ConfigMap', () => {
+    const annotations = render(existing).one('Deployment').spec.template.metadata.annotations ?? {};
+    expect(annotations['checksum/broker-profiles']).toBeUndefined();
+  });
+});

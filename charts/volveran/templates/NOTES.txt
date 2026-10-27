@@ -9,9 +9,21 @@ Reach it from your machine:
 Register this redirect URL with your OIDC client ({{ .Values.oidc.clientId }}):
   {{ .Values.oidc.redirectUrl }}
 Sign-in only works at the host of that URL, so expose Volverán there.
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is off, so the audit store is an emptyDir.
+Audit Entries and Discarded Message bodies are lost on every restart
+(deploy, upgrade, eviction or node drain). Do not run a shared instance
+this way: set persistence.enabled=true.
+{{- else if .Values.persistence.existingClaim }}
+
+Audit store: PersistentVolumeClaim {{ .Values.persistence.existingClaim }} (existing; this release
+does not manage it).
+{{- else }}
 
 Audit store: PersistentVolumeClaim {{ include "volveran.dataClaimName" . }}. It is kept when the
 release is uninstalled; delete it by hand to delete the audit trail.
+{{- end }}
 
 A deploy or pod restart signs every Operator out and ends open Checkouts
 (their Messages return to their queues without costing Delivery Budget).

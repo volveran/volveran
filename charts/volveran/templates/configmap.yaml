@@ -1,4 +1,9 @@
-{{- /* The Broker Profiles file, rendered from brokerProfiles.profiles and mounted at /config/profiles.yaml. */ -}}
+{{- /*
+The Broker Profiles file, rendered from brokerProfiles.profiles and mounted at
+/config/profiles.yaml. Not rendered when brokerProfiles.existingConfigMap names
+a ConfigMap the user manages.
+*/ -}}
+{{- if not .Values.brokerProfiles.existingConfigMap }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,3 +13,4 @@ metadata:
 data:
   profiles.yaml: |
     {{- include "volveran.profilesYaml" . | nindent 4 }}
+{{- end }}

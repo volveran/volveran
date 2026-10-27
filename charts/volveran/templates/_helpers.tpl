@@ -25,14 +25,18 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
-{{/* The container image reference. */}}
+{{/* The container image reference: by digest when one is set (it overrides the tag), else by tag. */}}
 {{- define "volveran.image" -}}
+{{- if .Values.image.digest -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
+{{- end -}}
 {{- end -}}
 
 {{/* The name of the ConfigMap holding profiles.yaml. */}}
 {{- define "volveran.profilesConfigMapName" -}}
-{{- printf "%s-profiles" (include "volveran.fullname" .) -}}
+{{- .Values.brokerProfiles.existingConfigMap | default (printf "%s-profiles" (include "volveran.fullname" .)) -}}
 {{- end -}}
 
 {{/* The profiles.yaml file rendered from brokerProfiles.profiles. */}}
@@ -42,7 +46,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 
 {{/* The name of the audit store PersistentVolumeClaim. */}}
 {{- define "volveran.dataClaimName" -}}
-{{- printf "%s-data" (include "volveran.fullname" .) -}}
+{{- .Values.persistence.existingClaim | default (printf "%s-data" (include "volveran.fullname" .)) -}}
 {{- end -}}
 
 {{/*
@@ -60,7 +64,103 @@ and carry the explanation a schema error cannot.
 {{- fail (printf "oidc.%s is required: Volverán runs in Team Mode and needs the OIDC issuer, client ID, redirect URL and the Secret holding the client and session secrets" $key) -}}
 {{- end -}}
 {{- end -}}
-{{- if not .Values.brokerProfiles.profiles -}}
-{{- fail "brokerProfiles.profiles must list at least one Broker Profile" -}}
+{{- if and .Values.brokerProfiles.profiles .Values.brokerProfiles.existingConfigMap -}}
+{{- fail "brokerProfiles.profiles and brokerProfiles.existingConfigMap are both set: Volverán reads one profiles.yaml, so give either inline profiles or an existing ConfigMap" -}}
+{{- end -}}
+{{- if not (or .Values.brokerProfiles.profiles .Values.brokerProfiles.existingConfigMap) -}}
+{{- fail "brokerProfiles.profiles or brokerProfiles.existingConfigMap is required: list at least one Broker Profile, or name an existing ConfigMap holding profiles.yaml" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Each named setting and the VOLVERAN_* variable it becomes, as YAML (settings value: variable). */}}
+{{- define "volveran.settingsVariables" -}}
+checkoutMaxMessages: VOLVERAN_CHECKOUT_MAX_MESSAGES
+checkoutMaxMb: VOLVERAN_CHECKOUT_MAX_MB
+checkoutTimeLimitMinutes: VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES
+checkoutHeartbeatSeconds: VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS
+bodyRetentionDays: VOLVERAN_BODY_RETENTION_DAYS
+bodyRetentionMaxBytes: VOLVERAN_BODY_RETENTION_MAX_BYTES
+bodyRetentionIntervalMinutes: VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES
+{{- end -}}
+
+{{/* The env entries for the settings that are set. Numbers are printed whole (Helm reads them as floats). */}}
+{{- define "volveran.settingsEnv" -}}
+{{- $settings := .Values.settings | default dict -}}
+{{- range $key, $name := include "volveran.settingsVariables" . | fromYaml }}
+{{- $value := get $settings $key -}}
+{{- if not (kindIs "invalid" $value) }}
+- name: {{ $name }}
+  value: {{ kindIs "string" $value | ternary $value (printf "%d" (int64 $value)) | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/* Variables the Deployment always sets; extraEnv may not set them. */}}
+{{- define "volveran.fixedVariables" -}}
+{{- list "VOLVERAN_AUTH" "VOLVERAN_HOST" "VOLVERAN_PORT" "VOLVERAN_PROFILES_FILE" "VOLVERAN_DATA_DIR" "VOLVERAN_OIDC_ISSUER" "VOLVERAN_OIDC_CLIENT_ID" "VOLVERAN_OIDC_REDIRECT_URL" "VOLVERAN_OIDC_SCOPES" "VOLVERAN_OIDC_CLIENT_SECRET" "VOLVERAN_SESSION_SECRET" | toJson -}}
+{{- end -}}
+
+{{/* The directory every CA bundle is mounted under, as <dir>/<bundle name>/<key>. */}}
+{{- define "volveran.caBundlesDir" -}}
+/etc/volveran/ca
+{{- end -}}
+
+{{/*
+Refuses values of the optional configuration areas (image, caBundles, settings,
+extraEnv, persistence, pod scheduling). Included next to volveran.validate.
+*/}}
+{{- define "volveran.validateOptions" -}}
+{{- $bundleNames := list -}}
+{{- range .Values.caBundles.bundles -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,58}[a-z0-9])?$" (.name | default "")) -}}
+{{- fail (printf "caBundles.bundles name %q must be lowercase letters, digits and \"-\" (a DNS label of at most 60 characters): it names the mount directory and the volume" (.name | default "")) -}}
+{{- end -}}
+{{- if has .name $bundleNames -}}
+{{- fail (printf "caBundles.bundles names %q twice: each bundle has its own directory under /etc/volveran/ca" .name) -}}
+{{- end -}}
+{{- $bundleNames = append $bundleNames .name -}}
+{{- if eq (empty .configMap) (empty .secret) -}}
+{{- fail (printf "caBundles.bundles %q needs exactly one of configMap or secret: the existing object whose keys are mounted as CA files" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- with .Values.caBundles.oidcTrust.bundle -}}
+{{- if not (has . $bundleNames) -}}
+{{- fail (printf "caBundles.oidcTrust.bundle names %q, which is not in caBundles.bundles: add the bundle there, or leave oidcTrust.bundle empty" .) -}}
+{{- end -}}
+{{- range $.Values.extraEnv -}}
+{{- if eq .name "NODE_EXTRA_CA_CERTS" -}}
+{{- fail "extraEnv sets NODE_EXTRA_CA_CERTS: use caBundles.oidcTrust instead, which points it at a mounted bundle" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $selector := include "volveran.selectorLabels" . | fromYaml -}}
+{{- range $key, $_ := .Values.pod.labels -}}
+{{- if hasKey $selector $key -}}
+{{- fail (printf "pod.labels.%s is set by the chart: it selects the pod for the Deployment and the Service, so it cannot change" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- if hasKey (.Values.pod.annotations | default dict) "checksum/broker-profiles" -}}
+{{- fail "pod.annotations.checksum/broker-profiles is set by the chart: it rolls the pod when the Broker Profiles change" -}}
+{{- end -}}
+{{- $fixed := include "volveran.fixedVariables" . | fromJsonArray -}}
+{{- $settings := include "volveran.settingsVariables" . | fromYaml -}}
+{{- range .Values.extraEnv -}}
+{{- if has .name $fixed -}}
+{{- fail (printf "extraEnv sets %s, which the chart sets itself: Volverán on Kubernetes always runs Team Mode on 0.0.0.0:8080 with the oidc values" .name) -}}
+{{- end -}}
+{{- $entry := . -}}
+{{- range $key, $name := $settings -}}
+{{- if eq $name $entry.name -}}
+{{- fail (printf "extraEnv sets %s: use settings.%s instead" $name $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not .Values.persistence.enabled) .Values.persistence.existingClaim -}}
+{{- fail "persistence.existingClaim is set but persistence.enabled is false: turn persistence on to use the claim, or remove existingClaim" -}}
+{{- end -}}
+{{- with .Values.image.digest -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" .) -}}
+{{- fail (printf "image.digest must look like sha256:<64 lowercase hex digits>, got %q" .) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}

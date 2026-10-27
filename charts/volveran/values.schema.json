@@ -23,12 +23,25 @@
         "tag": {
           "type": "string"
         },
+        "digest": {
+          "description": "Pins the image by digest; overrides tag.",
+          "type": "string",
+          "pattern": "^(sha256:[0-9a-f]{64})?$"
+        },
         "pullPolicy": {
           "enum": [
             "Always",
             "IfNotPresent",
             "Never"
           ]
+        },
+        "pullSecrets": {
+          "description": "Names of existing image pull Secrets.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -80,6 +93,54 @@
         },
         "passwordsSecret": {
           "type": "string"
+        },
+        "existingConfigMap": {
+          "description": "An existing ConfigMap with a profiles.yaml key, used instead of profiles.",
+          "type": "string"
+        }
+      }
+    },
+    "caBundles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundles": {
+          "description": "Existing ConfigMaps or Secrets mounted read-only at /etc/volveran/ca/<name>. Exactly one of configMap or secret, and unique DNS-label names, are checked by templates/_helpers.tpl.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "configMap": {
+                "type": "string",
+                "minLength": 1
+              },
+              "secret": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "oidcTrust": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bundle": {
+              "description": "The name of one of bundles; its key is set as NODE_EXTRA_CA_CERTS.",
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },
@@ -87,6 +148,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "enabled": {
+          "description": "false uses an emptyDir: Audit Entries and Discarded Message bodies are lost on every restart.",
+          "type": "boolean"
+        },
+        "existingClaim": {
+          "description": "An existing PersistentVolumeClaim used instead of a chart-created one.",
+          "type": "string"
+        },
         "size": {
           "type": "string",
           "minLength": 1
@@ -114,6 +183,105 @@
         }
       }
     },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkoutMaxMessages": {
+          "description": "VOLVERAN_CHECKOUT_MAX_MESSAGES; null leaves Volverán's default (1000).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "checkoutMaxMb": {
+          "description": "VOLVERAN_CHECKOUT_MAX_MB; null leaves Volverán's default (100).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "checkoutTimeLimitMinutes": {
+          "description": "VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES; null leaves Volverán's default (30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "checkoutHeartbeatSeconds": {
+          "description": "VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS; null leaves Volverán's default (120).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 10,
+          "maximum": 3600
+        },
+        "bodyRetentionDays": {
+          "description": "VOLVERAN_BODY_RETENTION_DAYS; null leaves Volverán's default (30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 36500
+        },
+        "bodyRetentionMaxBytes": {
+          "description": "VOLVERAN_BODY_RETENTION_MAX_BYTES: bytes, or a whole number with KiB, MiB, GiB or TiB; null leaves Volverán's default (1GiB).",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+ *([KkMmGgTt][Ii][Bb]|[Bb])?$"
+            }
+          ]
+        },
+        "bodyRetentionIntervalMinutes": {
+          "description": "VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES; null leaves Volverán's default (60).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        }
+      }
+    },
+    "extraEnv": {
+      "description": "Extra container environment variables. The chart refuses a variable it sets itself (templates/_helpers.tpl).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "string"
+          },
+          "valueFrom": {
+            "type": "object"
+          }
+        }
+      }
+    },
     "pod": {
       "type": "object",
       "additionalProperties": false,
@@ -127,6 +295,37 @@
         },
         "automountServiceAccountToken": {
           "type": "boolean"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "priorityClassName": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Added to the pod's labels. The selector labels (app.kubernetes.io/name, app.kubernetes.io/instance) are refused."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     }

@@ -8,7 +8,11 @@ image:
   repository: ghcr.io/volveran/volveran
   # -- Defaults to the chart's appVersion.
   tag: ""
+  # -- sha256:<64 hex>. Pins the image by digest and overrides tag.
+  digest: ""
   pullPolicy: IfNotPresent
+  # -- Names of existing Secrets (kubernetes.io/dockerconfigjson) for a private registry.
+  pullSecrets: []
 
 # OIDC sign-in (Team Mode). issuer, clientId, redirectUrl and existingSecret are required.
 oidc:
@@ -25,14 +29,34 @@ oidc:
 
 brokerProfiles:
   # -- Broker Profiles, in the same shape as the profiles YAML (see profiles.example.yaml).
-  # Rendered to a chart-managed ConfigMap. At least one is required.
+  # Rendered to a chart-managed ConfigMap. Required unless existingConfigMap is set.
   profiles: []
+  # -- An existing ConfigMap with a profiles.yaml key, used instead of profiles.
+  # Its caFile paths point under /etc/volveran/ca (see caBundles).
+  existingConfigMap: ""
   # -- An existing Secret whose keys become environment variables. Each profile's
   # passwordEnv names one of its keys.
   passwordsSecret: ""
 
+# Private CAs. Each bundle (an existing ConfigMap or Secret) is mounted read-only
+# at /etc/volveran/ca/<name>/, one file per key. A Broker Profile trusts one with
+# caFile: /etc/volveran/ca/<name>/<key>.
+caBundles:
+  bundles: []
+  #  - name: broker-ca
+  #    configMap: rabbit-internal-ca   # or secret: rabbit-internal-ca
+  # -- The bundle file the OIDC provider's certificate chains to, set as
+  # NODE_EXTRA_CA_CERTS. Empty bundle trusts only the public CAs.
+  oidcTrust:
+    bundle: ""
+    key: ca.crt
+
 # The audit store (Audit Entries and Discarded Message bodies, SQLite).
 persistence:
+  # -- false uses an emptyDir: the audit trail is lost on every restart.
+  enabled: true
+  # -- An existing PersistentVolumeClaim to use instead of a chart-created one.
+  existingClaim: ""
   size: 1Gi
   # -- Empty uses the cluster's default StorageClass.
   storageClass: ""
@@ -40,6 +64,28 @@ persistence:
 
 service:
   port: 8080
+
+# Volverán's own settings, each mapped to its VOLVERAN_* variable. null leaves
+# the variable unset, so Volverán's own default (in the comment) applies.
+settings:
+  # -- VOLVERAN_CHECKOUT_MAX_MESSAGES (1-65535). Default 1000.
+  checkoutMaxMessages: null
+  # -- VOLVERAN_CHECKOUT_MAX_MB (1-1000000). Default 100. Raise pod.resources memory with it.
+  checkoutMaxMb: null
+  # -- VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES (1-1440). Default 30.
+  checkoutTimeLimitMinutes: null
+  # -- VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS (10-3600). Default 120.
+  checkoutHeartbeatSeconds: null
+  # -- VOLVERAN_BODY_RETENTION_DAYS (1-36500). Default 30.
+  bodyRetentionDays: null
+  # -- VOLVERAN_BODY_RETENTION_MAX_BYTES: bytes, or with KiB, MiB, GiB or TiB (e.g. 1GiB). Default 1GiB.
+  bodyRetentionMaxBytes: null
+  # -- VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES (1-1440). Default 60.
+  bodyRetentionIntervalMinutes: null
+
+# -- Extra container environment variables (name with value or valueFrom), for
+# settings the chart does not name yet. Variables the chart sets are refused.
+extraEnv: []
 
 pod:
   # -- Time for SIGTERM to end every active Checkout before SIGKILL.
@@ -54,3 +100,11 @@ pod:
       memory: 512Mi
   # -- Volverán never talks to the Kubernetes API.
   automountServiceAccountToken: false
+  # Scheduling, and extra labels and annotations on the pod.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  # -- Added to the pod's labels; the chart's selector labels cannot be overridden.
+  labels: {}
+  annotations: {}
