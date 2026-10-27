@@ -54,3 +54,21 @@ pod:
       memory: 512Mi
   # -- Volverán never talks to the Kubernetes API.
   automountServiceAccountToken: false
+
+# An optional NetworkPolicy for the Volverán pod. See "Network policy" in README.md.
+networkPolicy:
+  enabled: false
+  # -- NetworkPolicy peers (namespaceSelector, podSelector, ipBlock) admitted to the http port,
+  # for example the Gateway or ingress controller. Empty admits nothing but the pod's node.
+  ingressFrom: []
+  # -- NetworkPolicy egress rules (to, ports), for example the brokers and the OIDC provider.
+  # Empty leaves egress open; any rule restricts egress to these rules plus DNS (dnsTo).
+  egress: []
+  # -- The cluster DNS resolver, allowed on port 53 (UDP and TCP) whenever egress is restricted.
+  dnsTo:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
