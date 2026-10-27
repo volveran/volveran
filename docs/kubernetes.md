@@ -66,7 +66,7 @@ The chart version always equals the Volverán version, and the chart runs the im
 4. Install:
 
    ```sh
-   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.1.0 \
+   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.2.0 \
      --namespace volveran -f values.yaml
    kubectl -n volveran rollout status deployment/volveran
    ```

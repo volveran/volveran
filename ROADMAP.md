@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.1.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.1.0`; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v0.2.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.2.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -39,17 +39,20 @@ Volverán **v0.1.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.
 - Audit store in SQLite on a mounted volume.
 - Release image `ghcr.io/volveran/volveran` for amd64 and arm64, with an SBOM and provenance attestation.
 
-## v0.2: Deployable on Kubernetes
+## v0.2: Deployable on Kubernetes (released in 0.2.0)
 
-- Helm chart published as an OCI artifact on `ghcr.io`, ready for Flux CD (`OCIRepository` + `HelmRelease`).
+- Helm chart published as a signed OCI artifact on `ghcr.io`, ready for Flux CD (`OCIRepository` + `HelmRelease`). The chart version equals the Volverán version.
 - Gateway API `HTTPRoute` and classic `Ingress`, both optional.
 - Secrets referenced by `existingSecret`, so SOPS, Sealed Secrets or External Secrets can manage them.
 - Broker Profiles from a ConfigMap; a PVC for the audit store.
-- Optional NetworkPolicy and Prometheus Operator ServiceMonitor.
-- Runs as non-root with a read-only root filesystem.
+- Optional NetworkPolicy.
+- Runs as a numeric non-root user with a read-only root filesystem, and passes the `restricted` Pod Security Standard.
 - Exactly one replica with the `Recreate` strategy ([ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)).
-- `examples/flux/`: a generic GitOps example (OCIRepository, HelmRelease, SOPS-encrypted Secret, HTTPRoute).
-- Docs: OIDC set-up for Keycloak (including brokered identity providers such as JumpCloud) and for direct providers.
+- `/healthz` and `/readyz` for probes, answering without a session and never depending on a broker.
+- Image and chart signed with keyless cosign by the release workflow.
+- `examples/flux/`: a generic GitOps example (OCIRepository, HelmRelease, SOPS-encrypted Secret, HTTPRoute), and a Kubernetes guide (`docs/kubernetes.md`).
+- A kind-cluster smoke test in CI: the chart installs under restricted pod security, an Operator signs in and Applies a Checkout, and the audit store survives a pod restart.
+- The OIDC set-up docs planned here (Keycloak with a brokered identity provider such as JumpCloud, and direct providers) were delivered in v0.1 ([`docs/team-mode.md`](docs/team-mode.md)).
 
 ## v0.3: Team safety
 
@@ -73,7 +76,7 @@ Volverán **v0.1.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.
 
 - Dead-letter queue depth and rate history.
 - Alerts to Slack, Microsoft Teams and webhooks.
-- Prometheus metrics endpoint.
+- Prometheus metrics endpoint, and a Prometheus Operator ServiceMonitor in the Helm chart.
 - Dead-letter topology map: which queues dead-letter into which.
 
 ## v1.0: Production hardening

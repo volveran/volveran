@@ -6,10 +6,23 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
+Deployable on Kubernetes (see the [roadmap](ROADMAP.md)). The image and its behaviour are unchanged for `docker run` and Compose apart from the health endpoints and the numeric user.
+
 ### Added
 
-- Kubernetes guide (`docs/kubernetes.md`): installing with Helm or Flux CD, values, exposure, secrets, private CAs, upgrades (a deploy signs everyone out and ends open Checkouts) and backup and restore of the audit store. A Flux CD example (`examples/flux/`): a namespace enforcing `restricted` pod security, a cosign-verified `OCIRepository`, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, and SOPS-encrypted Secrets with the reader's own age key. The Team Mode guide gains a Kubernetes section, and the README quick start the Helm install. (#24)
-- Release workflow: a version tag also publishes the Helm chart to `oci://ghcr.io/volveran/charts/volveran`, and signs the chart and the image with keyless cosign using the release workflow's GitHub OIDC identity (verification commands and the Flux `matchOIDCIdentity` in the workflow's header). The release fails before anything is pushed unless the tag, `package.json` and the chart's `version` and `appVersion` agree. A pre-release tag (`v0.2.0-rc.1`) publishes a pre-release chart version. (#23)
+- Helm chart `charts/volveran`, published to `oci://ghcr.io/volveran/charts/volveran` with the chart version equal to the Volverán version. It always runs Team Mode, listening on all interfaces inside the pod: one replica with the `Recreate` strategy (any other `replicaCount` is refused, citing ADR 0003), no service account token, a pod that passes the `restricted` Pod Security Standard (numeric non-root user, read-only root filesystem with an `emptyDir` at `/tmp`, no capabilities, `RuntimeDefault` seccomp), and liveness, readiness and startup probes on `/healthz` and `/readyz`. The OIDC client secret, the session secret and broker passwords come only from existing Secrets (`existingSecret`, `brokerProfiles.passwordsSecret`), never from values. Broker Profiles are written inline (a chart-managed ConfigMap whose changes roll the pod) or read from an existing ConfigMap. The audit store gets a PersistentVolumeClaim kept on uninstall, or an existing claim; `persistence.enabled: false` uses an `emptyDir` and warns in the install notes. Also: private CA bundles for brokers and the OIDC provider (`caBundles`), Volverán's settings as named values and an `extraEnv` escape hatch, image digest pinning and pull secrets, scheduling options, a values schema, install notes with the redirect URL to register, and every value documented in the chart README. Missing OIDC values or Broker Profiles fail at render time with a message naming the value. (#18, #22)
+- Exposure: an optional Gateway API `HTTPRoute` (parent references, host names) and an optional `Ingress` (class, hosts, TLS Secrets, annotations); neither renders by default. (#20)
+- An optional NetworkPolicy admitting only the peers you name to the pod, with optional egress rules that always allow DNS. (#21)
+- Health endpoints: `GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once configuration is loaded, OIDC discovery has succeeded (Team Mode) and the audit store is open, and `503` before startup ends and once shutdown starts. Both answer without a session in either mode, never check a broker, return only `{"status":"ok"}` and are left out of the request log. (#17)
+- Signed artifacts: a version tag publishes the Helm chart next to the image, and the release workflow signs both with keyless cosign using its GitHub OIDC identity (verification commands and the Flux `matchOIDCIdentity` in the workflow's header). The release fails before anything is pushed unless the tag, `package.json` and the chart's `version` and `appVersion` agree. A pre-release tag (`v0.2.0-rc.1`) publishes a pre-release chart version. (#23)
+- Kubernetes guide (`docs/kubernetes.md`): installing with Helm or Flux CD, values, exposure, secrets, private CAs, upgrades (a deploy signs everyone out and ends open Checkouts) and backup and restore of the audit store. A Flux CD example (`examples/flux/`): a namespace enforcing `restricted` pod security, a cosign-verified `OCIRepository` following `0.2.x`, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, and SOPS-encrypted Secrets with the reader's own age key. The Team Mode guide gains a Kubernetes section, and the README quick start the Helm install. (#24)
+- A kind-cluster smoke test in CI (`npm run test:smoke`): the chart installs under restricted pod security, an Operator signs in and Applies a Checkout, the audit store survives a pod restart, and a changed Broker Profile rolls the pod. (#19)
+
+### Changed
+
+- The image runs as the numeric user `1000:1000` (the same `node` user as before), so Kubernetes can verify `runAsNonRoot`. Existing `/data` volumes stay writable. (#17)
 
 ## [0.1.0] - 2026-10-24
 
@@ -40,5 +53,6 @@ First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/volveran/volveran/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/volveran/volveran/releases/tag/v0.2.0
 [0.1.0]: https://github.com/volveran/volveran/releases/tag/v0.1.0
