@@ -1,0 +1,37 @@
+{{- /*
+An optional Gateway API HTTPRoute that attaches the Service to an existing
+Gateway (the chart never renders one). Every path of each host goes to
+Volverán, which must sit at the root of the host: its session cookies are
+scoped to / and /auth, so there is no path prefix value.
+*/ -}}
+{{- if .Values.httpRoute.enabled }}
+{{- if not .Values.httpRoute.parentRefs }}
+{{- fail "httpRoute.parentRefs must name at least one Gateway when httpRoute.enabled is true: the chart attaches to an existing Gateway and never renders one" }}
+{{- end }}
+{{- if not .Values.httpRoute.hostnames }}
+{{- fail "httpRoute.hostnames must list at least one host name when httpRoute.enabled is true: sign-in only works at the host of oidc.redirectUrl" }}
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "volveran.fullname" . }}
+  labels:
+    {{- include "volveran.labels" . | nindent 4 }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "volveran.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

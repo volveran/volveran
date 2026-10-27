@@ -2,13 +2,34 @@
 Volverán {{ .Chart.AppVersion }} is installed in Team Mode (OIDC sign-in), one replica.
 
 Service: {{ $service }} (ClusterIP, port {{ .Values.service.port }})
+{{- /* Exposure: the route hosts, and whether the redirect URL's host is one of them. */}}
+{{- $routeHosts := list }}
+{{- if .Values.httpRoute.enabled }}{{ $routeHosts = concat $routeHosts .Values.httpRoute.hostnames }}{{ end }}
+{{- if .Values.ingress.enabled }}{{ $routeHosts = concat $routeHosts .Values.ingress.hosts }}{{ end }}
+{{- $redirectHost := regexReplaceAll ":[0-9]+$" (urlParse .Values.oidc.redirectUrl).host "" }}
+{{- $matched := false }}
+{{- range $routeHosts }}
+{{- if or (eq . $redirectHost) (and (hasPrefix "*." .) (hasSuffix (trimPrefix "*" .) $redirectHost)) }}{{ $matched = true }}{{ end }}
+{{- end }}
+{{- if $routeHosts }}
 
-Reach it from your machine:
+Open Volverán at https://{{ if $matched }}{{ $redirectHost }}{{ else }}{{ first $routeHosts }}{{ end }}/
+It is served at the root of the host; a route under a path prefix breaks sign-in.
+{{- else }}
+
+No HTTPRoute or Ingress is enabled. Reach it from your machine:
   kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ $service }} 8080:{{ .Values.service.port }}
+or enable httpRoute or ingress to serve it at the host of oidc.redirectUrl.
+{{- end }}
 
 Register this redirect URL with your OIDC client ({{ .Values.oidc.clientId }}):
   {{ .Values.oidc.redirectUrl }}
 Sign-in only works at the host of that URL, so expose Volverán there.
+{{- if and $routeHosts (not $matched) }}
+
+WARNING: the host of oidc.redirectUrl ({{ $redirectHost }}) is not a route host ({{ join ", " $routeHosts }}).
+Sign-in will fail: set oidc.redirectUrl to https://<route host>/auth/callback, or add its host to the route.
+{{- end }}
 
 Audit store: PersistentVolumeClaim {{ include "volveran.dataClaimName" . }}. It is kept when the
 release is uninstalled; delete it by hand to delete the audit trail.

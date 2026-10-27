@@ -41,6 +41,35 @@ persistence:
 service:
   port: 8080
 
+# Exposure. Neither route is rendered by default (port-forward only); both may be
+# enabled at once, for example during a migration. Volverán is served at the root
+# of each host: its session cookies are scoped to / and /auth, so a route cannot
+# mount it under a path prefix. Sign-in works only at the host of oidc.redirectUrl.
+httpRoute:
+  # -- A Gateway API HTTPRoute (gateway.networking.k8s.io/v1) attached to an existing Gateway.
+  enabled: false
+  # -- The Gateway(s) to attach to: name, and optionally namespace, sectionName, port.
+  # - name: edge
+  #   namespace: gateways
+  #   sectionName: https
+  parentRefs: []
+  # -- For example volveran.example.com. At least one is required.
+  hostnames: []
+  annotations: {}
+
+ingress:
+  # -- A networking.k8s.io/v1 Ingress for a classic ingress controller.
+  enabled: false
+  # -- Empty uses the cluster's default IngressClass.
+  className: ""
+  # -- For example volveran.example.com. At least one is required.
+  hosts: []
+  # -- TLS Secrets that already exist (the chart renders no Certificate).
+  # - secretName: volveran-tls
+  #   hosts: [volveran.example.com]
+  tls: []
+  annotations: {}
+
 pod:
   # -- Time for SIGTERM to end every active Checkout before SIGKILL.
   terminationGracePeriodSeconds: 60

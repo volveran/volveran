@@ -1,0 +1,39 @@
+# team.yaml plus both route kinds, so scripts/validate-chart.sh validates the
+# HTTPRoute against the Gateway API schema and the Ingress against Kubernetes'.
+oidc:
+  issuer: https://login.example.com/realms/ops
+  clientId: volveran
+  redirectUrl: https://volveran.example.com/auth/callback
+  existingSecret: volveran-oidc
+
+brokerProfiles:
+  passwordsSecret: volveran-broker-passwords
+  profiles:
+    - name: prod
+      managementUrl: https://rabbit.example.com:15671
+      amqpUrl: amqps://rabbit.example.com:5671
+      username: volveran
+      passwordEnv: VOLVERAN_PROD_PASSWORD
+      vhosts: ["/"]
+      defaultQueueFilter: "*.dlq"
+      protected: true
+
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: edge
+      namespace: gateways
+      sectionName: https
+  hostnames: [volveran.example.com]
+  annotations:
+    example.com/owner: platform
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts: [volveran.example.com]
+  tls:
+    - secretName: volveran-tls
+      hosts: [volveran.example.com]
+  annotations:
+    example.com/owner: platform
