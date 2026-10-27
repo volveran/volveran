@@ -10,3 +10,4 @@ The tool started as a localhost-only tool with no login, but it must also run as
 ## Consequences
 
 - In Docker, Solo Mode runs with `--network host`: the container's loopback is then the machine's loopback. Listening on `0.0.0.0` behind a published port is Team Mode only, because nothing inside the container can check that the port is published on loopback.
+- The Helm chart is Team Mode only: Solo Mode is not a value, because a pod behind a Service is reached off loopback.

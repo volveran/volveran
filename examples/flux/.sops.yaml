@@ -1,0 +1,8 @@
+# SOPS rules for the example: encrypt the values (data, stringData) of any
+# secrets.yaml with your own age public key, leaving the rest readable for
+# review. Replace the placeholder with the output of `age-keygen` (the
+# "Public key: age1..." line), and put this file at the root of your fleet repo.
+creation_rules:
+  - path_regex: secrets\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: <your age public key, age1...>
