@@ -1,7 +1,7 @@
 {{- /*
 The Broker Profiles file, rendered from brokerProfiles.profiles and mounted at
 /config/profiles.yaml. Not rendered when brokerProfiles.existingConfigMap names
-a ConfigMap the user manages.
+a ConfigMap the platform engineer manages.
 */ -}}
 {{- if not .Values.brokerProfiles.existingConfigMap }}
 apiVersion: v1
