@@ -87,6 +87,35 @@ settings:
 # settings the chart does not name yet. Variables the chart sets are refused.
 extraEnv: []
 
+# Exposure. Neither route is rendered by default (port-forward only); both may be
+# enabled at once, for example during a migration. Volverán is served at the root
+# of each host: its session cookies are scoped to / and /auth, so a route cannot
+# mount it under a path prefix. Sign-in works only at the host of oidc.redirectUrl.
+httpRoute:
+  # -- A Gateway API HTTPRoute (gateway.networking.k8s.io/v1) attached to an existing Gateway.
+  enabled: false
+  # -- The Gateway(s) to attach to: name, and optionally namespace, sectionName, port.
+  # - name: edge
+  #   namespace: gateways
+  #   sectionName: https
+  parentRefs: []
+  # -- For example volveran.example.com. At least one is required.
+  hostnames: []
+  annotations: {}
+
+ingress:
+  # -- A networking.k8s.io/v1 Ingress for a classic ingress controller.
+  enabled: false
+  # -- Empty uses the cluster's default IngressClass.
+  className: ""
+  # -- For example volveran.example.com. At least one is required.
+  hosts: []
+  # -- TLS Secrets that already exist (the chart renders no Certificate).
+  # - secretName: volveran-tls
+  #   hosts: [volveran.example.com]
+  tls: []
+  annotations: {}
+
 pod:
   # -- Time for SIGTERM to end every active Checkout before SIGKILL.
   terminationGracePeriodSeconds: 60
@@ -108,3 +137,21 @@ pod:
   # -- Added to the pod's labels; the chart's selector labels cannot be overridden.
   labels: {}
   annotations: {}
+
+# An optional NetworkPolicy for the Volverán pod. See "Network policy" in README.md.
+networkPolicy:
+  enabled: false
+  # -- NetworkPolicy peers (namespaceSelector, podSelector, ipBlock) admitted to the http port,
+  # for example the Gateway or ingress controller. Empty admits nothing but the pod's node.
+  ingressFrom: []
+  # -- NetworkPolicy egress rules (to, ports), for example the brokers and the OIDC provider.
+  # Empty leaves egress open; any rule restricts egress to these rules plus DNS (dnsTo).
+  egress: []
+  # -- The cluster DNS resolver, allowed on port 53 (UDP and TCP) whenever egress is restricted.
+  dnsTo:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns

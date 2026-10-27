@@ -67,6 +67,46 @@ helm install volveran ./charts/volveran --namespace volveran -f values.yaml
 The install notes print the Service name, the `kubectl port-forward` command and the redirect URL to register with the
 OIDC client. Sign-in only works at the host of `oidc.redirectUrl`, and Volverán must be served at the root of that host.
 
+## Exposure
+
+The chart renders no route by default: reach Volverán with `kubectl port-forward` or expose it your own way. It can
+render a Gateway API `HTTPRoute`, a classic `Ingress`, or both at once (for example while migrating from one to the
+other). It never renders a Gateway or a cert-manager Certificate; it only references a Gateway and TLS Secrets that
+already exist.
+
+- **Host-based routing only.** Volverán is served at the root of its host: the session cookie is scoped to `/` and the
+  sign-in cookie to `/auth`, and the web app loads from `/`. A route under a path prefix such as
+  `https://tools.example.com/volveran` breaks sign-in, so the chart has no path value. Give Volverán its own host name.
+- **The redirect URL's host must be a route host.** Set `oidc.redirectUrl` to `https://<route host>/auth/callback` and
+  register that URL with the OIDC client. The install notes print the external URL and the redirect URL, and warn when
+  the redirect URL's host is not one of the route hosts.
+- **TLS terminates at the edge.** The pod serves plain HTTP. An `https` redirect URL makes the session cookies `Secure`
+  regardless of how the request reached the pod, so there is no proxy setting to add.
+
+Gateway API (Envoy Gateway or any other implementation), attached to the `https` listener of an existing Gateway:
+
+```yaml
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: edge
+      namespace: gateways        # a Gateway in another namespace must allow routes from this one
+      sectionName: https
+  hostnames: [volveran.example.com]
+```
+
+A classic ingress controller, with an existing TLS Secret:
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts: [volveran.example.com]
+  tls:
+    - secretName: volveran-tls
+      hosts: [volveran.example.com]
+```
+
 ## Values
 
 Every value with its default. Values without a default are required; the chart refuses to render without them and
@@ -177,6 +217,25 @@ refused at render time.
 |---|---|---|
 | `extraEnv` | `[]` | Extra container environment variables (`name` with `value` or `valueFrom`), for a setting a later Volverán release adds before the chart names it. Quote values YAML reads as booleans or numbers (`"on"`, `"10"`). A variable the chart sets itself (Team Mode, listen address, OIDC, paths) or that a named setting covers is refused. |
 
+### HTTPRoute
+
+| Value | Default | Description |
+|---|---|---|
+| `httpRoute.enabled` | `false` | Render a Gateway API `HTTPRoute` (`gateway.networking.k8s.io/v1`) sending every path of its host names to the Service. |
+| `httpRoute.parentRefs` | `[]` (at least one required when enabled) | Existing Gateways to attach to: `name`, and optionally `namespace`, `sectionName` (a listener), `port`, `group`, `kind`. |
+| `httpRoute.hostnames` | `[]` (at least one required when enabled) | Host names of the route, for example `volveran.example.com`. One must be the host of `oidc.redirectUrl`. |
+| `httpRoute.annotations` | `{}` | Annotations on the `HTTPRoute`. |
+
+### Ingress
+
+| Value | Default | Description |
+|---|---|---|
+| `ingress.enabled` | `false` | Render an `Ingress` (`networking.k8s.io/v1`) sending every path of its hosts to the Service. |
+| `ingress.className` | `""` (cluster default) | IngressClass of the `Ingress`. |
+| `ingress.hosts` | `[]` (at least one required when enabled) | Hosts of the `Ingress`, for example `volveran.example.com`. One must be the host of `oidc.redirectUrl`. |
+| `ingress.tls` | `[]` | TLS entries: `secretName` of an existing TLS Secret and the `hosts` it covers. |
+| `ingress.annotations` | `{}` | Annotations on the `Ingress`, for example controller settings. |
+
 ### Pod
 
 | Value | Default | Description |
@@ -190,3 +249,70 @@ refused at render time.
 | `pod.priorityClassName` | `""` | PriorityClass of the pod. |
 | `pod.labels` | `{}` | Extra labels on the pod. `app.kubernetes.io/name` and `app.kubernetes.io/instance` select the pod and are refused. |
 | `pod.annotations` | `{}` | Extra annotations on the pod. `checksum/broker-profiles` is the chart's own and is refused. |
+
+### Network policy
+
+| Value | Default | Description |
+|---|---|---|
+| `networkPolicy.enabled` | `false` | Renders a NetworkPolicy that selects only the Volverán pod. See [Network policy](#network-policy). |
+| `networkPolicy.ingressFrom` | `[]` | NetworkPolicy peers (`namespaceSelector`, `podSelector`, `ipBlock`) admitted to the http port, for example the Gateway or ingress controller. Empty admits no peer. |
+| `networkPolicy.egress` | `[]` (egress open) | NetworkPolicy egress rules (`to`, `ports`), for example the brokers and the OIDC provider. Any rule restricts egress to these rules plus DNS to `networkPolicy.dnsTo`. |
+| `networkPolicy.dnsTo` | namespace `kube-system`, pods `k8s-app: kube-dns` | The cluster DNS resolver as NetworkPolicy peers. Allowed on port 53, UDP and TCP, whenever egress is restricted. |
+
+## Network policy
+
+With `networkPolicy.enabled`, the chart renders one NetworkPolicy that selects only this release's Volverán pod.
+It needs a CNI that enforces NetworkPolicy, such as Calico or Cilium. Without one, the object is accepted and has no
+effect.
+
+**Ingress.** Only the peers in `networkPolicy.ingressFrom` reach the pod, and only on its http port (8080), so nothing
+else in the cluster reaches the sign-in or the API. Each entry is a standard NetworkPolicy peer. A peer with both
+`namespaceSelector` and `podSelector` matches those pods in those namespaces. Two separate entries match either one. With
+no peers, the policy admits nothing.
+
+**Probes.** No peer is needed for the kubelet probes on `/healthz` and `/readyz`. Kubernetes defines that a pod
+isolated for ingress still accepts connections from its own node, and the kubelet runs its probes from that node.
+Common CNIs, Calico and Cilium among them, follow this rule by default. If your cluster filters node-to-pod traffic,
+for example through host firewall rules or a cluster-wide policy, add the node addresses as an `ipBlock` peer. `kubectl port-forward` enters the pod through the kubelet and
+container runtime rather than the pod network, so it usually keeps working too.
+
+**Egress.** With `networkPolicy.egress` empty, the policy leaves egress alone. Any rule turns egress restriction on,
+and then Volverán can reach only those destinations plus DNS: the chart always adds a rule allowing port 53, UDP and TCP,
+to `networkPolicy.dnsTo`, so name resolution never breaks. The default matches the CoreDNS pods of most distributions
+(`k8s-app: kube-dns` in `kube-system`). Change it if your resolver is labelled differently, or use an `ipBlock` for
+NodeLocal DNSCache. List every broker (management API and AMQP ports) and the OIDC provider. Volverán reads the OIDC
+discovery document at startup, so a missing OIDC rule keeps the pod from becoming ready. NetworkPolicy matches the
+pod IPs behind a Service, not the Service IP, so select in-cluster brokers by pod labels or use their pod CIDR.
+
+Example: admit only the Gateway's proxy pods, and limit egress to one broker and the OIDC provider:
+
+```yaml
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gateway-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy        # the labels of your Gateway's proxy pods
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.20.0.0/24                 # rabbit.example.com
+      ports:
+        - port: 15671                          # management API
+          protocol: TCP
+        - port: 5671                           # AMQPS
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.10/32              # login.example.com
+      ports:
+        - port: 443
+          protocol: TCP
+```
+
+Check which pods carry your Gateway's traffic: for in-cluster proxies (Envoy Gateway, Istio, NGINX Gateway Fabric) it is
+the proxy Deployment. A cloud load balancer that sends traffic straight to pod IPs needs its source ranges as `ipBlock`
+peers instead.

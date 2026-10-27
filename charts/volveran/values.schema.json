@@ -183,6 +183,114 @@
         }
       }
     },
+    "httpRoute": {
+      "description": "An optional Gateway API HTTPRoute to the Service at the root of each host name. Required-ness when enabled is checked in templates/httproute.yaml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "parentRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sectionName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "group": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "hostnames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ingress": {
+      "description": "An optional Ingress to the Service at the root of each host. Required-ness when enabled is checked in templates/ingress.yaml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "secretName"
+            ],
+            "properties": {
+              "secretName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "settings": {
       "type": "object",
       "additionalProperties": false,
@@ -328,6 +436,71 @@
           }
         }
       }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ingressFrom": {
+          "description": "NetworkPolicy peers admitted to the http port.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/networkPolicyPeer"
+          }
+        },
+        "egress": {
+          "description": "NetworkPolicy egress rules. Any rule restricts egress to these rules plus DNS to dnsTo.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/networkPolicyPeer"
+                }
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "port": {
+                      "type": [
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "endPort": {
+                      "type": "integer"
+                    },
+                    "protocol": {
+                      "enum": [
+                        "TCP",
+                        "UDP",
+                        "SCTP"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "dnsTo": {
+          "description": "NetworkPolicy peers of the cluster DNS resolver, allowed on port 53 whenever egress is restricted.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/networkPolicyPeer"
+          }
+        }
+      }
     }
   },
   "definitions": {
@@ -385,6 +558,22 @@
         },
         "protected": {
           "type": "boolean"
+        }
+      }
+    },
+    "networkPolicyPeer": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "namespaceSelector": {
+          "type": "object"
+        },
+        "podSelector": {
+          "type": "object"
+        },
+        "ipBlock": {
+          "type": "object"
         }
       }
     }
