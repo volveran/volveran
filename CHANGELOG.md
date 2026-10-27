@@ -6,7 +6,9 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
-Work towards v0.1 (see the [roadmap](ROADMAP.md)).
+## [0.1.0] - 2026-10-24
+
+First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 
 ### Added
 
@@ -33,4 +35,5 @@ Work towards v0.1 (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/commits/main
+[Unreleased]: https://github.com/volveran/volveran/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/volveran/volveran/releases/tag/v0.1.0
