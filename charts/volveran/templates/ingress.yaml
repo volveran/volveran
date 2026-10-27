@@ -1,0 +1,42 @@
+{{- /*
+An optional Ingress for a classic ingress controller. Each host routes at its
+root to the Service: Volverán's session cookies are scoped to / and /auth, so
+there is no path prefix value. TLS uses Secrets that already exist (the chart
+never renders a cert-manager Certificate).
+*/ -}}
+{{- if .Values.ingress.enabled }}
+{{- if not .Values.ingress.hosts }}
+{{- fail "ingress.hosts must list at least one host when ingress.enabled is true: sign-in only works at the host of oidc.redirectUrl" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "volveran.fullname" . }}
+  labels:
+    {{- include "volveran.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "volveran.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+{{- end }}

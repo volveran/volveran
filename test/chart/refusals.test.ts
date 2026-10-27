@@ -27,10 +27,16 @@ describe.each(withAndWithoutSchema)('refusals $schema', ({ skipSchemaValidation 
     expect(renderRefusal({ oidc: { [key]: '' } }, { skipSchemaValidation })).toContain(`oidc.${key} is required`);
   });
 
-  it('refuses an install without any Broker Profile', () => {
+  it('refuses an install with neither inline Broker Profiles nor an existing ConfigMap', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [] } }, { skipSchemaValidation })).toContain(
-      'brokerProfiles.profiles must list at least one Broker Profile',
+      'brokerProfiles.profiles or brokerProfiles.existingConfigMap is required',
     );
+  });
+
+  it('refuses inline Broker Profiles together with an existing ConfigMap', () => {
+    expect(
+      renderRefusal({ brokerProfiles: { existingConfigMap: 'team-broker-profiles' } }, { skipSchemaValidation }),
+    ).toContain('brokerProfiles.profiles and brokerProfiles.existingConfigMap are both set');
   });
 });
 
