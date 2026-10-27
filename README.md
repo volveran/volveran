@@ -156,7 +156,18 @@ docker build -t volveran .   # the image, as the release workflow builds it
 
 `npm run dev` needs a `profiles.yaml` in the checkout (ignored by git) and the password variables it names. Integration tests start the app in-process through `startApp` in `test/integration/harness.ts`, on a random loopback port with a generated profiles file; `testProfile` points a Broker Profile at the checkout's test broker. TLS tests put `startTlsProxy` (certificates in `test/fixtures/tls/`) in front of a broker port.
 
-**Releases.** Pushing a tag `v<version>` that matches `package.json` and `charts/volveran/Chart.yaml` (checked by `scripts/check-release-version.mjs` before anything is pushed) runs `.github/workflows/release.yml`: lint, unit tests and chart checks, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations, then the chart pushed to `oci://ghcr.io/volveran/charts/volveran`, and both signed with keyless cosign. A pre-release tag (`v0.2.0-rc.1`) gets no `latest` and publishes a pre-release chart version. The workflow's header comment has the `cosign verify` commands and the identity a Flux `OCIRepository` should match. Before tagging, move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version and bump the version in `package.json`, `charts/volveran/Chart.yaml` (`version` and `appVersion`; `npm run test:chart` checks them), the README quick start and `docker-compose.example.yml` (a unit test checks they agree).
+**Releases.** Pushing a tag `v<version>` that matches `package.json` and `charts/volveran/Chart.yaml` (checked by `scripts/check-release-version.mjs` before anything is pushed) runs `.github/workflows/release.yml`: lint, unit tests and chart checks, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations, then the chart pushed to `oci://ghcr.io/volveran/charts/volveran`, and both signed with keyless cosign. A pre-release tag (`v0.2.0-rc.1`) gets no `latest` and publishes a pre-release chart version. The workflow's header comment has the `cosign verify` commands and the identity a Flux `OCIRepository` should match. Before tagging:
+
+1. Move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version, with its compare and tag links at the bottom.
+2. Bump the version in every file that names it. `npm run test:unit` and `npm run test:chart` fail on any that disagree with `package.json`, except the prose marked below.
+   - `package.json` and (not checked) `package-lock.json`: `npm version <version> --no-git-tag-version` updates both.
+   - `src/shared/product.ts` (the version the app reports; the server build compiles only `src/`, so it cannot import `package.json`).
+   - `charts/volveran/Chart.yaml`: `version` and `appVersion`.
+   - `README.md`: the image tags and the `helm install --version` of the quick start, and (not checked) the status line and the example tag in the quick start's introduction.
+   - `docs/team-mode.md` (the image tag) and `docs/kubernetes.md` (`helm install --version`).
+   - `docker-compose.example.yml` (the image tag).
+   - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `0.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
+   - On a release that finishes a roadmap version: `ROADMAP.md` (not checked).
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 

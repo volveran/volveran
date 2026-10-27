@@ -1,7 +1,8 @@
-// The README quick start, the Kubernetes guide, the Flux example and
-// docker-compose.example.yml describe the image and chart the release workflow
-// publishes (.github/workflows/release.yml), so they must name the version in
-// package.json and the paths and defaults in the Dockerfile; the app reports
+// The README quick start, the Team Mode and Kubernetes guides, the Flux
+// example and docker-compose.example.yml describe the image and chart the
+// release workflow publishes (.github/workflows/release.yml), so they must name
+// the version in package.json and the paths and defaults in the Dockerfile;
+// the app reports
 // the same version at startup and the CHANGELOG has an entry for it. Bumping
 // the version without updating them fails here.
 import { readFileSync } from 'node:fs';
@@ -45,8 +46,8 @@ describe('release quick start', () => {
     expect(workflow).toContain(image);
   });
 
-  it('README pulls the version in package.json', () => {
-    const refs = imageRefs(readme);
+  it.each(['README.md', 'docs/team-mode.md'])('%s pulls the version in package.json', (file) => {
+    const refs = imageRefs(read(file));
     expect(refs).toContain(`${image}:${version}`);
     for (const ref of refs) expect([image, `${image}:${version}`, `${image}:latest`]).toContain(ref);
   });
