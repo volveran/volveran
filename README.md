@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: v0.1.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore. Kubernetes deployment (Helm chart and Flux CD) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
+> **Status: v0.2.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. Team safety (roles, four-eyes approval) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
 
 ## Why
 
@@ -25,7 +25,7 @@ There are two modes. **Solo Mode** runs on your laptop with no sign-in and liste
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.1.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.2.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
 
 ### Solo Mode
 
@@ -41,7 +41,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.1.0
+  ghcr.io/volveran/volveran:0.2.0
 ```
 
 4. Open <http://127.0.0.1:8080>.
@@ -71,7 +71,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.1.0
+  ghcr.io/volveran/volveran:0.2.0
 ```
 
 | Variable | Default | Meaning |
@@ -98,7 +98,7 @@ kubectl -n volveran create secret generic volveran-oidc \
   --from-literal=session-secret="$(openssl rand -base64 48)"
 kubectl -n volveran create secret generic volveran-broker-passwords \
   --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.1.0 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.2.0 \
   --namespace volveran -f values.yaml
 ```
 
