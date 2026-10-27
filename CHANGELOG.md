@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Release workflow: a version tag also publishes the Helm chart to `oci://ghcr.io/volveran/charts/volveran`, and signs the chart and the image with keyless cosign using the release workflow's GitHub OIDC identity (verification commands and the Flux `matchOIDCIdentity` in the workflow's header). The release fails before anything is pushed unless the tag, `package.json` and the chart's `version` and `appVersion` agree. A pre-release tag (`v0.2.0-rc.1`) publishes a pre-release chart version. (#23)
+
 ## [0.1.0] - 2026-10-24
 
 First release: triage core and identity (see the [roadmap](ROADMAP.md)).

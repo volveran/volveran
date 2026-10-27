@@ -1,10 +1,52 @@
-# Publishes the Docker image when a version tag is pushed (`git tag v0.1.0`).
-# The tag must match the version in package.json. The image is built for
-# linux/amd64 and linux/arm64 and pushed to ghcr.io/volveran/volveran as
-# `<version>` (e.g. 0.1.0) and, unless the tag is a pre-release (v0.1.0-rc.1),
-# as `latest`. BuildKit attaches an SBOM and SLSA provenance to the image, and
-# a GitHub artifact attestation is pushed next to it; check it with
+# Publishes the Docker image and the Helm chart when a version tag is pushed
+# (`git tag v0.2.0`), and signs both with keyless cosign.
+#
+# Version check: the tag must be `v<version>` for the version in package.json,
+# and the chart's `version` and `appVersion` (charts/volveran/Chart.yaml) must
+# be that same version (scripts/check-release-version.mjs). The check, lint,
+# unit tests and chart checks run before anything is pushed. A pre-release tag
+# (v0.2.0-rc.1) needs package.json and Chart.yaml at 0.2.0-rc.1 too; it
+# publishes a pre-release chart version, which Flux `semver` ranges skip unless
+# they ask for pre-releases (e.g. `>=0.2.0-0`).
+#
+# Image: built for linux/amd64 and linux/arm64 and pushed to
+# ghcr.io/volveran/volveran as `<version>` (e.g. 0.2.0) and, unless the tag is
+# a pre-release, as `latest`. BuildKit attaches an SBOM and SLSA provenance to
+# the image, and a GitHub artifact attestation is pushed next to it; check it with
 #   gh attestation verify oci://ghcr.io/volveran/volveran:<version> --owner volveran
+#
+# Chart: packaged and pushed to oci://ghcr.io/volveran/charts/volveran as
+# `<version>`; fetch it with
+#   helm pull oci://ghcr.io/volveran/charts/volveran --version <version>
+#
+# Signatures: the chart and the image are signed by digest with keyless cosign,
+# using this workflow's GitHub OIDC identity (no keys to manage). The signing
+# certificate's identity is
+#   issuer:  https://token.actions.githubusercontent.com
+#   subject: https://github.com/volveran/volveran/.github/workflows/release.yml@refs/tags/<tag>
+# Verify both with
+#   cosign verify ghcr.io/volveran/charts/volveran:<version> \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate-identity-regexp '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
+#   cosign verify ghcr.io/volveran/volveran:<version> \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     --certificate-identity-regexp '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
+# A Flux OCIRepository matches the same identity (`issuer` and `subject` are
+# regular expressions):
+#   spec:
+#     url: oci://ghcr.io/volveran/charts/volveran
+#     verify:
+#       provider: cosign
+#       matchOIDCIdentity:
+#         - issuer: '^https://token\.actions\.githubusercontent\.com$'
+#           subject: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
+#
+# Signature format: cosign is pinned to v2.6, which stores a signature in the
+# classic `sha256-<digest>.sig` tag next to the artifact. Every Flux release
+# with cosign verification reads that format. cosign v3 (the cosign-installer
+# default) writes Sigstore bundles as OCI referrers instead, which Flux reads
+# only from source-controller v1.8.0 (Flux v2.8.0, February 2026) on. Move to
+# v3 once older Flux releases no longer matter.
 name: Release
 
 on:
@@ -20,10 +62,15 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/volveran/volveran
+  CHART_REPOSITORY: ghcr.io/volveran/charts
+  HELM_VERSION: v3.20.2
+  COSIGN_VERSION: v2.6.5
+  CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+  CERTIFICATE_IDENTITY_REGEXP: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
 
 jobs:
   check:
-    name: Lint and unit tests
+    name: Version check, lint, unit tests and chart checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,18 +78,20 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Tag matches package.json
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          version=$(node -p 'require("./package.json").version')
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::Tag $TAG does not match package.json version $version (expected v$version)"
-            exit 1
-          fi
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
       - run: npm ci
+      - name: Tag matches package.json and Chart.yaml
+        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
       - run: npm run lint
       - run: npm test
+      # Here rather than in the chart job, so a broken chart stops the release
+      # before the image is pushed.
+      - name: helm lint
+        run: helm lint --strict charts/volveran -f test/chart/fixtures/team.yaml
+      - name: Chart rendering suite
+        run: npm run test:chart
 
   image:
     name: Build and push the image
@@ -53,6 +102,8 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -91,3 +142,65 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  chart:
+    name: Push the chart, sign the chart and the image
+    # After the image: the chart's default image tag (its appVersion) must exist.
+    needs: [check, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless cosign signs with this job's GitHub OIDC token.
+      id-token: write
+    env:
+      IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: sigstore/cosign-installer@v4
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+      # cosign uses the Docker credentials, helm its own registry config.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: helm registry login
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin
+      - name: Package and push the chart
+        id: push
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          helm package charts/volveran --destination "$RUNNER_TEMP/chart"
+          # helm push prints `Pushed: <ref>` and `Digest: sha256:...` on stderr.
+          helm push "$RUNNER_TEMP/chart/volveran-$version.tgz" "oci://$CHART_REPOSITORY" 2>&1 | tee "$RUNNER_TEMP/push.log"
+          digest=$(sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p' "$RUNNER_TEMP/push.log")
+          if [ -z "$digest" ]; then
+            echo "::error::No digest in the helm push output"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Sign the chart and the image
+        env:
+          CHART_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "$CHART_REPOSITORY/volveran@$CHART_DIGEST"
+          cosign sign --yes "$IMAGE@$IMAGE_DIGEST"
+      # The check a GitOps maintainer runs (see the header), by tag, so a
+      # signature that does not verify with the documented identity fails the release.
+      - name: Verify both signatures
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for ref in "$CHART_REPOSITORY/volveran:$version" "$IMAGE:$version"; do
+            cosign verify "$ref" \
+              --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-identity-regexp "$CERTIFICATE_IDENTITY_REGEXP" > /dev/null
+            echo "Verified $ref"
+          done
