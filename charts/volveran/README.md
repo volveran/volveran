@@ -185,3 +185,70 @@ names the missing value.
 | `pod.terminationGracePeriodSeconds` | `60` | Time between `SIGTERM` and `SIGKILL`, for Volverán to end every active Checkout. |
 | `pod.resources` | requests `cpu: 100m`, `memory: 256Mi`; limits `cpu: 1`, `memory: 512Mi` | Container resources, sized for the default Checkout limit (100 MB of held Message bodies). Raise the memory limit along with any larger Checkout limit. |
 | `pod.automountServiceAccountToken` | `false` | Volverán never talks to the Kubernetes API, so no token is mounted. |
+
+### Network policy
+
+| Value | Default | Description |
+|---|---|---|
+| `networkPolicy.enabled` | `false` | Renders a NetworkPolicy that selects only the Volverán pod. See [Network policy](#network-policy). |
+| `networkPolicy.ingressFrom` | `[]` | NetworkPolicy peers (`namespaceSelector`, `podSelector`, `ipBlock`) admitted to the http port, for example the Gateway or ingress controller. Empty admits no peer. |
+| `networkPolicy.egress` | `[]` (egress open) | NetworkPolicy egress rules (`to`, `ports`), for example the brokers and the OIDC provider. Any rule restricts egress to these rules plus DNS to `networkPolicy.dnsTo`. |
+| `networkPolicy.dnsTo` | namespace `kube-system`, pods `k8s-app: kube-dns` | The cluster DNS resolver as NetworkPolicy peers. Allowed on port 53, UDP and TCP, whenever egress is restricted. |
+
+## Network policy
+
+With `networkPolicy.enabled`, the chart renders one NetworkPolicy that selects only this release's Volverán pod.
+It needs a CNI that enforces NetworkPolicy, such as Calico or Cilium. Without one, the object is accepted and has no
+effect.
+
+**Ingress.** Only the peers in `networkPolicy.ingressFrom` reach the pod, and only on its http port (8080), so nothing
+else in the cluster reaches the sign-in or the API. Each entry is a standard NetworkPolicy peer. A peer with both
+`namespaceSelector` and `podSelector` matches those pods in those namespaces. Two separate entries match either one. With
+no peers, the policy admits nothing.
+
+**Probes.** No peer is needed for the kubelet probes on `/healthz` and `/readyz`. Kubernetes defines that a pod
+isolated for ingress still accepts connections from its own node, and the kubelet runs its probes from that node.
+Common CNIs, Calico and Cilium among them, follow this rule by default. If your cluster filters node-to-pod traffic,
+for example through host firewall rules or a cluster-wide policy, add the node addresses as an `ipBlock` peer. `kubectl port-forward` enters the pod through the kubelet and
+container runtime rather than the pod network, so it usually keeps working too.
+
+**Egress.** With `networkPolicy.egress` empty, the policy leaves egress alone. Any rule turns egress restriction on,
+and then Volverán can reach only those destinations plus DNS: the chart always adds a rule allowing port 53, UDP and TCP,
+to `networkPolicy.dnsTo`, so name resolution never breaks. The default matches the CoreDNS pods of most distributions
+(`k8s-app: kube-dns` in `kube-system`). Change it if your resolver is labelled differently, or use an `ipBlock` for
+NodeLocal DNSCache. List every broker (management API and AMQP ports) and the OIDC provider. Volverán reads the OIDC
+discovery document at startup, so a missing OIDC rule keeps the pod from becoming ready. NetworkPolicy matches the
+pod IPs behind a Service, not the Service IP, so select in-cluster brokers by pod labels or use their pod CIDR.
+
+Example: admit only the Gateway's proxy pods, and limit egress to one broker and the OIDC provider:
+
+```yaml
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gateway-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy        # the labels of your Gateway's proxy pods
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.20.0.0/24                 # rabbit.example.com
+      ports:
+        - port: 15671                          # management API
+          protocol: TCP
+        - port: 5671                           # AMQPS
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.10/32              # login.example.com
+      ports:
+        - port: 443
+          protocol: TCP
+```
+
+Check which pods carry your Gateway's traffic: for in-cluster proxies (Envoy Gateway, Istio, NGINX Gateway Fabric) it is
+the proxy Deployment. A cloud load balancer that sends traffic straight to pod IPs needs its source ranges as `ipBlock`
+peers instead.
