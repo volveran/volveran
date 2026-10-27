@@ -272,9 +272,21 @@ no peers, the policy admits nothing.
 
 **Probes.** No peer is needed for the kubelet probes on `/healthz` and `/readyz`. Kubernetes defines that a pod
 isolated for ingress still accepts connections from its own node, and the kubelet runs its probes from that node.
-Common CNIs, Calico and Cilium among them, follow this rule by default. If your cluster filters node-to-pod traffic,
-for example through host firewall rules or a cluster-wide policy, add the node addresses as an `ipBlock` peer. `kubectl port-forward` enters the pod through the kubelet and
-container runtime rather than the pod network, so it usually keeps working too.
+Common CNIs, Calico and Cilium among them, follow this rule by default. `kubectl port-forward` enters the pod through
+the kubelet and container runtime rather than the pod network, so it usually keeps working too.
+
+Some clusters filter node-to-pod traffic, and then the probes fail and the pod never becomes ready. Check for this if
+you run:
+
+- **Cilium with host traffic under policy** (`allow-localhost: policy`, or host firewall policies). Cilium identifies
+  the node by its `host` identity, not its address, so an `ipBlock` peer does not admit it. Add a CiliumNetworkPolicy
+  next to the release that selects the Volverán pod and allows `fromEntities: [host]` on TCP port 8080.
+- **Calico with a GlobalNetworkPolicy or host endpoint policy** that denies traffic from nodes: allow the node
+  addresses to port 8080 of the pod there, or add them in `networkPolicy.ingressFrom` as an `ipBlock` peer.
+- **Host firewall rules** (iptables, nftables, a cloud security group on the node): allow the node to reach pods on
+  port 8080.
+
+In each case only TCP port 8080 from the node is needed.
 
 **Egress.** With `networkPolicy.egress` empty, the policy leaves egress alone. Any rule turns egress restriction on,
 and then Volverán can reach only those destinations plus DNS: the chart always adds a rule allowing port 53, UDP and TCP,
