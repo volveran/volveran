@@ -1,0 +1,193 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Values for the volveran chart",
+  "description": "Validated by helm install, upgrade, lint and template. The template guards in templates/_helpers.tpl give the readable refusals (replicaCount, ADR 0003).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "replicaCount": {
+      "description": "Must be 1 (docs/adr/0003-single-replica-on-kubernetes.md). The chart refuses any other value with that explanation.",
+      "type": "integer"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "oidc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "description": "Required. The OIDC issuer URL; https unless on loopback."
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Required."
+        },
+        "redirectUrl": {
+          "type": "string",
+          "description": "Required. The public callback URL; its path ends in /auth/callback."
+        },
+        "scopes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Required. An existing Secret holding the OIDC client secret and the session secret."
+        },
+        "clientSecretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionSecretKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "description": "issuer, clientId, redirectUrl and existingSecret are required. The chart refuses a missing one with a message naming it (templates/_helpers.tpl), which a schema error cannot carry."
+    },
+    "brokerProfiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "description": "Broker Profiles in the same shape as the profiles YAML. Passwords are never written here: passwordEnv names a key of passwordsSecret.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/brokerProfile"
+          }
+        },
+        "passwordsSecret": {
+          "type": "string"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "accessMode": {
+          "enum": [
+            "ReadWriteOnce",
+            "ReadWriteOncePod",
+            "ReadWriteMany"
+          ]
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "pod": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resources": {
+          "type": "object"
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "brokerProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "managementUrl",
+        "amqpUrl",
+        "username",
+        "passwordEnv"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "managementUrl": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "amqpUrl": {
+          "type": "string",
+          "pattern": "^amqps?://"
+        },
+        "caFile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "passwordEnv": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "vhosts": {
+          "oneOf": [
+            {
+              "const": "all"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "defaultQueueFilter": {
+          "type": "string"
+        },
+        "protected": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

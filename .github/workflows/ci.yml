@@ -1,4 +1,5 @@
-# Lint, unit tests and the broker-facts suite. Pushes and pull requests test
+# Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform) and
+# the broker-facts suite. Pushes and pull requests test
 # against the pinned RabbitMQ image (test/broker/docker-compose.yml). The
 # weekly run tests against the latest rabbitmq:4-management, so a RabbitMQ
 # release that changes a fact in docs/rabbitmq-behaviour.md opens an issue.
@@ -29,6 +30,34 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    env:
+      KUBECONFORM_VERSION: v0.8.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.20.2
+      - name: Install kubeconform
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/$KUBECONFORM_VERSION/kubeconform-linux-amd64.tar.gz" |
+            tar -xz -C "$RUNNER_TEMP/bin" kubeconform
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: helm lint
+        run: helm lint --strict charts/volveran -f test/chart/fixtures/team.yaml
+      - name: Chart rendering suite
+        run: npm run test:chart
+      - name: kubeconform (Kubernetes and CRD catalog schemas)
+        run: scripts/validate-chart.sh
 
   broker:
     name: Broker facts (${{ github.event_name == 'schedule' && 'rabbitmq:4-management latest' || 'pinned RabbitMQ' }})

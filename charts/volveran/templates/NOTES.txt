@@ -1,0 +1,17 @@
+{{- $service := include "volveran.fullname" . -}}
+Volverán {{ .Chart.AppVersion }} is installed in Team Mode (OIDC sign-in), one replica.
+
+Service: {{ $service }} (ClusterIP, port {{ .Values.service.port }})
+
+Reach it from your machine:
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ $service }} 8080:{{ .Values.service.port }}
+
+Register this redirect URL with your OIDC client ({{ .Values.oidc.clientId }}):
+  {{ .Values.oidc.redirectUrl }}
+Sign-in only works at the host of that URL, so expose Volverán there.
+
+Audit store: PersistentVolumeClaim {{ include "volveran.dataClaimName" . }}. It is kept when the
+release is uninstalled; delete it by hand to delete the audit trail.
+
+A deploy or pod restart signs every Operator out and ends open Checkouts
+(their Messages return to their queues without costing Delivery Budget).

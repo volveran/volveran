@@ -1,0 +1,10 @@
+{{- /* The Broker Profiles file, rendered from brokerProfiles.profiles and mounted at /config/profiles.yaml. */ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "volveran.profilesConfigMapName" . }}
+  labels:
+    {{- include "volveran.labels" . | nindent 4 }}
+data:
+  profiles.yaml: |
+    {{- include "volveran.profilesYaml" . | nindent 4 }}

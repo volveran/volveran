@@ -1,0 +1,134 @@
+{{- /*
+The single Volverán pod, always in Team Mode. replicas and strategy are fixed:
+one process holds the Checkouts and writes the audit store (ADR 0003).
+*/ -}}
+{{- include "volveran.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "volveran.fullname" . }}
+  labels:
+    {{- include "volveran.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "volveran.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "volveran.selectorLabels" . | nindent 8 }}
+      annotations:
+        # A change to the chart-managed Broker Profiles rolls the pod.
+        checksum/broker-profiles: {{ include "volveran.profilesYaml" . | sha256sum }}
+    spec:
+      automountServiceAccountToken: {{ .Values.pod.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.pod.terminationGracePeriodSeconds }}
+      # Restricted Pod Security Standard. 1000:1000 is the image's numeric user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: volveran
+          image: {{ include "volveran.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Volverán listens only once OIDC discovery has succeeded, so the
+          # startup probe allows 5 minutes (5s x 60) before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # /readyz never checks a broker: one broker outage must not take the UI away.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          env:
+            - name: VOLVERAN_AUTH
+              value: oidc
+            - name: VOLVERAN_HOST
+              value: 0.0.0.0
+            - name: VOLVERAN_PORT
+              value: "8080"
+            - name: VOLVERAN_PROFILES_FILE
+              value: /config/profiles.yaml
+            - name: VOLVERAN_DATA_DIR
+              value: /data
+            - name: VOLVERAN_OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: VOLVERAN_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: VOLVERAN_OIDC_REDIRECT_URL
+              value: {{ .Values.oidc.redirectUrl | quote }}
+            - name: VOLVERAN_OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            # Credentials come only from Secrets the user names.
+            - name: VOLVERAN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: {{ .Values.oidc.clientSecretKey | quote }}
+            - name: VOLVERAN_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: {{ .Values.oidc.sessionSecretKey | quote }}
+          {{- with .Values.brokerProfiles.passwordsSecret }}
+          # Each key becomes a variable named by some profile's passwordEnv.
+          envFrom:
+            - secretRef:
+                name: {{ . | quote }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.pod.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: broker-profiles
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "volveran.dataClaimName" . }}
+        - name: broker-profiles
+          configMap:
+            name: {{ include "volveran.profilesConfigMapName" . }}
+        # The root filesystem is read-only; /tmp is the only scratch space.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
