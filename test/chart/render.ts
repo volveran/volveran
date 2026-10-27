@@ -6,6 +6,7 @@
 //   chart.one('Service').spec.ports
 //   renderRefusal({ replicaCount: 2 })   // Helm's error message
 //   renderNotes()                        // the install notes text (no cluster needed)
+//   volumeAt(chart, '/data').volume      // the pod volume mounted at a path
 //
 // Values are layered: chart defaults, then test/chart/fixtures/<fixture>.yaml
 // (default "team", the smallest working install), then the test's values. To
@@ -122,6 +123,16 @@ export function container(chart: Rendered): any {
   const found = podSpec(chart).containers.find((c: any) => c.name === 'volveran');
   if (!found) throw new Error('no container named volveran');
   return found;
+}
+
+/**
+ * The container's volume mount at a path and the pod volume behind it; both
+ * undefined when nothing is mounted there.
+ */
+export function volumeAt(chart: Rendered, mountPath: string): { mount: any; volume: any } {
+  const mount = container(chart).volumeMounts?.find((m: { mountPath: string }) => m.mountPath === mountPath);
+  const volume = mount && podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
+  return { mount, volume };
 }
 
 /** The container's env entry for a variable, or undefined. */

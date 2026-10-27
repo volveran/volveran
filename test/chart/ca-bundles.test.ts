@@ -3,27 +3,20 @@
 // bundle named as the OIDC trust bundle feeds NODE_EXTRA_CA_CERTS, so the
 // discovery document of an internal OIDC provider can be read.
 import { describe, expect, it } from 'vitest';
-import { container, env, podSpec, render, renderRefusal, type Rendered } from './render.js';
+import { container, env, render, renderRefusal, volumeAt } from './render.js';
 
 const bundles = [
   { name: 'broker-ca', configMap: 'rabbit-internal-ca' },
   { name: 'corporate-ca', secret: 'corporate-root-ca' },
 ];
 
-/** The mount at a path and the pod volume behind it. */
-const mounted = (chart: Rendered, mountPath: string) => {
-  const mount = container(chart).volumeMounts.find((m: { mountPath: string }) => m.mountPath === mountPath);
-  const volume = mount && podSpec(chart).volumes.find((v: { name: string }) => v.name === mount.name);
-  return { mount, volume };
-};
-
 describe('CA bundles', () => {
   it('mounts each ConfigMap or Secret read-only under /etc/volveran/ca/<name>', () => {
     const chart = render({ caBundles: { bundles } });
-    const broker = mounted(chart, '/etc/volveran/ca/broker-ca');
+    const broker = volumeAt(chart, '/etc/volveran/ca/broker-ca');
     expect(broker.mount.readOnly).toBe(true);
     expect(broker.volume.configMap).toEqual({ name: 'rabbit-internal-ca' });
-    const corporate = mounted(chart, '/etc/volveran/ca/corporate-ca');
+    const corporate = volumeAt(chart, '/etc/volveran/ca/corporate-ca');
     expect(corporate.mount.readOnly).toBe(true);
     expect(corporate.volume.secret).toEqual({ secretName: 'corporate-root-ca' });
   });
@@ -39,7 +32,7 @@ describe('CA bundles', () => {
     };
     const chart = render({ caBundles: { bundles }, brokerProfiles: { profiles: [profile] } });
     expect(chart.one('ConfigMap').data!['profiles.yaml']).toContain('caFile: /etc/volveran/ca/broker-ca/ca.crt');
-    expect(mounted(chart, '/etc/volveran/ca/broker-ca').volume).toBeDefined();
+    expect(volumeAt(chart, '/etc/volveran/ca/broker-ca').volume).toBeDefined();
   });
 
   it('sets NODE_EXTRA_CA_CERTS to the named OIDC trust bundle file', () => {
