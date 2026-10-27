@@ -1,6 +1,6 @@
 {
   "name": "volveran",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,8 +18,10 @@
     "lint": "npm run typecheck",
     "test": "npm run test:unit",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:chart": "vitest run --config vitest.chart.config.ts",
     "test:broker": "node scripts/test-broker.mjs run -- vitest run --config vitest.broker-facts.config.ts",
     "test:integration": "node scripts/test-broker.mjs run -- vitest run --config vitest.integration.config.ts",
+    "test:smoke": "node scripts/kind-smoke.mjs",
     "broker:up": "node scripts/test-broker.mjs up",
     "broker:down": "node scripts/test-broker.mjs down"
   },

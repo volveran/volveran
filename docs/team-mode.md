@@ -78,12 +78,39 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_PROD_PASSWORD \
-  ghcr.io/volveran/volveran:0.1.0
+  ghcr.io/volveran/volveran:0.2.0
 ```
 
 Open `https://volveran.example.com`: the browser goes to Keycloak, then JumpCloud, and back. The top bar shows the signed-in Operator and a **Sign out** button.
 
 The Operator's identity is Keycloak's `sub` for that person (Keycloak's user id, created the first time they sign in through JumpCloud), not JumpCloud's. It stays the same across sign-ins as long as the Keycloak user is kept.
+
+## Kubernetes
+
+The [Helm chart](../charts/volveran/README.md) always runs Team Mode, so it takes the settings above as values instead of environment variables: `oidc.issuer`, `oidc.clientId`, `oidc.redirectUrl` and `oidc.scopes`. The [Kubernetes guide](kubernetes.md) covers the whole install.
+
+**The redirect URL and the route host.** The browser reaches Volverán through the `HTTPRoute` or `Ingress`, so the redirect URL is built on the route's host: with `httpRoute.hostnames: [volveran.example.com]` (or `ingress.hosts`), set `oidc.redirectUrl: https://volveran.example.com/auth/callback` and register exactly that URL with the client. This is the most common sign-in mistake:
+
+- The scheme is `https` even though the pod serves plain HTTP: TLS terminates at the Gateway or ingress controller, and the browser only ever sees the public address. The session cookies are `Secure` because the redirect URL is `https`; there is no proxy setting to add.
+- The host is the public route host, not the Service name (`volveran.volveran.svc`) or the pod address.
+- Volverán is served at the root of that host. A route under a path prefix (`https://tools.example.com/volveran`) breaks sign-in.
+
+The install notes print the redirect URL to register, and warn when its host is not one of the route hosts. Without a route, `kubectl port-forward service/volveran 8080:8080` and a redirect URL of `http://localhost:8080/auth/callback` work for trying it out.
+
+**Secrets.** The client secret and the session secret come from an existing Secret named in `oidc.existingSecret`, under the keys `client-secret` and `session-secret` (`oidc.clientSecretKey`, `oidc.sessionSecretKey`). The chart never takes them as values, so SOPS, Sealed Secrets or External Secrets can manage the Secret. The pod reads it at startup: restart the Deployment after rotating either one. A new session secret signs everyone out.
+
+**A private CA for the provider.** An internal Keycloak signed by a private CA needs that CA in the pod, or startup fails with *Could not read the OIDC provider's discovery document*. Mount the CA from a ConfigMap or Secret and name it as the OIDC trust bundle:
+
+```yaml
+caBundles:
+  bundles:
+    - name: corporate-ca
+      secret: corporate-root-ca      # key ca.crt
+  oidcTrust:
+    bundle: corporate-ca             # NODE_EXTRA_CA_CERTS=/etc/volveran/ca/corporate-ca/ca.crt
+```
+
+Node.js adds it to the public CAs, so public providers keep working. The pod must also reach the provider over the network: with `networkPolicy.egress` rules, include one for the provider, or the pod never becomes ready.
 
 ## Troubleshooting
 
@@ -94,3 +121,4 @@ The Operator's identity is Keycloak's `sub` for that person (Keycloak's user id,
 | *Sign-in failed: this browser has no sign-in in progress* | Sign-in took more than 10 minutes, the browser blocks cookies, or Volverán was restarted while the person was at the provider. Sign in again. |
 | *Sign-in failed: unexpected ID Token "iss"* | The issuer in the token differs from `VOLVERAN_OIDC_ISSUER` (for example a trailing slash, or a different public host name for Keycloak; set Keycloak's hostname). |
 | Everyone is signed out after a deploy | Sessions live in the Volverán process; a restart ends them. |
+| On Kubernetes, the provider shows *invalid redirect_uri* | `oidc.redirectUrl` is not `https://<route host>/auth/callback` as registered with the client. See [Kubernetes](#kubernetes). |

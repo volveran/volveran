@@ -1,7 +1,10 @@
-// The README quick start and docker-compose.example.yml describe the image the
-// release workflow publishes (.github/workflows/release.yml), so they must
-// name the version in package.json and the paths and defaults in the
-// Dockerfile. Bumping the version without updating them fails here.
+// The README quick start, the Team Mode and Kubernetes guides, the Flux
+// example and docker-compose.example.yml describe the image and chart the
+// release workflow publishes (.github/workflows/release.yml), so they must name
+// the version in package.json and the paths and defaults in the Dockerfile;
+// the app reports
+// the same version at startup and the CHANGELOG has an entry for it. Bumping
+// the version without updating them fails here.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,10 +46,35 @@ describe('release quick start', () => {
     expect(workflow).toContain(image);
   });
 
-  it('README pulls the version in package.json', () => {
-    const refs = imageRefs(readme);
+  it.each(['README.md', 'docs/team-mode.md'])('%s pulls the version in package.json', (file) => {
+    const refs = imageRefs(read(file));
     expect(refs).toContain(`${image}:${version}`);
     for (const ref of refs) expect([image, `${image}:${version}`, `${image}:latest`]).toContain(ref);
+  });
+
+  it('README and the Kubernetes guide install the chart version in package.json', () => {
+    for (const text of [readme, read('docs/kubernetes.md')]) {
+      const installs = [...text.matchAll(/oci:\/\/ghcr\.io\/volveran\/charts\/volveran[^\n]*?--version (\d\S*)/g)];
+      expect(installs.length).toBeGreaterThan(0);
+      for (const install of installs) expect(install[1]).toBe(version);
+    }
+  });
+
+  it('the app reports the version in package.json', () => {
+    expect(read('src/shared/product.ts')).toContain(`version: '${version}'`);
+  });
+
+  it('the CHANGELOG has an entry for the version in package.json', () => {
+    const changelog = read('CHANGELOG.md');
+    expect(changelog).toMatch(new RegExp(`^## \\[${version.replaceAll('.', '\\.')}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm'));
+    expect(changelog).toContain(`[${version}]: https://github.com/volveran/volveran/releases/tag/v${version}`);
+    expect(changelog).toContain(`[Unreleased]: https://github.com/volveran/volveran/compare/v${version}...HEAD`);
+  });
+
+  it("the Flux example follows the patch releases of the version in package.json", () => {
+    const source = parse(read('examples/flux/app/ocirepository.yaml')) as { spec: { ref: { semver: string } } };
+    const [major, minor] = version.split('.');
+    expect(source.spec.ref.semver).toBe(`${major}.${minor}.x`);
   });
 
   it('the compose example runs the version in package.json', () => {

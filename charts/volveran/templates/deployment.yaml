@@ -1,0 +1,198 @@
+{{- /*
+The single Volverán pod, always in Team Mode. replicas and strategy are fixed:
+one process holds the Checkouts and writes the audit store (ADR 0003).
+*/ -}}
+{{- include "volveran.validate" . }}
+{{- include "volveran.validateOptions" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "volveran.fullname" . }}
+  labels:
+    {{- include "volveran.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "volveran.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "volveran.selectorLabels" . | nindent 8 }}
+        {{- with .Values.pod.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if or (not .Values.brokerProfiles.existingConfigMap) .Values.pod.annotations }}
+      annotations:
+        {{- if not .Values.brokerProfiles.existingConfigMap }}
+        # A change to the chart-managed Broker Profiles rolls the pod.
+        checksum/broker-profiles: {{ include "volveran.profilesYaml" . | sha256sum }}
+        {{- end }}
+        {{- with .Values.pod.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.pod.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.pod.terminationGracePeriodSeconds }}
+      {{- with .Values.pod.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.pod.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pod.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pod.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Restricted Pod Security Standard. 1000:1000 is the image's numeric user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: volveran
+          image: {{ include "volveran.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Volverán listens only once OIDC discovery has succeeded, so the
+          # startup probe allows 5 minutes (5s x 60) before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # /readyz never checks a broker: one broker outage must not take the UI away.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          env:
+            - name: VOLVERAN_AUTH
+              value: oidc
+            - name: VOLVERAN_HOST
+              value: 0.0.0.0
+            - name: VOLVERAN_PORT
+              value: "8080"
+            - name: VOLVERAN_PROFILES_FILE
+              value: /config/profiles.yaml
+            - name: VOLVERAN_DATA_DIR
+              value: /data
+            - name: VOLVERAN_OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: VOLVERAN_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: VOLVERAN_OIDC_REDIRECT_URL
+              value: {{ .Values.oidc.redirectUrl | quote }}
+            - name: VOLVERAN_OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            # Credentials come only from Secrets the platform engineer names.
+            - name: VOLVERAN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: {{ .Values.oidc.clientSecretKey | quote }}
+            - name: VOLVERAN_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: {{ .Values.oidc.sessionSecretKey | quote }}
+            {{- with include "volveran.settingsEnv" . | trim }}
+            {{- . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.caBundles.oidcTrust.bundle }}
+            # Node.js adds this file to its trusted CAs, so OIDC discovery and the
+            # token exchange can reach an issuer signed by a private CA.
+            - name: NODE_EXTRA_CA_CERTS
+              value: {{ printf "%s/%s/%s" (include "volveran.caBundlesDir" $) . $.Values.caBundles.oidcTrust.key | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.brokerProfiles.passwordsSecret }}
+          # Each key becomes a variable named by some profile's passwordEnv.
+          envFrom:
+            - secretRef:
+                name: {{ . | quote }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.pod.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: broker-profiles
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+            {{- range .Values.caBundles.bundles }}
+            - name: ca-{{ .name }}
+              mountPath: {{ printf "%s/%s" (include "volveran.caBundlesDir" $) .name }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "volveran.dataClaimName" . }}
+          {{- else }}
+          # persistence.enabled is false: the audit store is lost on every restart.
+          emptyDir: {}
+          {{- end }}
+        - name: broker-profiles
+          configMap:
+            name: {{ include "volveran.profilesConfigMapName" . }}
+        {{- range .Values.caBundles.bundles }}
+        - name: ca-{{ .name }}
+          {{- if .configMap }}
+          configMap:
+            name: {{ .configMap | quote }}
+          {{- else }}
+          secret:
+            secretName: {{ .secret | quote }}
+          {{- end }}
+        {{- end }}
+        # The root filesystem is read-only; /tmp is the only scratch space.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

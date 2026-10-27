@@ -1,0 +1,11 @@
+# The changed Broker Profile of the smoke test's `helm upgrade`: only the
+# default queue filter differs from values.yaml, which must still roll the pod.
+brokerProfiles:
+  profiles:
+    - name: smoke
+      managementUrl: http://rabbitmq.volveran-smoke-deps.svc.cluster.local:15672
+      amqpUrl: amqp://rabbitmq.volveran-smoke-deps.svc.cluster.local:5672
+      username: volveran-admin
+      passwordEnv: VOLVERAN_SMOKE_PASSWORD
+      vhosts: ["/"]
+      defaultQueueFilter: "orders.*"

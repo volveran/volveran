@@ -1,0 +1,24 @@
+# Where Flux fetches the chart: the OCI artifact the release workflow pushes to
+# ghcr.io. Flux only accepts an artifact signed with keyless cosign by
+# Volverán's release workflow (.github/workflows/release.yml) for a version tag;
+# `issuer` and `subject` are regular expressions.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: volveran
+  namespace: volveran
+spec:
+  interval: 1h
+  url: oci://ghcr.io/volveran/charts/volveran
+  ref:
+    # Patch releases of 0.2 are picked up on their own. Pre-releases
+    # (0.2.1-rc.1) are skipped; a range like ">=0.2.0-0" asks for them.
+    semver: "0.2.x"
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'

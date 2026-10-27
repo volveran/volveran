@@ -1,0 +1,100 @@
+# What the kind smoke test's Volverán talks to, in their own namespace
+# (neither image runs under the restricted Pod Security Standard):
+#   - RabbitMQ, seeded from the test broker's definitions and config
+#     (ConfigMap rabbitmq-config, from test/broker/, created by scripts/kind-smoke.mjs);
+#   - the mock OIDC provider of the Team Mode integration tests, serving https
+#     with the keystore in test/smoke/tls/ (Secret oidc-tls). Its issuer follows
+#     the Host header, and without a port in it the provider adds its own,
+#     so the Service keeps port 8080: https://oidc.volveran-smoke-deps.svc.cluster.local:8080/default.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: volveran-smoke-deps
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: rabbitmq }
+  template:
+    metadata:
+      labels: { app: rabbitmq }
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.4.0-management
+          ports:
+            - { name: amqp, containerPort: 5672 }
+            - { name: management, containerPort: 15672 }
+          # The image's rabbitmq user. Run as root, the probe below could create
+          # the Erlang cookie before the server does, which then cannot read it
+          # (eacces); see test/broker/docker-compose.yml.
+          securityContext:
+            runAsUser: 999
+            runAsGroup: 999
+          # Ready once the definitions are loaded (as in test/broker/docker-compose.yml).
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "test -f /var/lib/rabbitmq/.erlang.cookie && rabbitmq-diagnostics -q check_port_connectivity && rabbitmqctl -q list_queues -p / name | grep -q orders.dlq"]
+            periodSeconds: 5
+            timeoutSeconds: 20
+            failureThreshold: 60
+          volumeMounts:
+            - { name: config, mountPath: /etc/rabbitmq/conf.d/90-volveran.conf, subPath: rabbitmq.conf }
+            - { name: config, mountPath: /etc/rabbitmq/definitions.json, subPath: definitions.json }
+      volumes:
+        - name: config
+          configMap: { name: rabbitmq-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: volveran-smoke-deps
+spec:
+  selector: { app: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672, targetPort: amqp }
+    - { name: management, port: 15672, targetPort: management }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oidc
+  namespace: volveran-smoke-deps
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: oidc }
+  template:
+    metadata:
+      labels: { app: oidc }
+    spec:
+      containers:
+        - name: oidc
+          image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+          env:
+            - name: JSON_CONFIG
+              value: >-
+                {"interactiveLogin":true,"httpServer":{"type":"NettyWrapper","ssl":{"keystoreFile":"/tls/oidc.p12",
+                "keystoreType":"PKCS12","keystorePassword":"volveran-smoke","keyPassword":"volveran-smoke"}}}
+          ports:
+            - { name: https, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { scheme: HTTPS, path: /default/.well-known/openid-configuration, port: https }
+            periodSeconds: 2
+            failureThreshold: 60
+          volumeMounts:
+            - { name: tls, mountPath: /tls, readOnly: true }
+      volumes:
+        - name: tls
+          secret: { secretName: oidc-tls }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oidc
+  namespace: volveran-smoke-deps
+spec:
+  selector: { app: oidc }
+  ports:
+    - { name: https, port: 8080, targetPort: https }

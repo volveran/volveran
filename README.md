@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: v0.1.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore. Kubernetes deployment (Helm chart and Flux CD) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
+> **Status: v0.2.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. Team safety (roles, four-eyes approval) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
 
 ## Why
 
@@ -21,11 +21,11 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 
 Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
 
-There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. A Helm chart for Kubernetes and Flux CD is planned for v0.2.
+There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. Team Mode also runs on Kubernetes, from a Helm chart or with Flux CD ([Kubernetes guide](docs/kubernetes.md)).
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.1.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.2.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
 
 ### Solo Mode
 
@@ -41,14 +41,14 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.1.0
+  ghcr.io/volveran/volveran:0.2.0
 ```
 
 4. Open <http://127.0.0.1:8080>.
 
 With Docker Compose, copy [`docker-compose.example.yml`](docker-compose.example.yml) to `docker-compose.yml` next to `profiles.yaml` and run `docker compose up`.
 
-The volume at `/data` holds the audit store (`audit.sqlite`): every Audit Entry and the full copy of every Discarded Message. Keep it across upgrades and back it up; it is the only thing Volverán writes, so the rest of the container stays `--read-only`. A named volume (`volveran-data` above) is writable by the image's `node` user out of the box; to bind-mount a host directory instead, make it writable by uid 1000.
+The volume at `/data` holds the audit store (`audit.sqlite`): every Audit Entry and the full copy of every Discarded Message. Keep it across upgrades and back it up; it is the only thing Volverán writes, so the rest of the container stays `--read-only`. The image runs as the numeric user `1000:1000` (the `node` user), so Kubernetes can verify `runAsNonRoot`. A named volume (`volveran-data` above) is writable by it out of the box; to bind-mount a host directory instead, make it writable by uid 1000.
 
 Why `--network host`: a container's own loopback cannot be reached through a published port (`-p`), and listening on `0.0.0.0` inside the container would rely on every `docker run` publishing the port on `127.0.0.1` only. With the host's network, `127.0.0.1` inside is `127.0.0.1` on your machine, and brokers on `localhost` work as written. On Docker Desktop (macOS, Windows), turn on host networking in Settings → Resources → Network (Docker Desktop 4.34 or later). Listening on the network with a published port is reserved for Team Mode (`VOLVERAN_AUTH=oidc`), which signs every Operator in.
 
@@ -71,7 +71,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.1.0
+  ghcr.io/volveran/volveran:0.2.0
 ```
 
 | Variable | Default | Meaning |
@@ -86,6 +86,27 @@ docker run --rm --read-only -p 8080:8080 \
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
 
 The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+
+### Kubernetes
+
+The Helm chart `oci://ghcr.io/volveran/charts/volveran` runs Team Mode as a shared service: one replica, a PersistentVolumeClaim for the audit store, a pod that passes the `restricted` Pod Security Standard, and an optional `HTTPRoute` or `Ingress`. The chart version equals the Volverán version, and the chart is signed with keyless cosign like the image. Create the Secrets it references, write the values (OIDC settings, Broker Profiles, the route), and install:
+
+```sh
+kubectl create namespace volveran
+kubectl -n volveran create secret generic volveran-oidc \
+  --from-literal=client-secret='<OIDC client secret>' \
+  --from-literal=session-secret="$(openssl rand -base64 48)"
+kubectl -n volveran create secret generic volveran-broker-passwords \
+  --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.2.0 \
+  --namespace volveran -f values.yaml
+```
+
+The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposure, secrets, private CAs, upgrades and backups; every value is in the [chart README](charts/volveran/README.md). For GitOps, [`examples/flux/`](examples/flux/) is a Flux CD layout with a cosign-verified `OCIRepository`, a `HelmRelease` and SOPS-encrypted Secrets.
+
+### Health checks
+
+`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open) and `503` before. Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
 
 ### Configuration
 
@@ -126,13 +147,27 @@ npm run lint           # typecheck server, web app and tests
 npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
 npm run test:integration  # same for test/integration/
+npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
+scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
+npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator (needs kind, kubectl, Helm)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it
 ```
 
 `npm run dev` needs a `profiles.yaml` in the checkout (ignored by git) and the password variables it names. Integration tests start the app in-process through `startApp` in `test/integration/harness.ts`, on a random loopback port with a generated profiles file; `testProfile` points a Broker Profile at the checkout's test broker. TLS tests put `startTlsProxy` (certificates in `test/fixtures/tls/`) in front of a broker port.
 
-**Releases.** Pushing a tag `v<version>` that matches `package.json` runs `.github/workflows/release.yml`: lint and unit tests, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations. Before tagging, move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version and bump the version in `package.json`, the README quick start and `docker-compose.example.yml` (a unit test checks they agree).
+**Releases.** Pushing a tag `v<version>` that matches `package.json` and `charts/volveran/Chart.yaml` (checked by `scripts/check-release-version.mjs` before anything is pushed) runs `.github/workflows/release.yml`: lint, unit tests and chart checks, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations, then the chart pushed to `oci://ghcr.io/volveran/charts/volveran`, and both signed with keyless cosign. A pre-release tag (`v0.2.0-rc.1`) gets no `latest` and publishes a pre-release chart version. The workflow's header comment has the `cosign verify` commands and the identity a Flux `OCIRepository` should match. Before tagging:
+
+1. Move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version, with its compare and tag links at the bottom.
+2. Bump the version in every file that names it. `npm run test:unit` and `npm run test:chart` fail on any that disagree with `package.json`, except the prose marked below.
+   - `package.json` and (not checked) `package-lock.json`: `npm version <version> --no-git-tag-version` updates both.
+   - `src/shared/product.ts` (the version the app reports; the server build compiles only `src/`, so it cannot import `package.json`).
+   - `charts/volveran/Chart.yaml`: `version` and `appVersion`.
+   - `README.md`: the image tags and the `helm install --version` of the quick start, and (not checked) the status line and the example tag in the quick start's introduction.
+   - `docs/team-mode.md` (the image tag) and `docs/kubernetes.md` (`helm install --version`).
+   - `docker-compose.example.yml` (the image tag).
+   - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `0.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
+   - On a release that finishes a roadmap version: `ROADMAP.md` (not checked).
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
@@ -153,6 +188,8 @@ The test helpers find the running broker of the checkout on their own. Environme
 | `VOLVERAN_TEST_OIDC_PORT` | random free port | host port of the mock OIDC provider |
 | `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
 | `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against |
+
+**kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard, with the chart's NetworkPolicy on (kindnet enforces it, so the pod becoming ready shows the probes get through). `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).
 
 ## License
 

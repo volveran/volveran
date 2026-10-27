@@ -1,0 +1,40 @@
+# Chart values of the kind smoke test (scripts/kind-smoke.mjs). The image,
+# the OIDC issuer and the redirect URL are set on the command line by
+# test/smoke/kind-env.mjs; persistence keeps the chart's default (on).
+image:
+  pullPolicy: Never
+
+oidc:
+  clientId: volveran-test
+  existingSecret: volveran-oidc
+
+brokerProfiles:
+  passwordsSecret: volveran-broker-passwords
+  profiles:
+    - name: smoke
+      managementUrl: http://rabbitmq.volveran-smoke-deps.svc.cluster.local:15672
+      amqpUrl: amqp://rabbitmq.volveran-smoke-deps.svc.cluster.local:5672
+      username: volveran-admin
+      passwordEnv: VOLVERAN_SMOKE_PASSWORD
+      vhosts: ["/"]
+      defaultQueueFilter: "*.dlq"
+
+persistence:
+  size: 100Mi
+
+# Volverán refuses an http issuer off loopback, so the in-cluster mock provider
+# serves https with a certificate from test/smoke/tls/. scripts/kind-smoke.mjs
+# creates the ConfigMap smoke-oidc-ca (key ca.crt) holding that CA.
+caBundles:
+  bundles:
+    - name: smoke-oidc
+      configMap: smoke-oidc-ca
+  oidcTrust:
+    bundle: smoke-oidc
+
+# kindnet (kind v0.24 and later) enforces NetworkPolicy. With no ingressFrom
+# peers the policy admits nothing from the pod network, so the pod becoming
+# ready shows the kubelet probes get through, and the smoke test reaches the
+# app through port-forward, which does not cross the pod network.
+networkPolicy:
+  enabled: true

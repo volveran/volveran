@@ -1,0 +1,14 @@
+# The namespace Volverán runs in. It enforces the `restricted` Pod Security
+# Standard, which the chart's pod passes as it is. Flux never prunes it:
+# deleting the namespace would delete the audit store's claim in it too.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: volveran
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

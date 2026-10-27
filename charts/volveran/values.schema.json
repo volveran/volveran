@@ -1,0 +1,581 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Values for the volveran chart",
+  "description": "Validated by helm install, upgrade, lint and template. The template guards in templates/_helpers.tpl give the readable refusals (replicaCount, ADR 0003).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "replicaCount": {
+      "description": "Must be 1 (docs/adr/0003-single-replica-on-kubernetes.md). The chart refuses any other value with that explanation.",
+      "type": "integer"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "description": "Pins the image by digest; overrides tag.",
+          "type": "string",
+          "pattern": "^(sha256:[0-9a-f]{64})?$"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "pullSecrets": {
+          "description": "Names of existing image pull Secrets.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "oidc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "description": "Required. The OIDC issuer URL; https unless on loopback."
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Required."
+        },
+        "redirectUrl": {
+          "type": "string",
+          "description": "Required. The public callback URL; its path ends in /auth/callback."
+        },
+        "scopes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Required. An existing Secret holding the OIDC client secret and the session secret."
+        },
+        "clientSecretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionSecretKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "description": "issuer, clientId, redirectUrl and existingSecret are required. The chart refuses a missing one with a message naming it (templates/_helpers.tpl), which a schema error cannot carry."
+    },
+    "brokerProfiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "description": "Broker Profiles in the same shape as the profiles YAML. Passwords are never written here: passwordEnv names a key of passwordsSecret.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/brokerProfile"
+          }
+        },
+        "passwordsSecret": {
+          "type": "string"
+        },
+        "existingConfigMap": {
+          "description": "An existing ConfigMap with a profiles.yaml key, used instead of profiles.",
+          "type": "string"
+        }
+      }
+    },
+    "caBundles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundles": {
+          "description": "Existing ConfigMaps or Secrets mounted read-only at /etc/volveran/ca/<name>. Exactly one of configMap or secret, and unique DNS-label names, are checked by templates/_helpers.tpl.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "configMap": {
+                "type": "string",
+                "minLength": 1
+              },
+              "secret": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "oidcTrust": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bundle": {
+              "description": "The name of one of bundles; its key is set as NODE_EXTRA_CA_CERTS.",
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "false uses an emptyDir: Audit Entries and Discarded Message bodies are lost on every restart.",
+          "type": "boolean"
+        },
+        "existingClaim": {
+          "description": "An existing PersistentVolumeClaim used instead of a chart-created one.",
+          "type": "string"
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "accessMode": {
+          "enum": [
+            "ReadWriteOnce",
+            "ReadWriteOncePod",
+            "ReadWriteMany"
+          ]
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "httpRoute": {
+      "description": "An optional Gateway API HTTPRoute to the Service at the root of each host name. Required-ness when enabled is checked in templates/httproute.yaml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "parentRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sectionName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "group": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "hostnames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ingress": {
+      "description": "An optional Ingress to the Service at the root of each host. Required-ness when enabled is checked in templates/ingress.yaml.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "secretName"
+            ],
+            "properties": {
+              "secretName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkoutMaxMessages": {
+          "description": "VOLVERAN_CHECKOUT_MAX_MESSAGES; null leaves Volverán's default (1000).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "checkoutMaxMb": {
+          "description": "VOLVERAN_CHECKOUT_MAX_MB; null leaves Volverán's default (100).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "checkoutTimeLimitMinutes": {
+          "description": "VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES; null leaves Volverán's default (30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "checkoutHeartbeatSeconds": {
+          "description": "VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS; null leaves Volverán's default (120).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 10,
+          "maximum": 3600
+        },
+        "bodyRetentionDays": {
+          "description": "VOLVERAN_BODY_RETENTION_DAYS; null leaves Volverán's default (30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 36500
+        },
+        "bodyRetentionMaxBytes": {
+          "description": "VOLVERAN_BODY_RETENTION_MAX_BYTES: bytes, or a whole number with KiB, MiB, GiB or TiB; null leaves Volverán's default (1GiB).",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]+ *([KkMmGgTt][Ii][Bb]|[Bb])?$"
+            }
+          ]
+        },
+        "bodyRetentionIntervalMinutes": {
+          "description": "VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES; null leaves Volverán's default (60).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        }
+      }
+    },
+    "extraEnv": {
+      "description": "Extra container environment variables. The chart refuses a variable it sets itself (templates/_helpers.tpl).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "string"
+          },
+          "valueFrom": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "pod": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resources": {
+          "type": "object"
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "affinity": {
+          "type": "object"
+        },
+        "priorityClassName": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Added to the pod's labels. The selector labels (app.kubernetes.io/name, app.kubernetes.io/instance) are refused."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ingressFrom": {
+          "description": "NetworkPolicy peers admitted to the http port.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/networkPolicyPeer"
+          }
+        },
+        "egress": {
+          "description": "NetworkPolicy egress rules. Any rule restricts egress to these rules plus DNS to dnsTo.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/networkPolicyPeer"
+                }
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "port": {
+                      "type": [
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "endPort": {
+                      "type": "integer"
+                    },
+                    "protocol": {
+                      "enum": [
+                        "TCP",
+                        "UDP",
+                        "SCTP"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "dnsTo": {
+          "description": "NetworkPolicy peers of the cluster DNS resolver, allowed on port 53 whenever egress is restricted.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/networkPolicyPeer"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "brokerProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "managementUrl",
+        "amqpUrl",
+        "username",
+        "passwordEnv"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "managementUrl": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "amqpUrl": {
+          "type": "string",
+          "pattern": "^amqps?://"
+        },
+        "caFile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "passwordEnv": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "vhosts": {
+          "oneOf": [
+            {
+              "const": "all"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "defaultQueueFilter": {
+          "type": "string"
+        },
+        "protected": {
+          "type": "boolean"
+        }
+      }
+    },
+    "networkPolicyPeer": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "namespaceSelector": {
+          "type": "object"
+        },
+        "podSelector": {
+          "type": "object"
+        },
+        "ipBlock": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

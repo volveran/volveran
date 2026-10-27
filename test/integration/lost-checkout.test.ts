@@ -14,6 +14,7 @@ import {
   closeConnection,
   eventually,
   makeTempDir,
+  management,
   purgeQueues,
   readyCount,
   seedMessages,
@@ -87,6 +88,9 @@ describe('Lost Checkout', () => {
     let backstopApp: TestApp;
     /** Holds the app's own time-limit end back, so the broker's backstop fires first. */
     let releaseTimeLimit: () => void = () => {};
+    const timing = { timeLimitMs: 1_000, consumerTimeoutMarginMs: 1_000, heartbeatWindowMs: 60_000 };
+    /** The x-consumer-timeout of the Checkout consumer: time limit + margin. */
+    const backstopMs = timing.timeLimitMs + timing.consumerTimeoutMarginMs;
     beforeAll(async () => {
       queue = uniqueName('lost-checkout');
       // A queue-level timeout of an hour: only the Checkout's own consumer argument can fire within the test.
@@ -95,7 +99,7 @@ describe('Lost Checkout', () => {
       );
       backstopApp = await startApp({
         profiles: [testProfile({ name: 'local' })],
-        checkoutTiming: { timeLimitMs: 1_000, consumerTimeoutMarginMs: 1_000, heartbeatWindowMs: 60_000 },
+        checkoutTiming: timing,
         checkoutTestHooks: {
           beforeTimeLimitEnd: () => new Promise<void>((resolve) => (releaseTimeLimit = resolve)),
         },
@@ -104,19 +108,48 @@ describe('Lost Checkout', () => {
     afterAll(async () => {
       releaseTimeLimit();
       await backstopApp?.close();
+      await management(nudgePolicyPath(), { method: 'DELETE' });
       await withChannel('/', (ch) => ch.deleteQueue(queue));
     });
 
+    const nudgePolicyPath = () => `/policies/%2F/${encodeURIComponent(queue)}`;
+
+    /**
+     * Polls the Checkout until it is lost. A quorum queue checks consumer
+     * timeouts on a single timer that it only re-arms after applying a
+     * command (rabbit_fifo's evaluate_consumer_timeout, re-armed only for an
+     * earlier deadline than the last one). Nothing else touches this queue
+     * during the Checkout, and in CI that timer has fired once without
+     * expiring anything and never been re-armed: still active after 20 s,
+     * although the backstop fires within a second of its deadline otherwise.
+     * So once the deadline is well past, a policy change (a command on the
+     * queue; `max-length` far above what the test holds) makes the queue
+     * check again. It is still the broker's timeout that closes the channel.
+     */
+    async function untilLost(checkoutId: string, consumedAt: number) {
+      let nudges = 0;
+      return eventually(async () => {
+        const { checkout } = (await backstopApp.get(`/api/checkouts/${checkoutId}`)).body;
+        if (checkout.status === 'active' && Date.now() > consumedAt + backstopMs + (nudges + 1) * 3_000) {
+          nudges++;
+          const put = await management(nudgePolicyPath(), {
+            method: 'PUT',
+            body: { pattern: `^${queue.replace(/\./g, '\\.')}$`, definition: { 'max-length': 1_000_000 + nudges }, 'apply-to': 'queues' },
+          });
+          expect(put.status).toBeLessThan(300);
+        }
+        expect(checkout.status).toBe('lost');
+        return checkout;
+      }, 20_000);
+    }
+
     it('reports the Checkout lost, returns the Messages in order and frees the queue', async () => {
       await seedMessages('/', queue, 3);
+      const consumedAt = Date.now();
       const { checkout } = (await backstopApp.post(checkoutPath(queue))).body;
       expect(checkout.heldCount).toBe(3);
 
-      const lost = await eventually(async () => {
-        const res = await backstopApp.get(`/api/checkouts/${checkout.id}`);
-        expect(res.body.checkout.status).toBe('lost');
-        return res.body.checkout;
-      }, 20_000);
+      const lost = await untilLost(checkout.id, consumedAt);
       releaseTimeLimit();
 
       expect(lost.lostReason).toMatch(/closed the channel.*back in the queue/);
@@ -133,15 +166,14 @@ describe('Lost Checkout', () => {
     it('Apply returns an error after the quorum backstop fires', async () => {
       await withChannel('/', (ch) => ch.purgeQueue(queue));
       await seedMessages('/', queue, 2);
+      const consumedAt = Date.now();
       const { checkout } = (await backstopApp.post(checkoutPath(queue))).body;
       const decided = await backstopApp.post(`/api/checkouts/${checkout.id}/decisions`, {
         handles: [checkout.messages[0].handle],
         decision: { kind: 'discard', reason: 'poison' },
       });
       expect(decided.status).toBe(200);
-      await eventually(async () => {
-        expect((await backstopApp.get(`/api/checkouts/${checkout.id}`)).body.checkout.status).toBe('lost');
-      }, 20_000);
+      await untilLost(checkout.id, consumedAt);
       releaseTimeLimit();
 
       const applied = await backstopApp.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true });
