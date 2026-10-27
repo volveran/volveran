@@ -1,0 +1,9 @@
+# The objects Flux applies for Volverán (built by kustomize-controller from the
+# Flux Kustomization in ../cluster/volveran.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - secrets.yaml
+  - ocirepository.yaml
+  - helmrelease.yaml

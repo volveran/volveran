@@ -8,6 +8,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Added
 
+- Kubernetes guide (`docs/kubernetes.md`): installing with Helm or Flux CD, values, exposure, secrets, private CAs, upgrades (a deploy signs everyone out and ends open Checkouts) and backup and restore of the audit store. A Flux CD example (`examples/flux/`): a namespace enforcing `restricted` pod security, a cosign-verified `OCIRepository`, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, and SOPS-encrypted Secrets with the reader's own age key. The Team Mode guide gains a Kubernetes section, and the README quick start the Helm install. (#24)
 - Release workflow: a version tag also publishes the Helm chart to `oci://ghcr.io/volveran/charts/volveran`, and signs the chart and the image with keyless cosign using the release workflow's GitHub OIDC identity (verification commands and the Flux `matchOIDCIdentity` in the workflow's header). The release fails before anything is pushed unless the tag, `package.json` and the chart's `version` and `appVersion` agree. A pre-release tag (`v0.2.0-rc.1`) publishes a pre-release chart version. (#23)
 
 ## [0.1.0] - 2026-10-24
