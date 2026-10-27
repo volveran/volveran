@@ -67,6 +67,46 @@ helm install volveran ./charts/volveran --namespace volveran -f values.yaml
 The install notes print the Service name, the `kubectl port-forward` command and the redirect URL to register with the
 OIDC client. Sign-in only works at the host of `oidc.redirectUrl`, and Volverán must be served at the root of that host.
 
+## Exposure
+
+The chart renders no route by default: reach Volverán with `kubectl port-forward` or expose it your own way. It can
+render a Gateway API `HTTPRoute`, a classic `Ingress`, or both at once (for example while migrating from one to the
+other). It never renders a Gateway or a cert-manager Certificate; it only references a Gateway and TLS Secrets that
+already exist.
+
+- **Host-based routing only.** Volverán is served at the root of its host: the session cookie is scoped to `/` and the
+  sign-in cookie to `/auth`, and the web app loads from `/`. A route under a path prefix such as
+  `https://tools.example.com/volveran` breaks sign-in, so the chart has no path value. Give Volverán its own host name.
+- **The redirect URL's host must be a route host.** Set `oidc.redirectUrl` to `https://<route host>/auth/callback` and
+  register that URL with the OIDC client. The install notes print the external URL and the redirect URL, and warn when
+  the redirect URL's host is not one of the route hosts.
+- **TLS terminates at the edge.** The pod serves plain HTTP. An `https` redirect URL makes the session cookies `Secure`
+  regardless of how the request reached the pod, so there is no proxy setting to add.
+
+Gateway API (Envoy Gateway or any other implementation), attached to the `https` listener of an existing Gateway:
+
+```yaml
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: edge
+      namespace: gateways        # a Gateway in another namespace must allow routes from this one
+      sectionName: https
+  hostnames: [volveran.example.com]
+```
+
+A classic ingress controller, with an existing TLS Secret:
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts: [volveran.example.com]
+  tls:
+    - secretName: volveran-tls
+      hosts: [volveran.example.com]
+```
+
 ## Values
 
 Every value with its default. Values without a default are required; the chart refuses to render without them and
@@ -118,6 +158,25 @@ names the missing value.
 | Value | Default | Description |
 |---|---|---|
 | `service.port` | `8080` | Port of the ClusterIP Service. The container always listens on 8080. |
+
+### HTTPRoute
+
+| Value | Default | Description |
+|---|---|---|
+| `httpRoute.enabled` | `false` | Render a Gateway API `HTTPRoute` (`gateway.networking.k8s.io/v1`) sending every path of its host names to the Service. |
+| `httpRoute.parentRefs` | `[]` (at least one required when enabled) | Existing Gateways to attach to: `name`, and optionally `namespace`, `sectionName` (a listener), `port`, `group`, `kind`. |
+| `httpRoute.hostnames` | `[]` (at least one required when enabled) | Host names of the route, for example `volveran.example.com`. One must be the host of `oidc.redirectUrl`. |
+| `httpRoute.annotations` | `{}` | Annotations on the `HTTPRoute`. |
+
+### Ingress
+
+| Value | Default | Description |
+|---|---|---|
+| `ingress.enabled` | `false` | Render an `Ingress` (`networking.k8s.io/v1`) sending every path of its hosts to the Service. |
+| `ingress.className` | `""` (cluster default) | IngressClass of the `Ingress`. |
+| `ingress.hosts` | `[]` (at least one required when enabled) | Hosts of the `Ingress`, for example `volveran.example.com`. One must be the host of `oidc.redirectUrl`. |
+| `ingress.tls` | `[]` | TLS entries: `secretName` of an existing TLS Secret and the `hosts` it covers. |
+| `ingress.annotations` | `{}` | Annotations on the `Ingress`, for example controller settings. |
 
 ### Pod
 
