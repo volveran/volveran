@@ -11,7 +11,7 @@
 // of one delivery on quorum queues.
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
-import { ManagementClient } from '../management.js';
+import type { ManagementClient } from '../management.js';
 import type { QueueRef } from '../profiles.js';
 import { checkoutSize } from '../triage/checkout-collection.js';
 import { consumerTimeoutMs } from '../triage/checkout-timing.js';
@@ -43,12 +43,17 @@ export interface OpenHooks {
 }
 
 /**
- * Fills in `checkout` (queue facts, connection, channel, held Messages). On
+ * Fills in `checkout` (queue facts, connection, channel, held Messages);
+ * `management` is the client of its Broker Profile, from the access check. On
  * a throw the caller closes `checkout.connection`, which releases the lock.
  */
-export async function openCheckout(checkout: Checkout, options: StartOptions, hooks: OpenHooks): Promise<void> {
+export async function openCheckout(
+  checkout: Checkout,
+  management: ManagementClient,
+  options: StartOptions,
+  hooks: OpenHooks,
+): Promise<void> {
   const { vhost, queue } = checkout;
-  const management = new ManagementClient(checkout.profile);
   const info = await management.getQueue(vhost, queue);
   if (!info) throw queueNotFound(checkout);
   if (!isCheckoutQueueType(info.type)) throw new CheckoutError('queue_not_checkoutable', notCheckoutableReason(info.type));
