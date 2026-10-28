@@ -32,6 +32,7 @@ import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import type { MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
+import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import { applyInProgress, CheckoutError, checkoutNotActive, inCheckout, notCheckoutOwner, operatorHasCheckout } from './errors.js';
 import { openCheckout, type StartOptions } from './open.js';
@@ -191,14 +192,16 @@ export class CheckoutManager {
    * Carries out every Decision of the Checkout (ADR 0001), then ends it:
    * Messages whose Decision is Keep, failed or was not attempted go back to
    * the queue in order. Returns the outcome for each Message. Throws
-   * `checkout_not_active` on a Checkout that is over or lost.
+   * `checkout_not_active` on a Checkout that is over or lost. `role` is the
+   * Applying Operator's Role on the profile, recorded in each Audit Entry.
    */
-  async apply(id: string): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+  async apply(id: string, role: Role): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
     const checkout = this.find(id);
     if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
     const { startedAt, outcomes } = await runApply(checkout, {
       audit: this.options.audit,
+      role,
       beforeStep: this.hooks.beforeApplyStep,
     });
     checkout.lastApply = { at: startedAt.toISOString(), outcomes };

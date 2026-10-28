@@ -12,9 +12,12 @@ import type { AuditStore } from '../audit/store.js';
 import { queueRefOf } from '../profiles.js';
 import { buildApplyPlan } from '../triage/decisions.js';
 import type { Checkout } from './state.js';
+import type { Role } from '../../shared/roles.js';
 
 export interface RunApplyOptions {
   audit: AuditStore;
+  /** The Role of the Operator Applying, for the Audit Entries. */
+  role: Role;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
 }
@@ -31,7 +34,7 @@ export async function runApply(
   // Opened on first use; closes with the Checkout's connection when the Checkout ends.
   let publisher: ConfirmPublisher | undefined;
   const ctx: ApplyContext = {
-    target: { ...queueRefOf(checkout), checkoutId: checkout.id, operator: checkout.operator },
+    target: { ...queueRefOf(checkout), checkoutId: checkout.id, operator: checkout.operator, role: options.role },
     startedAt: new Date(),
     ack: (message) => ack(checkout, message),
     publish: async (exchange, routingKey, content, publishOptions) => {

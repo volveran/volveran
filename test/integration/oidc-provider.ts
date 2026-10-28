@@ -40,6 +40,8 @@ export interface TestIdentity {
   sub: string;
   email?: string;
   name?: string;
+  /** The groups claim (VOLVERAN_OIDC_GROUPS_CLAIM, default `groups`), for Roles. */
+  groups?: unknown;
 }
 
 export interface BrowserResponse {

@@ -69,6 +69,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       entryId = audit.record({
         at: new Date(),
         operator: target.operator,
+        role: target.role,
         brokerUser: target.profile.username,
         profile: target.profile.name,
         vhost: target.vhost,

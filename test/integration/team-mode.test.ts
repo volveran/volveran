@@ -66,6 +66,8 @@ describe('Team Mode', () => {
       email: 'alice@example.com',
       name: 'Alice Doe',
       checkoutId: null,
+      roles: { dev: 'admin' },
+      groups: [],
     });
     expect((await browser.get('/api/profiles')).status).toBe(200);
   });
@@ -94,11 +96,11 @@ describe('Team Mode', () => {
   it('shows the name when the provider gives no email, and the sub when it gives neither', async () => {
     const named = new TestBrowser(baseUrl);
     await named.signIn({ sub: 'bob-sub', name: 'Bob' });
-    expect((await named.get('/api/session')).body).toEqual({ mode: 'team', operator: 'Bob', operatorId: 'bob-sub', name: 'Bob', checkoutId: null });
+    expect((await named.get('/api/session')).body).toEqual({ mode: 'team', operator: 'Bob', operatorId: 'bob-sub', name: 'Bob', checkoutId: null, roles: { dev: 'admin' }, groups: [] });
 
     const bare = new TestBrowser(baseUrl);
     await bare.signIn({ sub: 'carol-sub' });
-    expect((await bare.get('/api/session')).body).toEqual({ mode: 'team', operator: 'carol-sub', operatorId: 'carol-sub', checkoutId: null });
+    expect((await bare.get('/api/session')).body).toEqual({ mode: 'team', operator: 'carol-sub', operatorId: 'carol-sub', checkoutId: null, roles: { dev: 'admin' }, groups: [] });
   });
 
   it('gives each signed-in person their own session', async () => {
