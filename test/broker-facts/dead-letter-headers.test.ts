@@ -3,8 +3,7 @@
 // with A dead-lettering into DLQ.
 import type * as amqp from 'amqplib';
 import { describe, expect, it } from 'vitest';
-import { eventually } from '../broker/client.js';
-import { type QueueType, queueTypes, type Scratch, scratchFor } from './support.js';
+import { deadLetterFrom, type QueueType, queueTypes, type Scratch, scratchFor, take } from './support.js';
 
 interface Topology {
   ex: string;
@@ -39,26 +38,6 @@ async function publish(s: Scratch, ex: string, key: string, body: string, header
   await s.ch.waitForConfirms();
 }
 
-/** Takes the one Message in `q` (waiting for it) and returns it. */
-async function take(s: Scratch, q: string): Promise<amqp.GetMessage> {
-  return eventually(async () => {
-    const m = await s.ch.get(q, { noAck: true });
-    if (!m) throw new Error(`nothing in ${q}`);
-    return m;
-  }, 3_000, 100);
-}
-
-/** Takes the one Message in `q` and rejects it without requeue, so it is dead-lettered. */
-async function deadLetterFrom(s: Scratch, q: string): Promise<void> {
-  const m = await eventually(async () => {
-    const got = await s.ch.get(q);
-    if (!got) throw new Error(`nothing in ${q}`);
-    return got;
-  }, 3_000, 100);
-  s.ch.reject(m, false);
-  await s.ch.checkQueue(q);
-}
-
 const headers = (m: amqp.Message) => m.properties.headers ?? {};
 
 describe.concurrent('Dead-lettering headers', () => {
@@ -68,7 +47,7 @@ describe.concurrent('Dead-lettering headers', () => {
       const t = await topology(s, type);
       await publish(s, t.ex, 'a', 'hello', { CC: ['b'], BCC: ['c'], app: 'x' });
       for (const q of [t.A, t.B, t.C]) {
-        const m = await take(s, q);
+        const m = await take(s.ch, q);
         expect(headers(m)).toEqual({ CC: ['b'], app: 'x' });
       }
     });
@@ -77,8 +56,8 @@ describe.concurrent('Dead-lettering headers', () => {
       const s = await scratchFor(ctx);
       const t = await topology(s, type);
       await publish(s, t.ex, 'a', 'hello', { CC: ['b'] });
-      await deadLetterFrom(s, t.A);
-      const dead = await take(s, t.dlq);
+      await deadLetterFrom(s.ch, t.A);
+      const dead = await take(s.ch, t.dlq);
       expect(headers(dead).CC).toEqual(['b']);
       expect(headers(dead)['x-death']).toEqual([expect.objectContaining({ 'routing-keys': ['a', 'b'] })]);
     });
@@ -87,8 +66,8 @@ describe.concurrent('Dead-lettering headers', () => {
       const s = await scratchFor(ctx);
       const t = await topology(s, type, 'dl');
       await publish(s, t.ex, 'a', 'hello', { CC: ['b'] });
-      await deadLetterFrom(s, t.A);
-      const dead = await take(s, t.dlq);
+      await deadLetterFrom(s.ch, t.A);
+      const dead = await take(s.ch, t.dlq);
       expect(dead.fields.routingKey).toBe('dl');
       expect(headers(dead).CC).toEqual(['b']);
     });
@@ -99,14 +78,14 @@ describe.concurrent('Dead-lettering headers', () => {
       const s = await scratchFor(ctx);
       const t = await topology(s, type);
       await publish(s, t.ex, 'a', 'hello', { CC: ['b'] });
-      await take(s, t.B); // B's consumer handled its copy
-      await deadLetterFrom(s, t.A);
-      const dead = await take(s, t.dlq);
+      await take(s.ch, t.B); // B's consumer handled its copy
+      await deadLetterFrom(s.ch, t.A);
+      const dead = await take(s.ch, t.dlq);
 
       await publish(s, t.ex, 'a', dead.content.toString(), headers(dead));
 
-      expect((await take(s, t.A)).content.toString()).toBe('hello');
-      expect((await take(s, t.B)).content.toString()).toBe('hello');
+      expect((await take(s.ch, t.A)).content.toString()).toBe('hello');
+      expect((await take(s.ch, t.B)).content.toString()).toBe('hello');
     });
   });
 
@@ -122,15 +101,15 @@ describe.concurrent('Dead-lettering headers', () => {
       const s = await scratchFor(ctx);
       const t = await topology(s, type);
       await publish(s, t.ex, 'b', 'forged', forged);
-      expect(headers(await take(s, t.B))).toEqual(forged);
+      expect(headers(await take(s.ch, t.B))).toEqual(forged);
     });
 
     it.for(queueTypes)('%s: dead-lettering it again starts a new history', async (type, ctx) => {
       const s = await scratchFor(ctx);
       const t = await topology(s, type);
       await publish(s, t.ex, 'a', 'forged', forged);
-      await deadLetterFrom(s, t.A);
-      const h = headers(await take(s, t.dlq));
+      await deadLetterFrom(s.ch, t.A);
+      const h = headers(await take(s.ch, t.dlq));
       expect(h['x-death']).toEqual([
         expect.objectContaining({ count: 1, reason: 'rejected', queue: t.A, exchange: t.ex, 'routing-keys': ['a'] }),
       ]);
