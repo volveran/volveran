@@ -40,6 +40,8 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 ## Dead-letter set-up
 
 - A queue whose dead-letter exchange does not exist drops the Messages it dead-letters.
+- A dead-letter exchange that routes the dead-letter routing key to no queue drops the Message, on classic and quorum queues alike. A binding added afterwards gets nothing.
+- An alternate exchange on the dead-letter exchange saves the Message: it reaches the alternate exchange's queues.
 
 ## Publishing
 
