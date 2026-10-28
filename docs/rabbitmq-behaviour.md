@@ -37,6 +37,10 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 - Republishing a dead-lettered Message with its `CC` header delivers copies to the `CC` queues again.
 - A client-supplied `x-death` reaches consumers untouched. When the Message is dead-lettered again, the broker discards it and starts a new history (`count: 1`, new `x-first-death-*`).
 
+## Dead-letter set-up
+
+- A queue whose dead-letter exchange does not exist drops the Messages it dead-letters.
+
 ## Publishing
 
 - Publishing to a missing exchange closes only that channel (`404 NOT_FOUND`). Other channels on the connection keep their unacknowledged deliveries.

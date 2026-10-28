@@ -8,7 +8,12 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Added
 
+- Set-up check `dead_letter_exchange_missing`: the queue list warns about a queue whose dead-letter exchange (by argument or policy) does not exist in the vhost, since the broker drops every Message the queue dead-letters. The queue list header counts the vhost's set-up warnings by severity. (#41)
 - Roles per Broker Profile (Team Mode). A profile's optional `roles` maps OIDC groups to `viewer` (sees the profile, its queues and Audit Entries without Discarded bodies), `operator` (also reads Discarded bodies and starts Checkouts, Decisions and Apply) or `admin` (also Restores); the highest matching role wins. The groups come from the ID token claim named by `VOLVERAN_OIDC_GROUPS_CLAIM` (default `groups`; chart value `oidc.groupsClaim`) and are fixed until the next sign-in. Routes answer `403 no_role_on_profile` or `403 role_required` (with `required` and `held`) before touching the broker, `GET /api/profiles` and Audit Entry search leave out profiles without a role, `GET /api/session` gains `roles` and (Team Mode) `groups`, and every new Audit Entry records the Operator's `role` (`null` on older entries). The web app shows the actions a role does not allow as unavailable. Startup refuses unknown roles, empty group lists and non-string groups. **Upgrading changes nothing until you add `roles`:** a profile without them keeps every Operator `admin`, with a startup warning per profile ([ADR 0007](docs/adr/0007-profiles-without-roles-keep-everyone-admin.md)), and Solo Mode ignores them. (#38)
+
+### Changed
+
+- API: a queue list row's `setupWarning` (one warning or `null`) is now `setupWarnings`, a list (`[]` for none), so a queue shows every warning that applies. Each warning gains a `severity`: `loses_messages` or `may_lose_messages`. The delivery-limit warning keeps its code, `messages_dropped_at_delivery_limit`, and now also fires when the queue's dead-letter exchange does not exist. The queue list response gains `setupWarningCounts`, the warnings of the whole vhost by severity, whatever the search or dead-letter queue filter. (#41)
 
 ### Fixed
 
