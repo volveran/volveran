@@ -20,10 +20,15 @@ describe('Comparing two Messages', () => {
         ch.sendToQueue(QUEUE, Buffer.from(JSON.stringify(body)), { messageId, contentType: 'application/json', headers });
       json('json-a', { tenant: 'acme', attempt: 1, trace: 't-1' }, { order: { id: 7, items: [{ sku: 'a' }, { sku: 'b' }] }, note: 'x' });
       json('json-b', { tenant: 'acme', attempt: 2, region: 'eu' }, { order: { id: 7, items: [{ sku: 'a' }, { sku: 'c' }] } });
-      const text = (messageId: string, body: string) =>
-        ch.sendToQueue(QUEUE, Buffer.from(body), { messageId, contentType: 'text/plain' });
-      text('text-a', 'line 1\nline 2\nline 3');
-      text('text-b', 'line 1\nline two\nline 3\nline 4');
+      // Republished by Spring AMQP's RepublishMessageRecoverer, after different exceptions.
+      const text = (messageId: string, body: string, exception: string) =>
+        ch.sendToQueue(QUEUE, Buffer.from(body), {
+          messageId,
+          contentType: 'text/plain',
+          headers: { 'x-exception-message': exception, 'x-original-exchange': 'orders' },
+        });
+      text('text-a', 'line 1\nline 2\nline 3', 'no stock');
+      text('text-b', 'line 1\nline two\nline 3\nline 4', 'no price');
       ch.sendToQueue(QUEUE, Buffer.from([0, 1, 2, 3]), { messageId: 'bin-a' });
       ch.sendToQueue(QUEUE, Buffer.from([0, 1, 9]), { messageId: 'bin-b' });
       await ch.waitForConfirms();
@@ -71,6 +76,13 @@ describe('Comparing two Messages', () => {
         { path: '$.note', status: 'onlyLeft', left: 'x' },
       ],
     });
+  });
+
+  it('compares Failure Details field by field', async () => {
+    const { failureDetails } = (await compare(handles['text-a'], handles['text-b'])).body.diff;
+    expect(failureDetails).toContainEqual({ name: 'message', status: 'changed', left: 'no stock', right: 'no price' });
+    expect(failureDetails).toContainEqual({ name: 'originalExchange', status: 'equal', left: 'orders', right: 'orders' });
+    expect(failureDetails).toContainEqual({ name: 'framework', status: 'equal', left: 'spring', right: 'spring' });
   });
 
   it('compares text bodies line by line and binary bodies by size and first differing byte', async () => {

@@ -15,7 +15,7 @@ import type {
 
 export type { MessageDiff };
 
-/** The parts of a Message view the diff reads. `failureDetails` is null or absent when there are none. */
+/** The parts of a Message view the diff reads; `failureDetails` is null (or absent) when there are none. */
 export type ComparableMessage = Pick<MessageDetail, 'properties' | 'headers' | 'xDeath' | 'body'> & {
   failureDetails?: object | null;
 };
