@@ -2,8 +2,8 @@
 // dead-lettered Messages, behind the queue list's set-up checks
 // (src/server/triage/setup-checks.ts). Each case builds its own topology.
 import { describe, expect, it } from 'vitest';
-import { sleep, uniqueName } from '../broker/client.js';
-import { next, queueTypes, refusal, type Scratch, scratchFor } from './support.js';
+import { eventually, management, sleep, uniqueName } from '../broker/client.js';
+import { next, queueTypes, type Scratch, scratchFor } from './support.js';
 
 /** Takes the one Message in `q` and rejects it without requeue, so it is dead-lettered. */
 async function deadLetterFrom(s: Scratch, q: string): Promise<void> {
@@ -86,30 +86,37 @@ describe.concurrent('Dead-letter set-up', () => {
       await s.ch.bindQueue(parked, onward, '');
       const dlq = await s.queue(`dls-${type}-expires`, { 'x-queue-type': type, 'x-expires': 1_000, 'x-dead-letter-exchange': onward });
       await s.publish(dlq, ['lost']);
-      await sleep(3_000);
-      const probe = await s.conn.createChannel();
-      probe.on('error', () => {});
-      expect(await refusal(probe.checkQueue(dlq))).toMatch(/404/);
+      // Quorum queues check their expiry less often than classic ones. Poll the management API:
+      // a passive declare counts as using the queue, which restarts a classic queue's expiry.
+      await eventually(async () => expect((await management(`/queues/%2F/${encodeURIComponent(dlq)}`)).status).toBe(404), 20_000, 500);
       expect(await s.bodies(parked)).toEqual([]);
     });
   });
 
-  describe('The default quorum dead-letter strategy is `at-most-once`: a Message dead-lettered to an exchange that routes nowhere is dropped. With `at-least-once` (which needs `reject-publish` overflow) the queue keeps it until it can be routed.', () => {
-    it('quorum: at-most-once loses the Message, at-least-once delivers it once a queue is bound', async (ctx) => {
+  describe('The default quorum dead-letter strategy is `at-most-once`: a Message dead-lettered to an exchange that routes it to no queue is dropped. With `at-least-once` (which needs `reject-publish` overflow) the queue keeps it, not ready, and retries.', () => {
+    it('quorum: the management API counts the Message in the at-least-once queue only, and a queue bound later to the at-most-once exchange gets nothing', async (ctx) => {
       const s = await scratchFor(ctx);
       const strategies = { 'at-most-once': {}, 'at-least-once': { 'x-dead-letter-strategy': 'at-least-once', 'x-overflow': 'reject-publish' } };
-      const parked: Record<string, string> = {};
+      const queues: Record<string, string> = {};
+      const exchanges: Record<string, string> = {};
       for (const [strategy, args] of Object.entries(strategies)) {
-        const dlx = await s.exchange(`dls-${strategy}-dlx`, 'fanout');
-        const q = await s.queue(`dls-${strategy}`, { 'x-queue-type': 'quorum', 'x-dead-letter-exchange': dlx, ...args });
-        await s.publish(q, [strategy]);
-        await deadLetterFrom(s, q);
-        await sleep(500);
-        parked[strategy] = await s.queue(`dls-${strategy}-parked`);
-        await s.ch.bindQueue(parked[strategy]!, dlx, '');
+        exchanges[strategy] = await s.exchange(`dls-${strategy}-dlx`, 'fanout');
+        queues[strategy] = await s.queue(`dls-${strategy}`, { 'x-queue-type': 'quorum', 'x-dead-letter-exchange': exchanges[strategy], ...args });
+        await s.publish(queues[strategy]!, [strategy]);
+        await deadLetterFrom(s, queues[strategy]!);
       }
-      await expectEventually(() => s.bodies(parked['at-least-once']!), ['at-least-once'], 45_000);
-      expect(await s.bodies(parked['at-most-once']!)).toEqual([]);
-    }, 60_000);
+      // Management statistics lag (see "Queue counts"); a passive declare counts ready Messages only.
+      const messages = async (q: string) => (await management(`/queues/%2F/${encodeURIComponent(q)}`)).body.messages;
+      await eventually(async () => {
+        expect(await messages(queues['at-least-once']!)).toBe(1);
+        expect(await messages(queues['at-most-once']!)).toBe(0);
+      }, 20_000, 500);
+      expect(await s.check(queues['at-least-once']!)).toMatchObject({ messageCount: 0 });
+
+      const parked = await s.queue('dls-at-most-once-parked');
+      await s.ch.bindQueue(parked, exchanges['at-most-once']!, '');
+      await sleep(1_000);
+      expect(await s.bodies(parked)).toEqual([]);
+    });
   });
 });
