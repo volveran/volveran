@@ -9,7 +9,7 @@ A named set of connection details for one RabbitMQ broker (e.g. dev, staging, pr
 _Avoid_: Connection, environment, cluster
 
 **Protected Profile**:
-A Broker Profile on which every Apply that changes where a Message ends up, and every Restore, needs a typed confirmation.
+A Broker Profile on which every Apply that changes where a Message ends up, and every Restore, needs a typed confirmation. In Team Mode such an Apply also needs an Approval, unless the profile sets `requireApproval: false`.
 _Avoid_: Prod mode, locked profile
 
 ## Triage

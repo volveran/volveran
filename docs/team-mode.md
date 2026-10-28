@@ -79,7 +79,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_PROD_PASSWORD \
-  ghcr.io/volveran/volveran:0.2.0
+  ghcr.io/volveran/volveran:0.3.0
 ```
 
 Open `https://volveran.example.com`: the browser goes to Keycloak, then JumpCloud, and back. The top bar shows the signed-in Operator and a **Sign out** button.
@@ -132,20 +132,20 @@ profiles:
 
 Group names in `roles` must match what the provider sends, exactly and case-sensitively.
 
-**Keycloak, with a groups mapper.** In the realm, go to **Clients → volveran → Client scopes → volveran-dedicated → Add mapper → By configuration → Group Membership**. Token claim name `groups`, **Full group path** off (so groups arrive as `support`, not `/support`), **Add to ID token** on, **Add to userinfo** on. Keep the default `VOLVERAN_OIDC_GROUPS_CLAIM=groups`.
+**Keycloak, with a groups mapper.** In the realm, go to **Clients → volveran → Client scopes → volveran-dedicated → Configure a new mapper** (or **Add mapper → By configuration** if it already has mappers) **→ Group Membership**. Token claim name `groups`, **Full group path** off (so groups arrive as `support`, not `/support`), **Add to ID token** on, **Add to userinfo** on. Keep the default `VOLVERAN_OIDC_GROUPS_CLAIM=groups`.
 
 **Keycloak, with realm roles.** Without a mapper, Keycloak puts the realm roles in `realm_access.roles`, but by default only in the access token. Go to **Client scopes → roles → Mappers → realm roles** and turn on **Add to ID token** (or **Add to userinfo**), then set `VOLVERAN_OIDC_GROUPS_CLAIM=realm_access.roles`. The list includes Keycloak's own roles (`offline_access`, `uma_authorization`, `default-roles-<realm>`); leave them out of `roles`. In the [worked example](#worked-example-keycloak-brokering-jumpcloud), JumpCloud's groups reach Keycloak only if an identity provider mapper imports them; map them to Keycloak groups or roles there, and use one of the two set-ups above.
 
-**JumpCloud (direct).** In the Volverán application's **SSO** tab, under **Attribute Mapping**, turn on **Include group attribute** and name it, for example `groups` (JumpCloud suggests `memberOf`). Set `VOLVERAN_OIDC_GROUPS_CLAIM` to that name. JumpCloud only sends the user groups that are bound to the application, so bind the groups you map in `roles`.
+**JumpCloud (direct).** In the Volverán application's **SSO** tab, under **Attribute Mapping**, turn on **Include group attribute** and name it, for example `groups` (JumpCloud's docs use `memberOf` as an example). Set `VOLVERAN_OIDC_GROUPS_CLAIM` to that name. JumpCloud only sends the user groups that are bound to the application, so bind the groups you map in `roles`.
 
-**Okta.** On the org authorization server (issuer `https://<org>.okta.com`), open the application's **Sign On** tab, edit **OpenID Connect ID Token**, and set **Groups claim type** *Filter*, **Groups claim filter** `groups`, *Matches regex* `.*` (or *Starts with* `volveran-` to send only the relevant groups). On a custom authorization server (`https://<org>.okta.com/oauth2/default`), add the claim under **Security → API → Authorization Servers → Claims** instead: name `groups`, include in **ID Token**, *Always*, value type *Groups*, with the same filter. If the claim is set to appear only on request, it reaches Volverán through userinfo. Okta sends at most 100 groups in a token, so filter rather than send everything. Keep `VOLVERAN_OIDC_GROUPS_CLAIM=groups`.
+**Okta.** On the org authorization server (issuer `https://<org>.okta.com`), open the application's **Sign On** tab, edit **OpenID Connect ID Token**, and set **Groups claim type** *Filter*, **Groups claim filter** `groups`, *Matches regex* `.*` (or *Starts with* `volveran-` to send only the relevant groups). On a custom authorization server (`https://<org>.okta.com/oauth2/default`), add the claim under **Security → API → Authorization Servers → Claims** instead: name `groups`, include in **ID Token**, *Always*, value type *Groups*, with the same filter. Okta sends the groups claim only when the `groups` scope is requested, so add it: `VOLVERAN_OIDC_SCOPES=openid email profile groups` (chart value `oidc.scopes`). Okta caps the claim at 100 groups only in the implicit flow; Volverán uses the authorization code flow, but filtering still keeps the token small. Keep `VOLVERAN_OIDC_GROUPS_CLAIM=groups`.
 
 **Microsoft Entra ID.** In the app registration, go to **Token configuration → Add groups claim**, and pick **Groups assigned to the application** (or *Security groups*), with the ID token type left at **Group ID**. Keep `VOLVERAN_OIDC_GROUPS_CLAIM=groups`. Two things differ from other providers, and Volverán does not work around either:
 
 - **Groups arrive as object ids**, not names: `roles` must list them, for example `admin: ["5f0c3d4e-0000-4c1a-9b9e-2f6b7e1a0c42"]`. Names are only available for groups synchronized from on-premises Active Directory (*sAMAccountName*), or, for cloud groups, with *Groups assigned to the application* and the option to emit their display names. Comment each id in the profiles file with the group's name.
-- **Above about 200 groups, the claim is replaced by an overage indicator** (`_claim_names` / `_claim_sources`, pointing at Microsoft Graph). Volverán does not call Graph, and Entra's userinfo does not carry groups, so such an Operator gets no groups. *Groups assigned to the application* avoids this, because only the assigned groups count.
+- **Above 200 groups (counting nested groups), the claim is replaced by an overage indicator** (`_claim_names` / `_claim_sources`, pointing at Microsoft Graph). Volverán does not call Graph, and Entra's userinfo does not carry groups, so such an Operator gets no groups. *Groups assigned to the application* makes this unlikely, since only assigned groups count; note that it needs Entra ID P1 or P2 and ignores nested groups (the Operator must be a direct member of an assigned group).
 
-Alternatively, define **app roles** in the app registration, assign groups to them under **Enterprise applications → Users and groups**, and set `VOLVERAN_OIDC_GROUPS_CLAIM=roles`. The `roles` claim carries the app role values (readable names you choose) and has no overage limit.
+Alternatively, define **app roles** in the app registration, assign groups to them under **Enterprise applications → Users and groups**, and set `VOLVERAN_OIDC_GROUPS_CLAIM=roles`. The `roles` claim carries the app role values (readable names you choose), not one entry per group, so it stays small. Assigning groups to app roles needs Entra ID P1 or P2 and does not cover nested groups.
 
 ## Approval
 
