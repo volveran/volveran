@@ -8,6 +8,7 @@
 // Checkout per Operator, Audit Entries) uses `operator.id`.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from './http-error.js';
+import type { OperatorToken } from './operator-token.js';
 
 export interface Operator {
   /**
@@ -27,6 +28,11 @@ export interface Operator {
    * the session: a change at the provider applies at the next sign-in.
    */
   groups?: string[];
+  /**
+   * Team Mode: the access token from sign-in, kept server-side. Profiles
+   * with `credentials: operatorToken` connect with it (broker-credentials.ts).
+   */
+  brokerToken?: OperatorToken;
 }
 
 declare module 'fastify' {

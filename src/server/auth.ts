@@ -18,6 +18,7 @@ import { groupsAtSignIn } from './groups-claim.js';
 import { HttpError } from './http-error.js';
 import { isLoopback } from './is-loopback.js';
 import { attachOperator, notSignedIn, teamOperator, type Operator } from './operator.js';
+import { OperatorToken } from './operator-token.js';
 import type { OidcSettings } from './run-mode.js';
 
 const sessionCookie = 'volveran_session';
@@ -36,7 +37,7 @@ interface PendingLogin {
 }
 
 interface Session {
-  /** Who signed in, with their groups. */
+  /** Who signed in, with their groups and their access token (`brokerToken`). */
   operator: Operator;
   expiresAt: number;
 }
@@ -179,6 +180,9 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
             log: req.log,
           });
           operator = teamOperator(claims, groups);
+          // Kept with the session's Operator, never sent to the browser: profiles
+          // with `credentials: operatorToken` connect with it (ADR 0008).
+          operator.brokerToken = new OperatorToken(tokens.access_token, tokens.expiresIn());
         } catch (err) {
           throw signInFailed(describe(err));
         }

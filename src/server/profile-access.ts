@@ -1,8 +1,10 @@
 // The one access check: every /api/ route that acts on a Broker Profile, or
 // on a Checkout or Audit Entry that belongs to one, resolves the profile
 // here, with the requesting Operator and the capability the route needs. It
-// answers with the Broker Profile, the Operator's Role on it and a
-// management API client for it, so no route builds a client on its own.
+// answers with the Broker Profile, the Operator's Role on it, a management
+// API client for it and the credentials for its AMQP connections, so no
+// route builds a client or picks credentials on its own. On a profile with
+// `credentials: operatorToken` both use the Operator's own token (ADR 0008).
 //
 // Each route names its capability where it resolves the profile. Who holds
 // which capability is decided in one place (`denial`), from the Operator's
@@ -18,6 +20,7 @@
 // `no_role_on_profile` without a role on it, 403 `role_required` (with
 // `required` and `held`) for too low a role. Each is thrown before the route
 // touches the broker or the audit store.
+import { brokerCredentials, type BrokerCredentials } from './broker-credentials.js';
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import type { Operator } from './operator.js';
@@ -52,11 +55,17 @@ export const REQUIRED_ROLE: Record<Capability, Role> = {
   restore: 'admin',
 };
 
-/** A Broker Profile the Operator may act on, with their Role on it and its management API client. */
+/**
+ * A Broker Profile the Operator may act on, with their Role on it, its
+ * management API client and the credentials to open AMQP connections with
+ * (the profile's shared account, or this Operator's own token).
+ */
 export interface ProfileAccess {
   profile: BrokerProfile;
   role: Role;
   management: ManagementClient;
+  /** Resolved when called: throws 401 `broker_token_expired` once the Operator's token has expired. */
+  credentials(): BrokerCredentials;
 }
 
 /** One queue the Operator may act on, with the management API client of its profile. */
@@ -176,6 +185,12 @@ export class ProfileAccessCheck {
   private grant(operator: Operator, capability: Capability, profile: BrokerProfile): ProfileAccess {
     const denied = this.denial(operator, capability, profile.name);
     if (denied) throw denied;
-    return { profile, role: this.roleOn(operator, profile.name)!, management: new ManagementClient(profile) };
+    const credentials = () => brokerCredentials(profile, operator);
+    return {
+      profile,
+      role: this.roleOn(operator, profile.name)!,
+      management: new ManagementClient(profile, credentials),
+      credentials,
+    };
   }
 }

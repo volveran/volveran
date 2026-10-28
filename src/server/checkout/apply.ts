@@ -44,6 +44,7 @@ export async function runApply(
       checkoutId: checkout.id,
       operator: checkout.operator,
       role: options.role,
+      brokerUser: checkout.brokerUser,
       approver: options.approver,
     },
     startedAt: new Date(),

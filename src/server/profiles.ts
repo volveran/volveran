@@ -1,7 +1,9 @@
 // Broker Profiles: loaded once at startup from a YAML file (mounted into the
 // container). Passwords are never in the file: each profile names the
 // environment variable that holds its password. A missing variable does not
-// stop startup; using that profile reports `password_not_set`.
+// stop startup; using that profile reports `password_not_set`. A profile
+// with `credentials: operatorToken` has no password at all: it connects with
+// the signed-in Operator's own access token (Team Mode, ADR 0008).
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
@@ -15,6 +17,26 @@ import { ROLES, type Role } from '../shared/roles.js';
  */
 export type RoleMapping = Partial<Record<Role, string[]>>;
 
+/**
+ * How Volverán authenticates to the broker of a profile: one shared service
+ * account, or each signed-in Operator's own OAuth 2.0 access token (ADR
+ * 0008). Resolved per request in broker-credentials.ts.
+ */
+export type ProfileCredentials =
+  | {
+      kind: 'shared';
+      username: string;
+      /** Name of the environment variable holding the password. */
+      passwordEnv: string;
+      /** Resolved from `passwordEnv`; undefined when the variable is not set. */
+      password: string | undefined;
+    }
+  | {
+      kind: 'operatorToken';
+      /** The access token claim the broker takes as the user name (its `preferred_username_claims`); default `sub`. */
+      tokenUsernameClaim: string;
+    };
+
 export interface BrokerProfile {
   name: string;
   /** http(s) base URL of the management API, without a trailing slash. */
@@ -25,11 +47,7 @@ export interface BrokerProfile {
   ca: Buffer | undefined;
   /** Where `ca` was read from, for messages. */
   caFile: string | undefined;
-  username: string;
-  /** Name of the environment variable holding the password. */
-  passwordEnv: string;
-  /** Resolved from `passwordEnv`; undefined when the variable is not set. */
-  password: string | undefined;
+  credentials: ProfileCredentials;
   vhosts: 'all' | string[];
   /** Glob on queue names (`*`, `?`); matching queues are dead-letter queues. */
   defaultQueueFilter: string | undefined;
@@ -124,7 +142,6 @@ export function parseProfiles(
     const name = requireString(raw, 'name', where);
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
-    const passwordEnv = requireString(raw, 'passwordEnv', where);
     const isProtected = parseProtected(raw.protected, where);
     return {
       name,
@@ -132,9 +149,7 @@ export function parseProfiles(
       amqpUrl: requireUrl(raw, 'amqpUrl', ['amqp:', 'amqps:'], where),
       ca: undefined,
       caFile: optionalString(raw, 'caFile', where),
-      username: requireString(raw, 'username', where),
-      passwordEnv,
-      password: env[passwordEnv],
+      credentials: parseCredentials(raw, env, where, `${where} ("${name}")`),
       vhosts: parseVhosts(raw.vhosts, where),
       defaultQueueFilter: optionalString(raw, 'defaultQueueFilter', where),
       protected: isProtected,
@@ -142,6 +157,48 @@ export function parseProfiles(
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
     };
   });
+}
+
+function parseCredentials(
+  raw: Record<string, unknown>,
+  env: Record<string, string | undefined>,
+  where: string,
+  named: string,
+): ProfileCredentials {
+  const kind = raw.credentials ?? 'shared';
+  if (kind === 'operatorToken') {
+    for (const key of ['username', 'passwordEnv']) {
+      if (raw[key] !== undefined) throw new ProfilesConfigError(`${named}.${key} is not allowed with credentials: operatorToken`);
+    }
+    const claim = raw.tokenUsernameClaim ?? 'sub';
+    if (typeof claim !== 'string' || claim.trim() === '') {
+      throw new ProfilesConfigError(`${named}.tokenUsernameClaim must be a non-empty string`);
+    }
+    return { kind, tokenUsernameClaim: claim };
+  }
+  if (kind !== 'shared') {
+    throw new ProfilesConfigError(`${named}.credentials must be "shared" or "operatorToken", not "${String(kind)}"`);
+  }
+  if (raw.tokenUsernameClaim !== undefined) {
+    throw new ProfilesConfigError(`${named}.tokenUsernameClaim is only allowed with credentials: operatorToken`);
+  }
+  const passwordEnv = requireString(raw, 'passwordEnv', where);
+  return { kind, username: requireString(raw, 'username', where), passwordEnv, password: env[passwordEnv] };
+}
+
+/**
+ * Startup check of the profiles against the run mode: Solo Mode has no
+ * signed-in Operator, so no token to connect with.
+ */
+export function checkProfilesForRunMode(profiles: BrokerProfile[], mode: 'solo' | 'team'): void {
+  if (mode === 'team') return;
+  const tokenProfile = profiles.find((p) => p.credentials.kind === 'operatorToken');
+  if (tokenProfile) {
+    throw new ProfilesConfigError(
+      `Broker Profile "${tokenProfile.name}" has credentials: operatorToken, which needs Team Mode (VOLVERAN_AUTH=oidc): ` +
+        'Solo Mode has no signed-in Operator whose token it could connect with. Give it username and passwordEnv instead.',
+    );
+  }
 }
 
 function parseVhosts(value: unknown, where: string): 'all' | string[] {

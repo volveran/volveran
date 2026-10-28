@@ -6,7 +6,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
-import { BrokerError, connectionFailed, requirePassword } from './broker-error.js';
+import type { BrokerCredentials } from './broker-credentials.js';
+import { BrokerError, brokerPermissionDenied, connectionFailed } from './broker-error.js';
 import { isRecord } from './is-record.js';
 import type { BrokerProfile } from './profiles.js';
 
@@ -44,7 +45,15 @@ export interface ManagementExchange {
 const REQUEST_TIMEOUT_MS = 5_000;
 
 export class ManagementClient {
-  constructor(private readonly profile: BrokerProfile) {}
+  /**
+   * `credentials` is asked on every request (basic auth with the shared
+   * account, or the Operator's token as a bearer token), so an expired token
+   * answers `broker_token_expired` then.
+   */
+  constructor(
+    private readonly profile: BrokerProfile,
+    private readonly credentials: () => BrokerCredentials,
+  ) {}
 
   async listVhosts(): Promise<string[]> {
     const body = (await this.request('/api/vhosts?columns=name')) as Array<{ name: string }>;
@@ -101,7 +110,7 @@ export class ManagementClient {
       if (err instanceof NotFound) {
         throw new BrokerError(
           'vhost_not_accessible',
-          `Vhost "${vhost}" on Broker Profile "${this.profile.name}" does not exist, or user "${this.profile.username}" has no permissions on it.`,
+          `Vhost "${vhost}" on Broker Profile "${this.profile.name}" does not exist, or user "${this.credentials().brokerUser}" has no permissions on it.`,
         );
       }
       throw err;
@@ -110,11 +119,11 @@ export class ManagementClient {
 
   private async request(path: string): Promise<unknown> {
     const { profile } = this;
-    const auth = Buffer.from(`${profile.username}:${requirePassword(profile)}`).toString('base64');
+    const credentials = this.credentials();
     const url = new URL(profile.managementUrl + path);
     let res: { status: number; text: string };
     try {
-      res = await get(url, { authorization: `Basic ${auth}`, accept: 'application/json' }, profile.ca);
+      res = await get(url, { authorization: credentials.authorization, accept: 'application/json' }, profile.ca);
     } catch (err) {
       throw connectionFailed(profile, 'the management API', profile.managementUrl, err);
     }
@@ -128,15 +137,25 @@ export class ManagementClient {
       // not JSON: no detail
     }
     if (res.status === 401 && /not management user/i.test(detail.reason ?? '')) {
+      if (credentials.kind === 'operatorToken') {
+        throw brokerPermissionDenied(
+          profile,
+          credentials.brokerUser,
+          { type: 'management', name: '' },
+          'management',
+          'Volverán reads queues through the management API: the token needs a scope like <resource_server_id>.tag:management.',
+        );
+      }
       throw new BrokerError(
         'not_management_user',
-        `User "${profile.username}" of Broker Profile "${profile.name}" may not use the management API (it needs the "management" tag or higher).`,
+        `User "${credentials.brokerUser}" of Broker Profile "${profile.name}" may not use the management API (it needs the "management" tag or higher).`,
       );
     }
     if (res.status === 401) {
       throw new BrokerError(
         'authentication_failed',
-        `The broker rejected the credentials of Broker Profile "${profile.name}" (user "${profile.username}", password from ${profile.passwordEnv}).`,
+        `The broker rejected the credentials of Broker Profile "${profile.name}" (${credentials.describe}).` +
+          (credentials.kind === 'operatorToken' ? ' Check that the broker accepts the token\'s audience and signing key.' : ''),
       );
     }
     if (res.status === 404) throw new NotFound();

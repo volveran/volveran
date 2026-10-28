@@ -28,6 +28,12 @@ export interface Checkout extends QueueRef {
   id: string;
   /** Who started it: `id` keys one active Checkout per Operator, `displayName` is shown. */
   operator: Operator;
+  /**
+   * Who the broker sees acting on the Checkout's connection, recorded in its
+   * Audit Entries: the profile's shared user, or the owner's token user (ADR
+   * 0008). An approved Apply runs on this connection, so as the owner.
+   */
+  brokerUser: string;
   queueType: CheckoutQueueType;
   /** The queue's effective delivery-limit (quorum); null when none. */
   deliveryLimit: number | null;

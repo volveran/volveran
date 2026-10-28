@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
+import type { BrokerCredentials } from '../broker-credentials.js';
 import { ConfirmPublisher } from '../apply/publisher.js';
 import { republishOptions } from '../apply/republish.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
@@ -156,12 +157,14 @@ export class RestoreService {
         throw new RestoreError('body_expired', `The body of the Message of Audit Entry ${id} is no longer stored, so it cannot be Restored.`);
       }
 
+      // The Operator's own token on a profile with `credentials: operatorToken`.
+      const credentials = target.credentials();
       const replayId = randomUUID();
       const entryId = this.audit.record({
         at: new Date(),
         operator,
         role,
-        brokerUser: profile.username,
+        brokerUser: credentials.brokerUser,
         profile: profile.name,
         vhost: discard.vhost,
         queue: discard.queue,
@@ -178,7 +181,7 @@ export class RestoreService {
         { ...message.properties, headers: message.headers },
         { replayId, from: discard.queue },
       );
-      const failure = await publish({ profile, vhost: discard.vhost, queue }, body, options);
+      const failure = await publish({ profile, vhost: discard.vhost, queue }, credentials, body, options);
       this.audit.setOutcome(entryId, failure ? 'failed' : 'done', failure);
       return this.audit.get(entryId)!;
     } finally {
@@ -188,10 +191,15 @@ export class RestoreService {
 }
 
 /** Publishes to `queue` through the default exchange on a connection of its own; returns why it failed, or null. */
-async function publish({ profile, vhost, queue }: QueueRef, body: Buffer, options: amqp.Options.Publish): Promise<string | null> {
+async function publish(
+  { profile, vhost, queue }: QueueRef,
+  credentials: BrokerCredentials,
+  body: Buffer,
+  options: amqp.Options.Publish,
+): Promise<string | null> {
   let connection: amqp.ChannelModel;
   try {
-    connection = await openAmqpConnection(profile, vhost, `volveran restore ${vhost} ${queue}`);
+    connection = await openAmqpConnection(profile, credentials, vhost, `volveran restore ${vhost} ${queue}`);
   } catch (err) {
     return (err as Error).message;
   }

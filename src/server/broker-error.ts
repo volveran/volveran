@@ -2,6 +2,12 @@
 // one code per thing the Operator would fix differently: the password
 // variable, the network, TLS trust, the credentials, or the broker user's
 // permissions.
+//
+// On a profile with `credentials: operatorToken` (ADR 0008) two are the
+// Operator's own: `broker_token_expired` (401, sign in again) and
+// `broker_permission_denied` (403, the Operator's broker permissions lack
+// something). The shared service account's problems stay 5xx: whoever runs
+// Volverán fixes those.
 import { HttpError } from './http-error.js';
 import type { BrokerProfile } from './profiles.js';
 
@@ -12,6 +18,8 @@ export type BrokerErrorCode =
   | 'authentication_failed'
   | 'not_management_user'
   | 'vhost_not_accessible'
+  | 'broker_token_expired'
+  | 'broker_permission_denied'
   | 'broker_error';
 
 const STATUS: Record<BrokerErrorCode, number> = {
@@ -21,25 +29,64 @@ const STATUS: Record<BrokerErrorCode, number> = {
   authentication_failed: 502,
   not_management_user: 502,
   vhost_not_accessible: 502,
+  broker_token_expired: 401,
+  broker_permission_denied: 403,
   broker_error: 502,
 };
 
 export class BrokerError extends HttpError<BrokerErrorCode> {
-  constructor(code: BrokerErrorCode, message: string) {
-    super(STATUS[code], code, message);
+  constructor(code: BrokerErrorCode, message: string, details: Record<string, unknown> = {}) {
+    super(STATUS[code], code, message, details);
     this.name = 'BrokerError';
   }
 }
 
-/** The profile's password, or a `password_not_set` BrokerError when its variable isn't set. */
-export function requirePassword(profile: BrokerProfile): string {
-  if (profile.password === undefined) {
-    throw new BrokerError(
-      'password_not_set',
-      `Broker Profile "${profile.name}": environment variable ${profile.passwordEnv} is not set, so there is no password to connect with.`,
-    );
-  }
-  return profile.password;
+/** The Operator's access token has expired (or the broker no longer accepts it): they sign in again for a new one. */
+export function brokerTokenExpired(profile: BrokerProfile): BrokerError {
+  return new BrokerError(
+    'broker_token_expired',
+    `Broker Profile "${profile.name}" connects with your own access token, and it has expired. Sign in again to get a new one.`,
+    { profile: profile.name, signInUrl: '/auth/login' },
+  );
+}
+
+/** What the broker refused: a queue, an exchange, a vhost, or the management API itself. */
+export interface BrokerResource {
+  type: 'queue' | 'exchange' | 'vhost' | 'management';
+  /** The queue, exchange or vhost name ("" for the default exchange and the management API). */
+  name: string;
+  /** The vhost of a queue or exchange. */
+  vhost?: string;
+}
+
+/** A RabbitMQ permission: configure, write or read on a resource, access to a vhost, or the management tag. */
+export type BrokerPermission = 'configure' | 'write' | 'read' | 'access' | 'management';
+
+function describeResource({ type, name, vhost }: BrokerResource): string {
+  if (type === 'management') return 'the management API';
+  if (type === 'vhost') return `vhost "${name}"`;
+  const label = type === 'exchange' && name === '' ? 'the default exchange' : `${type} "${name}"`;
+  return `${label} in vhost "${vhost}"`;
+}
+
+/**
+ * The broker refused `brokerUser` the `permission` on `resource`: 403
+ * `broker_permission_denied`, naming both. `hint` says what to grant.
+ */
+export function brokerPermissionDenied(
+  profile: BrokerProfile,
+  brokerUser: string,
+  resource: BrokerResource,
+  permission: BrokerPermission,
+  hint = '',
+): BrokerError {
+  const what = permission === 'access' ? 'access to' : permission === 'management' ? 'the management tag for' : `${permission} permission on`;
+  return new BrokerError(
+    'broker_permission_denied',
+    `The broker refused broker user "${brokerUser}" of Broker Profile "${profile.name}" ${what} ${describeResource(resource)}.` +
+      (hint ? ` ${hint}` : ''),
+    { profile: profile.name, brokerUser, resource, permission },
+  );
 }
 
 /** OpenSSL and Node error codes of a failed TLS handshake or certificate check. */
