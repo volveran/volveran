@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Compare two Messages. `GET /api/checkouts/:id/compare?a=<handle>&b=<handle>` (the owner) and `GET /api/approvals/:checkoutId/compare?…` (an approver of the waiting Checkout) answer `{ left, right, diff }`: both Message views and their diff, with properties and headers by name (`equal`, `changed`, `onlyLeft`, `onlyRight`), `x-death` entries by position, Failure Details by field, and the body by kind (JSON as JSON-path changes, text as line hunks, binary as the sizes and first differing byte, bodies of different kinds as `mixed`). The role and owner rules are those of the Message view; an unknown handle answers `404 message_not_found`, the same handle twice `400 invalid_request`. The web app opens a two-column comparison from a Checkout with exactly two Messages selected (Compare, or the `c` key) and from the Approval view, with differences highlighted, "Hide equal" (on for bodies over 50 lines) and, in a Checkout, Decision buttons for each side. (#62)
+
 ## [0.3.0] - 2026-10-28
 
 Team safety (see the [roadmap](ROADMAP.md)): Roles per Broker Profile, Approval on Protected Profiles, Broker Profiles that connect with the Operator's own token, Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation.

@@ -4,6 +4,7 @@ import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audi
 import type { ApprovalSummary, CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
+import type { MessageComparison } from '../shared/message-diff.js';
 import { product } from '../shared/product.js';
 import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
 
@@ -140,6 +141,9 @@ export const api = {
   checkout: (id: string) => getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`).then((b) => b.checkout),
   message: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  /** Two held Messages side by side, with their diff. */
+  compare: (id: string, a: number, b: number) =>
+    getJson<MessageComparison>(`/api/checkouts/${segment(id)}/compare?a=${a}&b=${b}`),
   endCheckout: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`, 'DELETE').then((b) => b.checkout),
   /** The handles of the held Messages matching `filter`. */
@@ -212,6 +216,8 @@ export const api = {
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
   approvalMessage: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  approvalCompare: (id: string, a: number, b: number) =>
+    getJson<MessageComparison>(`/api/approvals/${segment(id)}/compare?a=${a}&b=${b}`),
   /** Rejects the Apply of a waiting Checkout: it goes back to its requester's staging with `reason`. */
   reject: (id: string, reason: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
