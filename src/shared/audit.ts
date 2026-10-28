@@ -1,8 +1,9 @@
 // Audit Entries as the API sends them (src/server/routes/audit.ts), shared
 // by the server and the web app. Pure values and types (no Node or DOM APIs).
+import type { Filter } from './filters.js';
 
 /** Every triage action an Audit Entry can record. */
-export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore'] as const;
+export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore', 'export'] as const;
 
 /** The triage action an Audit Entry records. */
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -12,6 +13,8 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
  * stopped mid-action: the Message may still be in the queue too). done /
  * failed: carried out / not carried out. uncertain: the broker may or may not
  * have carried it out (the connection dropped before it confirmed the ack).
+ * An export is pending while its download is written, done once every line
+ * is, failed when the download stopped part way.
  */
 export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
 
@@ -49,6 +52,11 @@ export interface AuditEntryJson {
   outcomeReason: string | null;
   /** Set once retention evicted the Discarded body ("body expired"). */
   bodyExpiredAt: string | null;
+  /** An export: the filter its Messages matched; null when it exported every held Message. */
+  filter: Filter | null;
+  /** An export: how many Messages it holds; null for the other actions. */
+  messageCount: number | null;
+  /** The Message acted on; null for an export, which keeps no copy. */
   message: {
     properties: Record<string, unknown>;
     headers: Record<string, unknown>;

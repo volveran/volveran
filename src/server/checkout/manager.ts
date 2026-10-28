@@ -28,12 +28,14 @@ import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
 import { queueRefOf, type QueueRef } from '../profiles.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
+import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import type { MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
 import { runApply } from './apply.js';
 import { applyInProgress, CheckoutError, checkoutNotActive, inCheckout, notCheckoutOwner, operatorHasCheckout } from './errors.js';
+import { startExport, type CheckoutExport } from './export.js';
 import { openCheckout, type StartOptions } from './open.js';
 import type { Checkout, EndReason } from './state.js';
 import { queueInfo, view, type CheckoutView } from './view.js';
@@ -55,6 +57,8 @@ export interface CheckoutTestHooks {
   beforeTimeLimitEnd?(ref: QueueRef): Promise<void>;
   /** An Apply step's `pending` Audit Entry is committed; next the step touches the broker (e.g. the ack of a Discard). */
   beforeApplyStep?(entryId: number): Promise<void>;
+  /** An export is about to make the line of the Message at `position` (1 is the head of the queue). */
+  beforeExportLine?(position: number): Promise<void>;
 }
 
 export interface CheckoutManagerOptions {
@@ -206,6 +210,16 @@ export class CheckoutManager {
     // Apply then finds the Checkout already ended as 'applied'.
     await this.finish(checkout, 'applied');
     return { checkout: view(checkout), outcomes };
+  }
+
+  /**
+   * Starts an NDJSON export of the held Messages matching `filter` (every
+   * one when null) and records its Audit Entry (export.ts). Changes nothing
+   * on the broker. Throws `checkout_not_active` on a Checkout that is over
+   * or lost.
+   */
+  exportMessages(id: string, filter: Filter | null): CheckoutExport {
+    return startExport(this.find(id), filter, { audit: this.options.audit, beforeLine: this.hooks.beforeExportLine });
   }
 
   /** Ends the Checkout: every held Message goes back to the queue untouched, in its original order. */

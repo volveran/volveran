@@ -12,6 +12,7 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   replay: 'Replay',
   move: 'Move',
   restore: 'Restore',
+  export: 'Export',
 };
 
 const EMPTY_SEARCH: AuditSearch = { profile: '', queue: '', messageId: '', action: '', operator: '', replayId: '', from: '', to: '' };

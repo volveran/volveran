@@ -17,6 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
 import type { AuditAction, AuditDestination, AuditOutcome } from '../../shared/audit.js';
+import type { Filter } from '../../shared/filters.js';
 
 export type { AuditAction, AuditDestination, AuditOutcome };
 
@@ -57,13 +58,20 @@ export interface NewAuditEntry {
   replayId?: string | null;
   /** A Restore: the Audit Entry of the Discard whose Message it republished. */
   restoreOf?: number | null;
+  /** An export: the filter its Messages matched; null (or left out) when it exported every held Message. */
+  filter?: Filter | null;
+  /** An export: how many Messages it holds. */
+  messageCount?: number | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'replayId' | 'restoreOf'> {
+export interface AuditEntry
+  extends Omit<NewAuditEntry, 'operator' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount'> {
   id: number;
   replayId: string | null;
   restoreOf: number | null;
+  filter: Filter | null;
+  messageCount: number | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
   operatorId: string;
@@ -152,6 +160,9 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_entries_restore_of ON audit_entries (restore_of);
    CREATE INDEX audit_entries_stored_bodies ON audit_entries (created_at, id)
      WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL;`,
+  // v4 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
+  `ALTER TABLE audit_entries ADD COLUMN filter TEXT;
+   ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -179,8 +190,9 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of,
+             filter, message_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -202,6 +214,8 @@ export class AuditStore {
           message?.body ? message.body.length : null,
           entry.replayId ?? null,
           entry.restoreOf ?? null,
+          entry.filter ? JSON.stringify(entry.filter) : null,
+          entry.messageCount ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -353,6 +367,8 @@ interface Row {
   replay_id: string | null;
   restore_of: number | null;
   body_expired_at: number | null;
+  filter: string | null;
+  message_count: number | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -382,6 +398,8 @@ function toEntry(row: Row): AuditEntry {
     replayId: row.replay_id,
     restoreOf: row.restore_of,
     bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
+    filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
+    messageCount: row.message_count,
     message:
       row.message_properties === null
         ? null

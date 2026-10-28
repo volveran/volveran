@@ -18,6 +18,7 @@ import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
+import { registerExportRoutes } from './routes/export.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerProfileRoutes } from './routes/profiles.js';
@@ -169,6 +170,7 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
+  registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {
