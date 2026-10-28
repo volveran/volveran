@@ -28,7 +28,14 @@ export interface ApplyTarget extends QueueRef {
 }
 
 /** The outcome of one publish: ok only when confirmed without a preceding basic.return. */
-export type PublishResult = { ok: true } | { ok: false; reason: string };
+export type PublishResult =
+  | { ok: true }
+  /**
+   * `refused`: the broker refused the broker user write permission on the
+   * exchange (403 ACCESS_REFUSED); `reason` then names the exchange and the
+   * permission.
+   */
+  | { ok: false; reason: string; refused?: boolean };
 
 /** What a handler can do on the broker during Apply. */
 export interface ApplyContext {

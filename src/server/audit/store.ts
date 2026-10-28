@@ -99,6 +99,9 @@ export interface AuditEntry
   } | null;
 }
 
+/** Broker Profiles by name: only the ones listed, or every one except those listed. */
+export type ProfileScope = { only: string[] } | { except: string[] };
+
 /** A search over Audit Entries; every given field must match. */
 export interface AuditQuery {
   /** The queue a Message was taken from or sent to. */
@@ -112,8 +115,8 @@ export interface AuditQuery {
   profile?: string;
   /** The Operator: their stable id or their display name. */
   operator?: string;
-  /** Leaves out the entries of these Broker Profiles. */
-  excludeProfiles?: string[];
+  /** Keeps only the entries of these Broker Profiles (see ProfileScope). */
+  profiles?: ProfileScope;
   /** Restores of this Audit Entry. */
   restoreOf?: number;
   /** Entries at or after this time. */
@@ -271,8 +274,11 @@ export class AuditStore {
     if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
     if (query.replayId !== undefined) match('replay_id = ?', query.replayId);
     if (query.profile !== undefined) match('profile = ?', query.profile);
-    if (query.excludeProfiles?.length) {
-      match(`profile NOT IN (${query.excludeProfiles.map(() => '?').join(', ')})`, ...query.excludeProfiles);
+    const scope = query.profiles;
+    if (scope && 'only' in scope) {
+      match(scope.only.length ? `profile IN (${scope.only.map(() => '?').join(', ')})` : '0', ...scope.only);
+    } else if (scope?.except.length) {
+      match(`profile NOT IN (${scope.except.map(() => '?').join(', ')})`, ...scope.except);
     }
     if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
     if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);

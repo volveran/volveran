@@ -6,8 +6,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
-import type { BrokerCredentials } from './broker-credentials.js';
-import { BrokerError, brokerPermissionDenied, connectionFailed } from './broker-error.js';
+import { permissionRefused, type BrokerCredentials } from './broker-credentials.js';
+import { BrokerError, connectionFailed } from './broker-error.js';
 import { isRecord } from './is-record.js';
 import type { BrokerProfile } from './profiles.js';
 
@@ -147,25 +147,23 @@ export class ManagementClient {
       // not JSON: no detail
     }
     if (res.status === 401 && /not management user/i.test(detail.reason ?? '')) {
-      if (credentials.kind === 'operatorToken') {
-        throw brokerPermissionDenied(
-          profile,
-          credentials.brokerUser,
-          { type: 'management', name: '' },
-          'management',
-          'Volverán reads queues through the management API: the token needs a scope like <resource_server_id>.tag:management.',
-        );
-      }
-      throw new BrokerError(
-        'not_management_user',
-        `User "${credentials.brokerUser}" of Broker Profile "${profile.name}" may not use the management API (it needs the "management" tag or higher).`,
+      throw permissionRefused(
+        profile,
+        credentials.brokerUser,
+        { type: 'management', name: '' },
+        'management',
+        'Volverán reads queues through the management API: the token needs a scope like <resource_server_id>.tag:management.',
+        new BrokerError(
+          'not_management_user',
+          `User "${credentials.brokerUser}" of Broker Profile "${profile.name}" may not use the management API (it needs the "management" tag or higher).`,
+        ),
       );
     }
     if (res.status === 401) {
       throw new BrokerError(
         'authentication_failed',
         `The broker rejected the credentials of Broker Profile "${profile.name}" (${credentials.describe}).` +
-          (credentials.kind === 'operatorToken' ? ' Check that the broker accepts the token\'s audience and signing key.' : ''),
+          (credentials.rejectedHint ? ` ${credentials.rejectedHint}` : ''),
       );
     }
     if (res.status === 404) throw new NotFound();

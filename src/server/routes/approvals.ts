@@ -49,7 +49,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
 
   app.get('/api/approvals', async (req) => {
     const approver = operatorOf(req);
-    const approvals = checkouts.awaitingApproval(approver).filter((a) => access.holds(approver, 'approve', a.profile));
+    const approvals = checkouts.listAwaitingApproval(approver).filter((a) => access.holds(approver, 'approve', a.profile));
     return { approvals };
   });
 

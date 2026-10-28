@@ -10,5 +10,5 @@ v0.3 adds Roles per Broker Profile: a profile's `roles` mapping gives OIDC group
 ## Consequences
 
 - A profile is only as restricted as its `roles` says. A platform engineer who adds `roles` to `prod` but not to `staging` leaves `staging` open to everyone who can sign in; the startup warning is the reminder.
-- Audit Entries of a Broker Profile no longer in the profiles file have no mapping either, so every Operator may read them (bodies included). Nothing can be done on that broker any more, since Restore needs a configured profile.
+- Audit Entries of a Broker Profile no longer in the profiles file have no mapping either. Treating them like a profile without `roles` would let every signed-in Operator read their Discarded bodies, including one with no role anywhere, so they are not: on such an entry the Operator holds the highest role they hold on any configured profile (`admin` in Solo Mode; a configured profile without `roles` counts, so before the first mapping nothing changes). An Operator with no role anywhere does not find these entries in the search and is refused them with `403 no_role_on_profile`. Nothing can be done on that broker any more, since Restore needs a configured profile.
 - Solo Mode ignores `roles` (one startup log line): its single Operator is `admin` everywhere, so one profiles file serves both modes.

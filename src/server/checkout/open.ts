@@ -11,7 +11,7 @@
 // of one delivery on quorum queues.
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
-import { brokerPermissionDenied } from '../broker-error.js';
+import { permissionRefused } from '../broker-credentials.js';
 import type { ManagementClient } from '../management.js';
 import type { ProfileAccess } from '../profile-access.js';
 import type { QueueRef } from '../profiles.js';
@@ -99,7 +99,7 @@ export async function openCheckout(
     hooks.onLost(`The broker closed the channel holding the Messages (${err.message}). Every Message is back in the queue.`);
   });
   const readDenied = () =>
-    brokerPermissionDenied(
+    permissionRefused(
       checkout.profile,
       checkout.brokerUser,
       { type: 'queue', name: queue, vhost },
@@ -175,16 +175,14 @@ async function takeLock(checkout: Checkout, connection: amqp.ChannelModel, manag
       throw inCheckout(checkout, lock ? (holderFromLockArguments(lock.arguments)?.holder ?? null) : null);
     }
     if (code === 403) {
-      if (checkout.profile.credentials.kind === 'operatorToken') {
-        throw brokerPermissionDenied(
-          checkout.profile,
-          checkout.brokerUser,
-          { type: 'queue', name: lockQueue, vhost: checkout.vhost },
-          'configure',
-          'A Checkout declares its lock queue, so the token needs configure permission on queues matching volveran.* in that vhost.',
-        );
-      }
-      throw lockNotPermitted(checkout);
+      throw permissionRefused(
+        checkout.profile,
+        checkout.brokerUser,
+        { type: 'queue', name: lockQueue, vhost: checkout.vhost },
+        'configure',
+        'A Checkout declares its lock queue, so the token needs configure permission on queues matching volveran.* in that vhost.',
+        lockNotPermitted(checkout),
+      );
     }
     throw new CheckoutError('checkout_failed', `Cannot declare the Checkout lock queue "${lockQueue}": ${(err as Error).message}`);
   }

@@ -22,7 +22,11 @@ export async function publishHeld(
 ): Promise<StepResult> {
   const options = republishOptions(message.properties, { replayId, from: ctx.target.queue });
   const published = await ctx.publish(exchange, routingKey, message.content, options);
-  if (!published.ok) return { status: 'failed', reason: describe(published.reason) };
+  if (!published.ok) {
+    // A refusal names the missing permission itself; the destination's own description would mislead.
+    const reason = published.refused ? `${published.reason} It stays in the queue.` : describe(published.reason);
+    return { status: 'failed', reason };
+  }
   try {
     await ctx.ack(message);
   } catch (err) {

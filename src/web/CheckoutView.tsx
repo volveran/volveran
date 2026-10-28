@@ -36,13 +36,15 @@ import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { FilterBar } from './FilterBar.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
-import { SignInAgain } from './SignInAgain.js';
+import { ErrorBox } from './ErrorBox.js';
+import { useNow, usePolling } from './timers.js';
 import type { KeyboardCommand } from './keyboard-commands.js';
 
 /** An open prompt: the Discard reason or Move destination for some Messages, or the shortcut list. */
 type OpenPrompt = { kind: 'discard' | 'move'; handles: number[] } | { kind: 'shortcuts' };
 
-export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
+/** `hidden`: the page shows another view (Approvals) meanwhile; the Checkout keeps its heartbeat, its keys are off. */
+export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidden?: boolean; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
   /** The focused Message: the one the Message view shows. */
   const [focused, setFocused] = useState<number>();
@@ -51,7 +53,7 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [ending, setEnding] = useState(false);
   /** Date.now() when `checkout` arrived: the countdown runs from its remainingMs. */
   const [receivedAt, setReceivedAt] = useState(0);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useNow();
   /** The Selection: handles of the ticked Messages. */
   const [selection, setSelection] = useState<ReadonlySet<number>>(new Set());
   /** Handles matching the current filter; null when no filter is set. */
@@ -81,36 +83,19 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     };
   }, [profile, vhost]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const received = (c: Checkout) => {
-      if (cancelled) return;
-      setCheckout(c);
-      setReceivedAt(Date.now());
-    };
-    const failed = (err: ApiError) => !cancelled && setError(err);
-    let timer: ReturnType<typeof setInterval> | undefined;
-    api
-      .heartbeat(id)
-      .then((c) => {
-        received(c);
-        // The heartbeat also notices a Lost Checkout while the page is open.
-        timer = setInterval(
-          () => api.heartbeat(id).then(received).catch(failed),
-          Math.max(1_000, Math.min(5_000, c.heartbeatWindowMs / 4)),
-        );
-      })
-      .catch(failed);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [id]);
-
-  useEffect(() => {
-    const tick = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(tick);
-  }, []);
+  // The heartbeat also notices a Lost Checkout while the page is open.
+  usePolling(
+    {
+      load: () => api.heartbeat(id),
+      received: (c: Checkout) => {
+        setCheckout(c);
+        setReceivedAt(Date.now());
+      },
+      failed: setError,
+      everyMs: (c) => Math.max(1_000, Math.min(5_000, c.heartbeatWindowMs / 4)),
+    },
+    [id],
+  );
 
   useEffect(() => {
     const end = () => navigator.sendBeacon(`/api/checkouts/${encodeURIComponent(id)}/end`);
@@ -284,7 +269,7 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
   useKeyboardCommands(
-    active,
+    active && !hidden,
     {
       view: 'checkout',
       prompt: prompt !== null,
@@ -522,16 +507,6 @@ function endedLine(c: Checkout): string {
     default:
       return `This Checkout has ended; ${back}`;
   }
-}
-
-function ErrorBox({ error }: { error: ApiError }) {
-  return (
-    <div className="error" role="alert">
-      <p>{error.message}</p>
-      <code>{error.code}</code>
-      <SignInAgain error={error} />
-    </div>
-  );
 }
 
 function replayWarning(diedAgain: number): string {

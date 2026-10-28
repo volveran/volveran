@@ -9,10 +9,11 @@ import type { FastifyInstance } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { operatorOf } from '../operator.js';
 import type { ProfileAccessCheck } from '../profile-access.js';
+import type { RunMode } from '../run-mode.js';
 import type { Session } from '../../shared/queues.js';
 
 export interface SessionRouteDeps {
-  mode: 'solo' | 'team';
+  mode: RunMode['kind'];
   checkouts: CheckoutManager;
   access: ProfileAccessCheck;
 }

@@ -3,12 +3,14 @@
 // provider's signing key (test/broker/rabbitmq-oauth.conf). These facts are
 // the go/no-go check for connecting with the Operator's own token.
 import { randomBytes } from 'node:crypto';
+import type * as amqp from 'amqplib';
 import { describe, expect, it } from 'vitest';
 import { sleep } from '../broker/client.js';
 import {
   claimsOf,
   connectWithToken,
   managementWithToken,
+  oauthBroker,
   refresh,
   signIn,
   updateSecret,
@@ -164,4 +166,113 @@ describe('OAuth 2.0 tokens', () => {
       expect(res.status).toBe(401);
     });
   });
+
+  describe('The management API refuses a token without a `tag:management` scope with 401 and the reason "Not management user", on every endpoint.', () => {
+    it('refuses /overview and a vhost\'s queue list', async () => {
+      const { accessToken } = await signIn(user('alice'), { claims: { scope: withoutScope('rabbitmq.tag:management') } });
+      for (const path of ['/overview', '/queues/%2F']) {
+        expect(await managementWithToken(path, accessToken)).toEqual({
+          status: 401,
+          body: { error: 'not_authorised', reason: 'Not management user' },
+        });
+      }
+    });
+  });
+
+  describe('A token without read permission on a queue is refused `403 ACCESS_REFUSED` on consume and get, and the broker closes the channel. A passive declare of the queue (`checkQueue`) still succeeds.', () => {
+    it('counts the queue, but refuses consume and get', async () => {
+      await withQueue(async (queue) => {
+        const sub = user('alice');
+        const tc = await connectWithToken((await signIn(sub, { claims: { scope: withoutScope('rabbitmq.read:*/*') } })).accessToken);
+        try {
+          const checked = await tc.conn.createChannel();
+          expect(await checked.checkQueue(queue)).toMatchObject({ queue, messageCount: 1 });
+          await checked.close();
+
+          for (const read of [(ch: amqp.Channel) => ch.consume(queue, () => {}), (ch: amqp.Channel) => ch.get(queue)]) {
+            const ch = await tc.conn.createChannel();
+            const closed = channelError(ch);
+            await expect(read(ch)).rejects.toMatchObject({ code: 403 });
+            expect((await closed).message).toContain(`ACCESS_REFUSED - read access to queue '${queue}' in vhost '/' refused for user '${sub}'`);
+          }
+        } finally {
+          await tc.conn.close().catch(() => {});
+        }
+      });
+    });
+  });
+
+  describe('A token without configure permission on a queue is refused `403 ACCESS_REFUSED` on declaring it, and the broker closes the channel.', () => {
+    it('refuses declaring a Checkout lock queue', async () => {
+      const sub = user('alice');
+      const tc = await connectWithToken((await signIn(sub, { claims: { scope: withoutScope('rabbitmq.configure:*/*') } })).accessToken);
+      try {
+        const ch = await tc.conn.createChannel();
+        const closed = channelError(ch);
+        const lock = `volveran.checkout.facts.${sub}`;
+        await expect(ch.assertQueue(lock, { exclusive: true, autoDelete: true, durable: false })).rejects.toMatchObject({ code: 403 });
+        expect((await closed).message).toContain(`ACCESS_REFUSED - configure access to queue '${lock}' in vhost '/' refused for user '${sub}'`);
+      } finally {
+        await tc.conn.close().catch(() => {});
+      }
+    });
+  });
+
+  describe('A token without write permission on an exchange is refused `403 ACCESS_REFUSED` on publishing to it (`amq.default` for the default exchange). The broker closes the channel: the publish confirm fails with only "channel closed", and the channel\'s error carries the refusal, naming the exchange and the permission.', () => {
+    it.each([
+      ['the default exchange', '', 'amq.default'],
+      ['a named exchange', 'amq.direct', 'amq.direct'],
+    ])('refuses a publish to %s', async (_what, exchange, named) => {
+      await withQueue(async (queue) => {
+        const sub = user('alice');
+        const tc = await connectWithToken((await signIn(sub, { claims: { scope: withoutScope('rabbitmq.write:*/*') } })).accessToken);
+        try {
+          const ch = await tc.conn.createConfirmChannel();
+          const closed = channelError(ch);
+          const confirmed = new Promise((resolve, reject) =>
+            ch.publish(exchange, queue, Buffer.from('refused'), {}, (err) => (err ? reject(err) : resolve('acked'))),
+          );
+          await expect(confirmed).rejects.toThrow(/^channel closed$/);
+          const err = await closed;
+          expect(err.code).toBe(403);
+          expect(err.message).toContain(`ACCESS_REFUSED - write access to exchange '${named}' in vhost '/' refused for user '${sub}'`);
+        } finally {
+          await tc.conn.close().catch(() => {});
+        }
+      });
+    });
+  });
 });
+
+/** `oauthBroker.fullScopes` without `scope`. */
+function withoutScope(scope: string): string {
+  return oauthBroker.fullScopes
+    .split(' ')
+    .filter((s) => s !== scope)
+    .join(' ');
+}
+
+/** The error the broker closes `ch` with. */
+function channelError(ch: amqp.Channel): Promise<Error & { code?: number }> {
+  return new Promise((resolve) => ch.on('error', resolve));
+}
+
+/** Runs `fn` with a durable queue holding one Message, declared (and deleted after) with a full-scope token. */
+async function withQueue(fn: (queue: string) => Promise<void>): Promise<void> {
+  const tc = await connectWithToken((await signIn(user('admin'))).accessToken);
+  const queue = `facts.oauth.${randomBytes(3).toString('hex')}`;
+  try {
+    const ch = await tc.conn.createConfirmChannel();
+    // The broker refuses transient non-exclusive queues.
+    await ch.assertQueue(queue, { durable: true });
+    ch.sendToQueue(queue, Buffer.from('held'));
+    await ch.waitForConfirms();
+    try {
+      await fn(queue);
+    } finally {
+      await ch.deleteQueue(queue);
+    }
+  } finally {
+    await tc.conn.close().catch(() => {});
+  }
+}

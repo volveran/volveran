@@ -9,6 +9,7 @@ import path from 'node:path';
 import { parse } from 'yaml';
 import { ConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
+import type { RunMode } from './run-mode.js';
 import { ROLES, type Role } from '../shared/roles.js';
 
 /**
@@ -190,7 +191,7 @@ function parseCredentials(
  * Startup check of the profiles against the run mode: Solo Mode has no
  * signed-in Operator, so no token to connect with.
  */
-export function checkProfilesForRunMode(profiles: BrokerProfile[], mode: 'solo' | 'team'): void {
+export function checkProfilesForRunMode(profiles: BrokerProfile[], mode: RunMode['kind']): void {
   if (mode === 'team') return;
   const tokenProfile = profiles.find((p) => p.credentials.kind === 'operatorToken');
   if (tokenProfile) {

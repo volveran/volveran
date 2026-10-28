@@ -44,8 +44,8 @@ import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import type { MessageOutcome } from '../apply/types.js';
 import { replayTrail } from '../audit/replay-trail.js';
-import type { AuditStore } from '../audit/store.js';
-import { diedAgain, type DiedAgain } from '../triage/died-again.js';
+import type { AuditStore, ProfileScope } from '../audit/store.js';
+import { diedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import {
@@ -87,6 +87,15 @@ export interface CheckoutTestHooks {
   beforeExportLine?(position: number): Promise<void>;
 }
 
+export interface CheckoutStartOptions extends StartOptions {
+  /**
+   * The Broker Profiles whose Audit Entries the Operator may read (the access
+   * check's audit scope): Died Again shows no entry outside them. Every
+   * profile when left out.
+   */
+  auditScope?: ProfileScope;
+}
+
 export interface CheckoutManagerOptions {
   /** Where Apply writes its Audit Entries. */
   audit: AuditStore;
@@ -95,7 +104,7 @@ export interface CheckoutManagerOptions {
    * Team Mode: Protected Profiles with `requireApproval` need Approval for an
    * Apply. False in Solo Mode, which ignores `requireApproval`.
    */
-  approvals?: boolean;
+  enforceApproval?: boolean;
   /** Time limit, heartbeat window and quorum backstop margin (default DEFAULT_CHECKOUT_TIMING). */
   timing?: CheckoutTiming;
   /** How long an ended or lost Checkout stays readable before it is forgotten. */
@@ -125,7 +134,7 @@ export class CheckoutManager {
    * Starts a Checkout of `target`, a queue resolved through the access check
    * (its management client and the Operator's broker credentials included).
    */
-  async start(target: QueueAccess, operator: Operator, options: StartOptions = {}): Promise<CheckoutView> {
+  async start(target: QueueAccess, operator: Operator, options: CheckoutStartOptions = {}): Promise<CheckoutView> {
     const ref = queueRefOf(target);
     const mine = this.byOperator.get(operator.id);
     if (mine) throw operatorHasCheckout(operator.displayName, mine);
@@ -149,7 +158,7 @@ export class CheckoutManager {
       timeLimitTimer: undefined,
       heartbeatTimer: undefined,
       status: 'active',
-      requireApproval: (this.options.approvals ?? false) && target.profile.protected && target.profile.requireApproval,
+      requireApproval: (this.options.enforceApproval ?? false) && target.profile.protected && target.profile.requireApproval,
       approvalRequest: null,
       approvalClosed: null,
       rejection: null,
@@ -182,7 +191,7 @@ export class CheckoutManager {
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
-    this.findDiedAgain(checkout);
+    this.findDiedAgain(checkout, options.auditScope);
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return view(checkout);
@@ -233,18 +242,9 @@ export class CheckoutManager {
     return { ...messageDetail(handle, m, queueInfo(checkout)), diedAgain: checkout.diedAgain.get(handle) ?? null };
   }
 
-  /**
-   * The Died Again facts of a held Message (null when it is not Died Again),
-   * as its row and the Message view show them; for the modules that list held
-   * Messages (e.g. an export).
-   */
-  diedAgainOf(checkout: Checkout, handle: number): DiedAgain | null {
-    return checkout.diedAgain.get(handle) ?? null;
-  }
-
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
-  private findDiedAgain(checkout: Checkout): void {
-    const trail = replayTrail(this.options.audit);
+  private findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): void {
+    const trail = replayTrail(this.options.audit, auditScope);
     for (const [handle, m] of checkout.held) {
       const found = diedAgain(m.properties.headers, trail);
       if (found) checkout.diedAgain.set(handle, found);
@@ -293,7 +293,7 @@ export class CheckoutManager {
   }
 
   /** The Checkouts waiting for Approval, oldest request first, except `approver`'s own. */
-  awaitingApproval(approver: Operator): ApprovalSummary[] {
+  listAwaitingApproval(approver: Operator): ApprovalSummary[] {
     return [...this.checkouts.values()]
       .filter(
         (c): c is Checkout & { approvalRequest: ApprovalRequest } =>

@@ -116,10 +116,11 @@ profiles:
 - **Too low a role** answers `403 role_required` with the role needed (`required`) and the one held (`held`). The server checks before it touches the broker, so a modified browser cannot get round it. The web app shows such actions as unavailable, naming the role they need.
 - **When changes apply.** Groups are read once, at sign-in, and kept for the session (up to 12 hours). A change at the provider applies at the Operator's next sign-in; a change to `roles` applies when Volverán restarts (which signs everyone out).
 - **A profile without `roles`** keeps every signed-in Operator `admin` on it, as before v0.3, and startup logs a warning naming it ([ADR 0007](adr/0007-profiles-without-roles-keep-everyone-admin.md)). Add `roles` to every profile you want restricted.
+- **A profile removed from the profiles file** leaves its Audit Entries behind. On them an Operator holds the highest role they hold on any configured profile: a `viewer` somewhere reads them without Discarded bodies, an `operator` or `admin` with bodies, and an Operator with no role anywhere neither finds them nor reads them (`403 no_role_on_profile`). Nothing can be Restored from them, since Restore needs a configured profile.
 - **Startup refuses** a `roles` mapping with an unknown role name, an empty group list or a group that is not a string, naming the profile and the key.
 - **Solo Mode** ignores `roles` (with one startup log line): its Operator is `admin` everywhere, so the same profiles file works in both modes.
 - **The audit trail** records the Operator's role on each new Audit Entry (`role`; entries written before v0.3 have none). `GET /api/session` returns the Operator's `roles` per profile and the `groups` Volverán read, so they can tell whoever manages access which groups they have.
-- **No role anywhere.** An Operator who signs in with no role on any Broker Profile sees a page saying so, listing the groups Volverán received (or that it received none), so they can ask for the right access.
+- **No role anywhere.** An Operator who signs in with no role on any Broker Profile sees a page saying so, listing the groups Volverán received (or that it received none), so they can ask for the right access. `GET /api/audit-store` answers them `403 no_role`.
 
 ### The groups claim
 
@@ -204,7 +205,7 @@ profiles:
 | What happened | Answer |
 |---|---|
 | The token has expired and could not be refreshed | `401 broker_token_expired` with `signInUrl`: sign in again for a new token. |
-| The token lacks a permission (read on the queue, configure on the lock queue, the `management` tag) | `403 broker_permission_denied`, naming the broker user, the resource (`type`, `name`, `vhost`) and the `permission`. |
+| The token lacks a permission (read on the queue, configure on the lock queue, the `management` tag, write on the default exchange for a Restore) | `403 broker_permission_denied`, naming the broker user, the resource (`type`, `name`, `vhost`) and the `permission`. In an Apply, a Replay or Move the token may not publish fails that Message, and its reason names the exchange and the write permission. |
 | The broker does not accept the token (audience, signing key) | `502 authentication_failed`, naming the Operator's token. |
 | The token expires during a Checkout (refresh failed) | The broker closes the connection: a Lost Checkout, with every Message back in the queue (on quorum queues at the cost of one delivery). |
 

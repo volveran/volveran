@@ -9,9 +9,11 @@
 //
 // Each route resolves the entry's Broker Profile through the access check
 // (profile-access.ts): search returns only the entries the Operator may read, a
-// body comes only with `read_discarded_bodies`, Restore needs `restore`. An
-// entry of a profile no longer configured stays readable. The Restore is
-// recorded as the requesting Operator's.
+// body comes only with `read_discarded_bodies`, Restore needs `restore`. On
+// an entry of a profile no longer configured the Operator holds the highest
+// Role they hold anywhere. The body store's size needs a Role on some
+// profile (403 `no_role`). The Restore is recorded as the requesting
+// Operator's.
 //
 // Properties and headers use the lossless AMQP JSON of audit/amqp-json.ts
 // (byte arrays as { "$bytes": base64 }, 64-bit integers as { "$bigint": "..." }).
@@ -124,7 +126,7 @@ export function registerAuditRoutes(
   app.get<{ Querystring: AuditSearchParams }>('/api/audit-entries', async (req) => {
     const operator = operatorOf(req);
     // Left out in the query, so `limit` counts only the entries the Operator may read.
-    const entries = audit.list({ ...parseAuditSearch(req.query), excludeProfiles: access.withheld(operator, 'read_audit_entries') });
+    const entries = audit.list({ ...parseAuditSearch(req.query), profiles: access.auditScope(operator, 'read_audit_entries') });
     return { entries: entries.map((e) => auditEntryJson(e)) };
   });
 
@@ -143,5 +145,8 @@ export function registerAuditRoutes(
     return { entry: auditEntryJson(await restore.restore(entry.id, req.body ?? undefined, operator, target)) };
   });
 
-  app.get('/api/audit-store', async () => usage());
+  app.get('/api/audit-store', async (req) => {
+    access.assertSomeRole(operatorOf(req));
+    return usage();
+  });
 }

@@ -5,6 +5,8 @@
 // In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
 // Applies waiting for an Approval this Operator may give; a requester's link
 // (#/approvals/<checkout id>, approval-link.ts) opens it on their Checkout.
+// Approvals stay reachable while the Operator has a Checkout of their own:
+// that Checkout is hidden meanwhile, not ended, and comes back with Queues.
 // An Operator with no role on any profile (Team Mode) gets a page saying so,
 // listing the groups Volverán received (NoRolePage).
 // Only the profiles where the Operator has a Role are listed (the server
@@ -294,19 +296,31 @@ export function App() {
       </header>
 
       <main>
+        {view === 'approvals' && (
+          <>
+            {checkoutId && (
+              <p className="notice" role="note">
+                Your own Checkout stays open while you look at Approvals.{' '}
+                <button type="button" onClick={() => setView('queues')}>
+                  Back to your Checkout
+                </button>
+              </p>
+            )}
+            <ApprovalsView
+              key={linkedApproval ?? ''}
+              initialOpen={linkedApproval}
+              onClosed={() => {
+                setLinkedApproval(null);
+                window.history.replaceState(null, '', window.location.pathname + window.location.search);
+              }}
+            />
+          </>
+        )}
         {view === 'audit' && !checkoutId ? (
           <AuditView profiles={profiles} roles={session?.roles ?? {}} />
-        ) : view === 'approvals' && !checkoutId ? (
-          <ApprovalsView
-            key={linkedApproval ?? ''}
-            initialOpen={linkedApproval}
-            onClosed={() => {
-              setLinkedApproval(null);
-              window.history.replaceState(null, '', window.location.pathname + window.location.search);
-            }}
-          />
         ) : (
-          <>
+          // Hidden, not removed, under Approvals: the Operator's own Checkout keeps its heartbeat.
+          <div hidden={view === 'approvals'}>
             <div className="controls">
               <input
                 type="search"
@@ -354,6 +368,7 @@ export function App() {
             {checkoutId ? (
               <CheckoutView
                 id={checkoutId}
+                hidden={view === 'approvals'}
                 onClose={() => {
                   setCheckoutId(null);
                   setRefreshTick((n) => n + 1);
@@ -383,7 +398,7 @@ export function App() {
                 </>
               )
             )}
-          </>
+          </div>
         )}
         {shortcutsOpen && <ShortcutList onClose={() => setShortcutsOpen(false)} />}
       </main>
