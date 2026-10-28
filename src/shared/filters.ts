@@ -16,7 +16,9 @@ export type FilterClause =
    * The body parses as JSON and the path reaches a value: any value when
    * `value` is left out, otherwise a scalar whose text is exactly `value`.
    */
-  | { kind: 'json-path'; path: string; value?: string | undefined };
+  | { kind: 'json-path'; path: string; value?: string | undefined }
+  /** The Message is Died Again: it carries an `x-volveran-replay-id`. */
+  | { kind: 'died-again' };
 
 /** Every clause must match (AND). An empty filter matches every Message. */
 export type Filter = FilterClause[];

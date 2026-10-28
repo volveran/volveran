@@ -153,7 +153,8 @@ function asTime(v: unknown): string | null {
   return seconds === null ? null : new Date(seconds * 1000).toISOString();
 }
 
-export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): MessageDetail {
+/** The Message view, but for `diedAgain`, which needs the audit store (the Checkout manager adds it). */
+export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): Omit<MessageDetail, 'diedAgain'> {
   const { headers, ...props } = d.properties;
   const properties: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {

@@ -1,6 +1,7 @@
 // A Checkout as the API sends it (src/server/checkout/view.ts), with its held
 // Messages and the outcome of its Apply. Types only, shared by the server
 // and the web app.
+import type { AuditAction } from './audit.js';
 import type { Decision, DecisionSummaryLine } from './decisions.js';
 
 /** The queue types a Checkout can hold Messages from. */
@@ -88,16 +89,45 @@ export interface MessageDetail extends MessageSummary {
   headers: Record<string, unknown>;
   xDeath: XDeathEntry[];
   body: RenderedBody;
+  /** Null unless the Message is Died Again. */
+  diedAgain: DiedAgain | null;
 }
 
 /** Whether a Message can be given Replay; when not, why (shown to the Operator). */
 export type ReplayAvailability = { available: true } | { available: false; reason: string };
+
+/** The Audit Entry of the Replay, Move or Restore that last sent a Died Again Message out. */
+export interface DiedAgainSource {
+  auditEntryId: number;
+  action: Exclude<AuditAction, 'discard'>;
+  /** ISO time of the Audit Entry. */
+  at: string;
+  /** The Operator who acted, as shown (display name). */
+  operatorName: string;
+  /** The queue the Message was taken from then. */
+  fromQueue: string;
+}
+
+/**
+ * A Message that Volverán Replayed, Moved or Restored and that was
+ * dead-lettered again, recognised by its `x-volveran-replay-id` header.
+ */
+export interface DiedAgain {
+  /** The `x-volveran-replay-id` the Message carries. */
+  replayId: string;
+  /** How many times it has died again: the replay ids followed back through the Audit Entries, this one included. */
+  count: number;
+  /** Null when no Audit Entry here has the replay id (another Volverán instance sent it out, or the store was reset). */
+  last: DiedAgainSource | null;
+}
 
 /** A row of the Message list. */
 export interface MessageRow extends MessageSummary {
   /** The Message's Decision; Keep until told otherwise. */
   decision: Decision;
   replay: ReplayAvailability;
+  /** Null unless the Message is Died Again. */
+  diedAgain: DiedAgain | null;
 }
 
 /**
@@ -202,6 +232,8 @@ export interface CheckoutView {
   deliveryLimit: number | null;
   /** Held Messages in queue order. */
   messages: MessageRow[];
+  /** Held Messages that are Died Again. */
+  diedAgainCount: number;
   /** Messages per Decision (Discard, Replay, Move per destination, Keep last), for the Apply confirmation. */
   decisionSummary: DecisionSummaryLine[];
   /** The summary on one line, e.g. "12 Discard, 40 Replay, 3 Move to orders.manual, 145 Keep". */

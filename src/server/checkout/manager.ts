@@ -40,7 +40,9 @@ import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import type { MessageOutcome } from '../apply/types.js';
+import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore } from '../audit/store.js';
+import { diedAgain, type DiedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import {
@@ -148,6 +150,7 @@ export class CheckoutManager {
       held: new Map(),
       overflow: [],
       heldBytes: 0,
+      diedAgain: new Map(),
       decisions: new Map(),
       applying: null,
       lastApply: null,
@@ -166,6 +169,7 @@ export class CheckoutManager {
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
+    this.findDiedAgain(checkout);
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return view(checkout);
@@ -213,7 +217,25 @@ export class CheckoutManager {
     const checkout = this.find(id);
     const m = checkout.held.get(handle);
     if (!m) throw new CheckoutError('message_not_found', `Checkout ${id} holds no Message with handle ${handle}.`);
-    return messageDetail(handle, m, queueInfo(checkout));
+    return { ...messageDetail(handle, m, queueInfo(checkout)), diedAgain: checkout.diedAgain.get(handle) ?? null };
+  }
+
+  /**
+   * The Died Again facts of a held Message (null when it is not Died Again),
+   * as its row and the Message view show them; for the modules that list held
+   * Messages (e.g. an export).
+   */
+  diedAgainOf(checkout: Checkout, handle: number): DiedAgain | null {
+    return checkout.diedAgain.get(handle) ?? null;
+  }
+
+  /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
+  private findDiedAgain(checkout: Checkout): void {
+    const trail = replayTrail(this.options.audit);
+    for (const [handle, m] of checkout.held) {
+      const found = diedAgain(m.properties.headers, trail);
+      if (found) checkout.diedAgain.set(handle, found);
+    }
   }
 
   /**

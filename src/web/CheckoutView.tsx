@@ -156,9 +156,15 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
       setCheckout(res.checkout);
       setReceivedAt(Date.now());
       setError(undefined);
+      const notices: string[] = [];
       if (res.rejected.length > 0) {
-        setNotice(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
+        notices.push(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
       }
+      if (decision.kind === 'replay') {
+        const diedAgain = res.checkout.messages.filter((m) => handles.includes(m.handle) && m.diedAgain).length;
+        if (diedAgain > 0) notices.push(replayWarning(diedAgain));
+      }
+      if (notices.length > 0) setNotice(notices.join(' '));
     } catch (err) {
       setError(err as ApiError);
     } finally {
@@ -287,6 +293,12 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             {new Date(checkout.startedAt).toLocaleTimeString()}
           </p>
           <p className="held">{heldLine(checkout)}</p>
+          {checkout.diedAgainCount > 0 && (
+            <p className="died-again-count">
+              <span className="badge died-again">Died Again</span> {checkout.diedAgainCount} of the held Messages came
+              back after a Replay, Move or Restore.
+            </p>
+          )}
           {live && (
             <p className="countdown" title={`Ends itself at ${new Date(checkout.endsAt).toLocaleTimeString()}`}>
               Ends in {formatCountdown(checkout.remainingMs - (now - receivedAt))}
@@ -456,4 +468,8 @@ function ErrorBox({ error }: { error: ApiError }) {
       <code>{error.code}</code>
     </div>
   );
+}
+
+function replayWarning(diedAgain: number): string {
+  return `${diedAgain} of these Messages already died again after being sent back: their consumer failed on them before. Replay them only once the cause is fixed.`;
 }

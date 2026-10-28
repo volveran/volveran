@@ -13,6 +13,7 @@ export type {
   ApprovalSummary,
   CheckoutHolder,
   DeliveryBudget,
+  DiedAgain,
   MessageDetail,
   MessageOutcome,
   MessageRow,

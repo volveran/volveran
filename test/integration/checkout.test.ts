@@ -373,6 +373,7 @@ describe('Checkout', () => {
           deliveryBudget: { remaining: 5, warning: null },
           decision: { kind: 'keep' },
           replay: { available: true },
+          diedAgain: null,
         },
       ]);
 
