@@ -62,6 +62,8 @@ export type SetupWarning = { severity: SetupWarningSeverity; message: string } &
   | { code: 'dead_letter_exchange_missing'; deadLetterExchange: string }
   | { code: 'dead_letter_queue_drops_messages'; settings: DroppingSetting[] }
   | { code: 'quorum_at_most_once_dead_lettering' }
+  /** routingKey is the dead-letter routing key, null when none is set (Messages keep their own). */
+  | { code: 'dead_letter_unroutable'; deadLetterExchange: string; routingKey: string | null }
 );
 
 /** A dead-letter queue setting that drops Messages, by its policy key. */

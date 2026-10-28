@@ -119,4 +119,51 @@ describe.concurrent('Dead-letter set-up', () => {
       expect(await s.bodies(parked)).toEqual([]);
     });
   });
+
+  describe('A dead-letter exchange that routes the dead-letter routing key to no queue drops the Message, on classic and quorum queues alike. A binding added afterwards gets nothing.', () => {
+    it.for(queueTypes)('%s: the rejected Message reaches no queue, and a binding added later gets nothing', async (type, ctx) => {
+      const s = await scratchFor(ctx);
+      const dlx = await s.exchange('dls-unroutable-dlx', 'direct');
+      const dlq = await s.queue(`dls-${type}-unroutable-dlq`);
+      await s.ch.bindQueue(dlq, dlx, 'parked');
+      const q = await s.queue(`dls-${type}-unroutable`, {
+        'x-queue-type': type,
+        'x-dead-letter-exchange': dlx,
+        'x-dead-letter-routing-key': 'elsewhere',
+      });
+      await s.publish(q, ['lost']);
+      await deadLetterFrom(s, q);
+      await sleep(300);
+      expect(await s.check(q)).toMatchObject({ messageCount: 0 });
+      expect(await s.bodies(dlq)).toEqual([]);
+
+      // Nothing was held back: a binding for the key added now delivers nothing.
+      await s.ch.bindQueue(dlq, dlx, 'elsewhere');
+      await sleep(500);
+      expect(await s.bodies(dlq)).toEqual([]);
+    });
+  });
+
+  describe('An alternate exchange on the dead-letter exchange saves the Message: it reaches the alternate exchange\'s queues.', () => {
+    it.for(queueTypes)('%s: with an alternate exchange on the dead-letter exchange, the Message reaches the alternate exchange\'s queue', async (type, ctx) => {
+      const s = await scratchFor(ctx);
+      const alternate = await s.exchange('dls-alternate', 'fanout');
+      const saved = await s.queue(`dls-${type}-alternate-q`);
+      await s.ch.bindQueue(saved, alternate, '');
+      const dlx = uniqueName('dls-dlx-with-alternate');
+      await s.ch.assertExchange(dlx, 'direct', { durable: false, arguments: { 'alternate-exchange': alternate } });
+      ctx.onTestFinished(async () => {
+        await s.ch.deleteExchange(dlx).catch(() => {});
+      });
+      const q = await s.queue(`dls-${type}-alternate`, {
+        'x-queue-type': type,
+        'x-dead-letter-exchange': dlx,
+        'x-dead-letter-routing-key': 'elsewhere',
+      });
+      await s.publish(q, ['saved']);
+      await deadLetterFrom(s, q);
+      const m = await next(s.ch, saved, 3_000, { noAck: true });
+      expect(m && m.content.toString()).toBe('saved');
+    });
+  });
 });

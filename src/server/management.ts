@@ -40,6 +40,8 @@ export interface ManagementExchange {
   type: string;
   /** An internal exchange only receives from other exchanges: clients cannot publish to it. */
   internal: boolean;
+  /** Where Messages it cannot route go, by argument or policy (the argument wins); null for none. */
+  alternateExchange: string | null;
 }
 
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -78,8 +80,16 @@ export class ManagementClient {
 
   /** The named exchanges of `vhost`, the default exchange left out. */
   async listExchanges(vhost: string): Promise<ManagementExchange[]> {
-    const body = await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal`);
-    return (body as any[]).map(toExchange).filter((e) => e.name !== '');
+    const body = (await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal,arguments,policy`)) as any[];
+    // An exchange names its policy but not the policy's definition: read those only when needed.
+    const policies = body.some((e) => typeof e.policy === 'string') ? await this.policyDefinitions(vhost) : new Map();
+    return body.map((e) => toExchange(e, policies)).filter((e) => e.name !== '');
+  }
+
+  /** The definitions of the vhost's policies, by name (readable with the "management" tag). */
+  private async policyDefinitions(vhost: string): Promise<Map<string, Record<string, unknown>>> {
+    const body = (await this.inVhost(vhost, `/api/policies/${encodeURIComponent(vhost)}`)) as any[];
+    return new Map(body.filter((p) => isRecord(p.definition)).map((p) => [String(p.name), p.definition]));
   }
 
   /** One exchange, or null when it does not exist. */
@@ -201,6 +211,14 @@ function toQueue(q: any): ManagementQueue {
   };
 }
 
-function toExchange(e: any): ManagementExchange {
-  return { name: String(e.name ?? ''), type: String(e.type ?? 'direct'), internal: e.internal === true };
+/** `policies` resolves the exchange's policy by name; without it, only an argument gives the alternate exchange. */
+function toExchange(e: any, policies = new Map<string, Record<string, unknown>>()): ManagementExchange {
+  const argument = isRecord(e.arguments) ? e.arguments['alternate-exchange'] : undefined;
+  const policy = typeof e.policy === 'string' ? policies.get(e.policy)?.['alternate-exchange'] : undefined;
+  return {
+    name: String(e.name ?? ''),
+    type: String(e.type ?? 'direct'),
+    internal: e.internal === true,
+    alternateExchange: typeof argument === 'string' ? argument : typeof policy === 'string' ? policy : null,
+  };
 }
