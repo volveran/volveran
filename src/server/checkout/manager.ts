@@ -104,7 +104,7 @@ export interface CheckoutManagerOptions {
    * Team Mode: Protected Profiles with `requireApproval` need Approval for an
    * Apply. False in Solo Mode, which ignores `requireApproval`.
    */
-  approvals?: boolean;
+  enforceApproval?: boolean;
   /** Time limit, heartbeat window and quorum backstop margin (default DEFAULT_CHECKOUT_TIMING). */
   timing?: CheckoutTiming;
   /** How long an ended or lost Checkout stays readable before it is forgotten. */
@@ -158,7 +158,7 @@ export class CheckoutManager {
       timeLimitTimer: undefined,
       heartbeatTimer: undefined,
       status: 'active',
-      requireApproval: (this.options.approvals ?? false) && target.profile.protected && target.profile.requireApproval,
+      requireApproval: (this.options.enforceApproval ?? false) && target.profile.protected && target.profile.requireApproval,
       approvalRequest: null,
       approvalClosed: null,
       rejection: null,
@@ -293,7 +293,7 @@ export class CheckoutManager {
   }
 
   /** The Checkouts waiting for Approval, oldest request first, except `approver`'s own. */
-  awaitingApproval(approver: Operator): ApprovalSummary[] {
+  listAwaitingApproval(approver: Operator): ApprovalSummary[] {
     return [...this.checkouts.values()]
       .filter(
         (c): c is Checkout & { approvalRequest: ApprovalRequest } =>

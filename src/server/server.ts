@@ -70,7 +70,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const checkouts = new CheckoutManager({
     audit,
     limits: { ...config.checkoutLimits, ...options.checkoutLimits },
-    approvals: config.mode.kind === 'team',
+    enforceApproval: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
