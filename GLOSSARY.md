@@ -68,6 +68,10 @@ _Avoid_: User, who, actor
 What an Operator may do on one Broker Profile: `viewer` (look), `operator` (triage) or `admin` (also Restore). Each one includes the ones before it. In Team Mode it comes from the Operator's groups and the profile's `roles`; in Solo Mode the Operator is `admin` everywhere. The role `operator` is written in code format, so it reads apart from the Operator, the person.
 _Avoid_: Permission, access level
 
+**Approval**:
+A second Operator's consent, after reviewing its Decisions, to an Apply on a Protected Profile. In Team Mode, an Apply with any Decision other than Keep on a Protected Profile waits for it (unless the profile sets `requireApproval: false`); approving runs the Apply, and its Audit Entries record both people.
+_Avoid_: Sign-off, review, four-eyes (four-eyes may describe the feature in prose)
+
 ## Running
 
 **Solo Mode**:

@@ -120,6 +120,29 @@ profiles:
 - **Solo Mode** ignores `roles` (with one startup log line): its Operator is `admin` everywhere, so the same profiles file works in both modes.
 - **The audit trail** records the Operator's role on each new Audit Entry (`role`; entries written before v0.3 have none). `GET /api/session` returns the Operator's `roles` per profile and the `groups` Volverán read, so they can tell whoever manages access which groups they have.
 
+## Approval
+
+In Team Mode, a Protected Profile adds a second pair of eyes: an Apply with any Decision other than Keep waits for another Operator's Approval before it runs. An Apply where every Decision is Keep needs none, and Restore keeps the typed confirmation only.
+
+1. **The requester** stages Decisions as usual and opens the Apply confirmation, which reads *Request Approval*: they see the summary of Decisions and type the queue name, as for an Apply. The Checkout then waits (`awaiting_approval`): its Decisions cannot change, and *Withdraw request* gives them back. The Checkout's time limit and heartbeat keep running, so the requester keeps the page open while they wait.
+2. **An approver** is any other Operator with the role `operator` or `admin` on the profile. The *Approvals* view lists the waiting Applies they may approve, with requester, profile, vhost, queue and the count of each Decision. Opening one shows it read-only: its Decisions, Messages and Message view, as the requester sees them. *Approve* asks for the queue name typed, then runs the Apply on the requester's Checkout, and the requester's page shows the outcome per Message, naming the approver.
+3. **Nobody approves their own Apply** (`403 cannot_approve_own_apply`). A `viewer`, and an Operator with no role on the profile, cannot see or open a waiting Checkout, and the owner-only rule of `/api/checkouts/:id` is unchanged: approvers reach a Checkout only under `/api/approvals/`.
+4. **The audit trail** records the requester as the Operator of every Audit Entry the approved Apply writes (with the role they held when they asked), and the approver in `approverId` and `approverName`.
+
+A request lives as long as the Checkout: ending it, its time limit, or the requester closing the page (the Checkout ends once the heartbeat window passes) cancels the request, and the Messages go back to the queue.
+
+Approval is on by default for every Protected Profile in Team Mode, and startup logs which profiles require it. To keep typed confirmation only (a team of one, or a profile where that is enough), set `requireApproval: false`:
+
+```yaml
+profiles:
+  - name: prod
+    # ...connection settings...
+    protected: true
+    requireApproval: false
+```
+
+Startup refuses `requireApproval` on a profile that is not protected. Solo Mode ignores it: there is nobody to approve.
+
 ## Kubernetes
 
 The [Helm chart](../charts/volveran/README.md) always runs Team Mode, so it takes the settings above as values instead of environment variables: `oidc.issuer`, `oidc.clientId`, `oidc.redirectUrl`, `oidc.scopes` and `oidc.groupsClaim`. The [Kubernetes guide](kubernetes.md) covers the whole install.
