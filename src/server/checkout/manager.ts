@@ -25,7 +25,8 @@
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
-import type { QueueRef } from '../profiles.js';
+import type { QueueAccess } from '../profile-access.js';
+import { queueRefOf, type QueueRef } from '../profiles.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
@@ -85,7 +86,9 @@ export class CheckoutManager {
     this.endedRetentionMs = options.endedRetentionMs ?? DEFAULT_ENDED_RETENTION_MS;
   }
 
-  async start(ref: QueueRef, operator: Operator, options: StartOptions = {}): Promise<CheckoutView> {
+  /** Starts a Checkout of `target`, a queue resolved through the access check (its management client included). */
+  async start(target: QueueAccess, operator: Operator, options: StartOptions = {}): Promise<CheckoutView> {
+    const ref = queueRefOf(target);
     const mine = this.byOperator.get(operator.id);
     if (mine) throw operatorHasCheckout(operator.displayName, mine);
     const lockKey = this.lockKey(ref);
@@ -123,7 +126,7 @@ export class CheckoutManager {
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
-      await openCheckout(checkout, options, {
+      await openCheckout(checkout, target.management, options, {
         onLost: (reason) => this.markLost(checkout, reason),
         afterLock: this.hooks.afterLock,
         afterCollectWait: this.hooks.afterCollectWait,

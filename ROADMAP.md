@@ -58,7 +58,7 @@ Volverán **v0.2.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.
 
 - Roles (viewer, operator, admin) mapped from an OIDC groups claim, per Broker Profile.
 - Four-eyes approval for Apply on Protected Profiles.
-- Per-profile option to connect to the broker with the Operator's own OAuth2 token instead of shared credentials. This first needs verifying that `update-secret` really re-checks the token with the OAuth 2.0 backend; the internal backend accepts any password.
+- Per-profile option to connect to the broker with the Operator's own OAuth2 token instead of shared credentials. The broker-facts gate passed: with the OAuth 2.0 backend, `update-secret` accepts a refreshed token for the same user and refuses an invalid, expired or other user's token (the internal backend accepts any password); see [RabbitMQ behaviour](docs/rabbitmq-behaviour.md#oauth-20-tokens).
 - "Died again" detection: flag a Replayed Message that is dead-lettered again, matched by its replay id (already recorded in every Audit Entry since v0.1).
 - NDJSON export of a Checkout.
 - More dead-letter set-up checks, beyond the delivery-limit check that shipped in v0.1.

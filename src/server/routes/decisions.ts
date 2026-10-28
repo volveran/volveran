@@ -8,18 +8,20 @@
 // "Select all matching" (matching) only ever returns held Messages. Giving
 // Keep clears a Decision.
 import type { FastifyInstance } from 'fastify';
-import type { CheckoutManager } from '../checkout/manager.js';
 import { assertMoveDestinationExists } from '../checkout/move-destination.js';
 import { matchingHandles, stageDecisions } from '../checkout/staging.js';
 import { view } from '../checkout/view.js';
 import { InvalidRequestError } from '../http-error.js';
 import { decisionNotAllowed, parseDecision } from '../triage/decisions.js';
 import { parseFilter } from '../triage/filters.js';
+import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 
-export function registerDecisionRoutes(app: FastifyInstance, checkouts: CheckoutManager) {
+export function registerDecisionRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
+  const { checkouts } = deps;
   app.post<{ Params: { id: string }; Body: { filter?: unknown } | undefined }>(
     '/api/checkouts/:id/matching',
     async (req) => {
+      checkoutAccess(deps, req, 'checkout');
       const checkout = checkouts.checkout(req.params.id);
       const parsed = parseFilter(req.body?.filter);
       if (!parsed.ok) throw new InvalidRequestError(parsed.error);
@@ -31,6 +33,7 @@ export function registerDecisionRoutes(app: FastifyInstance, checkouts: Checkout
   app.post<{ Params: { id: string }; Body: { handles?: unknown; decision?: unknown } | undefined }>(
     '/api/checkouts/:id/decisions',
     async (req) => {
+      const { management } = checkoutAccess(deps, req, 'checkout');
       const checkout = checkouts.checkout(req.params.id);
       const handles = req.body?.handles;
       if (!Array.isArray(handles) || !handles.every((h) => Number.isSafeInteger(h))) {
@@ -41,7 +44,7 @@ export function registerDecisionRoutes(app: FastifyInstance, checkouts: Checkout
       const { decision } = parsed;
       // Only worth asking the broker when staging could accept it.
       if (decision.kind === 'move' && checkout.status === 'active' && !decisionNotAllowed(decision, checkout.queue)) {
-        await assertMoveDestinationExists(checkout, decision.destination);
+        await assertMoveDestinationExists(management, checkout, decision.destination);
       }
       const rejected = stageDecisions(checkout, handles as number[], decision);
       return { checkout: view(checkout), rejected };
