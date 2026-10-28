@@ -1,12 +1,13 @@
-// What happened to each Message in an Apply.
+// What happened to each Message in an Apply, and who approved it when it needed Approval.
 import type { MessageOutcome } from './api.js';
 import { DecisionBadge, OUTCOME_LABEL } from './decisions.js';
 
-export function ApplyOutcomes({ outcomes }: { outcomes: MessageOutcome[] }) {
+export function ApplyOutcomes({ outcomes, approvedBy = null }: { outcomes: MessageOutcome[]; approvedBy?: string | null }) {
   const count = (status: MessageOutcome['status']) => outcomes.filter((o) => o.status === status).length;
   return (
     <div className="outcomes">
       <h3>Apply result</h3>
+      {approvedBy && <p>Approved by {approvedBy}.</p>}
       <p>
         {count('done')} done, {count('failed')} failed and kept, {count('not-attempted')} not attempted,{' '}
         {count('kept')} kept. Every Message not done is back in the queue.

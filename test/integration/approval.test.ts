@@ -4,7 +4,16 @@
 // approver reads the waiting Checkout under /api/approvals/ and approves it,
 // which runs the Apply on the requester's Checkout.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { closedPort, purgeQueues, readyMessageIds, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
+import {
+  closedPort,
+  purgeQueues,
+  readyMessageIds,
+  seedMessages,
+  startApp,
+  testProfile,
+  withChannel,
+  type TestApp,
+} from './harness.js';
 import { teamModeEnv, TestBrowser, type TestIdentity } from './oidc-provider.js';
 
 const QUEUE = 'approval.dlq';
@@ -45,6 +54,7 @@ describe('Approval', () => {
     browser.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName });
 
   beforeAll(async () => {
+    await withChannel('/', (ch) => ch.assertQueue(QUEUE, { durable: true }));
     const port = await closedPort();
     baseUrl = `http://127.0.0.1:${port}`;
     app = await startApp({
@@ -67,6 +77,7 @@ describe('Approval', () => {
   });
   afterAll(async () => {
     await app?.close();
+    await withChannel('/', (ch) => ch.deleteQueue(QUEUE));
   });
 
   it('runs an approved Apply on the requester\'s Checkout, and records both people', async () => {
