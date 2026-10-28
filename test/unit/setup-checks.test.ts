@@ -36,9 +36,11 @@ describe('the delivery-limit check', () => {
   });
 
   it('does not warn when the queue has a dead-letter exchange that exists, by argument or by policy', () => {
-    expect(codes({ ...quorumDlq, arguments: { 'x-dead-letter-exchange': 'dlx' } })).toEqual([]);
-    expect(codes({ ...quorumDlq, effectivePolicy: { 'dead-letter-exchange': 'dlx' } })).toEqual([]);
-    expect(codes({ ...quorumDlq, arguments: { 'x-dead-letter-exchange': '', 'x-dead-letter-routing-key': 'parked' } })).toEqual([]);
+    // Only the at-most-once notice of a quorum queue that dead-letters.
+    const notice = ['quorum_at_most_once_dead_lettering'];
+    expect(codes({ ...quorumDlq, arguments: { 'x-dead-letter-exchange': 'dlx' } })).toEqual(notice);
+    expect(codes({ ...quorumDlq, effectivePolicy: { 'dead-letter-exchange': 'dlx' } })).toEqual(notice);
+    expect(codes({ ...quorumDlq, arguments: { 'x-dead-letter-exchange': '', 'x-dead-letter-routing-key': 'parked' } })).toEqual(notice);
   });
 
   it('still warns when the dead-letter exchange does not exist, alongside the missing exchange warning', () => {
@@ -90,6 +92,137 @@ describe('the missing dead-letter exchange check', () => {
   it('never warns about the default exchange, nor about a queue without a dead-letter exchange', () => {
     expect(codes({ ...work, arguments: { 'x-dead-letter-exchange': '' } })).toEqual([]);
     expect(codes({ ...work, arguments: {} })).toEqual([]);
+  });
+});
+
+describe('the dead-letter queue drops Messages check', () => {
+  const dlq: CheckedQueue = {
+    name: 'orders.dlq',
+    deadLetterQueue: true,
+    type: 'classic',
+    arguments: {},
+    effectivePolicy: {},
+    deliveryLimit: null,
+  };
+  const drops = (q: CheckedQueue) => setupWarnings(q, vhost).filter((w) => w.code === 'dead_letter_queue_drops_messages');
+
+  it('warns that a message TTL on a dead-letter queue without a dead-letter exchange of its own drops Messages, naming the TTL', () => {
+    expect(setupWarnings({ ...dlq, arguments: { 'x-message-ttl': 60_000 } }, vhost)).toEqual([
+      {
+        code: 'dead_letter_queue_drops_messages',
+        severity: 'loses_messages',
+        settings: ['message-ttl'],
+        message: expect.stringMatching(/message TTL of 60000 ms.*dropped.*Remove the message TTL.*dead-letter exchange/is),
+      },
+    ]);
+  });
+
+  it('warns about a length limit with the drop-head overflow, which is the default', () => {
+    expect(drops({ ...dlq, arguments: { 'x-max-length': 1000 } })).toEqual([
+      expect.objectContaining({ settings: ['max-length'], message: expect.stringMatching(/length limit of 1000 Messages.*drop-head.*oldest/is) }),
+    ]);
+    expect(drops({ ...dlq, arguments: { 'x-max-length-bytes': 4096, 'x-overflow': 'drop-head' } })).toEqual([
+      expect.objectContaining({ settings: ['max-length-bytes'], message: expect.stringContaining('length limit of 4096 bytes') }),
+    ]);
+  });
+
+  it('does not warn about a length limit whose overflow rejects new Messages instead', () => {
+    expect(drops({ ...dlq, arguments: { 'x-max-length': 1000, 'x-overflow': 'reject-publish' } })).toEqual([]);
+    expect(drops({ ...dlq, effectivePolicy: { 'max-length': 1000, overflow: 'reject-publish-dlx' } })).toEqual([]);
+    // The queue argument wins over the policy's overflow.
+    expect(drops({ ...dlq, arguments: { 'x-overflow': 'drop-head' }, effectivePolicy: { 'max-length': 10, overflow: 'reject-publish' } })).toEqual([
+      expect.objectContaining({ settings: ['max-length'] }),
+    ]);
+  });
+
+  it('reads the settings from a policy too, naming the lower value when both set one', () => {
+    expect(drops({ ...dlq, effectivePolicy: { 'message-ttl': 5000 } })).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('message TTL of 5000 ms') }),
+    ]);
+    expect(drops({ ...dlq, arguments: { 'x-message-ttl': 9000 }, effectivePolicy: { 'message-ttl': 5000 } })).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('message TTL of 5000 ms') }),
+    ]);
+  });
+
+  it('does not warn about a TTL or a length limit when the queue dead-letters onward to an exchange that exists', () => {
+    const settings = { 'x-message-ttl': 1000, 'x-max-length': 10 };
+    expect(drops({ ...dlq, arguments: { ...settings, 'x-dead-letter-exchange': 'dlx' } })).toEqual([]);
+    expect(drops({ ...dlq, arguments: settings, effectivePolicy: { 'dead-letter-exchange': 'dlx' } })).toEqual([]);
+    expect(drops({ ...dlq, arguments: { ...settings, 'x-dead-letter-exchange': 'gone' } })).toEqual([
+      expect.objectContaining({ settings: ['message-ttl', 'max-length'] }),
+    ]);
+  });
+
+  it('warns about a queue expiry even with a dead-letter exchange: the expired queue is deleted with its Messages, none dead-lettered', () => {
+    expect(drops({ ...dlq, arguments: { 'x-expires': 3_600_000, 'x-dead-letter-exchange': 'dlx' } })).toEqual([
+      expect.objectContaining({ settings: ['expires'], message: expect.stringMatching(/expires after 3600000 ms unused.*deleted.*not dead-letter.*Remove the queue expiry/is) }),
+    ]);
+    expect(drops({ ...dlq, effectivePolicy: { expires: 60_000 } })).toEqual([expect.objectContaining({ settings: ['expires'] })]);
+  });
+
+  it('names every setting that drops Messages in one warning', () => {
+    const [warning] = drops({ ...dlq, arguments: { 'x-message-ttl': 1, 'x-expires': 2, 'x-max-length': 3 } });
+    expect(warning!.settings).toEqual(['message-ttl', 'expires', 'max-length']);
+    expect(warning!.message).toMatch(/message TTL of 1 ms.*expires after 2 ms.*length limit of 3 Messages/is);
+  });
+
+  it('only checks dead-letter queues', () => {
+    expect(drops({ ...dlq, deadLetterQueue: false, arguments: { 'x-message-ttl': 1000 } })).toEqual([]);
+    expect(drops(dlq)).toEqual([]);
+  });
+});
+
+describe('the quorum at-most-once dead-lettering check', () => {
+  const work: CheckedQueue = {
+    name: 'payments.work',
+    deadLetterQueue: false,
+    type: 'quorum',
+    arguments: { 'x-queue-type': 'quorum', 'x-dead-letter-exchange': 'dlx' },
+    effectivePolicy: {},
+    deliveryLimit: 20,
+  };
+
+  it('notes that a quorum queue dead-lettering with the default at-most-once strategy can lose Messages, and how to fix it', () => {
+    expect(setupWarnings(work, vhost)).toEqual([
+      {
+        code: 'quorum_at_most_once_dead_lettering',
+        severity: 'may_lose_messages',
+        message: expect.stringMatching(/at-most-once.*lost.*at-least-once.*reject-publish/is),
+      },
+    ]);
+    expect(codes({ ...work, arguments: { 'x-dead-letter-strategy': 'at-most-once', 'x-dead-letter-exchange': '' } })).toEqual([
+      'quorum_at_most_once_dead_lettering',
+    ]);
+  });
+
+  it('does not note a queue that dead-letters at-least-once with reject-publish overflow, by argument or by policy', () => {
+    const safe = { 'dead-letter-strategy': 'at-least-once', overflow: 'reject-publish' };
+    expect(codes({ ...work, arguments: { ...work.arguments, 'x-dead-letter-strategy': 'at-least-once', 'x-overflow': 'reject-publish' } })).toEqual([]);
+    expect(codes({ ...work, effectivePolicy: safe })).toEqual([]);
+    // The queue argument wins over the policy's strategy.
+    expect(codes({ ...work, arguments: { ...work.arguments, 'x-dead-letter-strategy': 'at-most-once' }, effectivePolicy: safe })).toEqual([
+      'quorum_at_most_once_dead_lettering',
+    ]);
+  });
+
+  it('notes at-least-once without reject-publish overflow, which falls back to at-most-once', () => {
+    expect(setupWarnings({ ...work, arguments: { ...work.arguments, 'x-dead-letter-strategy': 'at-least-once' } }, vhost)).toEqual([
+      expect.objectContaining({ code: 'quorum_at_most_once_dead_lettering', message: expect.stringMatching(/overflow.*falls back to at-most-once/is) }),
+    ]);
+  });
+
+  it('only checks quorum queues that dead-letter to an exchange that exists', () => {
+    expect(codes({ ...work, type: 'classic', deliveryLimit: null })).toEqual([]);
+    expect(codes({ ...work, arguments: { 'x-queue-type': 'quorum' } })).toEqual([]);
+    // A missing exchange loses the Message whatever the strategy: that warning covers it.
+    expect(codes({ ...work, arguments: { 'x-dead-letter-exchange': 'gone' } })).toEqual(['dead_letter_exchange_missing']);
+  });
+
+  it('lists it after the warnings that lose Messages', () => {
+    expect(codes({ ...work, deadLetterQueue: true, arguments: { ...work.arguments, 'x-expires': 1000 } })).toEqual([
+      'dead_letter_queue_drops_messages',
+      'quorum_at_most_once_dead_lettering',
+    ]);
   });
 });
 

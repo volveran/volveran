@@ -7,7 +7,7 @@
 // A check looks at one queue in its vhost and returns a warning or null. To
 // add one: write it as a SetupCheck, add its warning to SetupWarning
 // (src/shared/queues.ts) and list it in `checks`.
-import type { SetupWarning, SetupWarningCounts, SetupWarningSeverity } from '../../shared/queues.js';
+import type { DroppingSetting, SetupWarning, SetupWarningCounts, SetupWarningSeverity } from '../../shared/queues.js';
 
 export type { SetupWarning, SetupWarningCounts };
 
@@ -108,8 +108,113 @@ export const deadLetterExchangeMissingCheck: SetupCheck = (q, vhost) => {
   };
 };
 
+/**
+ * A numeric queue setting once arguments and policies are applied: the broker
+ * takes the lower of the two (message-ttl, expires, max-length,
+ * max-length-bytes). null when neither sets it.
+ */
+function lowerSetting(q: Pick<CheckedQueue, 'arguments' | 'effectivePolicy'>, key: string): number | null {
+  const values = [q.arguments[`x-${key}`], q.effectivePolicy[key]].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  return values.length > 0 ? Math.min(...values) : null;
+}
+
+/** A string queue setting once arguments and policies are applied: the argument wins (overflow, dead-letter-strategy). */
+function stringSetting(q: Pick<CheckedQueue, 'arguments' | 'effectivePolicy'>, key: string): string | null {
+  return pick(q.arguments[`x-${key}`], q.effectivePolicy[key]);
+}
+
+/** Overflow behaviour once arguments and policies are applied; the broker's default is drop-head. */
+function overflow(q: Pick<CheckedQueue, 'arguments' | 'effectivePolicy'>): string {
+  return stringSetting(q, 'overflow') ?? 'drop-head';
+}
+
+/**
+ * A dead-letter queue whose own settings drop Messages before anyone triages
+ * them: a message TTL or a length limit with drop-head overflow, unless the
+ * queue dead-letters them onward to an exchange that exists; and a queue
+ * expiry, which deletes the queue with its Messages without dead-lettering
+ * them, so a dead-letter exchange does not help.
+ */
+export const deadLetterQueueDropsCheck: SetupCheck = (q, vhost) => {
+  if (!q.deadLetterQueue) return null;
+  const target = effectiveDeadLetter(q);
+  const onward = target !== null && exchangeExists(target.exchange, vhost);
+  const settings: DroppingSetting[] = [];
+  const what: string[] = [];
+
+  const ttl = lowerSetting(q, 'message-ttl');
+  if (ttl !== null && !onward) {
+    settings.push('message-ttl');
+    what.push(`a message TTL of ${ttl} ms: a Message that waits longer is dropped`);
+  }
+  const expires = lowerSetting(q, 'expires');
+  if (expires !== null) {
+    settings.push('expires');
+    what.push(`a queue expiry: it expires after ${expires} ms unused and is then deleted with every Message in it, as expiry does not dead-letter them`);
+  }
+  if (!onward && overflow(q) === 'drop-head') {
+    const limits = [
+      ['max-length', lowerSetting(q, 'max-length'), 'Messages'],
+      ['max-length-bytes', lowerSetting(q, 'max-length-bytes'), 'bytes'],
+    ] as const;
+    for (const [key, limit, unit] of limits) {
+      if (limit === null) continue;
+      settings.push(key);
+      what.push(`a length limit of ${limit} ${unit} with drop-head overflow: when it is full, the oldest Message is dropped`);
+    }
+  }
+  if (settings.length === 0) return null;
+
+  const fixes: string[] = [];
+  if (settings.includes('message-ttl')) fixes.push('Remove the message TTL');
+  if (settings.includes('expires')) fixes.push('Remove the queue expiry');
+  if (settings.includes('max-length') || settings.includes('max-length-bytes')) fixes.push('remove the length limit or set overflow = reject-publish');
+  const onwardFix = settings.some((s) => s !== 'expires')
+    ? `, or give the queue a dead-letter exchange${target ? ` that exists ("${target.exchange}" does not)` : ''} so these Messages move on instead`
+    : '';
+  return {
+    code: 'dead_letter_queue_drops_messages',
+    severity: 'loses_messages',
+    settings,
+    message:
+      `This dead-letter queue drops Messages for good before anyone triages them. It has ${what.join('; and ')}. ` +
+      `${capitalise(fixes.join('; '))}${onwardFix}.`,
+  };
+};
+
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * A quorum queue that dead-letters with the default at-most-once strategy:
+ * a Message is dropped if it cannot be routed when it is dead-lettered, or
+ * if a broker node fails while it moves. at-least-once only applies with
+ * reject-publish overflow; otherwise the queue falls back to at-most-once.
+ * A missing dead-letter exchange is left to its own warning: it loses the
+ * Message whatever the strategy.
+ */
+export const quorumAtMostOnceCheck: SetupCheck = (q, vhost) => {
+  if (q.type !== 'quorum') return null;
+  const target = effectiveDeadLetter(q);
+  if (!target || !exchangeExists(target.exchange, vhost)) return null;
+  const strategy = stringSetting(q, 'dead-letter-strategy') ?? 'at-most-once';
+  if (strategy === 'at-least-once' && overflow(q) === 'reject-publish') return null;
+  const why =
+    strategy === 'at-least-once'
+      ? `This quorum queue sets dead-letter-strategy = at-least-once, but its overflow is ${overflow(q)}, so it falls back to at-most-once`
+      : 'This quorum queue dead-letters with the default at-most-once strategy';
+  return {
+    code: 'quorum_at_most_once_dead_lettering',
+    severity: 'may_lose_messages',
+    message:
+      `${why}: a Message it dead-letters is lost if the dead-letter exchange routes it to no queue at that moment, or if a broker node fails while it moves. ` +
+      'Set dead-letter-strategy = at-least-once together with overflow = reject-publish (at-least-once needs it): the queue then keeps each dead-lettered Message until a dead-letter queue has confirmed it.',
+  };
+};
+
 /** Every check, in the order their warnings are listed within a severity. */
-const checks: SetupCheck[] = [deliveryLimitCheck, deadLetterExchangeMissingCheck];
+const checks: SetupCheck[] = [deliveryLimitCheck, deadLetterExchangeMissingCheck, deadLetterQueueDropsCheck, quorumAtMostOnceCheck];
 
 /** Every set-up warning that applies to `q`, most severe first. */
 export function setupWarnings(q: CheckedQueue, vhost: VhostTopology): SetupWarning[] {
