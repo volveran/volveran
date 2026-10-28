@@ -65,9 +65,11 @@ export function view(c: Checkout): CheckoutView {
   };
 }
 
+/** An Applying Checkout stays `applying` until the Apply has ended it and returned the rest; a lost one shows `lost` at once. */
 function statusOf(c: Checkout): CheckoutView['status'] {
-  if (c.status !== 'active') return c.status;
+  if (c.status === 'lost') return 'lost';
   if (c.applying) return 'applying';
+  if (c.status !== 'active') return c.status;
   return c.approvalRequest ? 'awaiting_approval' : 'active';
 }
 

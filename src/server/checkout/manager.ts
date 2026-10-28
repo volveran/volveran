@@ -399,10 +399,10 @@ export class CheckoutManager {
     } catch (err) {
       this.options.onApplyError?.(checkout.id, err);
     }
-    // Straight to finish (no await first): an end() that waited for this
-    // Apply then finds the Checkout already ended.
-    checkout.applying = null;
+    // Still `applying` until every Message not done is back in the queue; an
+    // end() that waited for this Apply then finds the Checkout already ended.
     await this.finish(checkout, running.stop?.endReason ?? 'applied').catch(() => {});
+    checkout.applying = null;
   }
 
   /**
