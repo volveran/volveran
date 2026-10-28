@@ -31,7 +31,7 @@ export interface CheckedQueue {
 /** The rest of the vhost, as the checks see it. */
 export interface VhostTopology {
   /** The named exchanges by name. The default exchange ("") always exists and is not listed. */
-  exchanges: Map<string, { type: string }>;
+  exchanges: Map<string, { type: string; alternateExchange?: string | null }>;
   bindings: Array<{ source: string; destination: string; destinationType: 'queue' | 'exchange'; routingKey: string }>;
 }
 
@@ -213,8 +213,97 @@ export const quorumAtMostOnceCheck: SetupCheck = (q, vhost) => {
   };
 };
 
+/**
+ * The queue's dead-letter exchange exists but routes what the queue
+ * dead-letters to no queue, and has no alternate exchange: the broker drops
+ * the Message. Without a dead-letter routing key, Messages keep the keys they
+ * reached the queue with, so it warns only when none of those routes.
+ */
+export const deadLetterUnroutableCheck: SetupCheck = (q, vhost) => {
+  const target = effectiveDeadLetter(q);
+  // The default exchange is left out (it routes to the queue named by the key).
+  if (!target || target.exchange === '' || !vhost.exchanges.has(target.exchange)) return null;
+  const keys = target.routingKey === null ? receivedKeys(q.name, vhost) : [target.routingKey];
+  if (keys === null || keys.some((key) => routes(target.exchange, key, vhost, new Set()))) return null;
+  const x = `"${target.exchange}"`;
+  const [what, fix] =
+    target.routingKey === null
+      ? [`without a dead-letter routing key, so Messages keep the routing keys it received (${keys.map((k) => `"${k}"`).join(', ')}), none of which a binding routes to a queue`, `Bind a queue to ${x} with one of those keys, or set a dead-letter routing key that one routes`]
+      : [`with the routing key "${target.routingKey}", which no binding routes to a queue`, `Bind a queue to ${x} with "${target.routingKey}"`];
+  return {
+    code: 'dead_letter_unroutable',
+    severity: 'loses_messages',
+    deadLetterExchange: target.exchange,
+    routingKey: target.routingKey,
+    message:
+      `This queue dead-letters to the exchange ${x} ${what}: every Message it dead-letters is dropped for good. ` +
+      `${fix}, or give ${x} an alternate exchange.`,
+  };
+};
+
+/**
+ * The routing keys Messages can reach queue `name` with: its own name (the
+ * default exchange) and the keys it is bound with. Null when they cannot be
+ * known: a binding from an exchange that ignores keys (fanout, headers, a
+ * plugin's type) or a topic binding with a wildcard.
+ */
+function receivedKeys(name: string, vhost: VhostTopology): string[] | null {
+  const keys = new Set([name]);
+  for (const b of vhost.bindings) {
+    if (b.destinationType !== 'queue' || b.destination !== name || b.source === '') continue;
+    const type = vhost.exchanges.get(b.source)?.type;
+    if (type === 'direct' || (type === 'topic' && !/(^|\.)[*#](\.|$)/.test(b.routingKey))) keys.add(b.routingKey);
+    else return null;
+  }
+  return [...keys].sort();
+}
+
+/**
+ * Whether `exchange` routes `routingKey` to at least one queue, following
+ * exchange-to-exchange bindings. An exchange with an alternate exchange, or
+ * whose routing cannot be decided from bindings (headers or a plugin's type),
+ * counts as routing.
+ */
+function routes(exchange: string, routingKey: string, vhost: VhostTopology, seen: Set<string>): boolean {
+  if (seen.has(exchange)) return false;
+  seen.add(exchange);
+  const x = vhost.exchanges.get(exchange);
+  if (!x) return false;
+  // What it cannot route goes to its alternate exchange.
+  if (x.alternateExchange) return true;
+  if (x.type !== 'direct' && x.type !== 'fanout' && x.type !== 'topic') return true;
+  return vhost.bindings.some(
+    (b) =>
+      b.source === exchange &&
+      matches(x.type, b.routingKey, routingKey) &&
+      (b.destinationType === 'queue' || routes(b.destination, routingKey, vhost, seen)),
+  );
+}
+
+/** Whether a binding with key `bindingKey` on an exchange of `type` matches `routingKey`. */
+function matches(type: string, bindingKey: string, routingKey: string): boolean {
+  if (type === 'fanout') return true;
+  if (type === 'topic') return topicMatches(bindingKey.split('.'), routingKey.split('.'));
+  return bindingKey === routingKey;
+}
+
+/** Topic matching by words: "*" is exactly one word, "#" zero or more. */
+function topicMatches(pattern: string[], words: string[]): boolean {
+  if (pattern.length === 0) return words.length === 0;
+  const [head, ...rest] = pattern;
+  if (head === '#') return words.some((_, i) => topicMatches(rest, words.slice(i))) || topicMatches(rest, []);
+  if (words.length === 0) return false;
+  return (head === '*' || head === words[0]) && topicMatches(rest, words.slice(1));
+}
+
 /** Every check, in the order their warnings are listed within a severity. */
-const checks: SetupCheck[] = [deliveryLimitCheck, deadLetterExchangeMissingCheck, deadLetterQueueDropsCheck, quorumAtMostOnceCheck];
+const checks: SetupCheck[] = [
+  deliveryLimitCheck,
+  deadLetterExchangeMissingCheck,
+  deadLetterUnroutableCheck,
+  deadLetterQueueDropsCheck,
+  quorumAtMostOnceCheck,
+];
 
 /** Every set-up warning that applies to `q`, most severe first. */
 export function setupWarnings(q: CheckedQueue, vhost: VhostTopology): SetupWarning[] {

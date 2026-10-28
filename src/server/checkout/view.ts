@@ -59,6 +59,7 @@ export function view(c: Checkout): CheckoutView {
       actionCount: handles.filter((h) => c.decisions.has(h)).length,
     }),
     approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString() },
+    rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
     lastApply: c.lastApply,
   };
 }
@@ -74,6 +75,7 @@ export function approvalSummary(c: Checkout & { approvalRequest: NonNullable<Che
     queue: c.queue,
     queueType: c.queueType,
     requestedAt: c.approvalRequest.requestedAt.toISOString(),
+    waitingMs: Math.max(0, Date.now() - c.approvalRequest.requestedAt.getTime()),
     endsAt: c.endsAt.toISOString(),
     remainingMs: remainingMs(c.endsAt, new Date()),
     decisionSummary,

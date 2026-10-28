@@ -212,6 +212,9 @@ export const api = {
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
   approvalMessage: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  /** Rejects the Apply of a waiting Checkout: it goes back to its requester's staging with `reason`. */
+  reject: (id: string, reason: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
   /** Approves the Apply of a waiting Checkout, which runs it; `confirmQueueName` is the queue name as typed. */
   approve: (id: string, confirmQueueName: string) =>
     getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/approvals/${segment(id)}/approve`, 'POST', {

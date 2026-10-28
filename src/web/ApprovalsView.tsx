@@ -2,11 +2,14 @@
 // this Operator may give (role `operator` or `admin` on the profile), and a
 // read-only view of one of them: its Decisions, Messages and Message view,
 // as the requester sees them. Approve asks for the queue name typed, then
-// runs the Apply on the requester's Checkout and shows its outcome. No key
-// approves (keyboard-commands.ts): Approve always needs its confirmation.
+// runs the Apply on the requester's Checkout and shows its outcome; Reject
+// asks for a reason, which the requester sees. No key approves or rejects
+// (keyboard-commands.ts): both always need their confirmation. A requester's
+// link (approval-link.ts) opens here on their waiting Checkout.
 import { useEffect, useState } from 'react';
 import { heldLine } from '../shared/held-line.js';
 import { decisionLabel } from '../shared/decisions.js';
+import { formatCountdown } from './countdown.js';
 import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail, type MessageOutcome } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
@@ -15,11 +18,15 @@ import { SignInAgain } from './SignInAgain.js';
 /** How often the list and an open waiting Checkout are read again. */
 const REFRESH_MS = 5_000;
 
-export function ApprovalsView() {
+/** `initialOpen`: the waiting Checkout a requester's link points at, opened first. `onClosed` runs when it is left. */
+export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: string | null; onClosed?(): void }) {
   const [approvals, setApprovals] = useState<ApprovalSummary[]>();
   const [error, setError] = useState<ApiError>();
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(initialOpen);
   const [tick, setTick] = useState(0);
+  /** Date.now() when `approvals` arrived: waiting and time left count on from there. */
+  const [receivedAt, setReceivedAt] = useState(0);
+  const now = useNow(open === null);
 
   useEffect(() => {
     if (open) return;
@@ -30,6 +37,7 @@ export function ApprovalsView() {
         .then((list) => {
           if (cancelled) return;
           setApprovals(list);
+          setReceivedAt(Date.now());
           setError(undefined);
         })
         .catch((err) => !cancelled && setError(err));
@@ -48,6 +56,7 @@ export function ApprovalsView() {
         onClose={() => {
           setOpen(null);
           setTick((n) => n + 1);
+          onClosed?.();
         }}
       />
     );
@@ -68,7 +77,8 @@ export function ApprovalsView() {
               <th>Broker Profile</th>
               <th>Vhost</th>
               <th>Queue</th>
-              <th>Requested</th>
+              <th>Waiting</th>
+              <th>Time left</th>
               <th>Decisions</th>
               <th />
             </tr>
@@ -80,8 +90,21 @@ export function ApprovalsView() {
                 <td>{a.profile}</td>
                 <td>{a.vhost}</td>
                 <td className="name">{a.queue}</td>
-                <td>{new Date(a.requestedAt).toLocaleTimeString()}</td>
-                <td>{a.decisionSummaryText}</td>
+                <td title={`Requested at ${new Date(a.requestedAt).toLocaleTimeString()}`}>
+                  {formatCountdown(a.waitingMs + (now - receivedAt))}
+                </td>
+                <td title={`The Checkout, and the request, end at ${new Date(a.endsAt).toLocaleTimeString()}`}>
+                  {formatCountdown(a.remainingMs - (now - receivedAt))}
+                </td>
+                <td>
+                  <ul className="decision-counts">
+                    {a.decisionSummary.map((l) => (
+                      <li key={decisionLabel(l)}>
+                        <strong>{l.count}</strong> {decisionLabel(l)}
+                      </li>
+                    ))}
+                  </ul>
+                </td>
                 <td>
                   <button onClick={() => setOpen(a.checkoutId)}>Review</button>
                 </td>
@@ -94,36 +117,61 @@ export function ApprovalsView() {
   );
 }
 
-/** One waiting Checkout, read-only, with Approve. */
+/** Date.now(), every second while `ticking`. */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
+
+/** One waiting Checkout, read-only, with Approve and Reject. */
 function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
   const [error, setError] = useState<ApiError>();
   const [focused, setFocused] = useState<number>();
   const [detail, setDetail] = useState<MessageDetail>();
-  const [confirming, setConfirming] = useState(false);
+  /** The open confirmation: Approve (queue name typed) or Reject (a reason). */
+  const [confirming, setConfirming] = useState<'approve' | 'reject' | null>(null);
   const [typed, setTyped] = useState('');
+  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   /** The Apply this Operator approved, once it has run. */
   const [result, setResult] = useState<{ checkout: Checkout; outcomes: MessageOutcome[] }>();
+  /** The request this Operator rejected: the Checkout is back with its requester. */
+  const [rejected, setRejected] = useState<Checkout>();
+  const done = result !== undefined || rejected !== undefined;
 
   useEffect(() => {
-    if (result) return;
+    if (done) return;
     let cancelled = false;
     const load = () =>
       api
         .approvalCheckout(id)
-        .then((c) => !cancelled && setCheckout(c))
-        .catch((err) => !cancelled && setError(err));
+        .then((c) => {
+          if (cancelled) return;
+          setCheckout(c);
+          setError(undefined);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setError(err);
+          // No longer waiting (withdrawn, approved, rejected, over): the error says why; nothing to review.
+          if (err instanceof ApiError && err.code === 'not_awaiting_approval') setCheckout(undefined);
+        });
     void load();
     const timer = setInterval(load, REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [id, result]);
+  }, [id, done]);
 
   useEffect(() => {
-    if (focused === undefined || result) return setDetail(undefined);
+    if (focused === undefined || done) return setDetail(undefined);
     let cancelled = false;
     api
       .approvalMessage(id, focused)
@@ -132,7 +180,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
     return () => {
       cancelled = true;
     };
-  }, [id, focused, result]);
+  }, [id, focused, done]);
 
   const approve = async () => {
     setBusy(true);
@@ -143,8 +191,22 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
       setError(err as ApiError);
     } finally {
       setBusy(false);
-      setConfirming(false);
+      setConfirming(null);
       setTyped('');
+    }
+  };
+
+  const reject = async () => {
+    setBusy(true);
+    try {
+      setRejected(await api.reject(id, reason));
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setBusy(false);
+      setConfirming(null);
+      setReason('');
     }
   };
 
@@ -157,6 +219,19 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
           {back}
         </div>
         <ApplyOutcomes outcomes={result.outcomes} approvedBy={result.checkout.lastApply?.approvedBy ?? null} />
+      </section>
+    );
+  }
+  if (rejected) {
+    return (
+      <section className="checkout">
+        <div className="checkout-head">
+          <h2>Rejected: Apply of {rejected.queue}</h2>
+          {back}
+        </div>
+        <p className="empty">
+          The Checkout is back with {rejected.operator}, who sees your reason: “{rejected.rejection?.reason}”.
+        </p>
       </section>
     );
   }
@@ -195,11 +270,43 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
         <strong>Decisions:</strong> {checkout.decisionSummaryText}
       </p>
       <div className="apply-panel">
-        {!confirming ? (
-          <button disabled={busy} onClick={() => setConfirming(true)}>
-            Approve…
-          </button>
-        ) : (
+        {confirming === null && (
+          <span>
+            <button disabled={busy} onClick={() => setConfirming('approve')}>
+              Approve…
+            </button>{' '}
+            <button disabled={busy} onClick={() => setConfirming('reject')}>
+              Reject…
+            </button>
+          </span>
+        )}
+        {confirming === 'reject' && (
+          <div className="confirm" role="alertdialog" aria-label="Reject Apply">
+            <strong>
+              Reject the Apply of {checkout.operator} on {checkout.profile} · {checkout.queue}
+            </strong>
+            <span>The Checkout goes back to {checkout.operator}, who sees your reason and can change the Decisions.</span>
+            <label className="reject-reason">
+              <span>Reason (required)</span>
+              <textarea autoFocus value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
+            </label>
+            <span>
+              <button className="danger" disabled={busy || reason.trim() === ''} onClick={() => void reject()}>
+                Reject
+              </button>{' '}
+              <button
+                className="link"
+                onClick={() => {
+                  setConfirming(null);
+                  setReason('');
+                }}
+              >
+                Cancel
+              </button>
+            </span>
+          </div>
+        )}
+        {confirming === 'approve' && (
           <div className="confirm" role="alertdialog" aria-label="Approve Apply">
             <strong className="confirm-profile protected">
               <span className="badge protected-badge">Protected Profile</span> Approve the Apply of {checkout.operator}{' '}
@@ -233,7 +340,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
               <button
                 className="link"
                 onClick={() => {
-                  setConfirming(false);
+                  setConfirming(null);
                   setTyped('');
                 }}
               >
