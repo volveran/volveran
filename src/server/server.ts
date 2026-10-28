@@ -37,7 +37,8 @@ export interface ServerOptions {
   webRoot?: string;
   /** Directory of the audit store (VOLVERAN_DATA_DIR); omitted means in memory only (tests). */
   dataDir?: string;
-  logger?: boolean;
+  /** Logs as JSON lines: true to stdout, or into `stream` (tests). Default off. */
+  logger?: boolean | { stream: { write(line: string): void } };
   /** Overrides the Checkout limits from VOLVERAN_CHECKOUT_MAX_MESSAGES / VOLVERAN_CHECKOUT_MAX_MB. */
   checkoutLimits?: Partial<CheckoutLimits>;
   /** Overrides the Checkout timing from VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES / VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS. */
@@ -141,7 +142,7 @@ interface AppOptions {
   audit: AuditRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
-  logger: boolean;
+  logger: boolean | { stream: { write(line: string): void } };
 }
 
 async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
