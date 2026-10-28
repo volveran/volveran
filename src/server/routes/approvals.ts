@@ -63,11 +63,12 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
   app.get<{ Params: { checkoutId: string; handle: string } }>(
     '/api/approvals/:checkoutId/messages/:handle',
     async (req) => {
+      const checkout = awaiting(req);
       const handle = Number(req.params.handle);
       if (!Number.isSafeInteger(handle)) {
         throw new CheckoutError('message_not_found', `"${req.params.handle}" is not a Message handle.`);
       }
-      return { message: checkouts.message(awaiting(req).id, handle) };
+      return { message: checkouts.message(checkout.id, handle) };
     },
   );
 
