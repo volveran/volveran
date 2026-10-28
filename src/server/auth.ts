@@ -67,6 +67,10 @@ class ExpiringMap<T extends { expiresAt: number }> {
   delete(id: string | undefined): void {
     if (id) this.entries.delete(id);
   }
+
+  values(): IterableIterator<T> {
+    return this.entries.values();
+  }
 }
 
 export interface TeamAuth {
@@ -137,6 +141,10 @@ export async function createTeamAuth(
   return {
     async register(app) {
       await app.register(fastifyCookie, { secret: sessionSecret });
+      // Sessions die with the app: no more token refreshes.
+      app.addHook('onClose', async () => {
+        for (const session of sessions.values()) session.operator.brokerToken?.stop();
+      });
 
       attachOperator(app, (req) => sessions.get(readCookie(req, sessionCookie))?.operator ?? null);
       app.addHook('onRequest', async (req) => {
@@ -249,7 +257,7 @@ function safeReturnTo(value: string | undefined): string {
 }
 
 function describe(err: unknown): string {
-  if (err instanceof oidc.AuthorizationResponseError) {
+  if (err instanceof oidc.AuthorizationResponseError || err instanceof oidc.ResponseBodyError) {
     return err.error_description ? `${err.error} (${err.error_description})` : err.error;
   }
   const e = err as { message?: string; cause?: { message?: string } };
