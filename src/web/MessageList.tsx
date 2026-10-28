@@ -1,11 +1,11 @@
 // The held Messages of a Checkout as a list (with the Selection, for the
 // owner) and the Message view of one of them. Shared by the owner's Checkout
 // view and the approver's read-only view of a waiting Checkout.
-import { useEffect, type Ref } from 'react';
+import { Fragment, useEffect, type Ref } from 'react';
 import { decisionLabel } from '../shared/decisions.js';
 import { formatBytes } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
-import type { DiedAgain, MessageDetail, MessageRow } from './api.js';
+import type { DiedAgain, FailureDetails, MessageDetail, MessageRow } from './api.js';
 import { DecisionBadge } from './decisions.js';
 
 const optionId = (handle: number) => `message-${handle}`;
@@ -18,6 +18,7 @@ function messageLabel(m: MessageRow): string {
     `routing key ${m.routingKey}`,
     m.deadLetterReason && `dead-lettered: ${m.deadLetterReason}`,
     !m.replay.available && 'no Replay',
+    m.failureDetails?.reason === 'skip' && 'skipped',
     m.diedAgain && `Died Again ${timesText(m.diedAgain.count)}`,
   ]
     .filter(Boolean)
@@ -124,6 +125,7 @@ export function MessageList(props: {
                     </span>
                   )}
                   {m.diedAgain && <DiedAgainBadge diedAgain={m.diedAgain} />}
+                  {m.failureDetails?.reason === 'skip' && <SkippedBadge />}
                 </td>
                 <td className="name">{m.messageId ?? <em>none</em>}</td>
                 <td>{m.routingKey}</td>
@@ -201,6 +203,63 @@ function DiedAgainNote({ diedAgain: d }: { diedAgain: DiedAgain }) {
   );
 }
 
+function SkippedBadge() {
+  return (
+    <span className="badge skipped" title="MassTransit skipped this Message (MT-Reason: skip): no consumer handled its type.">
+      skipped
+    </span>
+  );
+}
+
+const FRAMEWORK_NAME: Record<FailureDetails['framework'], string> = { spring: 'Spring AMQP', masstransit: 'MassTransit' };
+
+/** The Message view's Failure Details: what Spring AMQP or MassTransit wrote, the stack trace collapsed. */
+function FailureDetailsSection({ details: f }: { details: FailureDetails }) {
+  const rows: Array<[string, string | number | null]> = [
+    ['Exception type', f.exceptionType],
+    ['Message', f.message],
+    ['Consumer type', f.consumerType],
+    ['Message type', f.messageType],
+    ['Failed at', f.faultAt && !Number.isNaN(Date.parse(f.faultAt)) ? new Date(f.faultAt).toLocaleString() : f.faultAt],
+    ['Retries', f.retryCount],
+    ['Redeliveries', f.redeliveryCount],
+    ['Input queue', f.inputQueue],
+    ['Original exchange', f.originalExchange === '' ? '(default)' : f.originalExchange],
+    ['Original routing key', f.originalRoutingKey],
+    ...Object.entries(f.host ?? {}).map(([name, value]): [string, string] => [`Host ${name}`, value]),
+    ...Object.entries(f.extra),
+  ];
+  return (
+    <section className="failure-details">
+      <h4>
+        Failure Details <small>({FRAMEWORK_NAME[f.framework]})</small>
+      </h4>
+      {f.reason === 'skip' && (
+        <p>
+          <span className="badge skipped">skipped</span> MassTransit skipped this Message: no consumer handled its type. It
+          is not a fault.
+        </p>
+      )}
+      <dl>
+        {rows
+          .filter(([, value]) => value !== null)
+          .map(([label, value]) => (
+            <Fragment key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </Fragment>
+          ))}
+      </dl>
+      {f.stackTrace !== null && (
+        <details>
+          <summary>Stack trace</summary>
+          <pre>{f.stackTrace}</pre>
+        </details>
+      )}
+    </section>
+  );
+}
+
 export function MessageDetailView({ message: m }: { message: MessageDetail }) {
   return (
     <div className="message-detail">
@@ -227,6 +286,8 @@ export function MessageDetailView({ message: m }: { message: MessageDetail }) {
           </>
         )}
       </dl>
+
+      {m.failureDetails && <FailureDetailsSection details={m.failureDetails} />}
 
       <h4>Properties</h4>
       <pre>{JSON.stringify(m.properties, null, 2)}</pre>

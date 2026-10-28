@@ -15,6 +15,7 @@ export type {
   CheckoutHolder,
   DeliveryBudget,
   DiedAgain,
+  FailureDetails,
   MessageDetail,
   MessageOutcome,
   MessageRow,

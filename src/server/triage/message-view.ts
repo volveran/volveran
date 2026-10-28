@@ -2,6 +2,7 @@
 // held delivery, with its readable x-death history, its body rendered by
 // content type, and its Delivery Budget on quorum queues.
 import { deliveryBudget } from './delivery-budget.js';
+import { failureDetails } from './failure-details.js';
 import type { CheckoutQueueType } from './queue-list.js';
 import { isRecord } from '../is-record.js';
 import type { MessageDetail, MessageSummary, RenderedBody, XDeathEntry } from '../../shared/checkout.js';
@@ -34,19 +35,24 @@ export interface Delivery {
 export function messageSummary(handle: number, d: Delivery, queue: QueueInfo): MessageSummary {
   const { headers } = d.properties;
   const latest = parseXDeath(headers)[0];
+  const failure = failureDetails(headers);
+  // Without x-death (Spring AMQP and MassTransit don't dead-letter through the
+  // broker), the reason and original queue come from the Failure Details.
+  const fallbackReason = failure ? [failure.exceptionType, failure.message].filter((t) => t).join(': ') || null : null;
   return {
     handle,
     messageId: asString(d.properties.messageId),
     routingKey: d.fields.routingKey,
     timestamp: asTime(d.properties.timestamp),
-    deadLetterReason: latest?.reason ?? asString(headers?.['x-last-death-reason']),
-    originalQueue: latest?.queue ?? null,
+    deadLetterReason: latest?.reason ?? asString(headers?.['x-last-death-reason']) ?? (latest ? null : fallbackReason),
+    originalQueue: latest ? latest.queue : (failure?.inputQueue ?? null),
     size: d.content.length,
     deliveryBudget: deliveryBudget({
       deliveryCount: deliveryCount(headers, queue.type),
       deliveryLimit: queue.deliveryLimit,
       deadLetterExchange: queue.deadLetterExchange,
     }),
+    failureDetails: failure,
   };
 }
 
