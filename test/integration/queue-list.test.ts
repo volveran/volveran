@@ -180,7 +180,8 @@ describe('queue list', () => {
       await eventually(async () => {
         const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
         expect(res.body.queues.map((q: any) => [q.name, q.setupWarnings])).toEqual([
-          ['setupcheck.dlx.dlq', []],
+          // Only the at-most-once notice of a quorum queue that dead-letters.
+          ['setupcheck.dlx.dlq', [expect.objectContaining({ code: 'quorum_at_most_once_dead_lettering' })]],
           ['setupcheck.unlimited.dlq', []],
         ]);
       }, 20_000, 500);
