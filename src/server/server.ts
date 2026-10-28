@@ -177,7 +177,9 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
       return reply.status(404).send({ error: { code: 'not_found', message: `No route ${req.method} ${req.url}` } });
     }
     if (webRoot && existsSync(webRoot)) return reply.sendFile('index.html');
-    return reply.status(404).send('Web app not built');
+    return reply
+      .status(404)
+      .send('Web app not built. In development the web app is served by Vite: npm run dev, then open http://localhost:5173');
   });
 
   if (webRoot && existsSync(webRoot)) {

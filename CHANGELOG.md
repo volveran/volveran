@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Development: run from source (`npm run dev`), the server no longer serves the unbuilt `src/web` on `:8080`, which showed a blank page (`main.tsx` blocked for its MIME type). It serves no web app and answers `404` with a pointer to the Vite dev server on `http://localhost:5173`. `npm start` and the image still serve the built `dist/web`. (#32)
+
 ## [0.2.0] - 2026-10-27
 
 Deployable on Kubernetes (see the [roadmap](ROADMAP.md)). The image and its behaviour are unchanged for `docker run` and Compose apart from the health endpoints and the numeric user.
