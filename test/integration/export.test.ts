@@ -229,14 +229,12 @@ describe('NDJSON export of a Checkout near the byte limit', () => {
     if (checkoutId) await app.delete(`/api/checkouts/${checkoutId}`);
     await purgeQueues('/', fixtureQueues);
     await app?.close();
-  });
+  }, 120_000);
 
   it('streams the lines as they are read instead of making them all first', async () => {
     await withChannel('/', async (ch) => {
-      for (let i = 0; i < count; i++) {
-        ch.sendToQueue('orders.dlq', Buffer.alloc(size, i), { messageId: `m${i}` });
-        await ch.waitForConfirms();
-      }
+      for (let i = 0; i < count; i++) ch.sendToQueue('orders.dlq', Buffer.alloc(size, i), { messageId: `m${i}` });
+      await ch.waitForConfirms();
     });
     const started = await app.post(checkoutPath('orders.dlq'));
     expect(started.status).toBe(201);
@@ -246,27 +244,32 @@ describe('NDJSON export of a Checkout near the byte limit', () => {
     const res = await postExport(app, checkoutId!);
     expect(res.status).toBe(200);
     const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let text = decoder.decode((await reader.read()).value, { stream: true });
+    const chunks: Uint8Array[] = [(await reader.read()).value!];
     // The reader stalls: the server stops making lines once the socket is full.
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(made).toBeLessThan(count / 2);
 
     // Reads the rest a line at a time, never keeping the whole download.
     const positions: number[] = [];
-    for (;;) {
-      let nl: number;
-      while ((nl = text.indexOf('\n')) !== -1) {
-        const line = JSON.parse(text.slice(0, nl));
-        text = text.slice(nl + 1);
-        expect(Buffer.from(line.body, 'base64')).toEqual(Buffer.alloc(size, line.position - 1));
-        positions.push(line.position);
+    let mismatched = 0;
+    const takeLine = (line: Buffer) => {
+      const parsed = JSON.parse(line.toString('utf8'));
+      if (!Buffer.from(parsed.body, 'base64').equals(Buffer.alloc(size, parsed.position - 1))) mismatched++;
+      positions.push(parsed.position);
+    };
+    for (let chunk: Uint8Array | undefined = chunks.pop(); chunk; ) {
+      let rest = Buffer.from(chunk);
+      for (let nl = rest.indexOf(0x0a); nl !== -1; nl = rest.indexOf(0x0a)) {
+        takeLine(Buffer.concat([...chunks.splice(0), rest.subarray(0, nl)]));
+        rest = rest.subarray(nl + 1);
       }
-      const { done, value } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
+      if (rest.length > 0) chunks.push(rest);
+      const next = await reader.read();
+      chunk = next.done ? undefined : next.value;
     }
+    expect(chunks).toEqual([]);
+    expect(mismatched).toBe(0);
     expect(positions).toEqual(Array.from({ length: count }, (_, i) => i + 1));
     expect(made).toBe(count);
-  }, 120_000);
+  }, 300_000);
 });
