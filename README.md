@@ -15,7 +15,7 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 ## How it works
 
 1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue.
-2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
+2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. A Message that Volverán sent out before and that was dead-lettered again is flagged **Died Again**, with how many times and a link to the Audit Entry of its last trip, so you don't Replay the same poison Message over and over. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
 3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message.
 4. **Audit and Restore.** Every action is recorded with who did it. Discarded Messages are kept so they can be Restored.
 
@@ -129,6 +129,29 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)).
+
+### Exporting Messages
+
+The owner of an active Checkout can download its held Messages as NDJSON, every one or only those matching the current filter (the **Export** buttons, or `POST /api/checkouts/:id/export` with an optional `{ "filter": [...] }`). Exporting only reads: it never acks, rejects or reorders a Message, and leaves the Decisions as they are. The file is named `volveran-<profile>-<queue>-<UTC time>.ndjson` and is streamed, so even a Checkout at the 100 MB limit is never copied whole into memory. Each export is recorded as an Audit Entry (action `export`) with the Operator, profile, queue, Checkout, filter and number of Messages, but no copy of the Messages.
+
+Each line is one JSON object per Message, in queue order:
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Line format version, `1`. |
+| `position` | Where the Message stood in the Checkout, `1` being the head of the queue. A filtered export keeps these positions. |
+| `messageId` | The `message_id` property, or `null`. |
+| `exchange`, `routingKey` | What the Message was delivered with (for a dead-lettered Message, the dead-letter exchange's). |
+| `properties` | Every AMQP property that is set except headers, with amqplib's names (`contentType`, `deliveryMode`, `timestamp` in seconds, ...). |
+| `headers` | The headers. |
+| `body` | The body exactly as sent, base64. |
+| `bodyKind` | `json`, `text` or `binary`: how the Message view shows the body. |
+| `xDeath` | The decoded `x-death` history, most recent first: `{ queue, reason, count, time, exchange, routingKeys, originalExpiration }`. |
+| `deliveryBudget` | `{ remaining, warning }` on a quorum queue with a delivery limit, otherwise `null`. |
+| `decision` | The Message's Decision when exported: `{ "kind": "keep" }`, `{ "kind": "discard", "reason": ... }`, `{ "kind": "replay" }` or `{ "kind": "move", "destination": { "queue": ... } \| { "exchange": ..., "routingKey": ... } }`. |
+| `diedAgain` | `{ "replayId": ... }` when the Message carries a Volverán replay id (`x-volveran-replay-id`), otherwise `null`. |
+
+`properties` and `headers` use the same lossless AMQP JSON as Audit Entries, so they hold the Message byte for byte: a byte array is `{ "$bytes": "<base64>" }`, a 64-bit integer `{ "$bigint": "<decimal>" }`, and a table with a key starting with `$` is wrapped as `{ "$table": { ... } }`. Typed values such as decimals stay as amqplib decodes them (`{ "!": "decimal", "value": { "places": 2, "digits": 1234 } }`). For example, `jq -r 'select(.bodyKind == "json") | .body | @base64d' export.ndjson` prints the JSON bodies.
 
 ## Learn more
 

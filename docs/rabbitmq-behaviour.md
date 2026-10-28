@@ -40,6 +40,10 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 ## Dead-letter set-up
 
 - A queue whose dead-letter exchange does not exist drops the Messages it dead-letters.
+- A dead-letter queue with a message TTL and no dead-letter exchange of its own drops Messages once they expire.
+- A dead-letter queue with a length limit and the default `drop-head` overflow drops its oldest Messages when full, unless it has a dead-letter exchange of its own.
+- A queue that expires (`x-expires`) is deleted with its Messages, which are not dead-lettered even when it has a dead-letter exchange.
+- The default quorum dead-letter strategy is `at-most-once`: a Message dead-lettered to an exchange that routes it to no queue is dropped. With `at-least-once` (which needs `reject-publish` overflow) the queue keeps it, not ready, and retries.
 
 ## Publishing
 

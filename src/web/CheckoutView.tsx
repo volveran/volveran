@@ -51,6 +51,9 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [selection, setSelection] = useState<ReadonlySet<number>>(new Set());
   /** Handles matching the current filter; null when no filter is set. */
   const [matched, setMatched] = useState<ReadonlySet<number> | null>(null);
+  /** The clauses of the current filter (what an export of the matching Messages sends). */
+  const [clauses, setClauses] = useState<FilterClause[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>();
   /** The Move destination picker's choices; a string says why they could not be loaded. */
@@ -138,11 +141,25 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     setBusy(true);
     try {
       setMatched(new Set((await api.matching(id, clauses)).handles));
+      setClauses(clauses);
       setError(undefined);
     } catch (err) {
       setError(err as ApiError);
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Downloads the Messages matching the current filter, or every held one, as NDJSON. */
+  const exportMessages = async (filtered: boolean) => {
+    setExporting(true);
+    try {
+      await api.exportMessages(id, filtered ? clauses : undefined);
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -156,9 +173,15 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
       setCheckout(res.checkout);
       setReceivedAt(Date.now());
       setError(undefined);
+      const notices: string[] = [];
       if (res.rejected.length > 0) {
-        setNotice(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
+        notices.push(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
       }
+      if (decision.kind === 'replay') {
+        const diedAgain = res.checkout.messages.filter((m) => handles.includes(m.handle) && m.diedAgain).length;
+        if (diedAgain > 0) notices.push(replayWarning(diedAgain));
+      }
+      if (notices.length > 0) setNotice(notices.join(' '));
     } catch (err) {
       setError(err as ApiError);
     } finally {
@@ -287,6 +310,12 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             {new Date(checkout.startedAt).toLocaleTimeString()}
           </p>
           <p className="held">{heldLine(checkout)}</p>
+          {checkout.diedAgainCount > 0 && (
+            <p className="died-again-count">
+              <span className="badge died-again">Died Again</span> {checkout.diedAgainCount} of the held Messages came
+              back after a Replay, Move or Restore.
+            </p>
+          )}
           {live && (
             <p className="countdown" title={`Ends itself at ${new Date(checkout.endsAt).toLocaleTimeString()}`}>
               Ends in {formatCountdown(checkout.remainingMs - (now - receivedAt))}
@@ -372,6 +401,15 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             />
           )}
           {notice && <p className="notice">{notice}</p>}
+          <p className="export">
+            <button
+              disabled={exporting}
+              onClick={() => exportMessages(false)}
+              title="Download every held Message as NDJSON, one line each (recorded as an Audit Entry)"
+            >
+              {exporting ? 'Exporting…' : `Export all ${checkout.messages.length} Messages`}
+            </button>
+          </p>
           <FilterBar
             active={matched !== null}
             busy={busy}
@@ -389,6 +427,13 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
                 onClick={() => setSelection((s) => new Set([...s, ...matched]))}
               >
                 Select all {matched.size} matching
+              </button>
+              <button
+                disabled={matched.size === 0 || exporting}
+                onClick={() => exportMessages(true)}
+                title="Download the matching Messages as NDJSON (recorded as an Audit Entry)"
+              >
+                Export {matched.size} matching
               </button>
             </div>
           )}
@@ -456,4 +501,8 @@ function ErrorBox({ error }: { error: ApiError }) {
       <code>{error.code}</code>
     </div>
   );
+}
+
+function replayWarning(diedAgain: number): string {
+  return `${diedAgain} of these Messages already died again after being sent back: their consumer failed on them before. Replay them only once the cause is fixed.`;
 }

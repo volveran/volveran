@@ -7,7 +7,7 @@ import type { CheckoutTiming } from '../triage/checkout-timing.js';
 import type { ActionDecision } from '../triage/decisions.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 import type { Role } from '../../shared/roles.js';
-import type { AppliedResult, CheckoutStatus, EndReason } from '../../shared/checkout.js';
+import type { AppliedResult, CheckoutStatus, DiedAgain, EndReason } from '../../shared/checkout.js';
 
 export type { AppliedResult, CheckoutStatus, EndReason };
 
@@ -70,6 +70,8 @@ export interface Checkout extends QueueRef {
   /** Deliveries past the byte limit: not shown, returned right after the held ones. */
   overflow: amqp.ConsumeMessage[];
   heldBytes: number;
+  /** The held Messages that are Died Again, by Message handle; read from the audit store once they are held. */
+  diedAgain: Map<number, DiedAgain>;
   /** Decisions other than Keep, by Message handle (staging.ts); a Message missing here is Keep. */
   decisions: Map<number, ActionDecision>;
   /**

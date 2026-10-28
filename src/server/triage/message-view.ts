@@ -67,16 +67,30 @@ export function deliveryCount(headers: Record<string, unknown> | undefined, queu
  */
 export function renderBody(content: Buffer, contentType?: string, contentEncoding?: string): RenderedBody {
   const size = content.length;
-  const binary = (): RenderedBody => ({
-    kind: 'binary',
-    size,
-    hex: content.toString('hex'),
-    base64: content.toString('base64'),
-  });
-  if (contentEncoding && !/^(identity|utf-?8)$/i.test(contentEncoding.trim())) return binary();
+  const body = classifyBody(content, contentType, contentEncoding);
+  switch (body.kind) {
+    case 'json':
+      return { kind: 'json', size, text: JSON.stringify(body.value, null, 2) };
+    case 'text':
+      return { kind: 'text', size, text: body.text };
+    case 'binary':
+      return { kind: 'binary', size, hex: content.toString('hex'), base64: content.toString('base64') };
+  }
+}
+
+/** Whether a body reads as JSON, text or binary: the kind renderBody shows it as. */
+export function bodyKind(content: Buffer, contentType?: string, contentEncoding?: string): RenderedBody['kind'] {
+  return classifyBody(content, contentType, contentEncoding).kind;
+}
+
+type ClassifiedBody = { kind: 'json'; value: unknown } | { kind: 'text'; text: string } | { kind: 'binary' };
+
+function classifyBody(content: Buffer, contentType?: string, contentEncoding?: string): ClassifiedBody {
+  const binary: ClassifiedBody = { kind: 'binary' };
+  if (contentEncoding && !/^(identity|utf-?8)$/i.test(contentEncoding.trim())) return binary;
 
   const text = decodeUtf8(content);
-  if (text === undefined) return binary();
+  if (text === undefined) return binary;
 
   const mime = (contentType ?? '').split(';')[0]!.trim().toLowerCase();
   const declaredJson = mime === 'application/json' || mime.endsWith('+json');
@@ -84,10 +98,10 @@ export function renderBody(content: Buffer, contentType?: string, contentEncodin
 
   if (declaredJson || !declaredText) {
     const json = parseJson(text, declaredJson);
-    if (json !== undefined) return { kind: 'json', size, text: JSON.stringify(json, null, 2) };
+    if (json !== undefined) return { kind: 'json', value: json };
   }
-  if (declaredText || declaredJson || looksLikeText(text)) return { kind: 'text', size, text };
-  return binary();
+  if (declaredText || declaredJson || looksLikeText(text)) return { kind: 'text', text };
+  return binary;
 }
 
 function decodeUtf8(content: Buffer): string | undefined {
@@ -153,7 +167,8 @@ function asTime(v: unknown): string | null {
   return seconds === null ? null : new Date(seconds * 1000).toISOString();
 }
 
-export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): MessageDetail {
+/** The Message view, but for `diedAgain`, which needs the audit store (the Checkout manager adds it). */
+export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): Omit<MessageDetail, 'diedAgain'> {
   const { headers, ...props } = d.properties;
   const properties: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {

@@ -60,7 +60,12 @@ export type SetupWarningSeverity = 'loses_messages' | 'may_lose_messages';
 export type SetupWarning = { severity: SetupWarningSeverity; message: string } & (
   | { code: 'messages_dropped_at_delivery_limit'; deliveryLimit: number }
   | { code: 'dead_letter_exchange_missing'; deadLetterExchange: string }
+  | { code: 'dead_letter_queue_drops_messages'; settings: DroppingSetting[] }
+  | { code: 'quorum_at_most_once_dead_lettering' }
 );
+
+/** A dead-letter queue setting that drops Messages, by its policy key. */
+export type DroppingSetting = 'message-ttl' | 'expires' | 'max-length' | 'max-length-bytes';
 
 export type SetupWarningCode = SetupWarning['code'];
 
