@@ -31,7 +31,7 @@ export interface CheckedQueue {
 /** The rest of the vhost, as the checks see it. */
 export interface VhostTopology {
   /** The named exchanges by name. The default exchange ("") always exists and is not listed. */
-  exchanges: Map<string, { type: string; alternateExchange?: string }>;
+  exchanges: Map<string, { type: string; alternateExchange?: string | null }>;
   bindings: Array<{ source: string; destination: string; destinationType: 'queue' | 'exchange'; routingKey: string }>;
 }
 

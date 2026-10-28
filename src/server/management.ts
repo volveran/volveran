@@ -39,6 +39,8 @@ export interface ManagementExchange {
   type: string;
   /** An internal exchange only receives from other exchanges: clients cannot publish to it. */
   internal: boolean;
+  /** Where Messages it cannot route go, by argument or policy (the argument wins); null for none. */
+  alternateExchange: string | null;
 }
 
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -69,7 +71,7 @@ export class ManagementClient {
 
   /** The named exchanges of `vhost`, the default exchange left out. */
   async listExchanges(vhost: string): Promise<ManagementExchange[]> {
-    const body = await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal`);
+    const body = await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal,arguments,effective_policy_definition`);
     return (body as any[]).map(toExchange).filter((e) => e.name !== '');
   }
 
@@ -183,5 +185,12 @@ function toQueue(q: any): ManagementQueue {
 }
 
 function toExchange(e: any): ManagementExchange {
-  return { name: String(e.name ?? ''), type: String(e.type ?? 'direct'), internal: e.internal === true };
+  const argument = isRecord(e.arguments) ? e.arguments['alternate-exchange'] : undefined;
+  const policy = isRecord(e.effective_policy_definition) ? e.effective_policy_definition['alternate-exchange'] : undefined;
+  return {
+    name: String(e.name ?? ''),
+    type: String(e.type ?? 'direct'),
+    internal: e.internal === true,
+    alternateExchange: typeof argument === 'string' ? argument : typeof policy === 'string' ? policy : null,
+  };
 }

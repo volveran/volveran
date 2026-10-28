@@ -224,12 +224,84 @@ describe('queue list', () => {
 
       const declare = await management(`/exchanges/${vhost}/${missing}`, { method: 'PUT', body: { type: 'fanout', durable: true } });
       expect(declare.status).toBeLessThan(300);
+      // The exchange exists now, but routes nothing yet: only the unroutable warning is left.
       const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=missingdlx');
-      expect(res.body.queues.map((q: any) => q.setupWarnings)).toEqual([[], []]);
+      expect(res.body.queues.map((q: any) => q.setupWarnings.map((w: any) => w.code))).toEqual([['dead_letter_unroutable'], ['dead_letter_unroutable']]);
     } finally {
       await management(`/policies/${vhost}/missingdlx`, { method: 'DELETE' });
       await management(`/exchanges/${vhost}/${missing}`, { method: 'DELETE' });
       for (const [q] of created) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('flags a queue whose dead-letter routing key no binding routes, until a binding or an alternate exchange routes it', async () => {
+    const vhost = encodeURIComponent('/');
+    const q = 'unroutabledlx.work';
+    const dlq = 'unroutabledlx.dlq';
+    const dlx = 'unroutabledlx.dlx';
+    const alternate = 'unroutabledlx.alternate';
+    const warningsOf = async () => {
+      const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=unroutabledlx.work');
+      expect(names(res.body.queues)).toEqual([q]);
+      return res.body.queues[0].setupWarnings;
+    };
+    try {
+      for (const x of [dlx, alternate]) {
+        expect((await management(`/exchanges/${vhost}/${x}`, { method: 'PUT', body: { type: 'direct', durable: true } })).status).toBeLessThan(300);
+      }
+      for (const [name, args] of [[dlq, {}], [q, { 'x-dead-letter-exchange': dlx, 'x-dead-letter-routing-key': 'parked' }]] as const) {
+        expect((await management(`/queues/${vhost}/${name}`, { method: 'PUT', body: { durable: true, arguments: args } })).status).toBeLessThan(300);
+      }
+      const bind = (key: string) =>
+        management(`/bindings/${vhost}/e/${dlx}/q/${dlq}`, { method: 'POST', body: { routing_key: key } });
+      expect((await bind('other')).status).toBeLessThan(300);
+
+      expect(await warningsOf()).toEqual([
+        {
+          code: 'dead_letter_unroutable',
+          severity: 'loses_messages',
+          deadLetterExchange: dlx,
+          routingKey: 'parked',
+          message: expect.stringMatching(/"unroutabledlx\.dlx" with the routing key "parked".*dropped.*Bind a queue/is),
+        },
+      ]);
+
+      // An alternate exchange set by a policy saves the Messages too.
+      const policy = await management(`/policies/${vhost}/unroutabledlx`, {
+        method: 'PUT',
+        body: { pattern: '^unroutabledlx\\.dlx$', 'apply-to': 'exchanges', definition: { 'alternate-exchange': alternate } },
+      });
+      expect(policy.status).toBeLessThan(300);
+      await eventually(async () => expect(await warningsOf()).toEqual([]));
+      await management(`/policies/${vhost}/unroutabledlx`, { method: 'DELETE' });
+      await eventually(async () => expect(await warningsOf()).toHaveLength(1));
+
+      expect((await bind('parked')).status).toBeLessThan(300);
+      expect(await warningsOf()).toEqual([]);
+    } finally {
+      await management(`/policies/${vhost}/unroutabledlx`, { method: 'DELETE' });
+      for (const name of [q, dlq]) await management(`/queues/${vhost}/${name}`, { method: 'DELETE' });
+      for (const x of [dlx, alternate]) await management(`/exchanges/${vhost}/${x}`, { method: 'DELETE' });
+    }
+  });
+
+  it('reads an alternate exchange set by an exchange argument', async () => {
+    const vhost = encodeURIComponent('/');
+    const q = 'aedlx.work';
+    const dlx = 'aedlx.dlx';
+    try {
+      const put = await management(`/exchanges/${vhost}/${dlx}`, {
+        method: 'PUT',
+        body: { type: 'direct', durable: true, arguments: { 'alternate-exchange': 'aedlx.alternate' } },
+      });
+      expect(put.status).toBeLessThan(300);
+      const queue = await management(`/queues/${vhost}/${q}`, { method: 'PUT', body: { durable: true, arguments: { 'x-dead-letter-exchange': dlx } } });
+      expect(queue.status).toBeLessThan(300);
+      const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=aedlx');
+      expect(res.body.queues.map((r: any) => [r.name, r.setupWarnings])).toEqual([[q, []]]);
+    } finally {
+      await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+      await management(`/exchanges/${vhost}/${dlx}`, { method: 'DELETE' });
     }
   });
 
