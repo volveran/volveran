@@ -17,6 +17,7 @@ import {
   startApp,
   testProfile,
   uniqueName,
+  waitForReady,
   withChannel,
   type TestApp,
 } from './harness.js';
@@ -108,6 +109,7 @@ describe('Move', () => {
         { handle: handle('pay-2'), messageId: 'pay-2', decision: { kind: 'keep' }, status: 'kept', reason: null },
       ]),
     );
+    await waitForReady('/', 'payments.dlq', 1);
     expect(await readyMessageIds('/', 'payments.dlq')).toEqual(['pay-2']);
     expect(await readyCount('/', 'payments.dlq.classic')).toBe(0);
     const arrived = await take('triage.manual');

@@ -23,6 +23,7 @@ import {
   startApp,
   testOperator,
   testProfile,
+  waitForReady,
   type TestApp,
 } from './harness.js';
 
@@ -90,6 +91,7 @@ describe('Apply with Discard', () => {
       );
       expect(applied.body.checkout).toMatchObject({ status: 'ended', endReason: 'applied', heldCount: 0 });
       expect(applied.body.checkout.lastApply.outcomes).toEqual(applied.body.outcomes);
+      await waitForReady('/', queue, 3);
       expect(await readyMessageIds('/', queue)).toEqual([0, 2, 4].map((n) => `${queue}-${n}`));
       // The queue and the Operator are free for the next Checkout.
       await startCheckout(queue);
@@ -153,6 +155,7 @@ describe('Apply with Discard', () => {
       raw: { $bytes: Buffer.from([0, 255]).toString('base64') },
       'x-death': [expect.objectContaining({ queue: 'payments.work', reason: 'rejected', exchange: 'payments' })],
     });
+    await waitForReady('/', 'payments.dlq', 1);
     expect(await readyMessageIds('/', 'payments.dlq')).toEqual(['pay-2']);
   });
 

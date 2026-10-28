@@ -213,6 +213,19 @@ export async function readyCount(vhost: string, queue: string): Promise<number> 
 }
 
 /**
+ * Waits until `queue` has exactly `count` ready Messages. A quorum queue
+ * takes back Messages nacked or left unacknowledged by a closed channel or
+ * connection through its Raft log, so they count as ready shortly after,
+ * not at once. A passive declare, so waiting never changes the queue.
+ */
+export async function waitForReady(vhost: string, queue: string, count: number): Promise<void> {
+  await eventually(async () => {
+    const ready = await readyCount(vhost, queue);
+    if (ready !== count) throw new Error(`${queue} has ${ready} ready Messages, expected ${count}`);
+  });
+}
+
+/**
  * Takes every ready Message in `queue`, returns their message ids and puts
  * them all back (basic.nack requeue, so no delivery attempt is used).
  */

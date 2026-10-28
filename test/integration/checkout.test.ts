@@ -20,6 +20,7 @@ import {
   eventually,
   management,
   vhostPath,
+  waitForReady,
   type TestApp,
 } from './harness.js';
 
@@ -108,6 +109,7 @@ describe('Checkout', () => {
     expect((await app.get(`/api/checkouts/${checkout.id}`)).body.checkout.heldCount).toBe(2);
 
     await endCheckout(checkout.id);
+    await waitForReady('/', queue, 3);
     expect((await readyMessageIds('/', queue)).sort()).toEqual([`${queue}-0`, `${queue}-1`, 'late-arrival'].sort());
   });
 
@@ -129,6 +131,7 @@ describe('Checkout', () => {
     expect(ended.status).toBe(200);
     expect(ended.body.checkout).toMatchObject({ status: 'ended', endReason: 'operator', heldCount: 0, messages: [] });
     // Same order, and on the quorum queue x-delivery-count is unchanged.
+    await waitForReady('/', queue, 5);
     expect(await readyMessages(queue)).toEqual(before);
     // The queue is free again.
     expect((await startCheckout(queue)).status).toBe(201);
@@ -174,9 +177,10 @@ describe('Checkout', () => {
       expect(checkout.limits.maxMessages).toBe(3);
       expect(checkout.messages.map((m: any) => m.messageId)).toEqual([0, 1, 2].map((i) => `${queue}-${i}`));
       // The other 2 stay ready (a passive declare: taking them to look would reorder a quorum queue).
-      expect(await readyCount('/', queue)).toBe(2);
+      await waitForReady('/', queue, 2);
 
       await endCheckout(checkout.id, limited);
+      await waitForReady('/', queue, 5);
       expect(await readyMessageIds('/', queue)).toEqual([0, 1, 2, 3, 4].map((i) => `${queue}-${i}`));
     });
 
@@ -196,6 +200,7 @@ describe('Checkout', () => {
       expect(checkout.messages.map((m: any) => m.messageId)).toEqual([0, 1, 2].map((i) => `${queue}-${i}`));
 
       await endCheckout(checkout.id, limited);
+      await waitForReady('/', queue, 5);
       expect(await readyMessageIds('/', queue)).toEqual([0, 1, 2, 3, 4].map((i) => `${queue}-${i}`));
     });
   });
@@ -236,9 +241,10 @@ describe('Checkout', () => {
         expect(collected!.overflow).toBeGreaterThan(0);
         expect(collected!.overflow).toBeLessThanOrEqual(lastWindow);
         expect(Math.max(...collected!.windows)).toBeLessThanOrEqual(5);
-        expect(await readyCount('/', queue)).toBe(50 - 5 - collected!.overflow);
+        await waitForReady('/', queue, 50 - 5 - collected!.overflow);
 
         await endCheckout(checkout.id, limited);
+        await waitForReady('/', queue, 50);
         expect(await readyMessageIds('/', queue)).toEqual(Array.from({ length: 50 }, (_, i) => `${queue}-${i}`));
       },
       60_000,
@@ -280,7 +286,7 @@ describe('Checkout', () => {
         // The refused start left the queue alone.
         expect((await other.get(`/api/checkouts/${first.id}`)).body.checkout).toMatchObject({ status: 'active', heldCount: 1 });
         await endCheckout(first.id, other);
-        expect(await readyCount('/', 'payments.dlq')).toBe(1);
+        await waitForReady('/', 'payments.dlq', 1);
         expect((await startCheckout('payments.dlq')).status).toBe(201);
       } finally {
         await other.close();
