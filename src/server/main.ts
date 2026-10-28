@@ -10,8 +10,9 @@
 //   VOLVERAN_OIDC_REDIRECT_URL, VOLVERAN_OIDC_SCOPES, VOLVERAN_SESSION_SECRET
 //                           Team Mode sign-in (see run-mode.ts, auth.ts)
 //   VOLVERAN_OIDC_GROUPS_CLAIM
-//                           the ID token claim holding the Operator's groups,
-//                           for Roles (default groups; see groups-claim.ts)
+//                           the claim (name or dotted path) holding the
+//                           Operator's groups, for Roles (default groups; see
+//                           groups-claim.ts)
 //   VOLVERAN_WEB_ROOT       built web app (default dist/web next to the compiled
 //                           server; none when run from source, see web-root.ts)
 //   VOLVERAN_DATA_DIR       the audit store (Audit Entries, Discarded Messages);

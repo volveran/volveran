@@ -6,18 +6,17 @@
 //
 //   GET /healthz → 200 { status: "ok" } whenever the process serves HTTP
 //   GET /readyz  → 200 { status: "ok" } once startup has finished,
-//                  503 { status: "starting" } before (and while shutting down)
+//                  503 once shutdown starts
+//
+// Both routes answer the same way; they differ in how probes use them. The
+// server only listens once startup has finished (server.ts), so no request
+// reaches /readyz before then. Once shutdown starts, Fastify answers 503 to
+// every request itself (its return503OnClosing default) before any route
+// runs, with the fixed body
+// {"error":"Service Unavailable","message":"Service Unavailable","statusCode":503}.
 import type { FastifyInstance } from 'fastify';
 
-export interface HealthRouteDeps {
-  /** True once configuration, Broker Profiles, OIDC discovery and the audit store are ready. */
-  isReady: () => boolean;
-}
-
-export function registerHealthRoutes(app: FastifyInstance, { isReady }: HealthRouteDeps) {
+export function registerHealthRoutes(app: FastifyInstance) {
   app.get('/healthz', { logLevel: 'silent' }, async () => ({ status: 'ok' }));
-  app.get('/readyz', { logLevel: 'silent' }, async (_req, reply) => {
-    if (isReady()) return { status: 'ok' };
-    return reply.status(503).send({ status: 'starting' });
-  });
+  app.get('/readyz', { logLevel: 'silent' }, async () => ({ status: 'ok' }));
 }

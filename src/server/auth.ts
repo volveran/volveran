@@ -14,7 +14,7 @@ import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as oidc from 'openid-client';
 import { ConfigError } from './config-error.js';
-import { groupsFromClaims } from './groups-claim.js';
+import { groupsAtSignIn } from './groups-claim.js';
 import { HttpError } from './http-error.js';
 import { isLoopback } from './is-loopback.js';
 import { attachOperator, notSignedIn, teamOperator, type Operator } from './operator.js';
@@ -170,7 +170,15 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
           });
           const claims = tokens.claims();
           if (!claims?.sub) throw new Error('the ID token has no "sub" claim');
-          operator = teamOperator(claims, groupsFromClaims(claims, settings.groupsClaim));
+          const groups = await groupsAtSignIn({
+            idToken: claims,
+            claim: settings.groupsClaim,
+            userinfo: config.serverMetadata().userinfo_endpoint
+              ? () => oidc.fetchUserInfo(config, tokens.access_token, claims.sub)
+              : null,
+            log: req.log,
+          });
+          operator = teamOperator(claims, groups);
         } catch (err) {
           throw signInFailed(describe(err));
         }

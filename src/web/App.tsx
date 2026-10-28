@@ -4,6 +4,8 @@
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
 // In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
 // Applies waiting for an Approval this Operator may give.
+// An Operator with no role on any profile (Team Mode) gets a page saying so,
+// listing the groups Volverán received (NoRolePage).
 // Only the profiles where the Operator has a Role are listed (the server
 // filters them), and actions their Role does not allow are shown as
 // unavailable, naming the role they need.
@@ -79,6 +81,8 @@ export function App() {
 
   const profile = profiles.find((p) => p.name === profileName);
   const role = profileName ? session?.roles[profileName] : undefined;
+  /** Team Mode, signed in with no role on any Broker Profile: NoRolePage instead of the app. */
+  const noRoleAnywhere = session?.mode === 'team' && Object.keys(session.roles).length === 0;
 
   // A Protected Profile shows in the browser tab too, so it is visible from other tabs.
   useEffect(() => {
@@ -184,7 +188,7 @@ export function App() {
     }
   };
   useKeyboardCommands(
-    view === 'queues' && !checkoutId,
+    view === 'queues' && !checkoutId && !noRoleAnywhere,
     {
       view: 'queue-list',
       prompt: shortcutsOpen,
@@ -193,6 +197,10 @@ export function App() {
     },
     run,
   );
+
+  if (noRoleAnywhere) {
+    return <NoRolePage operator={session.operator} operatorId={session.operatorId} groups={session.groups} />;
+  }
 
   return (
     <div className={profile?.protected ? 'app protected' : 'app'}>
@@ -347,6 +355,57 @@ export function App() {
           </>
         )}
         {shortcutsOpen && <ShortcutList onClose={() => setShortcutsOpen(false)} />}
+      </main>
+    </div>
+  );
+}
+
+/**
+ * Team Mode, signed in with no role on any Broker Profile: say so, and list
+ * the groups Volverán received, for the Operator to pass on to whoever
+ * configures the profiles' `roles`.
+ */
+function NoRolePage({ operator, operatorId, groups }: { operator: string; operatorId: string; groups: string[] }) {
+  return (
+    <div className="app">
+      <header className="topbar">
+        <h1>{product.name}</h1>
+        <span className="who">
+          Operator <strong title={operatorId}>{operator}</strong>{' '}
+          <button type="button" onClick={() => void signOut()}>
+            Sign out
+          </button>
+        </span>
+      </header>
+      <main className="no-role">
+        <h2>You have no role on any Broker Profile</h2>
+        <p>
+          Each Broker Profile gives a role to the groups listed in its <code>roles</code>, and none of your groups is
+          listed in any of them. Ask whoever runs {product.name} to add one of your groups to the profiles you need.
+        </p>
+        {groups.length > 0 ? (
+          <>
+            <p>
+              {product.name} received {groups.length === 1 ? 'this group' : `these ${groups.length} groups`} from your
+              identity provider:
+            </p>
+            <ul className="groups">
+              {groups.map((g) => (
+                <li key={g}>
+                  <code>{g}</code>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p>
+            {product.name} received <strong>no groups</strong> from your identity provider. The provider may not send the
+            groups claim {product.name} is configured to read, or you are in no group.
+          </p>
+        )}
+        <p className="notice">
+          Group changes apply the next time you sign in: sign out and in again once your access is fixed.
+        </p>
       </main>
     </div>
   );
