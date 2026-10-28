@@ -12,8 +12,11 @@
 // When the Apply needs Approval (Team Mode, a Protected Profile), the Apply
 // confirmation requests it instead; the Checkout then waits, its Decisions
 // frozen, until another Operator approves it (the heartbeat brings the
-// outcome back here) or the Operator withdraws the request.
+// outcome back here), rejects it (the reason shows here, and the Checkout is
+// back in staging), or the Operator withdraws the request. While it waits
+// the page shows the time left and a link to paste in chat for an approver.
 import { useEffect, useRef, useState } from 'react';
+import { approvalLink } from '../shared/approval-link.js';
 import { heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
 import { returnOrder } from '../shared/return-order.js';
@@ -28,6 +31,7 @@ import {
 } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
+import { formatCountdown } from './countdown.js';
 import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { FilterBar } from './FilterBar.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
@@ -326,12 +330,22 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             {checkout.decisionSummaryText}). They find it under Approvals. Your Decisions cannot change until then.
           </p>
           <p>
-            Keep this page open: closing it ends the Checkout, and with it the request. The Checkout's time limit keeps
-            running.
+            <strong>{formatCountdown(checkout.remainingMs - (now - receivedAt))} left</strong> before the Checkout reaches
+            its time limit and ends, and with it the request. Keep this page open: closing it ends the Checkout too.
           </p>
+          <CopyableLink label="Link for an approver" url={approvalLink(window.location.origin, checkout.id)} />
           <button onClick={withdraw} disabled={busy}>
             Withdraw request
           </button>
+        </div>
+      )}
+      {active && checkout.rejection && (
+        <div className="rejection" role="alert">
+          <strong>
+            Approval rejected by {checkout.rejection.rejectedBy} at {new Date(checkout.rejection.at).toLocaleTimeString()}
+          </strong>
+          <p className="rejection-reason">{checkout.rejection.reason}</p>
+          <p>Change the Decisions, then request Approval again.</p>
         </div>
       )}
 
@@ -426,11 +440,26 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   );
 }
 
-function formatCountdown(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+/** A link shown in full, with a button that copies it (the text stays selectable where the clipboard is not available). */
+function CopyableLink({ label, url }: { label: string; url: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(url).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  return (
+    <p className="copyable-link">
+      <label>
+        <span>{label}</span>
+        <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} aria-label={label} spellCheck={false} />
+      </label>
+      <button type="button" onClick={copy}>
+        {copied ? 'Copied' : 'Copy link'}
+      </button>
+    </p>
+  );
 }
 
 function endedLine(c: Checkout): string {

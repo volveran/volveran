@@ -73,6 +73,7 @@ export function approvalSummary(c: Checkout & { approvalRequest: NonNullable<Che
     queue: c.queue,
     queueType: c.queueType,
     requestedAt: c.approvalRequest.requestedAt.toISOString(),
+    waitingMs: Math.max(0, Date.now() - c.approvalRequest.requestedAt.getTime()),
     endsAt: c.endsAt.toISOString(),
     remainingMs: remainingMs(c.endsAt, new Date()),
     decisionSummary,

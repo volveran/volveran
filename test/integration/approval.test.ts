@@ -122,6 +122,7 @@ describe('Approval', () => {
         vhost: '/',
         queue: QUEUE,
         requestedAt: expect.any(String),
+        waitingMs: expect.any(Number),
         remainingMs: expect.any(Number),
         decisionSummary: expect.arrayContaining([
           expect.objectContaining({ kind: 'discard', count: 2 }),

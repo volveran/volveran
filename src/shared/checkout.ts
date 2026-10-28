@@ -167,6 +167,8 @@ export interface ApprovalSummary {
   queueType: CheckoutQueueType;
   /** ISO 8601. */
   requestedAt: string;
+  /** Milliseconds since requestedAt, measured by the server. */
+  waitingMs: number;
   /** When the Checkout ends itself, and with it the request (ISO 8601). */
   endsAt: string;
   /** Milliseconds left until endsAt, measured by the server. */
