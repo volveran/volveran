@@ -483,3 +483,13 @@ td.select {
   color: var(--danger);
   border: 1px solid var(--danger);
 }
+
+.no-role .groups {
+  margin: 8px 0 16px;
+  padding-left: 20px;
+  user-select: all;
+}
+
+.no-role .groups li {
+  margin: 2px 0;
+}
