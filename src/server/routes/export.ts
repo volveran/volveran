@@ -8,8 +8,9 @@
 // Without `filter`, every held Message; with one, the Messages "Select all
 // matching" would pick. Under /api/checkouts/:id, so only the Checkout's
 // owner may export it (403 `not_checkout_owner`), with the capability
-// `checkout`. 409 `checkout_not_active` on a Checkout that is over or lost.
-// Writes one `export` Audit Entry; changes nothing on the broker.
+// `checkout` (the `operator` role or above). 409 `checkout_not_active` on
+// a Checkout that is over or lost. Writes one `export` Audit Entry;
+// changes nothing on the broker.
 import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { InvalidRequestError } from '../http-error.js';
@@ -20,7 +21,7 @@ import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 export function registerExportRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts } = deps;
   app.post<{ Params: { id: string }; Body: unknown }>('/api/checkouts/:id/export', async (req, reply) => {
-    checkoutAccess(deps, req, 'checkout');
+    const { role } = checkoutAccess(deps, req, 'checkout');
     const body = req.body ?? {};
     if (!isRecord(body)) throw new InvalidRequestError('The request body must be a JSON object.');
     let filter: Filter | null = null;
@@ -29,7 +30,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: CheckoutRouteDe
       if (!parsed.ok) throw new InvalidRequestError(parsed.error);
       filter = parsed.filter;
     }
-    const { filename, count, lines } = checkouts.exportMessages(req.params.id, filter);
+    const { filename, count, lines } = checkouts.exportMessages(req.params.id, filter, role);
     return reply
       .header('content-type', 'application/x-ndjson; charset=utf-8')
       .header('content-disposition', `attachment; filename="${filename}"`)

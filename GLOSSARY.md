@@ -64,6 +64,10 @@ _Avoid_: Skip, requeue, ignore
 The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account.
 _Avoid_: User, who, actor
 
+**Role**:
+What an Operator may do on one Broker Profile: `viewer` (look), `operator` (triage) or `admin` (also Restore). Each one includes the ones before it. In Team Mode it comes from the Operator's groups and the profile's `roles`; in Solo Mode the Operator is `admin` everywhere. The role `operator` is written in code format, so it reads apart from the Operator, the person.
+_Avoid_: Permission, access level
+
 ## Running
 
 **Solo Mode**:

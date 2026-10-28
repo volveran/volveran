@@ -8,6 +8,7 @@ import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { ActionDecision } from '../triage/decisions.js';
 import type { MessageOutcome, OutcomeStatus } from '../../shared/checkout.js';
+import type { Role } from '../../shared/roles.js';
 
 export type { MessageOutcome, OutcomeStatus };
 
@@ -18,6 +19,8 @@ export type HeldMessage = amqp.ConsumeMessage;
 export interface ApplyTarget extends QueueRef {
   checkoutId: string;
   operator: Pick<Operator, 'id' | 'displayName'>;
+  /** The Operator's Role on the Broker Profile, recorded in each Audit Entry. */
+  role: Role;
 }
 
 /** The outcome of one publish: ok only when confirmed without a preceding basic.return. */

@@ -9,6 +9,7 @@ Team Mode (`VOLVERAN_AUTH=oidc`) signs Operators in through any OpenID Connect p
 - After sign-in it keeps a server-side session for 12 hours. The browser only holds a random session id in a signed, HTTP-only, `SameSite=Lax` cookie (`Secure` when the redirect URL is `https`). **Sign out** deletes the session in Volverán; it does not sign the person out of the provider.
 - The **Operator** is the ID token's `sub`, which Volverán stores as the Operator's identity. It shows the `email` claim, or the `name` claim, or `sub` when neither is present. Ask for the `email` and `profile` scopes (the default) so people see names rather than opaque ids.
 - Every `/api/` route answers `401 not_signed_in` without a session; the web app then sends the browser to sign in.
+- It reads the Operator's **groups** from the ID token at sign-in, and gives them a Role on each Broker Profile from the profile's `roles` (see [Roles](#roles)).
 - Broker access does not change: every Operator acts on a broker with the Broker Profile's shared credentials ([ADR 0004](adr/0004-shared-broker-credentials-first.md)).
 
 ## Generic provider set-up
@@ -85,9 +86,43 @@ Open `https://volveran.example.com`: the browser goes to Keycloak, then JumpClou
 
 The Operator's identity is Keycloak's `sub` for that person (Keycloak's user id, created the first time they sign in through JumpCloud), not JumpCloud's. It stays the same across sign-ins as long as the Keycloak user is kept.
 
+## Roles
+
+Each Broker Profile can give OIDC groups one of three Roles. Each includes the ones before it:
+
+| What the Operator may do on the profile | `viewer` | `operator` | `admin` |
+|---|---|---|---|
+| See the profile, its vhosts, its queue list and set-up warnings | ✓ | ✓ | ✓ |
+| Search and read its Audit Entries (without Discarded bodies) | ✓ | ✓ | ✓ |
+| Read Discarded Message bodies in Audit Entries | | ✓ | ✓ |
+| Start a Checkout, assign Decisions, Apply | | ✓ | ✓ |
+| Restore | | | ✓ |
+
+Write them in the profiles file (or the chart's inline `brokerProfiles.profiles`):
+
+```yaml
+profiles:
+  - name: prod
+    # ...connection settings...
+    protected: true
+    roles:
+      viewer: [support]
+      operator: [oncall, sre]
+      admin: [platform]
+```
+
+- **The groups claim.** Volverán reads the groups from the ID token claim named by `VOLVERAN_OIDC_GROUPS_CLAIM` (default `groups`; chart value `oidc.groupsClaim`), a top-level claim holding a list of group names. Configure your provider to put the groups in the ID token under that name (in Keycloak, a *Group Membership* mapper on the client with *Add to ID token* on and *Full group path* off). A missing claim, or one that is not a list of strings, gives the Operator no groups; sign-in still succeeds.
+- **The highest role wins.** An Operator in groups mapped to several roles holds the highest of them, so adding someone to a second group never takes access away. No matching group means no role: the profile is left out of their profile list and Audit Entry search, and every route on it answers `403 no_role_on_profile`.
+- **Too low a role** answers `403 role_required` with the role needed (`required`) and the one held (`held`). The server checks before it touches the broker, so a modified browser cannot get round it. The web app shows such actions as unavailable, naming the role they need.
+- **When changes apply.** Groups are read once, at sign-in, and kept for the session (up to 12 hours). A change at the provider applies at the Operator's next sign-in; a change to `roles` applies when Volverán restarts (which signs everyone out).
+- **A profile without `roles`** keeps every signed-in Operator `admin` on it, as before v0.3, and startup logs a warning naming it ([ADR 0007](adr/0007-profiles-without-roles-keep-everyone-admin.md)). Add `roles` to every profile you want restricted.
+- **Startup refuses** a `roles` mapping with an unknown role name, an empty group list or a group that is not a string, naming the profile and the key.
+- **Solo Mode** ignores `roles` (with one startup log line): its Operator is `admin` everywhere, so the same profiles file works in both modes.
+- **The audit trail** records the Operator's role on each new Audit Entry (`role`; entries written before v0.3 have none). `GET /api/session` returns the Operator's `roles` per profile and the `groups` Volverán read, so they can tell whoever manages access which groups they have.
+
 ## Kubernetes
 
-The [Helm chart](../charts/volveran/README.md) always runs Team Mode, so it takes the settings above as values instead of environment variables: `oidc.issuer`, `oidc.clientId`, `oidc.redirectUrl` and `oidc.scopes`. The [Kubernetes guide](kubernetes.md) covers the whole install.
+The [Helm chart](../charts/volveran/README.md) always runs Team Mode, so it takes the settings above as values instead of environment variables: `oidc.issuer`, `oidc.clientId`, `oidc.redirectUrl`, `oidc.scopes` and `oidc.groupsClaim`. The [Kubernetes guide](kubernetes.md) covers the whole install.
 
 **The redirect URL and the route host.** The browser reaches Volverán through the `HTTPRoute` or `Ingress`, so the redirect URL is built on the route's host: with `httpRoute.hostnames: [volveran.example.com]` (or `ingress.hosts`), set `oidc.redirectUrl: https://volveran.example.com/auth/callback` and register exactly that URL with the client. This is the most common sign-in mistake:
 
@@ -120,5 +155,6 @@ Node.js adds it to the public CAs, so public providers keep working. The pod mus
 | The provider shows *invalid redirect_uri* | The client's registered redirect URL differs from `VOLVERAN_OIDC_REDIRECT_URL` (scheme, host, port and path must match exactly). |
 | *Sign-in failed: this browser has no sign-in in progress* | Sign-in took more than 10 minutes, the browser blocks cookies, or Volverán was restarted while the person was at the provider. Sign in again. |
 | *Sign-in failed: unexpected ID Token "iss"* | The issuer in the token differs from `VOLVERAN_OIDC_ISSUER` (for example a trailing slash, or a different public host name for Keycloak; set Keycloak's hostname). |
+| A Broker Profile is missing from the list, or routes answer `403 no_role_on_profile` | None of the Operator's groups is mapped in that profile's `roles`. Check `groups` in `GET /api/session`: an empty list means the ID token has no groups claim under `VOLVERAN_OIDC_GROUPS_CLAIM`. Group changes apply at the next sign-in. |
 | Everyone is signed out after a deploy | Sessions live in the Volverán process; a restart ends them. |
 | On Kubernetes, the provider shows *invalid redirect_uri* | `oidc.redirectUrl` is not `https://<route host>/auth/callback` as registered with the client. See [Kubernetes](#kubernetes). |

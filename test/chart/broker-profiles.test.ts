@@ -2,7 +2,7 @@
 // mounted where the image reads it, and a change to them rolls the pod.
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { env, render, volumeAt, type Rendered } from './render.js';
+import { env, render, renderRefusal, volumeAt, type Rendered } from './render.js';
 
 const prod = {
   name: 'prod',
@@ -38,6 +38,17 @@ describe('Broker Profiles', () => {
       render({ brokerProfiles: { profiles: [{ ...prod, defaultQueueFilter: '*.dead' }] } }),
     );
     expect(after).not.toEqual(before);
+  });
+
+  it('accepts roles, and writes them into profiles.yaml', () => {
+    const roles = { viewer: ['support'], operator: ['oncall', 'sre'], admin: ['platform'] };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, roles }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, roles }] });
+  });
+
+  it('refuses an unknown role name, or an empty group list', () => {
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { owner: ['platform'] } }] } })).toMatch(/roles/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { admin: [] } }] } })).toMatch(/admin/);
   });
 
   it('keeps the pod template annotations when nothing about the profiles changes', () => {

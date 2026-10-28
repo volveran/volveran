@@ -33,6 +33,7 @@ import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import type { MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
+import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import { applyInProgress, CheckoutError, checkoutNotActive, inCheckout, notCheckoutOwner, operatorHasCheckout } from './errors.js';
 import { startExport, type CheckoutExport } from './export.js';
@@ -195,14 +196,16 @@ export class CheckoutManager {
    * Carries out every Decision of the Checkout (ADR 0001), then ends it:
    * Messages whose Decision is Keep, failed or was not attempted go back to
    * the queue in order. Returns the outcome for each Message. Throws
-   * `checkout_not_active` on a Checkout that is over or lost.
+   * `checkout_not_active` on a Checkout that is over or lost. `role` is the
+   * Applying Operator's Role on the profile, recorded in each Audit Entry.
    */
-  async apply(id: string): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+  async apply(id: string, role: Role): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
     const checkout = this.find(id);
     if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
     const { startedAt, outcomes } = await runApply(checkout, {
       audit: this.options.audit,
+      role,
       beforeStep: this.hooks.beforeApplyStep,
     });
     checkout.lastApply = { at: startedAt.toISOString(), outcomes };
@@ -216,10 +219,10 @@ export class CheckoutManager {
    * Starts an NDJSON export of the held Messages matching `filter` (every
    * one when null) and records its Audit Entry (export.ts). Changes nothing
    * on the broker. Throws `checkout_not_active` on a Checkout that is over
-   * or lost.
+   * or lost. `role` is the exporting Operator's Role, recorded in the Audit Entry.
    */
-  exportMessages(id: string, filter: Filter | null): CheckoutExport {
-    return startExport(this.find(id), filter, { audit: this.options.audit, beforeLine: this.hooks.beforeExportLine });
+  exportMessages(id: string, filter: Filter | null, role: Role): CheckoutExport {
+    return startExport(this.find(id), filter, { audit: this.options.audit, role, beforeLine: this.hooks.beforeExportLine });
   }
 
   /** Ends the Checkout: every held Message goes back to the queue untouched, in its original order. */

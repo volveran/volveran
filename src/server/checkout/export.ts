@@ -13,6 +13,7 @@
 // download is written, `done` once every line is, `failed` when it stopped
 // part way (the browser went away).
 import type { AuditStore } from '../audit/store.js';
+import type { Role } from '../../shared/roles.js';
 import { exportFilename, exportLine } from '../triage/export-line.js';
 import { matchesFilter, type Filter } from '../triage/filters.js';
 import { applyInProgress, checkoutNotActive } from './errors.js';
@@ -31,6 +32,8 @@ export interface CheckoutExport {
 
 export interface ExportOptions {
   audit: AuditStore;
+  /** The exporting Operator's Role on the profile, recorded in the Audit Entry. */
+  role: Role;
   /** Test seam: awaited before each line is made. */
   beforeLine?(position: number): Promise<void>;
 }
@@ -40,7 +43,7 @@ export interface ExportOptions {
  * when null) and records its Audit Entry. Throws `checkout_not_active` on a
  * Checkout that is over or lost, `apply_in_progress` while it is Applied.
  */
-export function startExport(checkout: Checkout, filter: Filter | null, { audit, beforeLine }: ExportOptions): CheckoutExport {
+export function startExport(checkout: Checkout, filter: Filter | null, { audit, role, beforeLine }: ExportOptions): CheckoutExport {
   if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'its Messages can no longer be exported');
   if (checkout.applying) throw applyInProgress(checkout);
 
@@ -52,6 +55,7 @@ export function startExport(checkout: Checkout, filter: Filter | null, { audit, 
   const entryId = audit.record({
     at,
     operator: checkout.operator,
+    role,
     brokerUser: checkout.profile.username,
     profile: checkout.profile.name,
     vhost: checkout.vhost,

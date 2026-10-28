@@ -17,7 +17,8 @@ import {
 import { appNamespace, depsNamespace, helmInstallArgs, kubectl, ports, releaseName, run, smokeDir } from './kind-env.mjs';
 
 const appUrl = `http://127.0.0.1:${ports.app}`;
-const operator = { sub: 'smoke-operator', email: 'operator@example.com', name: 'Smoke Operator' };
+// In the group values.yaml maps to the role `operator` on the smoke profile.
+const operator = { sub: 'smoke-operator', email: 'operator@example.com', name: 'Smoke Operator', groups: ['smoke-triage'] };
 const messageId = `smoke-${Date.now()}`;
 const payload = JSON.stringify({ order: messageId, total: 42 });
 const checkoutPath = `/api/profiles/smoke/vhosts/%2F/queues/orders.dlq/checkouts`;
@@ -80,7 +81,13 @@ describe('Volverán on kind', () => {
     const browser = await signIn();
     const session = await browser.get('/api/session');
     expect(session.status).toBe(200);
-    expect(session.body).toMatchObject({ mode: 'team', operator: 'operator@example.com', operatorId: 'smoke-operator' });
+    expect(session.body).toMatchObject({
+      mode: 'team',
+      operator: 'operator@example.com',
+      operatorId: 'smoke-operator',
+      groups: ['smoke-triage'],
+      roles: { smoke: 'operator' },
+    });
   });
 
   it('Applies a Discard from a Checkout on a dead-letter queue', async () => {
@@ -108,7 +115,7 @@ describe('Volverán on kind', () => {
 
     const { entries } = (await browser.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body;
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ action: 'discard', messageId, queue: 'orders.dlq', operatorName: 'operator@example.com', outcome: 'done' });
+    expect(entries[0]).toMatchObject({ action: 'discard', messageId, queue: 'orders.dlq', operatorName: 'operator@example.com', outcome: 'done', role: 'operator' });
     discardEntryId = entries[0].id;
     const entry = await auditEntry(browser, discardEntryId);
     expect(Buffer.from(entry.message.body, 'base64').toString()).toBe(payload);

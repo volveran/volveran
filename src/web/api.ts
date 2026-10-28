@@ -5,7 +5,7 @@ import type { CheckoutView, MessageDetail, MessageOutcome } from '../shared/chec
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
 import { product } from '../shared/product.js';
-import type { MoveDestinations, ProfileSummary, QueueRow, Session } from '../shared/queues.js';
+import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
@@ -20,7 +20,15 @@ export type {
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
-export type { CheckoutAvailability, MoveDestinations, Session, SetupWarning } from '../shared/queues.js';
+export type {
+  CheckoutAvailability,
+  MoveDestinations,
+  QueueList,
+  Session,
+  SetupWarning,
+  SetupWarningCounts,
+  SetupWarningSeverity,
+} from '../shared/queues.js';
 export type Checkout = CheckoutView;
 export type Profile = ProfileSummary;
 export type Queue = QueueRow;
@@ -113,9 +121,7 @@ export const api = {
     if (opts.search.trim()) params.set('search', opts.search.trim());
     if (opts.onlyDeadLetterQueues) params.set('onlyDeadLetterQueues', 'true');
     const qs = params.size > 0 ? `?${params}` : '';
-    return getJson<{ queues: Queue[] }>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`).then(
-      (b) => b.queues,
-    );
+    return getJson<QueueList>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`);
   },
   moveDestinations: (profile: string, vhost: string) =>
     getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),

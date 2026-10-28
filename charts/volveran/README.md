@@ -58,7 +58,13 @@ brokerProfiles:
       vhosts: ["/"]
       defaultQueueFilter: "*.dlq"
       protected: true
+      roles:                                   # OIDC groups (oidc.groupsClaim) per Role
+        viewer: [support]
+        operator: [oncall]
+        admin: [platform]
 ```
+
+A profile without `roles` lets every signed-in Operator act as `admin` on it; see [Team Mode](../../docs/team-mode.md#roles).
 
 ```sh
 helm install volveran ./charts/volveran --namespace volveran -f values.yaml
@@ -136,6 +142,7 @@ names the missing value.
 | `oidc.clientId` | required | OIDC client ID. |
 | `oidc.redirectUrl` | required | The public callback URL the OIDC client registers, ending in `/auth/callback`, for example `https://volveran.example.com/auth/callback`. An `https` URL makes the session cookies `Secure`, also behind a TLS-terminating Gateway. |
 | `oidc.scopes` | `openid email profile` | Space-separated scopes; must include `openid`. |
+| `oidc.groupsClaim` | `groups` | The ID token claim holding the Operator's groups (`VOLVERAN_OIDC_GROUPS_CLAIM`), which each profile's `roles` maps. |
 | `oidc.existingSecret` | required | An existing Secret holding the OIDC client secret and the session secret. |
 | `oidc.clientSecretKey` | `client-secret` | Key of `oidc.existingSecret` holding the OIDC client secret. |
 | `oidc.sessionSecretKey` | `session-secret` | Key of `oidc.existingSecret` holding the session secret (at least 32 characters; it signs the session cookies). |
@@ -144,7 +151,7 @@ names the missing value.
 
 | Value | Default | Description |
 |---|---|---|
-| `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `vhosts`, `defaultQueueFilter`, `protected`. Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
+| `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `vhosts`, `defaultQueueFilter`, `protected`, `roles` (any of `viewer`, `operator`, `admin`, each a non-empty list of groups; the schema refuses other role names). Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
 | `brokerProfiles.passwordsSecret` | `""` | An existing Secret whose keys become environment variables. Each profile's `passwordEnv` must name one of its keys. |
 | `brokerProfiles.existingConfigMap` | `""` | An existing ConfigMap with a `profiles.yaml` key, mounted at `/config` instead of the chart-managed one. Leave `brokerProfiles.profiles` empty when it is set. The chart cannot see its content, so a change to it does not roll the pod: restart the Deployment yourself. A `caFile` in it is an absolute path under `/etc/volveran/ca` (see CA bundles). |
 

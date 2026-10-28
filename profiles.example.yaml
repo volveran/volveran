@@ -21,3 +21,7 @@ profiles:
     vhosts: ["/"]
     defaultQueueFilter: "*.dlq"
     protected: true              # Apply and Restore need the queue name typed
+    roles:                       # Team Mode: OIDC groups per role (VOLVERAN_OIDC_GROUPS_CLAIM);
+      viewer: [support]          #   without roles, every Operator is admin here.
+      operator: [oncall, sre]    #   Solo Mode ignores roles.
+      admin: [platform]

@@ -179,6 +179,7 @@ describe('NDJSON export of a Checkout', () => {
     ]);
     expect(entries[0]).toMatchObject({
       operatorName: testOperator,
+      role: 'admin',
       profile: 'local',
       vhost: '/',
       queue: 'orders.dlq',
