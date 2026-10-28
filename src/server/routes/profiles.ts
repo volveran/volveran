@@ -7,7 +7,8 @@
 //       ?search=&onlyDeadLetterQueues=true
 //   GET /api/profiles/:profile/vhosts/:vhost/move-destinations → { queues, exchanges }
 import type { FastifyInstance } from 'fastify';
-import type { BrokerProfile } from '../profiles.js';
+import { operatorOf } from '../operator.js';
+import type { ProfileAccessCheck } from '../profile-access.js';
 import { checkoutHolders, isLockQueue } from '../triage/checkout-lock.js';
 import {
   arrangeQueues,
@@ -16,17 +17,11 @@ import {
   deadLetterSetupWarning,
   deadLetterSources,
 } from '../triage/queue-list.js';
-import type { ProfileLookup } from './profile-lookup.js';
 import type { MoveDestinations, ProfileSummary, QueueRow } from '../../shared/queues.js';
 
-export interface ProfileRouteDeps {
-  profiles: BrokerProfile[];
-  lookup: ProfileLookup;
-}
-
-export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }: ProfileRouteDeps) {
-  app.get('/api/profiles', async (): Promise<{ profiles: ProfileSummary[] }> => ({
-    profiles: profiles.map((p) => ({
+export function registerProfileRoutes(app: FastifyInstance, access: ProfileAccessCheck) {
+  app.get('/api/profiles', async (req): Promise<{ profiles: ProfileSummary[] }> => ({
+    profiles: access.list(operatorOf(req), 'see_profile').map((p) => ({
       name: p.name,
       username: p.username,
       managementUrl: p.managementUrl,
@@ -40,7 +35,7 @@ export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }
   }));
 
   app.get<{ Params: { profile: string } }>('/api/profiles/:profile/vhosts', async (req) => {
-    const { profile, management } = lookup.profile(req.params.profile);
+    const { profile, management } = access.profile(operatorOf(req), 'see_profile', req.params.profile);
     const names = profile.vhosts === 'all' ? await management.listVhosts() : profile.vhosts;
     return { vhosts: names.map((name) => ({ name })) };
   });
@@ -50,7 +45,8 @@ export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }
   // lock queues, the default exchange and internal exchanges are left out.
   app.get<{ Params: { profile: string; vhost: string } }>('/api/profiles/:profile/vhosts/:vhost/move-destinations', async (req): Promise<MoveDestinations> => {
     const { vhost } = req.params;
-    const { management } = lookup.vhost(req.params.profile, vhost);
+    // For the Decision bar: only someone who may assign Decisions needs it.
+    const { management } = access.vhost(operatorOf(req), 'checkout', req.params.profile, vhost);
     const [queues, exchanges] = await Promise.all([management.listQueues(vhost), management.listExchanges(vhost)]);
     return {
       queues: queues.map((q) => q.name).filter((name) => !isLockQueue(name)).sort(compareNames),
@@ -68,7 +64,7 @@ export function registerProfileRoutes(app: FastifyInstance, { profiles, lookup }
     Querystring: { search?: string; onlyDeadLetterQueues?: string };
   }>('/api/profiles/:profile/vhosts/:vhost/queues', async (req): Promise<{ defaultQueueFilter: string | null; queues: QueueRow[] }> => {
     const { vhost } = req.params;
-    const { profile, management } = lookup.vhost(req.params.profile, vhost);
+    const { profile, management } = access.vhost(operatorOf(req), 'see_profile', req.params.profile, vhost);
     const [allQueues, bindings] = await Promise.all([management.listQueues(vhost), management.listBindings(vhost)]);
     // Checkout lock queues are Volverán's own: not listed, but they say who holds which queue.
     const holders = checkoutHolders(allQueues);

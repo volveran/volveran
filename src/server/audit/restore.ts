@@ -17,9 +17,9 @@ import { openAmqpConnection } from '../amqp-connection.js';
 import { ConfirmPublisher } from '../apply/publisher.js';
 import { republishOptions } from '../apply/republish.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
-import { ManagementClient } from '../management.js';
 import type { Operator } from '../operator.js';
-import { profileHasVhost, type BrokerProfile, type QueueRef } from '../profiles.js';
+import type { ProfileAccess } from '../profile-access.js';
+import { profileHasVhost, type QueueRef } from '../profiles.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import type { AuditEntry, AuditStore } from './store.js';
 
@@ -75,13 +75,21 @@ export class RestoreService {
 
   constructor(
     private readonly audit: AuditStore,
-    private readonly findProfile: (name: string) => BrokerProfile | undefined,
     /** Whether Checkout `id` is still active or Applying in this process. */
     private readonly checkoutRunning: (id: string) => boolean,
   ) {}
 
-  /** Restores the Message of Audit Entry `id`; returns the Restore's own Audit Entry (outcome `done` or `failed`). */
-  async restore(id: number, request: RestoreRequest | undefined, operator: Operator): Promise<AuditEntry> {
+  /**
+   * Restores the Message of Audit Entry `id`; returns the Restore's own Audit
+   * Entry (outcome `done` or `failed`). `target` is the entry's Broker Profile
+   * from the access check, null when it is no longer configured.
+   */
+  async restore(
+    id: number,
+    request: RestoreRequest | undefined,
+    operator: Operator,
+    target: ProfileAccess | null,
+  ): Promise<AuditEntry> {
     const discard = this.audit.get(id);
     if (!discard) throw new RestoreError('audit_entry_not_found', `No Audit Entry ${id}.`);
     if (request?.confirm !== true) {
@@ -104,10 +112,10 @@ export class RestoreService {
         `The body of the Message of Audit Entry ${id} expired on ${discard.bodyExpiredAt.toISOString()}: retention evicted it (Discarded bodies are kept for a limited time and up to a total size), so it cannot be Restored. The Audit Entry keeps its properties and headers.`,
       );
     }
-    const profile = this.findProfile(discard.profile);
-    if (!profile) {
+    if (!target) {
       throw new RestoreError('profile_not_found', `Broker Profile "${discard.profile}" is no longer configured.`);
     }
+    const { profile, management } = target;
     requireTypedQueueName(profile, queue, request, 'Restore');
     // `pending` is also the normal state of a step being carried out right now:
     // only once its Checkout is gone (ended, lost, or Volverán restarted) can
@@ -136,7 +144,7 @@ export class RestoreService {
     // Claimed before the first await, so a second request for the same entry is refused.
     this.running.add(id);
     try {
-      if (!profileHasVhost(profile, discard.vhost) || !(await new ManagementClient(profile).getQueue(discard.vhost, queue))) {
+      if (!profileHasVhost(profile, discard.vhost) || !(await management.getQueue(discard.vhost, queue))) {
         throw new RestoreError(
           'queue_not_found',
           `Queue "${queue}" does not exist in vhost "${discard.vhost}" (or Broker Profile "${profile.name}" cannot see it). Pick an existing queue.`,
