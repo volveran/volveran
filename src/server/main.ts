@@ -9,7 +9,8 @@
 //   VOLVERAN_OIDC_ISSUER, VOLVERAN_OIDC_CLIENT_ID, VOLVERAN_OIDC_CLIENT_SECRET,
 //   VOLVERAN_OIDC_REDIRECT_URL, VOLVERAN_OIDC_SCOPES, VOLVERAN_SESSION_SECRET
 //                           Team Mode sign-in (see run-mode.ts, auth.ts)
-//   VOLVERAN_WEB_ROOT       built web app (default dist/web next to this file)
+//   VOLVERAN_WEB_ROOT       built web app (default dist/web next to the compiled
+//                           server; none when run from source, see web-root.ts)
 //   VOLVERAN_DATA_DIR       the audit store (Audit Entries, Discarded Messages);
 //                           default ./data, /data in the Docker image
 //   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
@@ -26,12 +27,10 @@
 //                           audit/body-retention.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`).
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { product } from '../shared/product.js';
 import { ConfigError } from './config-error.js';
 import { startServer } from './server.js';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
+import { defaultWebRoot } from './web-root.js';
 
 async function main() {
   const server = await startServer({
@@ -39,7 +38,7 @@ async function main() {
     env: process.env,
     host: process.env.VOLVERAN_HOST ?? '127.0.0.1',
     port: Number(process.env.VOLVERAN_PORT ?? 8080),
-    webRoot: process.env.VOLVERAN_WEB_ROOT ?? path.resolve(here, '../web'),
+    webRoot: process.env.VOLVERAN_WEB_ROOT ?? defaultWebRoot(import.meta.url),
     dataDir: path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'),
     logger: true,
   });
