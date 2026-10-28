@@ -25,7 +25,7 @@ There are two modes. **Solo Mode** runs on your laptop with no sign-in and liste
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.2.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.3.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
 
 ### Solo Mode
 
@@ -41,7 +41,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.2.0
+  ghcr.io/volveran/volveran:0.3.0
 ```
 
 4. Open <http://127.0.0.1:8080>.
@@ -71,7 +71,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.2.0
+  ghcr.io/volveran/volveran:0.3.0
 ```
 
 | Variable | Default | Meaning |
@@ -99,7 +99,7 @@ kubectl -n volveran create secret generic volveran-oidc \
   --from-literal=session-secret="$(openssl rand -base64 48)"
 kubectl -n volveran create secret generic volveran-broker-passwords \
   --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.2.0 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.3.0 \
   --namespace volveran -f values.yaml
 ```
 
