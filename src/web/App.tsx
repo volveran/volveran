@@ -4,7 +4,17 @@
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
 import { useEffect, useState } from 'react';
 import { product } from '../shared/product.js';
-import { api, ApiError, signOut, type Profile, type Queue, type Session } from './api.js';
+import {
+  api,
+  ApiError,
+  signOut,
+  type Profile,
+  type Queue,
+  type QueueList,
+  type Session,
+  type SetupWarningCounts,
+  type SetupWarningSeverity,
+} from './api.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
 
@@ -41,7 +51,7 @@ export function App() {
   const [profileName, setProfileName] = useState<string>();
   const [vhosts, setVhosts] = useState<string[]>([]);
   const [vhost, setVhost] = useState<string>();
-  const [queues, setQueues] = useState<Queue[]>();
+  const [queueList, setQueueList] = useState<QueueList>();
   const [search, setSearch] = useState('');
   const [onlyDeadLetterQueues, setOnlyDeadLetterQueues] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -82,7 +92,7 @@ export function App() {
     if (!profileName) return;
     setVhosts([]);
     setVhost(undefined);
-    setQueues(undefined);
+    setQueueList(undefined);
     setError(undefined);
     let cancelled = false;
     api
@@ -108,12 +118,12 @@ export function App() {
       .queues(profileName, vhost, { search: debouncedSearch, onlyDeadLetterQueues })
       .then((list) => {
         if (cancelled) return;
-        setQueues(list);
+        setQueueList(list);
         setError(undefined);
       })
       .catch((err) => {
         if (cancelled) return;
-        setQueues(undefined);
+        setQueueList(undefined);
         setError(err);
       })
       .finally(() => !cancelled && setLoading(false));
@@ -250,7 +260,7 @@ export function App() {
                 }}
               />
             ) : (
-              queues && (
+              queueList && (
                 <>
                   {profile?.protected && (
                     <p className="protected-banner" role="note">
@@ -259,7 +269,8 @@ export function App() {
                       and every Restore, needs the queue name typed.
                     </p>
                   )}
-                  <QueueTable queues={queues} onCheckout={startCheckout} />
+                  <VhostWarningCounts counts={queueList.setupWarningCounts} vhost={vhost} />
+                  <QueueTable queues={queueList.queues} onCheckout={startCheckout} />
                 </>
               )
             )}
@@ -294,6 +305,27 @@ function errorTitle(error: ApiError): string {
   }
 }
 
+const severityLabel: Record<SetupWarningSeverity, string> = {
+  loses_messages: 'Loses Messages',
+  may_lose_messages: 'May lose Messages',
+};
+
+/** The vhost's set-up warnings by severity, above the queue list (whatever the search leaves listed). */
+function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vhost: string | undefined }) {
+  const parts = (Object.keys(severityLabel) as SetupWarningSeverity[]).filter((s) => counts[s] > 0);
+  if (parts.length === 0) return null;
+  return (
+    <p className="setup-warning-counts" role="status">
+      Set-up warnings in vhost {vhost}:{' '}
+      {parts.map((s) => (
+        <span key={s} className={`badge severity-${s}`}>
+          {severityLabel[s]}: {counts[s]}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue: string): void }) {
   if (queues.length === 0) return <p className="empty">No queues match.</p>;
   return (
@@ -317,12 +349,12 @@ function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue:
               {q.deadLetteredFrom.length > 0 && (
                 <span className="dlq-source">dead-lettered from {q.deadLetteredFrom.join(', ')}</span>
               )}
-              {q.setupWarning && (
-                <span className="setup-warning" role="note">
-                  <span className="badge limit-warning">Drops Messages after {q.setupWarning.deliveryLimit} deliveries</span>
-                  <small>{q.setupWarning.message}</small>
+              {q.setupWarnings.map((w) => (
+                <span key={w.code} className="setup-warning" role="note">
+                  <span className={`badge severity-${w.severity}`}>{severityLabel[w.severity]}</span>
+                  <small>{w.message}</small>
                 </span>
-              )}
+              ))}
             </td>
             <td>
               <span className={`badge type-${q.type}`}>{q.type}</span>

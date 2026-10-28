@@ -6,6 +6,14 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Set-up check `dead_letter_exchange_missing`: the queue list warns about a queue whose dead-letter exchange (by argument or policy) does not exist in the vhost, since the broker drops every Message the queue dead-letters. The queue list header counts the vhost's set-up warnings by severity. (#41)
+
+### Changed
+
+- API: a queue list row's `setupWarning` (one warning or `null`) is now `setupWarnings`, a list (`[]` for none), so a queue shows every warning that applies. Each warning gains a `severity`: `loses_messages` or `may_lose_messages`. The delivery-limit warning keeps its code, `messages_dropped_at_delivery_limit`, and now also fires when the queue's dead-letter exchange does not exist. The queue list response gains `setupWarningCounts`, the warnings of the whole vhost by severity, whatever the search or dead-letter queue filter. (#41)
+
 ### Fixed
 
 - Development: run from source (`npm run dev`), the server no longer serves the unbuilt `src/web` on `:8080`, which showed a blank page (`main.tsx` blocked for its MIME type). It serves no web app and answers `404` with a pointer to the Vite dev server on `http://localhost:5173`. `npm start` and the image still serve the built `dist/web`. (#32)

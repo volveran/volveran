@@ -138,15 +138,18 @@ describe('queue list', () => {
   it('flags a quorum dead-letter queue whose delivery limit drops Messages for lack of a dead-letter exchange', async () => {
     const res = await app.get('/api/profiles/local/vhosts/%2F/queues');
     const byName = Object.fromEntries(res.body.queues.map((q: any) => [q.name, q]));
-    expect(byName['orders.dlq.quorum'].setupWarning).toEqual({
-      code: 'messages_dropped_at_delivery_limit',
-      deliveryLimit: 20,
-      message: expect.stringMatching(/default delivery-limit \(20\).*dropped.*delivery-limit = -1.*dead-letter exchange/is),
-    });
-    expect(byName['orders.dlq.quorum-dlx'].setupWarning).toBeNull();
-    expect(byName['payments.dlq'].setupWarning).toMatchObject({ deliveryLimit: 5 });
-    expect(byName['payments.work'].setupWarning).toBeNull();
-    expect(byName['orders.dlq'].setupWarning).toBeNull();
+    expect(byName['orders.dlq.quorum'].setupWarnings).toEqual([
+      {
+        code: 'messages_dropped_at_delivery_limit',
+        severity: 'loses_messages',
+        deliveryLimit: 20,
+        message: expect.stringMatching(/default delivery-limit \(20\).*dropped.*delivery-limit = -1.*dead-letter exchange/is),
+      },
+    ]);
+    expect(byName['orders.dlq.quorum-dlx'].setupWarnings).toEqual([]);
+    expect(byName['payments.dlq'].setupWarnings).toEqual([expect.objectContaining({ deliveryLimit: 5 })]);
+    expect(byName['payments.work'].setupWarnings).toEqual([]);
+    expect(byName['orders.dlq'].setupWarnings).toEqual([]);
   });
 
   it('sees a dead-letter exchange or an unlimited delivery limit set by a policy', async () => {
@@ -165,7 +168,7 @@ describe('queue list', () => {
       // A new queue's delivery limit shows up with its first management statistics.
       await eventually(async () => {
         const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
-        expect(res.body.queues.map((q: any) => q.setupWarning?.deliveryLimit)).toEqual([20, 20]);
+        expect(res.body.queues.map((q: any) => q.setupWarnings.map((w: any) => w.deliveryLimit))).toEqual([[20], [20]]);
       }, 20_000, 500);
 
       for (const [name, { pattern, definition }] of Object.entries(policies)) {
@@ -174,15 +177,96 @@ describe('queue list', () => {
       }
       await eventually(async () => {
         const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
-        expect(res.body.queues.map((q: any) => [q.name, q.setupWarning])).toEqual([
-          ['setupcheck.dlx.dlq', null],
-          ['setupcheck.unlimited.dlq', null],
+        expect(res.body.queues.map((q: any) => [q.name, q.setupWarnings])).toEqual([
+          ['setupcheck.dlx.dlq', []],
+          ['setupcheck.unlimited.dlq', []],
         ]);
       }, 20_000, 500);
     } finally {
       await filtered.close();
       for (const name of Object.keys(policies)) await management(`/policies/${vhost}/${name}`, { method: 'DELETE' });
       for (const q of queues) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('flags a queue whose dead-letter exchange does not exist, set by an argument or by a policy, until it is declared', async () => {
+    const vhost = encodeURIComponent('/');
+    const byArgument = 'missingdlx.argument.work';
+    const byPolicy = 'missingdlx.policy.work';
+    const missing = 'missingdlx.nowhere';
+    const created = [
+      [byArgument, { durable: true, arguments: { 'x-dead-letter-exchange': missing } }],
+      [byPolicy, { durable: true }],
+    ] as const;
+    for (const [q, body] of created) {
+      expect((await management(`/queues/${vhost}/${q}`, { method: 'PUT', body })).status).toBeLessThan(300);
+    }
+    const policy = await management(`/policies/${vhost}/missingdlx`, {
+      method: 'PUT',
+      body: { pattern: '^missingdlx\\.policy\\.work$', 'apply-to': 'queues', definition: { 'dead-letter-exchange': missing } },
+    });
+    expect(policy.status).toBeLessThan(300);
+    try {
+      await eventually(async () => {
+        const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=missingdlx');
+        expect(names(res.body.queues)).toEqual([byArgument, byPolicy]);
+        for (const q of res.body.queues) {
+          expect(q.setupWarnings).toEqual([
+            {
+              code: 'dead_letter_exchange_missing',
+              severity: 'loses_messages',
+              deadLetterExchange: missing,
+              message: expect.stringMatching(/"missingdlx\.nowhere".*does not exist.*dropped.*Declare/is),
+            },
+          ]);
+        }
+      });
+
+      const declare = await management(`/exchanges/${vhost}/${missing}`, { method: 'PUT', body: { type: 'fanout', durable: true } });
+      expect(declare.status).toBeLessThan(300);
+      const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=missingdlx');
+      expect(res.body.queues.map((q: any) => q.setupWarnings)).toEqual([[], []]);
+    } finally {
+      await management(`/policies/${vhost}/missingdlx`, { method: 'DELETE' });
+      await management(`/exchanges/${vhost}/${missing}`, { method: 'DELETE' });
+      for (const [q] of created) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('shows every warning on a queue, and counts the warnings of the whole vhost by severity', async () => {
+    const vhost = encodeURIComponent('/');
+    const q = 'bothwarnings.dlq';
+    const put = await management(`/queues/${vhost}/${q}`, {
+      method: 'PUT',
+      body: { durable: true, arguments: { 'x-queue-type': 'quorum', 'x-dead-letter-exchange': 'bothwarnings.nowhere' } },
+    });
+    expect(put.status).toBeLessThan(300);
+    const filtered = await startApp({ profiles: [testProfile({ name: 'bothwarnings', defaultQueueFilter: 'bothwarnings.*' })] });
+    try {
+      // A new queue's delivery limit shows up with its first management statistics.
+      const all = await eventually(async () => {
+        const res = await filtered.get('/api/profiles/bothwarnings/vhosts/%2F/queues');
+        const row = res.body.queues.find((r: any) => r.name === q);
+        expect(row.setupWarnings.map((w: any) => [w.code, w.severity])).toEqual([
+          ['messages_dropped_at_delivery_limit', 'loses_messages'],
+          ['dead_letter_exchange_missing', 'loses_messages'],
+        ]);
+        return res.body;
+      }, 20_000, 500);
+
+      const tally = { loses_messages: 0, may_lose_messages: 0 };
+      for (const row of all.queues) for (const w of row.setupWarnings) tally[w.severity as keyof typeof tally]++;
+      // The two fixture delivery limits (orders.dlq.quorum, payments.dlq) and this queue's two.
+      expect(tally).toEqual({ loses_messages: 4, may_lose_messages: 0 });
+      expect(all.setupWarningCounts).toEqual(tally);
+
+      // The count is the whole vhost's, whatever the search and the dead-letter queue filter leave listed.
+      const narrowed = await filtered.get(`/api/profiles/bothwarnings/vhosts/%2F/queues?search=${q}&onlyDeadLetterQueues=true`);
+      expect(names(narrowed.body.queues)).toEqual([q]);
+      expect(narrowed.body.setupWarningCounts).toEqual(tally);
+    } finally {
+      await filtered.close();
+      await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
     }
   });
 
