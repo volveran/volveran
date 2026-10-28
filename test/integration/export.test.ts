@@ -129,7 +129,11 @@ describe('NDJSON export of a Checkout', () => {
     await deadLetter(deadLetterRoutes.classic, [
       { body: '{"n":1}', options: { messageId: 'a', contentType: 'application/json', headers: { tenant: 'acme' } } },
       { body: '{"n":2}', options: { messageId: 'b', contentType: 'application/json', headers: { tenant: 'globex' } } },
-      { body: '{"n":3}', options: { messageId: 'c', contentType: 'application/json', headers: { tenant: 'acme' } } },
+      // A Died Again Message: Volverán sent it out before (#40).
+      {
+        body: '{"n":3}',
+        options: { messageId: 'c', contentType: 'application/json', headers: { tenant: 'acme', 'x-volveran-replay-id': 'r-c' } },
+      },
     ]);
     const checkout = await startCheckout();
     const handle = (id: string) => checkout.messages.find((m: any) => m.messageId === id).handle;
@@ -149,6 +153,7 @@ describe('NDJSON export of a Checkout', () => {
       [1, 'a', { kind: 'discard', reason: 'bad' }],
       [3, 'c', { kind: 'move', destination: { queue: 'triage.manual' } }],
     ]);
+    expect(lines.map((l) => l.diedAgain)).toEqual([null, { replayId: 'r-c' }]);
     expect(lines[0].xDeath).toEqual([
       expect.objectContaining({ queue: 'orders.work', reason: 'rejected', count: 1, exchange: 'orders' }),
     ]);

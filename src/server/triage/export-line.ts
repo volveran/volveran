@@ -5,6 +5,7 @@
 import { toAmqpJson } from '../audit/amqp-json.js';
 import { EXPORT_LINE_VERSION, type ExportLine } from '../../shared/export.js';
 import type { Decision } from './decisions.js';
+import { replayIdOf } from './died-again.js';
 import { bodyKind, messageSummary, parseXDeath, type Delivery, type QueueInfo } from './message-view.js';
 
 export type { ExportLine };
@@ -15,6 +16,7 @@ export function exportLine(position: number, d: Delivery, queue: QueueInfo, deci
   const properties = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== undefined));
   const summary = messageSummary(position, d, queue);
   const text = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const replayId = replayIdOf(headers);
   return {
     v: EXPORT_LINE_VERSION,
     position,
@@ -29,8 +31,8 @@ export function exportLine(position: number, d: Delivery, queue: QueueInfo, deci
     xDeath: parseXDeath(headers),
     deliveryBudget: summary.deliveryBudget,
     decision,
-    // #40 (Died Again) fills this in from the Message's x-volveran-replay-id.
-    diedAgain: null,
+    // Died Again (#40): the Message's x-volveran-replay-id, the same test the Checkout uses.
+    diedAgain: replayId ? { replayId } : null,
   };
 }
 

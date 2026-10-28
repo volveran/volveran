@@ -32,6 +32,20 @@ describe('exportLine', () => {
       diedAgain: null,
     });
   });
+
+  it('carries the replay id of a Died Again Message, and null for one Volverán never sent out', () => {
+    const line = (headers: Record<string, unknown>) =>
+      exportLine(
+        1,
+        { fields: { exchange: '', routingKey: 'orders', redelivered: false }, properties: { headers }, content: Buffer.from('x') },
+        classic,
+        { kind: 'keep' },
+      ).diedAgain;
+    expect(line({ 'x-volveran-replay-id': 'r-1' })).toEqual({ replayId: 'r-1' });
+    expect(line({ 'x-volveran-replay-id': Buffer.from('r-2') })).toEqual({ replayId: 'r-2' });
+    expect(line({ 'x-volveran-replay-id': '' })).toBeNull();
+    expect(line({})).toBeNull();
+  });
 });
 
 describe('exportFilename', () => {
