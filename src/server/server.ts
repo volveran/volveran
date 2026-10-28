@@ -18,6 +18,7 @@ import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
+import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerProfileRoutes } from './routes/profiles.js';
@@ -66,6 +67,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const checkouts = new CheckoutManager({
     audit,
     limits: { ...config.checkoutLimits, ...options.checkoutLimits },
+    approvals: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
@@ -95,6 +97,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       app.log.info({ profiles: mapped }, 'Solo Mode ignores the roles of Broker Profiles: the Operator is admin on every profile');
     }
   } else {
+    // Approval (v0.3): the one change for v0.2 users of Protected Profiles in Team Mode.
+    for (const p of profiles.filter((p) => p.protected)) {
+      if (p.requireApproval) {
+        app.log.info(
+          { profile: p.name },
+          `Protected Profile "${p.name}" requires Approval: an Apply that changes where a Message ends up waits for a second Operator. Set requireApproval: false on it to Apply alone`,
+        );
+      } else {
+        app.log.info({ profile: p.name }, `Protected Profile "${p.name}" has requireApproval: false: an Apply needs no Approval`);
+      }
+    }
     for (const p of profiles.filter((p) => !p.roles)) {
       app.log.warn(
         { profile: p.name },
@@ -184,6 +197,7 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
+  registerApprovalRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {

@@ -5,13 +5,25 @@ import { applyConfirmationFor, confirmationProblem } from '../../src/server/tria
 
 describe('Apply confirmation', () => {
   it('asks for the typed queue name only on a Protected Profile with a Decision other than Keep', () => {
-    expect(applyConfirmationFor({ protectedProfile: true, actionCount: 1 })).toEqual({ typeQueueName: true });
-    expect(applyConfirmationFor({ protectedProfile: true, actionCount: 0 })).toEqual({ typeQueueName: false });
-    expect(applyConfirmationFor({ protectedProfile: false, actionCount: 3 })).toEqual({ typeQueueName: false });
+    const typed = (protectedProfile: boolean, actionCount: number) =>
+      applyConfirmationFor({ protectedProfile, requireApproval: false, actionCount }).typeQueueName;
+    expect(typed(true, 1)).toBe(true);
+    expect(typed(true, 0)).toBe(false);
+    expect(typed(false, 3)).toBe(false);
+  });
+
+  it('asks for Approval only when the Protected Profile requires it and a Decision is not Keep', () => {
+    expect(applyConfirmationFor({ protectedProfile: true, requireApproval: true, actionCount: 1 })).toEqual({
+      typeQueueName: true,
+      approvalRequired: true,
+    });
+    expect(applyConfirmationFor({ protectedProfile: true, requireApproval: true, actionCount: 0 }).approvalRequired).toBe(false);
+    expect(applyConfirmationFor({ protectedProfile: true, requireApproval: false, actionCount: 2 }).approvalRequired).toBe(false);
+    expect(applyConfirmationFor({ protectedProfile: false, requireApproval: true, actionCount: 2 }).approvalRequired).toBe(false);
   });
 
   it('accepts only the exact queue name', () => {
-    const needed = { typeQueueName: true };
+    const needed = { typeQueueName: true, approvalRequired: false };
     expect(confirmationProblem(needed, 'orders.dlq', { confirm: true, confirmQueueName: 'orders.dlq' })).toBeNull();
     expect(confirmationProblem(needed, 'orders.dlq', { confirm: true, confirmQueueName: 'Orders.dlq' })).toBe(
       'queue_name_confirmation_required',
@@ -23,8 +35,8 @@ describe('Apply confirmation', () => {
   });
 
   it('always needs the single confirmation', () => {
-    expect(confirmationProblem({ typeQueueName: false }, 'q', { confirm: true })).toBeNull();
-    expect(confirmationProblem({ typeQueueName: false }, 'q', {})).toBe('confirmation_required');
-    expect(confirmationProblem({ typeQueueName: true }, 'q', { confirmQueueName: 'q' })).toBe('confirmation_required');
+    expect(confirmationProblem({ typeQueueName: false, approvalRequired: false }, 'q', { confirm: true })).toBeNull();
+    expect(confirmationProblem({ typeQueueName: false, approvalRequired: false }, 'q', {})).toBe('confirmation_required');
+    expect(confirmationProblem({ typeQueueName: true, approvalRequired: false }, 'q', { confirmQueueName: 'q' })).toBe('confirmation_required');
   });
 });

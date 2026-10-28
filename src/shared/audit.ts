@@ -33,6 +33,9 @@ export interface AuditEntryJson {
   operatorName: string;
   /** The Operator's Role on the Broker Profile when they acted; null on entries written before v0.3. */
   role: Role | null;
+  /** The Operator who approved the Apply that wrote the entry (Approval); null when it needed none. */
+  approverId: string | null;
+  approverName: string | null;
   /** The Broker Profile's RabbitMQ user. */
   brokerUser: string;
   profile: string;

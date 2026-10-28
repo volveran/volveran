@@ -1,6 +1,8 @@
 // Running a Checkout's Apply (ADR 0001): the Decisions carried out one
 // Message at a time (apply/executor.ts), asking before every step whether
-// the Checkout is still active. Replay and Move publish on a confirm channel
+// the Checkout is still active. An approved Apply runs here too, on the
+// requester's Checkout and connection, recorded as the requester's with the
+// approver alongside. Replay and Move publish on a confirm channel
 // of their own on the Checkout's connection (apply/publisher.ts, ADR 0006),
 // so a publish error never closes the channel holding the Messages. The
 // manager ends the Checkout afterwards.
@@ -12,12 +14,15 @@ import type { AuditStore } from '../audit/store.js';
 import { queueRefOf } from '../profiles.js';
 import { buildApplyPlan } from '../triage/decisions.js';
 import type { Checkout } from './state.js';
+import type { Operator } from '../operator.js';
 import type { Role } from '../../shared/roles.js';
 
 export interface RunApplyOptions {
   audit: AuditStore;
-  /** The Role of the Operator Applying, for the Audit Entries. */
+  /** The Role of the Operator Applying (the requester, for an approved Apply), for the Audit Entries. */
   role: Role;
+  /** The Operator who approved the Apply, for the Audit Entries; null when it needed no Approval. */
+  approver: Pick<Operator, 'id' | 'displayName'> | null;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
 }
@@ -34,7 +39,13 @@ export async function runApply(
   // Opened on first use; closes with the Checkout's connection when the Checkout ends.
   let publisher: ConfirmPublisher | undefined;
   const ctx: ApplyContext = {
-    target: { ...queueRefOf(checkout), checkoutId: checkout.id, operator: checkout.operator, role: options.role },
+    target: {
+      ...queueRefOf(checkout),
+      checkoutId: checkout.id,
+      operator: checkout.operator,
+      role: options.role,
+      approver: options.approver,
+    },
     startedAt: new Date(),
     ack: (message) => ack(checkout, message),
     publish: async (exchange, routingKey, content, publishOptions) => {

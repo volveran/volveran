@@ -6,9 +6,23 @@ import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js
 import type { CheckoutTiming } from '../triage/checkout-timing.js';
 import type { ActionDecision } from '../triage/decisions.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
+import type { Role } from '../../shared/roles.js';
 import type { AppliedResult, CheckoutStatus, EndReason } from '../../shared/checkout.js';
 
 export type { AppliedResult, CheckoutStatus, EndReason };
+
+/**
+ * The status the manager keeps. A Checkout waiting for Approval is `active`
+ * with an `approvalRequest`; the view reports it as `awaiting_approval`.
+ */
+export type CheckoutState = Exclude<CheckoutStatus, 'awaiting_approval'>;
+
+/** A request for Approval of the Checkout's Apply, while it waits. */
+export interface ApprovalRequest {
+  requestedAt: Date;
+  /** The requester's Role on the profile when they asked: the approved Apply records it. */
+  role: Role;
+}
 
 export interface Checkout extends QueueRef {
   id: string;
@@ -27,7 +41,14 @@ export interface Checkout extends QueueRef {
   timeLimitTimer: NodeJS.Timeout | undefined;
   /** Ends the Checkout when no heartbeat arrives for the heartbeat window; refreshed by each heartbeat. */
   heartbeatTimer: NodeJS.Timeout | undefined;
-  status: CheckoutStatus;
+  status: CheckoutState;
+  /**
+   * Team Mode, a Protected Profile with `requireApproval`: an Apply with any
+   * Decision other than Keep waits for a second Operator's Approval.
+   */
+  requireApproval: boolean;
+  /** Set while the Checkout waits for Approval (its Decisions are frozen); cleared by withdraw, approve, or its end. */
+  approvalRequest: ApprovalRequest | null;
   lostReason: string | null;
   endReason: EndReason | null;
   /** Ready Messages in the queue when the Checkout started (passive declare). */

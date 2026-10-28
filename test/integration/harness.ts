@@ -34,6 +34,7 @@ export interface ProfileFixture {
   vhosts?: 'all' | string[];
   defaultQueueFilter?: string;
   protected?: boolean;
+  requireApproval?: boolean;
   /** Team Mode: the groups holding each Role on the profile. */
   roles?: Partial<Record<'viewer' | 'operator' | 'admin', unknown>>;
 }
