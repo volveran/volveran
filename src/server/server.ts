@@ -76,8 +76,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret) };
   const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
-  // /readyz answers 200 only between the end of startup and the start of shutdown.
-  let ready = false;
   const app = await buildApp({
     profiles,
     access,
@@ -85,7 +83,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     audit: { audit, restore, usage },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
-    isReady: () => ready,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -116,9 +113,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retentionTimer = setInterval(evict, retention.intervalMs);
   retentionTimer.unref();
 
-  app.addHook('preClose', async () => {
-    ready = false;
-  });
   // Every held Message goes back to its queue (an Apply in progress finishes
   // first) before the audit store closes and the process exits.
   app.addHook('onClose', async () => {
@@ -126,7 +120,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await checkouts.endAll();
     audit.close();
   });
-  ready = true;
+  // Listening comes last, so /readyz is only reachable once startup has finished.
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
@@ -148,11 +142,9 @@ interface AppOptions {
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean;
-  /** Whether startup has finished, for /readyz. */
-  isReady: () => boolean;
 }
 
-async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, isReady }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -164,7 +156,7 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
-  registerHealthRoutes(app, { isReady });
+  registerHealthRoutes(app);
 
   // Every request carries its Operator (operator.ts); in Team Mode, /api/
   // routes refuse requests without a session before any handler runs.
