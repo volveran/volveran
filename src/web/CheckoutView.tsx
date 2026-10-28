@@ -5,8 +5,11 @@
 // While the page shows the Checkout it sends heartbeats (without them the
 // server ends it), and it counts down to the Checkout's time limit. Apply
 // carries out the Decisions and ends the Checkout; the page then shows what
-// happened to each Message.
-import { useEffect, useState } from 'react';
+// happened to each Message. The keyboard moves through the Messages (the
+// Message view follows), builds the Selection and assigns Decisions; the
+// keys are mapped to commands in keyboard-commands.ts.
+import { useEffect, useRef, useState, type Ref } from 'react';
+import { decisionLabel } from '../shared/decisions.js';
 import { formatBytes, heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
 import { returnOrder } from '../shared/return-order.js';
@@ -22,13 +25,19 @@ import {
 } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
-import { DecisionBar } from './DecisionBar.js';
+import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { DecisionBadge } from './decisions.js';
 import { FilterBar } from './FilterBar.js';
+import { ShortcutList, useKeyboardCommands } from './keyboard.js';
+import type { KeyboardCommand } from './keyboard-commands.js';
+
+/** An open prompt: the Discard reason or Move destination for some Messages, or the shortcut list. */
+type OpenPrompt = { kind: 'discard' | 'move'; handles: number[] } | { kind: 'shortcuts' };
 
 export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
-  const [selected, setSelected] = useState<number>();
+  /** The focused Message: the one the Message view shows. */
+  const [focused, setFocused] = useState<number>();
   const [detail, setDetail] = useState<MessageDetail>();
   const [error, setError] = useState<ApiError>();
   const [ending, setEnding] = useState(false);
@@ -43,6 +52,9 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [notice, setNotice] = useState<string>();
   /** The Move destination picker's choices; a string says why they could not be loaded. */
   const [destinations, setDestinations] = useState<MoveDestinations | string>();
+  const [prompt, setPrompt] = useState<OpenPrompt | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   const profile = checkout?.profile;
   const vhost = checkout?.vhost;
 
@@ -96,16 +108,16 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   }, [id]);
 
   useEffect(() => {
-    if (selected === undefined) return setDetail(undefined);
+    if (focused === undefined) return setDetail(undefined);
     let cancelled = false;
     api
-      .message(id, selected)
+      .message(id, focused)
       .then((m) => !cancelled && setDetail(m))
       .catch((err) => !cancelled && setError(err));
     return () => {
       cancelled = true;
     };
-  }, [id, selected]);
+  }, [id, focused]);
 
   const end = async () => {
     setEnding(true);
@@ -131,11 +143,13 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
-  const decide = async (decision: Decision) => {
+  /** Assigns the Decision to the Messages: the Selection unless the keyboard named the focused Message. */
+  const decide = async (decision: Decision, handles: number[] = [...selection]) => {
+    if (handles.length === 0) return;
     setBusy(true);
     setNotice(undefined);
     try {
-      const res = await api.setDecisions(id, [...selection], decision);
+      const res = await api.setDecisions(id, handles, decision);
       setCheckout(res.checkout);
       setReceivedAt(Date.now());
       setError(undefined);
@@ -165,8 +179,55 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
+  const active = checkout?.status === 'active';
+  /** The Messages the list shows: all of them, or those matching the filter. */
+  const shown = checkout ? (matched ? checkout.messages.filter((m) => matched.has(m.handle)) : checkout.messages) : [];
+
+  const run = (command: KeyboardCommand) => {
+    switch (command.kind) {
+      case 'move': {
+        if (shown.length === 0) return;
+        const at = shown.findIndex((m) => m.handle === focused);
+        const next = shown[at < 0 ? 0 : Math.max(0, Math.min(shown.length - 1, at + command.by))]!.handle;
+        if (command.extendSelection) setSelection((s) => new Set([...s, ...(focused === undefined ? [] : [focused]), next]));
+        setFocused(next);
+        listRef.current?.focus();
+        return;
+      }
+      case 'toggle-selection':
+        if (focused === undefined) return;
+        return setSelection((s) => {
+          const next = new Set(s);
+          if (!next.delete(focused)) next.add(focused);
+          return next;
+        });
+      case 'assign': {
+        if (busy) return;
+        const handles = command.to === 'selection' ? [...selection] : focused === undefined ? [] : [focused];
+        if (command.decision === 'discard' || command.decision === 'move') {
+          return setPrompt({ kind: command.decision, handles });
+        }
+        return void decide({ kind: command.decision }, handles);
+      }
+      case 'focus-filter':
+        return filterRef.current?.focus();
+      case 'clear-selection':
+        return setSelection(new Set());
+      case 'close-prompt':
+        return setPrompt(null);
+      case 'show-shortcuts':
+        return setPrompt({ kind: 'shortcuts' });
+      case 'start-checkout':
+        return;
+    }
+  };
+  useKeyboardCommands(
+    active,
+    { view: 'checkout', prompt: prompt !== null, selection: selection.size, focusedItem: focused !== undefined },
+    run,
+  );
+
   if (!checkout) return error ? <ErrorBox error={error} /> : <p className="empty">Loading the Checkout…</p>;
-  const active = checkout.status === 'active';
 
   return (
     <section className={checkout.protectedProfile ? 'checkout protected' : 'checkout'}>
@@ -234,15 +295,31 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
           />
           <DecisionBar
             selected={selection.size}
-            sourceQueue={checkout.queue}
-            destinations={destinations}
             replayUnavailable={checkout.messages.filter((m) => selection.has(m.handle) && !m.replay.available).length}
             busy={busy}
-            onDecide={decide}
+            onPrompt={(kind) => setPrompt({ kind, handles: [...selection] })}
+            onDecide={(decision) => void decide(decision)}
             onClearSelection={() => setSelection(new Set())}
           />
+          {prompt && prompt.kind !== 'shortcuts' && (
+            <DecisionPrompt
+              kind={prompt.kind}
+              count={prompt.handles.length}
+              sourceQueue={checkout.queue}
+              destinations={destinations}
+              busy={busy}
+              onDecide={(decision) => void decide(decision, prompt.handles)}
+              onClose={() => setPrompt(null)}
+            />
+          )}
           {notice && <p className="notice">{notice}</p>}
-          <FilterBar active={matched !== null} busy={busy} onFilter={filter} onClear={() => setMatched(null)} />
+          <FilterBar
+            active={matched !== null}
+            busy={busy}
+            onFilter={filter}
+            onClear={() => setMatched(null)}
+            firstFieldRef={filterRef}
+          />
           {matched && (
             <div className="filter-result">
               <span>
@@ -261,18 +338,25 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
 
       {active && (
         <div className="checkout-body">
-          <MessageTable
-            messages={matched ? checkout.messages.filter((m) => matched.has(m.handle)) : checkout.messages}
+          <MessageList
+            listRef={listRef}
+            messages={shown}
             empty={matched ? 'No Message matches the filter.' : 'The queue had no ready Messages.'}
             quorum={checkout.queueType === 'quorum' && checkout.deliveryLimit !== null}
-            selected={selected}
-            onSelect={setSelected}
+            focused={focused}
+            onFocus={setFocused}
             selection={selection}
             onSelection={setSelection}
           />
           {detail && <MessageDetailView message={detail} />}
         </div>
       )}
+      {active && (
+        <p className="muted shortcut-hint">
+          Press <kbd>?</kbd> for keyboard shortcuts.
+        </p>
+      )}
+      {prompt?.kind === 'shortcuts' && <ShortcutList onClose={() => setPrompt(null)} />}
     </section>
   );
 }
@@ -309,15 +393,39 @@ function ErrorBox({ error }: { error: ApiError }) {
   );
 }
 
-function MessageTable(props: {
+const optionId = (handle: number) => `message-${handle}`;
+
+/** How a screen reader announces a Message when it gets the focus. */
+function messageLabel(m: MessageRow): string {
+  return [
+    m.messageId ?? 'Message without message_id',
+    decisionLabel(m.decision),
+    `routing key ${m.routingKey}`,
+    m.deadLetterReason && `dead-lettered: ${m.deadLetterReason}`,
+    !m.replay.available && 'no Replay',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/**
+ * The held Messages as a listbox: the list keeps the DOM focus and the
+ * focused Message is its active descendant; a Message in the Selection is
+ * aria-selected. The table inside only lays the rows out.
+ */
+function MessageList(props: {
+  listRef: Ref<HTMLDivElement>;
   messages: MessageRow[];
   empty: string;
   quorum: boolean;
-  selected: number | undefined;
-  onSelect(handle: number): void;
+  focused: number | undefined;
+  onFocus(handle: number): void;
   selection: ReadonlySet<number>;
   onSelection(selection: ReadonlySet<number>): void;
 }) {
+  useEffect(() => {
+    if (props.focused !== undefined) document.getElementById(optionId(props.focused))?.scrollIntoView({ block: 'nearest' });
+  }, [props.focused]);
   if (props.messages.length === 0) return <p className="empty">{props.empty}</p>;
   const allTicked = props.messages.every((m) => props.selection.has(m.handle));
   const tick = (handles: number[], on: boolean) => {
@@ -328,69 +436,92 @@ function MessageTable(props: {
     }
     props.onSelection(next);
   };
+  const focusedShown = props.messages.some((m) => m.handle === props.focused);
   return (
-    <table className="queues messages">
-      <thead>
-        <tr>
-          <th className="select">
-            <input
-              type="checkbox"
-              aria-label="Select all shown Messages"
-              checked={allTicked}
-              onChange={() => tick(props.messages.map((m) => m.handle), !allTicked)}
-            />
-          </th>
-          <th>Decision</th>
-          <th>message_id</th>
-          <th>Routing key</th>
-          <th>Timestamp</th>
-          <th>Dead-letter reason</th>
-          <th>Original queue</th>
-          {props.quorum && <th className="num">Delivery Budget</th>}
-        </tr>
-      </thead>
-      <tbody>
-        {props.messages.map((m) => (
-          <tr
-            key={m.handle}
-            className={m.handle === props.selected ? 'match selected' : undefined}
-            onClick={() => props.onSelect(m.handle)}
-          >
-            <td className="select" onClick={(e) => e.stopPropagation()}>
-              <input
-                type="checkbox"
-                aria-label={`Select ${m.messageId ?? 'Message'}`}
-                checked={props.selection.has(m.handle)}
-                onChange={(e) => tick([m.handle], e.target.checked)}
-              />
-            </td>
-            <td>
-              <DecisionBadge decision={m.decision} />
-              {!m.replay.available && (
-                <span className="badge" title={m.replay.reason}>
-                  no Replay
-                </span>
-              )}
-            </td>
-            <td className="name">{m.messageId ?? <em>none</em>}</td>
-            <td>{m.routingKey}</td>
-            <td>{m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}</td>
-            <td>{m.deadLetterReason ?? ''}</td>
-            <td>{m.originalQueue ?? ''}</td>
-            {props.quorum && (
-              <td className="num">
-                {m.deliveryBudget?.remaining ?? ''}
-                {m.deliveryBudget?.warning && (
-                  <span className="badge limit-warning" title={m.deliveryBudget.warning}>
-                    ⚠
-                  </span>
+    <div className="message-list">
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={allTicked}
+          onChange={() => tick(props.messages.map((m) => m.handle), !allTicked)}
+        />
+        Select all {props.messages.length} shown Messages
+      </label>
+      <div
+        ref={props.listRef}
+        className="listbox"
+        role="listbox"
+        aria-label="Held Messages"
+        aria-multiselectable="true"
+        tabIndex={0}
+        aria-activedescendant={focusedShown ? optionId(props.focused!) : undefined}
+        onFocus={(e) => {
+          // Tabbing into the list focuses its first Message, so there is always one to announce.
+          if (e.target === e.currentTarget && !focusedShown) props.onFocus(props.messages[0]!.handle);
+        }}
+      >
+        <table className="queues messages" role="presentation">
+          <thead aria-hidden="true">
+            <tr>
+              <th className="select" />
+              <th>Decision</th>
+              <th>message_id</th>
+              <th>Routing key</th>
+              <th>Timestamp</th>
+              <th>Dead-letter reason</th>
+              <th>Original queue</th>
+              {props.quorum && <th className="num">Delivery Budget</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {props.messages.map((m) => (
+              <tr
+                key={m.handle}
+                id={optionId(m.handle)}
+                role="option"
+                aria-selected={props.selection.has(m.handle)}
+                aria-label={messageLabel(m)}
+                className={m.handle === props.focused ? 'match focused' : undefined}
+                onClick={() => props.onFocus(m.handle)}
+              >
+                {/* The ticked state reaches screen readers as aria-selected; the box is for the mouse. */}
+                <td className="select" aria-hidden="true" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    tabIndex={-1}
+                    checked={props.selection.has(m.handle)}
+                    onChange={(e) => tick([m.handle], e.target.checked)}
+                  />
+                </td>
+                <td>
+                  <DecisionBadge decision={m.decision} />
+                  {!m.replay.available && (
+                    <span className="badge" title={m.replay.reason}>
+                      no Replay
+                    </span>
+                  )}
+                </td>
+                <td className="name">{m.messageId ?? <em>none</em>}</td>
+                <td>{m.routingKey}</td>
+                <td>{m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}</td>
+                <td>{m.deadLetterReason ?? ''}</td>
+                <td>{m.originalQueue ?? ''}</td>
+                {props.quorum && (
+                  <td className="num">
+                    {m.deliveryBudget?.remaining ?? ''}
+                    {m.deliveryBudget?.warning && (
+                      <span className="badge limit-warning" title={m.deliveryBudget.warning}>
+                        ⚠
+                      </span>
+                    )}
+                  </td>
                 )}
-              </td>
-            )}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
