@@ -25,12 +25,14 @@
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
-import type { QueueRef } from '../profiles.js';
+import type { QueueAccess } from '../profile-access.js';
+import { queueRefOf, type QueueRef } from '../profiles.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import type { MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
+import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import { applyInProgress, CheckoutError, checkoutNotActive, inCheckout, notCheckoutOwner, operatorHasCheckout } from './errors.js';
 import { openCheckout, type StartOptions } from './open.js';
@@ -85,7 +87,9 @@ export class CheckoutManager {
     this.endedRetentionMs = options.endedRetentionMs ?? DEFAULT_ENDED_RETENTION_MS;
   }
 
-  async start(ref: QueueRef, operator: Operator, options: StartOptions = {}): Promise<CheckoutView> {
+  /** Starts a Checkout of `target`, a queue resolved through the access check (its management client included). */
+  async start(target: QueueAccess, operator: Operator, options: StartOptions = {}): Promise<CheckoutView> {
+    const ref = queueRefOf(target);
     const mine = this.byOperator.get(operator.id);
     if (mine) throw operatorHasCheckout(operator.displayName, mine);
     const lockKey = this.lockKey(ref);
@@ -123,7 +127,7 @@ export class CheckoutManager {
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
-      await openCheckout(checkout, options, {
+      await openCheckout(checkout, target.management, options, {
         onLost: (reason) => this.markLost(checkout, reason),
         afterLock: this.hooks.afterLock,
         afterCollectWait: this.hooks.afterCollectWait,
@@ -188,14 +192,16 @@ export class CheckoutManager {
    * Carries out every Decision of the Checkout (ADR 0001), then ends it:
    * Messages whose Decision is Keep, failed or was not attempted go back to
    * the queue in order. Returns the outcome for each Message. Throws
-   * `checkout_not_active` on a Checkout that is over or lost.
+   * `checkout_not_active` on a Checkout that is over or lost. `role` is the
+   * Applying Operator's Role on the profile, recorded in each Audit Entry.
    */
-  async apply(id: string): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+  async apply(id: string, role: Role): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
     const checkout = this.find(id);
     if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
     const { startedAt, outcomes } = await runApply(checkout, {
       audit: this.options.audit,
+      role,
       beforeStep: this.hooks.beforeApplyStep,
     });
     checkout.lastApply = { at: startedAt.toISOString(), outcomes };

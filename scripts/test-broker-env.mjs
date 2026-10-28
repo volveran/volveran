@@ -6,7 +6,8 @@
 // directory plus a hash of its path, so brokers of several worktrees run side
 // by side. Host ports are left to Docker (random free ports, bound to
 // 127.0.0.1) unless VOLVERAN_TEST_AMQP_PORT / VOLVERAN_TEST_MGMT_PORT /
-// VOLVERAN_TEST_OIDC_PORT are set.
+// VOLVERAN_TEST_OIDC_PORT (and, for the OAuth 2.0 broker,
+// VOLVERAN_TEST_OAUTH_AMQP_PORT / VOLVERAN_TEST_OAUTH_MGMT_PORT) are set.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -24,12 +25,15 @@ export const composeFile = path.join(repoRoot, 'test/broker/docker-compose.yml')
  * @property {string | undefined} amqpPort host AMQP port, undefined for a random free port
  * @property {string | undefined} mgmtPort host management port, undefined for a random free port
  * @property {string | undefined} oidcPort host port of the mock OIDC provider, undefined for a random free port
+ * @property {string | undefined} oauthAmqpPort host AMQP port of the OAuth 2.0 broker, undefined for a random free port
+ * @property {string | undefined} oauthMgmtPort host management port of the OAuth 2.0 broker, undefined for a random free port
  */
 
 /**
  * The compose project and host ports for the checkout at `root`, with
- * VOLVERAN_TEST_PROJECT, VOLVERAN_TEST_AMQP_PORT, VOLVERAN_TEST_MGMT_PORT and
- * VOLVERAN_TEST_OIDC_PORT from `env` taking precedence.
+ * VOLVERAN_TEST_PROJECT, VOLVERAN_TEST_AMQP_PORT, VOLVERAN_TEST_MGMT_PORT,
+ * VOLVERAN_TEST_OIDC_PORT, VOLVERAN_TEST_OAUTH_AMQP_PORT and
+ * VOLVERAN_TEST_OAUTH_MGMT_PORT from `env` taking precedence.
  * @param {string} root
  * @param {Record<string, string | undefined>} env
  * @returns {TestBrokerSettings}
@@ -40,6 +44,8 @@ export function testBrokerSettings(root, env) {
     amqpPort: env.VOLVERAN_TEST_AMQP_PORT || undefined,
     mgmtPort: env.VOLVERAN_TEST_MGMT_PORT || undefined,
     oidcPort: env.VOLVERAN_TEST_OIDC_PORT || undefined,
+    oauthAmqpPort: env.VOLVERAN_TEST_OAUTH_AMQP_PORT || undefined,
+    oauthMgmtPort: env.VOLVERAN_TEST_OAUTH_MGMT_PORT || undefined,
   };
 }
 
@@ -56,10 +62,11 @@ function defaultProject(root) {
 }
 
 /**
- * The host ports the running test broker and OIDC provider of `project` were
- * given, asked from docker compose. Throws when they are not running.
+ * The host ports the running test broker, OAuth 2.0 broker and OIDC provider
+ * of `project` were given, asked from docker compose. Throws when they are
+ * not running.
  * @param {string} project
- * @returns {{ amqpPort: string, mgmtPort: string, oidcPort: string }}
+ * @returns {{ amqpPort: string, mgmtPort: string, oidcPort: string, oauthAmqpPort: string, oauthMgmtPort: string }}
  */
 export function publishedPorts(project) {
   /** @param {number} containerPort @param {string} [service] */
@@ -82,5 +89,11 @@ export function publishedPorts(project) {
     }
     return match[1];
   };
-  return { amqpPort: port(5672), mgmtPort: port(15672), oidcPort: port(8080, 'oidc') };
+  return {
+    amqpPort: port(5672),
+    mgmtPort: port(15672),
+    oidcPort: port(8080, 'oidc'),
+    oauthAmqpPort: port(5672, 'rabbitmq-oauth'),
+    oauthMgmtPort: port(15672, 'rabbitmq-oauth'),
+  };
 }

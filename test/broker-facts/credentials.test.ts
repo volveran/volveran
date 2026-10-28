@@ -4,7 +4,7 @@ import { openChannel } from '../broker/client.js';
 import { scratchFor } from './support.js';
 
 describe('Credentials', () => {
-  describe('`update-secret` is accepted even with a wrong password on the internal authentication backend. Its behaviour with the OAuth 2.0 backend is not yet verified.', () => {
+  describe('`update-secret` is accepted even with a wrong password on the internal authentication backend. The OAuth 2.0 backend does re-check the new secret; see "OAuth 2.0 tokens".', () => {
     it('update-secret with a wrong password succeeds and the connection keeps working', async (ctx) => {
       const s = await scratchFor(ctx);
       await expect(s.conn.updateSecret(Buffer.from('not-the-password'), 'broker-facts test')).resolves.toBeUndefined();

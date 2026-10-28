@@ -1,9 +1,9 @@
 // Pure queue-list logic (no I/O): which queues are dead-letter queues, the
 // order they are listed in, search, and Checkout availability by queue type.
 import type { CheckoutQueueType } from '../../shared/checkout.js';
-import type { CheckoutAvailability, SetupWarning } from '../../shared/queues.js';
+import type { CheckoutAvailability } from '../../shared/queues.js';
 
-export type { CheckoutAvailability, CheckoutQueueType, SetupWarning };
+export type { CheckoutAvailability, CheckoutQueueType };
 
 /**
  * Glob match on a whole queue name: `*` matches any run of characters
@@ -138,43 +138,4 @@ export function notCheckoutableReason(queueType: string): string {
     return 'Stream queues cannot be checked out: a stream keeps its Messages after they are read, so there is nothing to hold and settle one by one. Only classic and quorum queues can be triaged.';
   }
   return `Queues of type "${queueType}" cannot be checked out. Only classic and quorum queues can be triaged.`;
-}
-
-/** What deadLetterSetupWarning needs to know about a listed queue. */
-export interface DeliveryLimitSettings {
-  /** From arrangeQueues. */
-  deadLetterQueue: boolean;
-  /** The broker's queue type. */
-  type: string;
-  arguments: Record<string, unknown>;
-  /** Definition of the policies in effect. */
-  effectivePolicy: Record<string, unknown>;
-  /** The effective delivery-limit from the management API; null when unlimited or unknown. */
-  deliveryLimit: number | null;
-}
-
-/** The broker's default delivery-limit for quorum queues (RabbitMQ 4.0+). */
-const DEFAULT_DELIVERY_LIMIT = 20;
-
-/**
- * Warns about a quorum dead-letter queue that has a delivery limit but no
- * dead-letter exchange (from its arguments or its policy): a Message returned
- * abnormally more often than the limit allows is dropped by the broker.
- */
-export function deadLetterSetupWarning(q: DeliveryLimitSettings): SetupWarning | null {
-  if (!q.deadLetterQueue || q.type !== 'quorum') return null;
-  const limit = q.deliveryLimit;
-  if (limit === null || limit < 0) return null;
-  const hasDeadLetterExchange =
-    typeof q.arguments['x-dead-letter-exchange'] === 'string' ||
-    typeof q.effectivePolicy['dead-letter-exchange'] === 'string';
-  if (hasDeadLetterExchange) return null;
-  const which = limit === DEFAULT_DELIVERY_LIMIT ? `the default delivery-limit (${limit})` : `a delivery-limit of ${limit}`;
-  return {
-    code: 'messages_dropped_at_delivery_limit',
-    deliveryLimit: limit,
-    message:
-      `This quorum queue has ${which} and no dead-letter exchange: a Message returned to it abnormally more than ${limit} times (a crash, a lost connection, a rejection) is dropped for good. ` +
-      'Set delivery-limit = -1 (for example with a policy) to never drop, or give the queue a dead-letter exchange.',
-  };
 }

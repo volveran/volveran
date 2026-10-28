@@ -1,5 +1,6 @@
 // Audit Entries as the API sends them (src/server/routes/audit.ts), shared
 // by the server and the web app. Pure values and types (no Node or DOM APIs).
+import type { Role } from './roles.js';
 
 /** Every triage action an Audit Entry can record. */
 export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore'] as const;
@@ -30,6 +31,8 @@ export interface AuditEntryJson {
   at: string;
   operatorId: string;
   operatorName: string;
+  /** The Operator's Role on the Broker Profile when they acted; null on entries written before v0.3. */
+  role: Role | null;
   /** The Broker Profile's RabbitMQ user. */
   brokerUser: string;
   profile: string;

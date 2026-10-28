@@ -2,11 +2,29 @@
 // in localStorage) and see its queues, dead-letter queues first; start a
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
-import { useEffect, useState } from 'react';
+// Only the profiles where the Operator has a Role are listed (the server
+// filters them), and actions their Role does not allow are shown as
+// unavailable, naming the role they need.
+// In the queue list j/k or the arrow keys move and Enter starts a Checkout
+// (keys mapped in keyboard-commands.ts).
+import { useEffect, useRef, useState } from 'react';
 import { product } from '../shared/product.js';
-import { api, ApiError, signOut, type Profile, type Queue, type Session } from './api.js';
+import { roleIncludes, type Role } from '../shared/roles.js';
+import {
+  api,
+  ApiError,
+  signOut,
+  type Profile,
+  type Queue,
+  type QueueList,
+  type Session,
+  type SetupWarningCounts,
+  type SetupWarningSeverity,
+} from './api.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
+import { ShortcutList, useKeyboardCommands } from './keyboard.js';
+import type { KeyboardCommand } from './keyboard-commands.js';
 
 const STORAGE_KEY = 'volveran.location';
 
@@ -41,7 +59,7 @@ export function App() {
   const [profileName, setProfileName] = useState<string>();
   const [vhosts, setVhosts] = useState<string[]>([]);
   const [vhost, setVhost] = useState<string>();
-  const [queues, setQueues] = useState<Queue[]>();
+  const [queueList, setQueueList] = useState<QueueList>();
   const [search, setSearch] = useState('');
   const [onlyDeadLetterQueues, setOnlyDeadLetterQueues] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -52,8 +70,12 @@ export function App() {
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
+  /** The queue the keyboard is on. */
+  const [focusedQueue, setFocusedQueue] = useState<string>();
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const profile = profiles.find((p) => p.name === profileName);
+  const role = profileName ? session?.roles[profileName] : undefined;
 
   // A Protected Profile shows in the browser tab too, so it is visible from other tabs.
   useEffect(() => {
@@ -82,7 +104,7 @@ export function App() {
     if (!profileName) return;
     setVhosts([]);
     setVhost(undefined);
-    setQueues(undefined);
+    setQueueList(undefined);
     setError(undefined);
     let cancelled = false;
     api
@@ -108,12 +130,12 @@ export function App() {
       .queues(profileName, vhost, { search: debouncedSearch, onlyDeadLetterQueues })
       .then((list) => {
         if (cancelled) return;
-        setQueues(list);
+        setQueueList(list);
         setError(undefined);
       })
       .catch((err) => {
         if (cancelled) return;
-        setQueues(undefined);
+        setQueueList(undefined);
         setError(err);
       })
       .finally(() => !cancelled && setLoading(false));
@@ -134,6 +156,40 @@ export function App() {
       else setError(apiError);
     }
   };
+
+  const queues = queueList?.queues ?? [];
+  const run = (command: KeyboardCommand) => {
+    switch (command.kind) {
+      case 'move': {
+        if (queues.length === 0) return;
+        const at = queues.findIndex((q) => q.name === focusedQueue);
+        setFocusedQueue(queues[at < 0 ? 0 : Math.max(0, Math.min(queues.length - 1, at + command.by))]!.name);
+        return;
+      }
+      case 'start-checkout': {
+        const q = queues.find((q) => q.name === focusedQueue);
+        const mayCheckout = role !== undefined && roleIncludes(role, 'operator');
+        if (q && mayCheckout && q.checkout.available && !q.checkedOutBy) void startCheckout(q.name);
+        return;
+      }
+      case 'show-shortcuts':
+        return setShortcutsOpen(true);
+      case 'close-prompt':
+        return setShortcutsOpen(false);
+      default:
+        return;
+    }
+  };
+  useKeyboardCommands(
+    view === 'queues' && !checkoutId,
+    {
+      view: 'queue-list',
+      prompt: shortcutsOpen,
+      selection: 0,
+      focusedItem: queues.some((q) => q.name === focusedQueue),
+    },
+    run,
+  );
 
   return (
     <div className={profile?.protected ? 'app protected' : 'app'}>
@@ -178,6 +234,11 @@ export function App() {
           </span>
         )}
         {profile?.protected && <span className="badge protected-badge">Protected Profile</span>}
+        {session?.mode === 'team' && role && (
+          <span className="who">
+            role <code>{role}</code>
+          </span>
+        )}
         {session?.mode === 'solo' && (
           <span className="who">
             Solo Mode · Operator <strong>{session.operator}</strong>
@@ -195,7 +256,7 @@ export function App() {
 
       <main>
         {view === 'audit' && !checkoutId ? (
-          <AuditView profiles={profiles} />
+          <AuditView profiles={profiles} roles={session?.roles ?? {}} />
         ) : (
           <>
             <div className="controls">
@@ -250,7 +311,7 @@ export function App() {
                 }}
               />
             ) : (
-              queues && (
+              queueList && (
                 <>
                   {profile?.protected && (
                     <p className="protected-banner" role="note">
@@ -259,12 +320,23 @@ export function App() {
                       and every Restore, needs the queue name typed.
                     </p>
                   )}
-                  <QueueTable queues={queues} onCheckout={startCheckout} />
+                  <VhostWarningCounts counts={queueList.setupWarningCounts} vhost={vhost} />
+                  <QueueTable
+                    queues={queueList.queues}
+                    role={role}
+                    focused={focusedQueue}
+                    onFocus={setFocusedQueue}
+                    onCheckout={startCheckout}
+                  />
+                  <p className="muted shortcut-hint">
+                    Press <kbd>?</kbd> for keyboard shortcuts.
+                  </p>
                 </>
               )
             )}
           </>
         )}
+        {shortcutsOpen && <ShortcutList onClose={() => setShortcutsOpen(false)} />}
       </main>
     </div>
   );
@@ -289,12 +361,55 @@ function errorTitle(error: ApiError): string {
       return 'You already have a Checkout';
     case 'lock_not_permitted':
       return 'Missing permission for the Checkout lock';
+    case 'no_role_on_profile':
+      return 'No role on this Broker Profile';
+    case 'role_required':
+      return 'Your role does not allow this';
     default:
       return 'Something went wrong';
   }
 }
 
-function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue: string): void }) {
+const severityLabel: Record<SetupWarningSeverity, string> = {
+  loses_messages: 'Loses Messages',
+  may_lose_messages: 'May lose Messages',
+};
+
+/** The vhost's set-up warnings by severity, above the queue list (whatever the search leaves listed). */
+function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vhost: string | undefined }) {
+  const parts = (Object.keys(severityLabel) as SetupWarningSeverity[]).filter((s) => counts[s] > 0);
+  if (parts.length === 0) return null;
+  return (
+    <p className="setup-warning-counts" role="status">
+      Set-up warnings in vhost {vhost}:{' '}
+      {parts.map((s) => (
+        <span key={s} className={`badge severity-${s}`}>
+          {severityLabel[s]}: {counts[s]}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/** The queue list. The keyboard's queue row takes the DOM focus, so it is visible and announced. */
+function QueueTable({
+  queues,
+  role,
+  focused,
+  onFocus,
+  onCheckout,
+}: {
+  queues: Queue[];
+  role: Role | undefined;
+  focused: string | undefined;
+  onFocus(queue: string): void;
+  onCheckout(queue: string): void;
+}) {
+  const rows = useRef(new Map<string, HTMLTableRowElement>());
+  useEffect(() => {
+    if (focused !== undefined) rows.current.get(focused)?.focus();
+  }, [focused]);
+  const mayCheckout = role !== undefined && roleIncludes(role, 'operator');
   if (queues.length === 0) return <p className="empty">No queues match.</p>;
   return (
     <table className="queues">
@@ -311,18 +426,28 @@ function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue:
       </thead>
       <tbody>
         {queues.map((q) => (
-          <tr key={q.name} className={q.deadLetterQueue ? 'match' : undefined}>
+          <tr
+            key={q.name}
+            ref={(row) => {
+              if (row) rows.current.set(q.name, row);
+              else rows.current.delete(q.name);
+            }}
+            tabIndex={-1}
+            aria-current={q.name === focused ? 'true' : undefined}
+            className={[q.deadLetterQueue && 'match', q.name === focused && 'focused'].filter(Boolean).join(' ') || undefined}
+            onFocus={(e) => e.target === e.currentTarget && onFocus(q.name)}
+          >
             <td className="name">
               {q.name} {q.deadLetterQueue && <span className="badge dlq">DLQ</span>}
               {q.deadLetteredFrom.length > 0 && (
                 <span className="dlq-source">dead-lettered from {q.deadLetteredFrom.join(', ')}</span>
               )}
-              {q.setupWarning && (
-                <span className="setup-warning" role="note">
-                  <span className="badge limit-warning">Drops Messages after {q.setupWarning.deliveryLimit} deliveries</span>
-                  <small>{q.setupWarning.message}</small>
+              {q.setupWarnings.map((w) => (
+                <span key={w.code} className="setup-warning" role="note">
+                  <span className={`badge severity-${w.severity}`}>{severityLabel[w.severity]}</span>
+                  <small>{w.message}</small>
                 </span>
-              )}
+              ))}
             </td>
             <td>
               <span className={`badge type-${q.type}`}>{q.type}</span>
@@ -336,6 +461,11 @@ function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue:
                   <small>
                     by {q.checkedOutBy.operator} since {new Date(q.checkedOutBy.since).toLocaleTimeString()}
                   </small>
+                </span>
+              ) : !mayCheckout ? (
+                <span className="unavailable">
+                  Needs the role <code>operator</code>
+                  <small>your role here is {role ?? 'none'}</small>
                 </span>
               ) : q.checkout.available ? (
                 <button onClick={() => onCheckout(q.name)}>Check out</button>

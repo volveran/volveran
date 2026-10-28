@@ -6,6 +6,17 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Set-up check `dead_letter_exchange_missing`: the queue list warns about a queue whose dead-letter exchange (by argument or policy) does not exist in the vhost, since the broker drops every Message the queue dead-letters. The queue list header counts the vhost's set-up warnings by severity. (#41)
+- Roles per Broker Profile (Team Mode). A profile's optional `roles` maps OIDC groups to `viewer` (sees the profile, its queues and Audit Entries without Discarded bodies), `operator` (also reads Discarded bodies and starts Checkouts, Decisions and Apply) or `admin` (also Restores); the highest matching role wins. The groups come from the ID token claim named by `VOLVERAN_OIDC_GROUPS_CLAIM` (default `groups`; chart value `oidc.groupsClaim`) and are fixed until the next sign-in. Routes answer `403 no_role_on_profile` or `403 role_required` (with `required` and `held`) before touching the broker, `GET /api/profiles` and Audit Entry search leave out profiles without a role, `GET /api/session` gains `roles` and (Team Mode) `groups`, and every new Audit Entry records the Operator's `role` (`null` on older entries). The web app shows the actions a role does not allow as unavailable. Startup refuses unknown roles, empty group lists and non-string groups. **Upgrading changes nothing until you add `roles`:** a profile without them keeps every Operator `admin`, with a startup warning per profile ([ADR 0007](docs/adr/0007-profiles-without-roles-keep-everyone-admin.md)), and Solo Mode ignores them. (#38)
+- Keyboard navigation. Queue list: `j`/`k` or the arrow keys move, Enter starts a Checkout on the focused queue. Checkout: `j`/`k` or the arrow keys move and the Message view follows, Space adds the focused Message to the Selection or takes it out, Shift+↑/↓ extends the Selection, Shift+`D`/`R`/`M`/`K` assign Discard, Replay, Move or Keep to the Selection or else the focused Message, `/` focuses the filter, Escape closes a prompt or clears the Selection, and `?` lists every shortcut. No key Applies, approves, rejects or Restores, and shortcuts do nothing while a text field has focus. The Message list is a listbox for screen readers, with the focused Message as its active descendant, and keyboard focus is always visible. (#47)
+
+### Changed
+
+- Discard and Move open a prompt for the reason or the destination, the same prompt their keys open, instead of taking them from fields in the Decision bar. (#47)
+- API: a queue list row's `setupWarning` (one warning or `null`) is now `setupWarnings`, a list (`[]` for none), so a queue shows every warning that applies. Each warning gains a `severity`: `loses_messages` or `may_lose_messages`. The delivery-limit warning keeps its code, `messages_dropped_at_delivery_limit`, and now also fires when the queue's dead-letter exchange does not exist. The queue list response gains `setupWarningCounts`, the warnings of the whole vhost by severity, whatever the search or dead-letter queue filter. (#41)
+
 ### Fixed
 
 - Development: run from source (`npm run dev`), the server no longer serves the unbuilt `src/web` on `:8080`, which showed a blank page (`main.tsx` blocked for its MIME type). It serves no web app and answers `404` with a pointer to the Vite dev server on `http://localhost:5173`. `npm start` and the image still serve the built `dist/web`. (#32)

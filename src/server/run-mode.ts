@@ -14,6 +14,8 @@ export interface OidcSettings {
   /** Where the provider sends the browser back: Volverán's `/auth/callback` as the browser reaches it. */
   redirectUrl: string;
   scopes: string[];
+  /** The ID token claim holding the Operator's groups, for their Roles (VOLVERAN_OIDC_GROUPS_CLAIM). */
+  groupsClaim: string;
 }
 
 export type RunMode =
@@ -32,6 +34,7 @@ export const callbackPath = '/auth/callback';
 
 const minSessionSecretLength = 32;
 const defaultScopes = 'openid email profile';
+const defaultGroupsClaim = 'groups';
 
 export function resolveRunMode(env: Record<string, string | undefined>, host: string): RunModeResult {
   const auth = env.VOLVERAN_AUTH?.trim() || 'none';
@@ -114,6 +117,7 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
         clientSecret: read('VOLVERAN_OIDC_CLIENT_SECRET')!,
         redirectUrl: read('VOLVERAN_OIDC_REDIRECT_URL')!,
         scopes,
+        groupsClaim: read('VOLVERAN_OIDC_GROUPS_CLAIM') ?? defaultGroupsClaim,
       },
       sessionSecret,
     },

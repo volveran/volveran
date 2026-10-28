@@ -20,10 +20,10 @@ import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
-import { profileLookup } from './routes/profile-lookup.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { attachOperator } from './operator.js';
+import { ProfileAccessCheck } from './profile-access.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
@@ -74,11 +74,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     config.mode.kind === 'solo'
       ? { kind: 'solo', operator: config.mode.operator }
       : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret) };
-  const restore = new RestoreService(
-    audit,
-    (name) => profiles.find((p) => p.name === name),
-    (id) => checkouts.isRunning(id),
-  );
+  const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
@@ -88,6 +84,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     webRoot: options.webRoot,
     logger: options.logger ?? false,
   });
+
+  // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
+  if (access.kind === 'solo') {
+    const mapped = profiles.filter((p) => p.roles).map((p) => p.name);
+    if (mapped.length > 0) {
+      app.log.info({ profiles: mapped }, 'Solo Mode ignores the roles of Broker Profiles: the Operator is admin on every profile');
+    }
+  } else {
+    for (const p of profiles.filter((p) => !p.roles)) {
+      app.log.warn(
+        { profile: p.name },
+        `Broker Profile "${p.name}" has no roles: every signed-in Operator is admin on it, and can Restore`,
+      );
+    }
+  }
 
   // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
   const evict = () => {
@@ -156,13 +167,16 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }:
     await access.auth.register(app);
   }
 
-  const lookup = profileLookup(profiles);
-  registerSessionRoutes(app, { mode: access.kind, checkouts });
-  registerProfileRoutes(app, { profiles, lookup });
-  registerCheckoutRoutes(app, { checkouts, queueRef: lookup.queueRef });
-  registerDecisionRoutes(app, checkouts);
-  registerApplyRoutes(app, checkouts);
-  registerAuditRoutes(app, audit);
+  // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
+  // the profile through this one check (profile-access.ts).
+  const profileAccess = new ProfileAccessCheck(profiles, access.kind);
+  const checkoutDeps = { checkouts, access: profileAccess };
+  registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
+  registerProfileRoutes(app, profileAccess);
+  registerCheckoutRoutes(app, checkoutDeps);
+  registerDecisionRoutes(app, checkoutDeps);
+  registerApplyRoutes(app, checkoutDeps);
+  registerAuditRoutes(app, audit, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {

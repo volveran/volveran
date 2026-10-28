@@ -152,6 +152,23 @@ describe('AuditStore', () => {
     expect(store.list({ replayId: 'nope' })).toEqual([]);
   });
 
+  it('records the Operator\'s role, and reads entries written before roles existed back with none', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'audit-store-'));
+    new AuditStore(dir).close();
+    // Turn it back into a version 3 store holding one entry.
+    const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
+    db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
+             VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);
+    db.close();
+
+    store = new AuditStore(dir);
+
+    const id = store.record(entry({ role: 'operator' }));
+    expect(store.get(id)?.role).toBe('operator');
+    expect(store.list()[1]).toMatchObject({ queue: 'orders.dlq', role: null });
+  });
+
   it('upgrades a store written before replay ids existed, keeping its entries', async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'audit-store-'));
     new AuditStore(dir).close();
@@ -159,7 +176,8 @@ describe('AuditStore', () => {
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
     db.exec(`DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;
              ALTER TABLE audit_entries DROP COLUMN restore_of; ALTER TABLE audit_entries DROP COLUMN body_expired_at;
-             DROP INDEX audit_entries_replay_id; ALTER TABLE audit_entries DROP COLUMN replay_id; PRAGMA user_version = 1;`);
+             DROP INDEX audit_entries_replay_id; ALTER TABLE audit_entries DROP COLUMN replay_id;
+             ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 1;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
              VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);
     db.close();

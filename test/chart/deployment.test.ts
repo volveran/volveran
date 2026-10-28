@@ -26,6 +26,11 @@ describe('Deployment', () => {
     expect(env(render(), 'VOLVERAN_OIDC_SCOPES').value).toBe('openid email profile');
   });
 
+  it('names the groups claim, for Roles', () => {
+    expect(env(render(), 'VOLVERAN_OIDC_GROUPS_CLAIM').value).toBe('groups');
+    expect(env(render({ oidc: { groupsClaim: 'teams' } }), 'VOLVERAN_OIDC_GROUPS_CLAIM').value).toBe('teams');
+  });
+
   it('mounts no service account token unless turned on', () => {
     expect(podSpec(render()).automountServiceAccountToken).toBe(false);
     expect(podSpec(render({ pod: { automountServiceAccountToken: true } })).automountServiceAccountToken).toBe(true);

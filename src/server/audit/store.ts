@@ -17,6 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
 import type { AuditAction, AuditDestination, AuditOutcome } from '../../shared/audit.js';
+import type { Role } from '../../shared/roles.js';
 
 export type { AuditAction, AuditDestination, AuditOutcome };
 
@@ -36,6 +37,8 @@ export interface NewAuditEntry {
   at: Date;
   /** Who acted: `id` is the stable identity, `displayName` what people see. */
   operator: Pick<Operator, 'id' | 'displayName'>;
+  /** The Operator's Role on the Broker Profile when they acted (`admin` in Solo Mode). */
+  role?: Role | null;
   /** The Broker Profile's RabbitMQ user, often a shared service account. */
   brokerUser: string;
   profile: string;
@@ -60,8 +63,10 @@ export interface NewAuditEntry {
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'replayId' | 'restoreOf'> {
+export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'role' | 'message' | 'replayId' | 'restoreOf'> {
   id: number;
+  /** The Operator's Role when they acted; null on entries written before v0.3. */
+  role: Role | null;
   replayId: string | null;
   restoreOf: number | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
@@ -91,6 +96,8 @@ export interface AuditQuery {
   profile?: string;
   /** The Operator: their stable id or their display name. */
   operator?: string;
+  /** Leaves out the entries of these Broker Profiles. */
+  excludeProfiles?: string[];
   /** Restores of this Audit Entry. */
   restoreOf?: number;
   /** Entries at or after this time. */
@@ -152,6 +159,8 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_entries_restore_of ON audit_entries (restore_of);
    CREATE INDEX audit_entries_stored_bodies ON audit_entries (created_at, id)
      WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL;`,
+  // v4 (#38): the Operator's Role on the Broker Profile; null on older entries.
+  `ALTER TABLE audit_entries ADD COLUMN operator_role TEXT;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -179,8 +188,8 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -202,6 +211,7 @@ export class AuditStore {
           message?.body ? message.body.length : null,
           entry.replayId ?? null,
           entry.restoreOf ?? null,
+          entry.role ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -233,6 +243,9 @@ export class AuditStore {
     if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
     if (query.replayId !== undefined) match('replay_id = ?', query.replayId);
     if (query.profile !== undefined) match('profile = ?', query.profile);
+    if (query.excludeProfiles?.length) {
+      match(`profile NOT IN (${query.excludeProfiles.map(() => '?').join(', ')})`, ...query.excludeProfiles);
+    }
     if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
     if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
     if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
@@ -353,6 +366,7 @@ interface Row {
   replay_id: string | null;
   restore_of: number | null;
   body_expired_at: number | null;
+  operator_role: Role | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -361,6 +375,7 @@ function toEntry(row: Row): AuditEntry {
     at: new Date(row.created_at),
     operatorId: row.operator_id,
     operatorName: row.operator_name,
+    role: row.operator_role,
     brokerUser: row.broker_user,
     profile: row.profile,
     vhost: row.vhost,

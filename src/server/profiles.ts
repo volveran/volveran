@@ -7,6 +7,13 @@ import path from 'node:path';
 import { parse } from 'yaml';
 import { ConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
+import { ROLES, type Role } from '../shared/roles.js';
+
+/**
+ * Which OIDC groups hold which Role on a Broker Profile (Team Mode). An
+ * Operator in groups of several roles holds the highest of them.
+ */
+export type RoleMapping = Partial<Record<Role, string[]>>;
 
 export interface BrokerProfile {
   name: string;
@@ -27,6 +34,12 @@ export interface BrokerProfile {
   /** Glob on queue names (`*`, `?`); matching queues are dead-letter queues. */
   defaultQueueFilter: string | undefined;
   protected: boolean;
+  /**
+   * Team Mode: the Role each group holds on this profile. Undefined when the
+   * profile has no `roles`: every Operator is `admin` on it (ADR 0007).
+   * Solo Mode ignores it.
+   */
+  roles: RoleMapping | undefined;
 }
 
 /** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
@@ -118,6 +131,7 @@ export function parseProfiles(
       vhosts: parseVhosts(raw.vhosts, where),
       defaultQueueFilter: optionalString(raw, 'defaultQueueFilter', where),
       protected: parseProtected(raw.protected, where),
+      roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
     };
   });
 }
@@ -128,6 +142,24 @@ function parseVhosts(value: unknown, where: string): 'all' | string[] {
     return value as string[];
   }
   throw new ProfilesConfigError(`${where}.vhosts must be "all" or a non-empty list of vhost names`);
+}
+
+function parseRoles(value: unknown, where: string): RoleMapping | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value) || Object.keys(value).length === 0) {
+    throw new ProfilesConfigError(`${where} must be a mapping of viewer, operator or admin to lists of group names`);
+  }
+  const roles: RoleMapping = {};
+  for (const [key, groups] of Object.entries(value)) {
+    if (!(ROLES as readonly string[]).includes(key)) {
+      throw new ProfilesConfigError(`${where}.${key} is not a role; the roles are viewer, operator and admin`);
+    }
+    if (!Array.isArray(groups) || groups.length === 0 || !groups.every((g) => typeof g === 'string' && g !== '')) {
+      throw new ProfilesConfigError(`${where}.${key} must be a non-empty list of group names`);
+    }
+    roles[key as Role] = groups as string[];
+  }
+  return roles;
 }
 
 function parseProtected(value: unknown, where: string): boolean {
