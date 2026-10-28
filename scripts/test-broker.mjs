@@ -2,14 +2,17 @@
 // or down (see README "Development"). The compose project name and host ports
 // come from scripts/test-broker-env.mjs: one broker per checkout, on random
 // free ports unless VOLVERAN_TEST_AMQP_PORT / VOLVERAN_TEST_MGMT_PORT /
-// VOLVERAN_TEST_OIDC_PORT are set.
+// VOLVERAN_TEST_OIDC_PORT / VOLVERAN_TEST_OAUTH_AMQP_PORT /
+// VOLVERAN_TEST_OAUTH_MGMT_PORT are set. The compose file has two brokers:
+// the main one and a second with the OAuth 2.0 backend.
 //
 //   node scripts/test-broker.mjs up
 //   node scripts/test-broker.mjs down
 //   node scripts/test-broker.mjs run -- <command...>   # up, run, down
 //
 // `run` passes the ports to the command as VOLVERAN_TEST_AMQP_PORT,
-// VOLVERAN_TEST_MGMT_PORT and VOLVERAN_TEST_OIDC_PORT, and tears the broker down afterwards (also on
+// VOLVERAN_TEST_MGMT_PORT, VOLVERAN_TEST_OIDC_PORT, VOLVERAN_TEST_OAUTH_AMQP_PORT
+// and VOLVERAN_TEST_OAUTH_MGMT_PORT, and tears the broker down afterwards (also on
 // Ctrl-C) unless VOLVERAN_TEST_KEEP_BROKER=1.
 import { spawn, spawnSync } from 'node:child_process';
 import { composeFile, publishedPorts, repoRoot, testBrokerSettings } from './test-broker-env.mjs';
@@ -22,6 +25,8 @@ const composeEnv = {
   VOLVERAN_TEST_AMQP_PORT: settings.amqpPort ?? '',
   VOLVERAN_TEST_MGMT_PORT: settings.mgmtPort ?? '',
   VOLVERAN_TEST_OIDC_PORT: settings.oidcPort ?? '',
+  VOLVERAN_TEST_OAUTH_AMQP_PORT: settings.oauthAmqpPort ?? '',
+  VOLVERAN_TEST_OAUTH_MGMT_PORT: settings.oauthMgmtPort ?? '',
 };
 
 function compose(...args) {
@@ -55,7 +60,8 @@ async function up() {
   const ports = publishedPorts(settings.project);
   if (!(await waitForOidc(ports.oidcPort))) return { status: 1 };
   console.log(
-    `[test-broker] up: project=${settings.project} amqp=${ports.amqpPort} mgmt=${ports.mgmtPort} oidc=${ports.oidcPort}`,
+    `[test-broker] up: project=${settings.project} amqp=${ports.amqpPort} mgmt=${ports.mgmtPort} oidc=${ports.oidcPort}` +
+      ` oauth-amqp=${ports.oauthAmqpPort} oauth-mgmt=${ports.oauthMgmtPort}`,
   );
   return { status, ports };
 }
@@ -91,6 +97,8 @@ if (command === 'up') {
       VOLVERAN_TEST_AMQP_PORT: started.ports.amqpPort,
       VOLVERAN_TEST_MGMT_PORT: started.ports.mgmtPort,
       VOLVERAN_TEST_OIDC_PORT: started.ports.oidcPort,
+      VOLVERAN_TEST_OAUTH_AMQP_PORT: started.ports.oauthAmqpPort,
+      VOLVERAN_TEST_OAUTH_MGMT_PORT: started.ports.oauthMgmtPort,
     },
     shell: process.platform === 'win32',
   });

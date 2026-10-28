@@ -6,6 +6,8 @@
 #   VOLVERAN_TEST_AMQP_PORT  host AMQP port        (empty: random free port)
 #   VOLVERAN_TEST_MGMT_PORT  host management port  (empty: random free port)
 #   VOLVERAN_TEST_OIDC_PORT  host port of the mock OIDC provider (empty: random free port)
+#   VOLVERAN_TEST_OAUTH_AMQP_PORT / VOLVERAN_TEST_OAUTH_MGMT_PORT  host ports of the
+#                            OAuth 2.0 broker (empty: random free ports)
 #   VOLVERAN_TEST_RABBITMQ_IMAGE  image to test against (default: the pinned tag)
 name: ${VOLVERAN_TEST_PROJECT:-volveran-test}
 
@@ -29,15 +31,42 @@ services:
       retries: 60
       start_period: 5s
 
+  # Second RabbitMQ with the OAuth 2.0 backend only (rabbitmq-oauth.conf),
+  # trusting the mock OIDC provider's signing keys, for the OAuth 2.0 broker
+  # facts. Same image as `rabbitmq`, so the weekly run checks both.
+  rabbitmq-oauth:
+    image: ${VOLVERAN_TEST_RABBITMQ_IMAGE:-rabbitmq:4.4.0-management}
+    ports:
+      - "127.0.0.1:${VOLVERAN_TEST_OAUTH_AMQP_PORT:-}:5672"
+      - "127.0.0.1:${VOLVERAN_TEST_OAUTH_MGMT_PORT:-}:15672"
+    volumes:
+      - ./rabbitmq-oauth.conf:/etc/rabbitmq/conf.d/90-volveran.conf:ro
+      - ./rabbitmq-oauth-plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./oidc-signing-key.pem:/etc/rabbitmq/oidc-signing-key.pem:ro
+    # Waits for the cookie first, as the `rabbitmq` healthcheck does.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/lib/rabbitmq/.erlang.cookie && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 2s
+      timeout: 10s
+      retries: 60
+      start_period: 5s
+
   # Mock OIDC provider for the Team Mode tests. Issuer:
   # http://127.0.0.1:<VOLVERAN_TEST_OIDC_PORT>/default (the issuer follows the
   # Host header). With interactiveLogin, its authorize endpoint accepts a form
   # POST of `username` (becomes `sub`) and `claims` (JSON merged into the ID
-  # token), so tests sign in as anyone. The image has no shell, so there is no
-  # healthcheck: scripts/test-broker.mjs waits for its discovery document.
+  # token and the access token), so tests sign in as anyone. The image has no
+  # shell, so there is no healthcheck: scripts/test-broker.mjs waits for its
+  # discovery document.
+  #
+  # oidc.json pins its signing key (kid `default`), because RabbitMQ only
+  # fetches signing keys over https: `rabbitmq-oauth` is given the public half,
+  # oidc-signing-key.pem, instead of the provider's JWKS URL.
   oidc:
     image: ${VOLVERAN_TEST_OIDC_IMAGE:-ghcr.io/navikt/mock-oauth2-server:2.1.10}
     ports:
       - "127.0.0.1:${VOLVERAN_TEST_OIDC_PORT:-}:8080"
+    volumes:
+      - ./oidc.json:/etc/mock-oauth2-server/config.json:ro
     environment:
-      JSON_CONFIG: '{"interactiveLogin":true}'
+      JSON_CONFIG_PATH: /etc/mock-oauth2-server/config.json

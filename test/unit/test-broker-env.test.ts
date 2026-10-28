@@ -25,7 +25,13 @@ describe('test broker settings', () => {
   });
 
   it('leaves host ports to Docker (random free ports) unless they are set', () => {
-    expect(testBrokerSettings('/x', {})).toMatchObject({ amqpPort: undefined, mgmtPort: undefined, oidcPort: undefined });
+    expect(testBrokerSettings('/x', {})).toMatchObject({
+      amqpPort: undefined,
+      mgmtPort: undefined,
+      oidcPort: undefined,
+      oauthAmqpPort: undefined,
+      oauthMgmtPort: undefined,
+    });
   });
 
   it('honours VOLVERAN_TEST_* overrides', () => {
@@ -34,7 +40,16 @@ describe('test broker settings', () => {
       VOLVERAN_TEST_AMQP_PORT: '5673',
       VOLVERAN_TEST_MGMT_PORT: '15673',
       VOLVERAN_TEST_OIDC_PORT: '18080',
+      VOLVERAN_TEST_OAUTH_AMQP_PORT: '5674',
+      VOLVERAN_TEST_OAUTH_MGMT_PORT: '15674',
     });
-    expect(settings).toEqual({ project: 'mine', amqpPort: '5673', mgmtPort: '15673', oidcPort: '18080' });
+    expect(settings).toEqual({
+      project: 'mine',
+      amqpPort: '5673',
+      mgmtPort: '15673',
+      oidcPort: '18080',
+      oauthAmqpPort: '5674',
+      oauthMgmtPort: '15674',
+    });
   });
 });
