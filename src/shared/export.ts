@@ -1,7 +1,7 @@
 // One line of a Checkout's NDJSON export (POST /api/checkouts/:id/export,
 // src/server/triage/export-line.ts). Types only; the format is documented in
 // the README ("Exporting Messages").
-import type { DeliveryBudget, RenderedBody, XDeathEntry } from './checkout.js';
+import type { DeliveryBudget, FailureDetails, RenderedBody, XDeathEntry } from './checkout.js';
 import type { Decision } from './decisions.js';
 
 /** The version of the line format; a line that changes meaning gets a new one. */
@@ -31,4 +31,6 @@ export interface ExportLine {
   decision: Decision;
   /** Set when the Message carries a Volverán replay id (Died Again); null otherwise. */
   diedAgain: { replayId: string } | null;
+  /** What Spring AMQP or MassTransit wrote about the failure; null when neither did (added in v0.4, same `v`). */
+  failureDetails: FailureDetails | null;
 }

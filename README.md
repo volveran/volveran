@@ -154,6 +154,7 @@ Each line is one JSON object per Message, in queue order:
 | `deliveryBudget` | `{ remaining, warning }` on a quorum queue with a delivery limit, otherwise `null`. |
 | `decision` | The Message's Decision when exported: `{ "kind": "keep" }`, `{ "kind": "discard", "reason": ... }`, `{ "kind": "replay" }` or `{ "kind": "move", "destination": { "queue": ... } \| { "exchange": ..., "routingKey": ... } }`. |
 | `diedAgain` | `{ "replayId": ... }` when the Message carries a Volverán replay id (`x-volveran-replay-id`), otherwise `null`. |
+| `failureDetails` | The Failure Details Spring AMQP or MassTransit wrote into the headers, decoded, otherwise `null` ([Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md)). Added in 0.4 with `v` still `1`. |
 
 `properties` and `headers` use the same lossless AMQP JSON as Audit Entries, so they hold the Message byte for byte: a byte array is `{ "$bytes": "<base64>" }`, a 64-bit integer `{ "$bigint": "<decimal>" }`, and a table with a key starting with `$` is wrapped as `{ "$table": { ... } }`. Typed values such as decimals stay as amqplib decodes them (`{ "!": "decimal", "value": { "places": 2, "digits": 1234 } }`). For example, `jq -r 'select(.bodyKind == "json") | .body | @base64d' export.ndjson` prints the JSON bodies.
 
@@ -162,6 +163,7 @@ Each line is one JSON object per Message, in queue order:
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
 - [Architecture decisions](docs/adr/).
 - [Roadmap](ROADMAP.md).
+- [Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md): what Volverán reads from the failure headers these frameworks write.
 - [How Volverán compares](docs/comparison.md) with Warren, RabbitGUI and RabbitScout.
 
 ## Development

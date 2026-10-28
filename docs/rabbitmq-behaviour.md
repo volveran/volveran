@@ -47,6 +47,23 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 - A dead-letter exchange that routes the dead-letter routing key to no queue drops the Message, on classic and quorum queues alike. A binding added afterwards gets nothing.
 - An alternate exchange on the dead-letter exchange saves the Message: it reaches the alternate exchange's queues.
 
+## Re-dead-letter time
+
+Replay rules measure a Message's back-off from its most recent dead-lettering, read from `x-death`.
+
+- A Message republished with `x-death` removed (as Replay does, ADR 0005) and dead-lettered again carries a single fresh `x-death` entry (`count: 1`) whose `time` is the new dead-lettering, not the first one.
+- `x-death` `time` is an AMQP timestamp: whole seconds since the epoch.
+
+## Canary watch
+
+Canary Replay watches for a Canary that dies again without consuming from the dead-letter queue, through a queue of its own bound to the dead-letter exchange.
+
+- A queue bound to a dead-letter exchange with the same binding as the dead-letter queue receives a copy of a Message dead-lettered there, with `x-volveran-replay-id` intact, and the dead-letter queue still receives its own copy. This holds for direct, fanout and topic dead-letter exchanges, from classic and quorum source queues.
+
+## Watch queue lifetime
+
+- An exclusive, auto-delete queue declared on a connection disappears when that connection closes, whether the client closes it or the socket drops.
+
 ## Publishing
 
 - Publishing to a missing exchange closes only that channel (`404 NOT_FOUND`). Other channels on the connection keep their unacknowledged deliveries.

@@ -1,7 +1,7 @@
 // Helpers for the broker-facts suite: declare throwaway queues and hold
 // Messages unacknowledged while watching what the broker sends back.
 import type * as amqp from 'amqplib';
-import { connect, openChannel, openConfirmChannel, sleep, uniqueName } from '../broker/client.js';
+import { connect, eventually, openChannel, openConfirmChannel, sleep, uniqueName } from '../broker/client.js';
 
 export type QueueType = 'classic' | 'quorum';
 export const queueTypes: QueueType[] = ['classic', 'quorum'];
@@ -158,4 +158,24 @@ export async function next(ch: amqp.Channel, queue: string, waitMs = 1_000, opti
     if (m || Date.now() > deadline) return m;
     await sleep(25);
   }
+}
+
+/** Takes the one Message in `q` with auto-ack, waiting up to 3 s for it. */
+export async function take(ch: amqp.Channel, q: string): Promise<amqp.GetMessage> {
+  return eventually(async () => {
+    const m = await ch.get(q, { noAck: true });
+    if (!m) throw new Error(`nothing in ${q}`);
+    return m;
+  }, 3_000, 100);
+}
+
+/** Takes the one Message in `q` and rejects it without requeue, so it is dead-lettered. */
+export async function deadLetterFrom(ch: amqp.Channel, q: string): Promise<void> {
+  const m = await eventually(async () => {
+    const got = await ch.get(q);
+    if (!got) throw new Error(`nothing in ${q}`);
+    return got;
+  }, 3_000, 100);
+  ch.reject(m, false);
+  await ch.checkQueue(q);
 }

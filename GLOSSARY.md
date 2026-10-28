@@ -62,6 +62,10 @@ _Avoid_: Skip, requeue, ignore
 Said of a Message that Volverán Replayed, Moved or Restored and that has been dead-lettered again, recognised by the replay id (`x-volveran-replay-id`) it carries. How many times it has died again comes from following the replay ids back through the Audit Entries.
 _Avoid_: Repeat offender, recurring, boomerang
 
+**Failure Details**:
+The exception and context a client framework (Spring AMQP, MassTransit) writes into a Message's headers when it gives up on it: the exception type and message, the stack trace, the consumer, the time and the original queue or exchange.
+_Avoid_: Error info, fault (except in MassTransit's own header names)
+
 ## Accountability
 
 **Operator**:

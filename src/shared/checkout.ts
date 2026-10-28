@@ -62,6 +62,38 @@ export interface MessageSummary {
   size: number;
   /** Quorum queues with a delivery limit only; null otherwise. */
   deliveryBudget: DeliveryBudget | null;
+  /** What Spring AMQP or MassTransit wrote about the failure; null when neither did. */
+  failureDetails: FailureDetails | null;
+}
+
+/**
+ * The exception and context a client framework wrote into a Message's
+ * headers when it gave up on it (src/server/triage/failure-details.ts).
+ * Fields the framework did not write are null.
+ */
+export interface FailureDetails {
+  /** Spring AMQP's RepublishMessageRecoverer, or MassTransit. */
+  framework: 'spring' | 'masstransit';
+  exceptionType: string | null;
+  message: string | null;
+  stackTrace: string | null;
+  consumerType: string | null;
+  messageType: string | null;
+  /** When the consumer failed: ISO time, or the header as written when it does not read as a time. */
+  faultAt: string | null;
+  retryCount: number | null;
+  redeliveryCount: number | null;
+  /** MassTransit's `MT-Host-*` headers, by the name after the prefix (e.g. `MachineName`). */
+  host: Record<string, string> | null;
+  /** MassTransit's `MT-Reason`: a fault, or a Message no consumer handled (skip). */
+  reason: 'fault' | 'skip' | null;
+  /** Spring AMQP: where the Message was first published. */
+  originalExchange: string | null;
+  originalRoutingKey: string | null;
+  /** MassTransit: the queue named in `MT-Fault-InputAddress`, the one whose consumer failed. */
+  inputQueue: string | null;
+  /** Other framework headers, as text: Spring's other `x-exception-*`, MassTransit's addresses. */
+  extra: Record<string, string>;
 }
 
 export interface XDeathEntry {

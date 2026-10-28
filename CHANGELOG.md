@@ -12,6 +12,10 @@ All notable changes to Volverán are recorded here. The format is based on
 - An Apply in progress no longer depends on the browser: the heartbeat window is suspended while it runs, so closing the page does not end the Checkout under it. The time limit stays a hard bound: at the limit the Apply attempts no further step, reports the rest `not-attempted` (back in the queue, in order) and the Checkout ends with `endReason: "time-limit"`; until now the time limit waited for the whole Apply. (#54)
 - The web app starts the Apply (or approves it) and then follows its progress on the Checkout, with a progress bar of the Messages done, failed and still to go, and shows the outcome list once the Apply ends. An approver sees that the Apply started on the requester's Checkout, where its progress and outcomes are shown. (#54)
 
+### Added
+
+- Failure Details from Spring AMQP and MassTransit headers. Volverán reads the headers Spring AMQP's `RepublishMessageRecoverer` (`x-exception-*`, `x-original-exchange`, `x-original-routingKey`) and MassTransit (`MT-Reason`, `MT-Fault-*`, `MT-Host-*`) write when they give up on a Message. Message summaries, the Message view and NDJSON export lines gain `failureDetails` (`null` when none; the export stays `v: 1`). Without `x-death`, the dead-letter reason falls back to the exception type and message, and the original queue to MassTransit's input queue. The new filter clause `{ "kind": "failure", "value": ... }` matches the exception type or message in any case. Queues whose name ends in `_error` are listed as dead-letter queues. The web app shows a Failure Details section (stack trace collapsed), a skipped marker for `MT-Reason: skip` and the Failure filter. See [Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md). (#60)
+
 ## [0.3.0] - 2026-10-28
 
 Team safety (see the [roadmap](ROADMAP.md)): Roles per Broker Profile, Approval on Protected Profiles, Broker Profiles that connect with the Operator's own token, Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation.
