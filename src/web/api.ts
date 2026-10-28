@@ -167,6 +167,31 @@ export const api = {
     getJson<{ entry: AuditEntry }>(`/api/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(
       (b) => b.entry,
     ),
+  /**
+   * Downloads the held Messages as NDJSON (those matching `filter`, or every
+   * one) and hands the file to the browser. Recorded as an Audit Entry.
+   */
+  exportMessages: async (id: string, filter?: FilterClause[]) => {
+    const res = await fetch(`/api/checkouts/${segment(id)}/export`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(filter ? { filter } : {}),
+    }).catch((err: Error) => {
+      throw new ApiError(0, 'app_unreachable', `Cannot reach ${product.name}: ${err.message}`);
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => undefined);
+      const { code, message, ...details } = (json?.error ?? {}) as { code?: string; message?: string };
+      throw new ApiError(res.status, code ?? 'http_error', message ?? `Export failed with ${res.status}`, details);
+    }
+    const filename = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'volveran-export.ndjson';
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
   apply: (id: string, confirmQueueName?: string) =>
     getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
