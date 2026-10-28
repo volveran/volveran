@@ -186,6 +186,7 @@ describe('Roles per Broker Profile', () => {
         ['POST', `/api/checkouts/${id}/matching`, { filter: [] }],
         ['POST', `/api/checkouts/${id}/decisions`, { handles: [handle], decision: { kind: 'discard', reason: 'x' } }],
         ['POST', `/api/checkouts/${id}/apply`, { confirm: true, confirmQueueName: queue }],
+        ['POST', `/api/checkouts/${id}/export`, {}],
       ] as Array<[string, string, unknown?]>) {
         const res = await browser.request(method, path, body === undefined ? {} : { body });
         expect(res.status, `${method} ${path}`).toBe(403);

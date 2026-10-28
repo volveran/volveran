@@ -58,6 +58,10 @@ _Avoid_: Transfer, copy, shovel
 Returning a Message to its source queue unchanged at the end of a Checkout, without using up any of its Delivery Budget.
 _Avoid_: Skip, requeue, ignore
 
+**Died Again**:
+Said of a Message that Volverán Replayed, Moved or Restored and that has been dead-lettered again, recognised by the replay id (`x-volveran-replay-id`) it carries. How many times it has died again comes from following the replay ids back through the Audit Entries.
+_Avoid_: Repeat offender, recurring, boomerang
+
 ## Accountability
 
 **Operator**:
