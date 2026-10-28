@@ -111,6 +111,19 @@ describe('x-death filters', () => {
   });
 });
 
+describe('Died Again filter', () => {
+  it('matches a Message carrying a replay id, as text or bytes', () => {
+    expect(matches([{ kind: 'died-again' }], delivery({ headers: { 'x-volveran-replay-id': 'r1' } }))).toBe(true);
+    expect(matches([{ kind: 'died-again' }], delivery({ headers: { 'x-volveran-replay-id': Buffer.from('r1') } }))).toBe(true);
+    expect(matches([{ kind: 'died-again' }], delivery({ headers: { 'x-volveran-from': 'orders.dlq' } }))).toBe(false);
+    expect(matches([{ kind: 'died-again' }], delivery())).toBe(false);
+  });
+
+  it('parses without a value', () => {
+    expect(parseFilter([{ kind: 'died-again' }])).toEqual({ ok: true, filter: [{ kind: 'died-again' }] });
+  });
+});
+
 describe('body text filter', () => {
   it('matches a case-insensitive substring of the body as sent', () => {
     const d = delivery({ body: '{"error":"Card DECLINED","order":42}', contentType: 'application/json' });

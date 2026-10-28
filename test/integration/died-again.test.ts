@@ -157,4 +157,26 @@ describe('Died Again', () => {
 
     expect(message('u-1').diedAgain).toEqual({ replayId: 'replayed-by-another-instance', count: 1, last: null });
   });
+
+  it('selects exactly the Died Again Messages with the died-again filter, as many as the summary counts', async () => {
+    await deadLetter(route, [
+      { body: 'poison', options: { messageId: 'a' } },
+      { body: 'fine', options: { messageId: 'b' } },
+      { body: 'poison', options: { messageId: 'c' } },
+    ]);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== route.dlq));
+    const first = await startCheckout();
+    await decide(first.id, [first.handle('a'), first.handle('c')], REPLAY);
+    await apply(first.id);
+    open.splice(open.indexOf(first.id), 1);
+    await rejectAll();
+
+    const { id, checkout, handle } = await startCheckout();
+    const matching = await app.post(`/api/checkouts/${id}/matching`, { filter: [{ kind: 'died-again' }] });
+
+    expect(matching.status).toBe(200);
+    expect(matching.body.handles.sort()).toEqual([handle('a'), handle('c')].sort());
+    expect(checkout.diedAgainCount).toBe(2);
+    expect(matching.body.count).toBe(checkout.diedAgainCount);
+  });
 });
