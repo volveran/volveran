@@ -5,7 +5,7 @@
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AuditStore } from '../../src/server/audit/store.js';
-import { closedPort, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, type TestApp } from './harness.js';
+import { closedPort, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, withChannel, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, type TestIdentity } from './oidc-provider.js';
 
 const queue = 'triage.manual';
@@ -258,40 +258,57 @@ describe('Roles per Broker Profile', () => {
   });
 });
 
-describe('Audit Entries of a Broker Profile no longer configured', () => {
+describe('Audit Entries of a Broker Profile the Operator has no role on, or no longer configured', () => {
   let app: TestApp;
   let baseUrl: string;
   let dataDir: string;
   let retired: number;
+  let secretReplay: number;
   const body = Buffer.from('{"card":"4111"}');
 
   beforeAll(async () => {
     dataDir = await makeTempDir('roles-retired');
     const store = new AuditStore(dataDir);
-    retired = store.record({
-      at: new Date(),
-      operator: { id: 'someone', displayName: 'someone' },
-      brokerUser: 'volveran-admin',
-      profile: 'retired',
-      vhost: '/',
-      queue,
-      messageId: 'm-1',
-      action: 'discard',
-      reason: 'bad payload',
-      destination: null,
-      checkoutId: 'c',
-      message: { body, properties: { messageId: 'm-1' }, headers: {} },
-    });
+    const recorded = (profile: string, action: 'discard' | 'replay', replayId: string | null) =>
+      store.record({
+        at: new Date(),
+        operator: { id: 'someone', displayName: 'someone' },
+        brokerUser: 'volveran-admin',
+        profile,
+        vhost: '/',
+        queue,
+        messageId: 'm-1',
+        action,
+        reason: action === 'discard' ? 'bad payload' : null,
+        destination: null,
+        checkoutId: 'c',
+        message: { body, properties: { messageId: 'm-1' }, headers: {} },
+        replayId,
+      });
+    retired = recorded('retired', 'discard', null);
+    secretReplay = recorded('secret', 'replay', 'r-secret');
     store.close();
     const port = await closedPort();
     baseUrl = `http://127.0.0.1:${port}`;
+    const nowhere = await closedPort();
     // Every configured profile has roles: an Operator in no mapped group has no role anywhere.
     app = await startApp({
-      profiles: [testProfile({ name: 'prod', roles: { viewer: ['support'], operator: ['oncall'], admin: ['platform'] } })],
+      profiles: [
+        testProfile({ name: 'prod', roles: { viewer: ['support'], operator: ['oncall', 'platform'] } }),
+        testProfile({
+          name: 'secret',
+          managementUrl: `http://127.0.0.1:${nowhere}`,
+          amqpUrl: `amqp://127.0.0.1:${nowhere}`,
+          roles: { admin: ['platform'] },
+        }),
+      ],
       port,
       env: teamModeEnv(baseUrl),
       dataDir,
     });
+  });
+  afterEach(async () => {
+    await purgeQueues('/', [queue]);
   });
   afterAll(async () => {
     await app?.close();
@@ -331,6 +348,24 @@ describe('Audit Entries of a Broker Profile no longer configured', () => {
     expect(refused.status).toBe(403);
     expect(refused.body.error.code).toBe('no_role');
     expect((await (await signedIn(vera)).get('/api/audit-store')).status).toBe(200);
+  });
+
+  it('flags a Died Again Message without the Audit Entry that sent it out when the Operator has no role on its profile', async () => {
+    await withChannel('/', async (ch) => {
+      ch.sendToQueue(queue, Buffer.from('again'), { messageId: 'm-1', headers: { 'x-volveran-replay-id': 'r-secret' } });
+      await ch.waitForConfirms();
+    });
+    for (const [identity, last] of [
+      [otto, null],
+      [ada, expect.objectContaining({ auditEntryId: secretReplay })],
+    ] as const) {
+      const browser = await signedIn(identity);
+      const started = await browser.post(checkoutPath('prod'));
+      expect(started.status).toBe(201);
+      const { checkout } = started.body;
+      expect(checkout.messages[0].diedAgain).toEqual({ replayId: 'r-secret', count: 1, last });
+      expect((await browser.request('DELETE', `/api/checkouts/${checkout.id}`)).status).toBe(200);
+    }
   });
 });
 

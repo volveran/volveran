@@ -57,7 +57,8 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
       const { overrideConsumers = false } = body;
       if (typeof overrideConsumers !== 'boolean') throw new InvalidRequestError('"overrideConsumers" must be true or false.');
       const target = access.queue(operatorOf(req), 'checkout', profile, vhost, queue);
-      const checkout = await checkouts.start(target, operatorOf(req), { overrideConsumers });
+      const auditScope = access.auditScope(operatorOf(req), 'read_audit_entries');
+      const checkout = await checkouts.start(target, operatorOf(req), { overrideConsumers, auditScope });
       return reply.status(201).send({ checkout });
     },
   );
