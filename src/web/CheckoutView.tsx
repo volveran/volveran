@@ -32,6 +32,7 @@ import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { FilterBar } from './FilterBar.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
+import { SignInAgain } from './SignInAgain.js';
 import type { KeyboardCommand } from './keyboard-commands.js';
 
 /** An open prompt: the Discard reason or Move destination for some Messages, or the shortcut list. */
@@ -499,6 +500,7 @@ function ErrorBox({ error }: { error: ApiError }) {
     <div className="error" role="alert">
       <p>{error.message}</p>
       <code>{error.code}</code>
+      <SignInAgain error={error} />
     </div>
   );
 }
