@@ -1,5 +1,5 @@
 // The Message filter: conditions that must all hold (routing key, header,
-// x-death reason, original queue, body text, JSON path). Submitting narrows
+// x-death reason, original queue, body text, JSON path, Died Again). Submitting narrows
 // the Message list; "Select all matching" lives with the list. `/` focuses
 // the first condition's value (firstFieldRef).
 import { useState, type Ref } from 'react';
@@ -14,6 +14,8 @@ const KINDS: Array<{ kind: Kind; label: string; placeholder: string }> = [
   { kind: 'original-queue', label: 'Original queue', placeholder: 'orders.work (wildcards allowed)' },
   { kind: 'body-text', label: 'Body text', placeholder: 'text in the body (any case)' },
   { kind: 'json-path', label: 'JSON path', placeholder: 'value (empty = path present)' },
+  // Takes no value: the Messages that came back after a Replay, Move or Restore.
+  { kind: 'died-again', label: 'Died Again', placeholder: '' },
 ];
 
 /** A clause being edited: every field as text, turned into a FilterClause on submit. */
@@ -25,6 +27,7 @@ interface Draft {
 }
 
 function toClause(d: Draft): FilterClause | undefined {
+  if (d.kind === 'died-again') return { kind: 'died-again' };
   const value = d.value;
   if (d.kind === 'header') return d.key.trim() ? { kind: 'header', name: d.key.trim(), ...(value ? { value } : {}) } : undefined;
   if (d.kind === 'json-path') return d.key.trim() ? { kind: 'json-path', path: d.key.trim(), ...(value ? { value } : {}) } : undefined;
@@ -81,14 +84,16 @@ export function FilterBar({
                 onChange={(e) => update(i, { key: e.target.value })}
               />
             )}
-            <input
-              ref={i === 0 ? firstFieldRef : undefined}
-              type="search"
-              aria-label={`${meta.label} value`}
-              placeholder={meta.placeholder}
-              value={d.value}
-              onChange={(e) => update(i, { value: e.target.value })}
-            />
+            {d.kind !== 'died-again' && (
+              <input
+                ref={i === 0 ? firstFieldRef : undefined}
+                type="search"
+                aria-label={`${meta.label} value`}
+                placeholder={meta.placeholder}
+                value={d.value}
+                onChange={(e) => update(i, { value: e.target.value })}
+              />
+            )}
             {drafts.length > 1 && (
               <button
                 type="button"

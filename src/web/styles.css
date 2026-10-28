@@ -168,6 +168,14 @@ main {
   border: 1px solid var(--warning);
 }
 
+/* A Message that came back after a Replay, Move or Restore. */
+.badge.died-again {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+  margin-left: 4px;
+}
+
 .held {
   color: var(--warning);
   font-size: 0.9em;

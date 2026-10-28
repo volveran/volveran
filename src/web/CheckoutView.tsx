@@ -18,6 +18,7 @@ import {
   ApiError,
   type Checkout,
   type Decision,
+  type DiedAgain,
   type FilterClause,
   type MessageDetail,
   type MessageRow,
@@ -153,9 +154,15 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
       setCheckout(res.checkout);
       setReceivedAt(Date.now());
       setError(undefined);
+      const notices: string[] = [];
       if (res.rejected.length > 0) {
-        setNotice(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
+        notices.push(`${res.rejected.length} Message(s) kept their Decision: ${res.rejected[0]!.reason}`);
       }
+      if (decision.kind === 'replay') {
+        const diedAgain = res.checkout.messages.filter((m) => handles.includes(m.handle) && m.diedAgain).length;
+        if (diedAgain > 0) notices.push(replayWarning(diedAgain));
+      }
+      if (notices.length > 0) setNotice(notices.join(' '));
     } catch (err) {
       setError(err as ApiError);
     } finally {
@@ -253,6 +260,12 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             {new Date(checkout.startedAt).toLocaleTimeString()}
           </p>
           <p className="held">{heldLine(checkout)}</p>
+          {checkout.diedAgainCount > 0 && (
+            <p className="died-again-count">
+              <span className="badge died-again">Died Again</span> {checkout.diedAgainCount} of the held Messages came
+              back after a Replay, Move or Restore.
+            </p>
+          )}
           {active && (
             <p className="countdown" title={`Ends itself at ${new Date(checkout.endsAt).toLocaleTimeString()}`}>
               Ends in {formatCountdown(checkout.remainingMs - (now - receivedAt))}
@@ -409,6 +422,7 @@ function messageLabel(m: MessageRow): string {
     `routing key ${m.routingKey}`,
     m.deadLetterReason && `dead-lettered: ${m.deadLetterReason}`,
     !m.replay.available && 'no Replay',
+    m.diedAgain && `Died Again ${timesText(m.diedAgain.count)}`,
   ]
     .filter(Boolean)
     .join(', ');
@@ -506,6 +520,7 @@ function MessageList(props: {
                       no Replay
                     </span>
                   )}
+                  {m.diedAgain && <DiedAgainBadge diedAgain={m.diedAgain} />}
                 </td>
                 <td className="name">{m.messageId ?? <em>none</em>}</td>
                 <td>{m.routingKey}</td>
@@ -531,10 +546,67 @@ function MessageList(props: {
   );
 }
 
+const ACTION_DONE: Record<NonNullable<DiedAgain['last']>['action'], string> = {
+  replay: 'Replayed',
+  move: 'Moved',
+  restore: 'Restored',
+};
+
+const timesText = (count: number) => (count === 1 ? 'once' : `${count} times`);
+
+function replayWarning(diedAgain: number): string {
+  return `${diedAgain} of these Messages already died again after being sent back: their consumer failed on them before. Replay them only once the cause is fixed.`;
+}
+
+/** The Audit Entry, as the API returns it (the web app has no page for one entry). */
+function AuditEntryLink({ id }: { id: number }) {
+  return (
+    <a href={`/api/audit-entries/${id}`} target="_blank" rel="noreferrer">
+      Audit Entry {id}
+    </a>
+  );
+}
+
+function DiedAgainBadge({ diedAgain: d }: { diedAgain: DiedAgain }) {
+  const how = d.last
+    ? `${ACTION_DONE[d.last.action]} by ${d.last.operatorName} on ${new Date(d.last.at).toLocaleString()} (Audit Entry ${d.last.auditEntryId})`
+    : 'No Audit Entry here has its replay id';
+  return (
+    <span className="badge died-again" title={`Died Again ${timesText(d.count)}. ${how}.`}>
+      Died Again{d.count > 1 ? ` ×${d.count}` : ''}
+    </span>
+  );
+}
+
+/** The Message view's account of a Died Again Message, linked to the Audit Entry that last sent it out. */
+function DiedAgainNote({ diedAgain: d }: { diedAgain: DiedAgain }) {
+  return (
+    <div className="warning died-again-note">
+      <p>
+        <strong>Died Again {timesText(d.count)}.</strong>{' '}
+        {d.last ? (
+          <>
+            {ACTION_DONE[d.last.action]} from {d.last.fromQueue} by {d.last.operatorName} on{' '}
+            {new Date(d.last.at).toLocaleString()} (<AuditEntryLink id={d.last.auditEntryId} />), then dead-lettered
+            again.
+          </>
+        ) : (
+          <>
+            No Audit Entry here has its replay id <code>{d.replayId}</code>: another {product.name} instance may have sent
+            it out.
+          </>
+        )}
+      </p>
+      <p>Its consumer already failed on it after it was sent back: Replay it only once the cause is fixed.</p>
+    </div>
+  );
+}
+
 function MessageDetailView({ message: m }: { message: MessageDetail }) {
   return (
     <div className="message-detail">
       <h3>{m.messageId ?? 'Message without message_id'}</h3>
+      {m.diedAgain && <DiedAgainNote diedAgain={m.diedAgain} />}
       {m.deliveryBudget?.warning && (
         <div className="warning">
           <p>{m.deliveryBudget.warning}</p>

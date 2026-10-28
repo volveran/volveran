@@ -12,6 +12,7 @@ export type { AuditAction, AuditOutcome } from '../shared/audit.js';
 export type {
   CheckoutHolder,
   DeliveryBudget,
+  DiedAgain,
   MessageDetail,
   MessageOutcome,
   MessageRow,
