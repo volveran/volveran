@@ -233,6 +233,7 @@ describe('Checkout in Team Mode', () => {
     const routes: Array<[method: string, route: string, body?: unknown]> = [
       ['GET', '/api/checkouts/:id'],
       ['GET', '/api/checkouts/:id/messages/1'],
+      ['GET', '/api/checkouts/:id/compare?a=1&b=2'],
       ['POST', '/api/checkouts/:id/heartbeat', {}],
       ['POST', '/api/checkouts/:id/matching', { filter: [] }],
       ['POST', '/api/checkouts/:id/decisions', { handles: [1], decision: { kind: 'discard', reason: 'Not needed' } }],
