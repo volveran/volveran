@@ -31,7 +31,7 @@ The action the user has assigned to one Message in a Checkout: Discard, Replay, 
 _Avoid_: Action, mark, plan item, Undecided
 
 **Apply**:
-Carrying out all the Decisions of a Checkout against the broker in one step.
+Carrying out all the Decisions of a Checkout against the broker, confirmed once. It runs in the background, one Message at a time, and ends the Checkout.
 _Avoid_: Commit, execute, submit
 
 **Message**:

@@ -11,7 +11,7 @@
 //   GET  /api/approvals                              → { approvals: ApprovalSummary[] }
 //   GET  /api/approvals/:checkoutId                  → { checkout }  read-only, the owner's shape
 //   GET  /api/approvals/:checkoutId/messages/:handle → { message }
-//   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → { checkout, outcomes }
+//   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → 202 { checkout }  the Apply started, as for the owner's Apply
 //   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
 //
 // Errors: 409 `approval_not_required` (the Apply needs none), 409
@@ -78,11 +78,11 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
 
   app.post<{ Params: { checkoutId: string }; Body: { confirmQueueName?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/approve',
-    async (req) => {
+    async (req, reply) => {
       const checkout = awaiting(req);
       requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
       // Nothing awaits between these checks and approve() taking the request.
-      return checkouts.approve(checkout.id, operatorOf(req));
+      return reply.code(202).send({ checkout: checkouts.approve(checkout.id, operatorOf(req)) });
     },
   );
 

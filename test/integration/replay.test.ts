@@ -6,6 +6,7 @@
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  applyAndWait,
   deadLetter,
   deadLetterRoutes,
   drain,
@@ -39,7 +40,8 @@ describe('Replay', () => {
   }
   const decide = (id: string, handles: number[], decision: unknown) =>
     app.post(`/api/checkouts/${id}/decisions`, { handles, decision });
-  const apply = (id: string) => app.post(`/api/checkouts/${id}/apply`, { confirm: true });
+  /** Applies and waits for the Apply to end; answers with the Checkout and its outcomes. */
+  const apply = (id: string) => applyAndWait(app, `/api/checkouts/${id}/apply`, { confirm: true });
 
   /** A queue that only this test uses; deleted after the test. */
   async function tempQueue(prefix: string, setup: (ch: amqp.ConfirmChannel, name: string) => Promise<unknown>) {
@@ -100,7 +102,7 @@ describe('Replay', () => {
 
       const applied = await apply(id);
 
-      expect(applied.status).toBe(200);
+      expect(applied.status).toBe(202);
       expect(applied.body.outcomes).toEqual([
         { handle: handle('r-1'), messageId: 'r-1', decision: REPLAY, status: 'done', reason: null },
       ]);
@@ -132,7 +134,7 @@ describe('Replay', () => {
     const { id, handle } = await startCheckout('orders.dlq');
     await decide(id, [handle('a'), handle('b')], REPLAY);
 
-    expect((await apply(id)).status).toBe(200);
+    expect((await apply(id)).status).toBe(202);
 
     const arrived = await take('orders.work');
     expect(arrived.map((m) => m.properties.messageId)).toEqual(['a', 'b']);
@@ -153,7 +155,7 @@ describe('Replay', () => {
     const { id, handle } = await startCheckout('payments.dlq');
     await decide(id, [handle('p-1')], REPLAY);
 
-    expect((await apply(id)).status).toBe(200);
+    expect((await apply(id)).status).toBe(202);
 
     const { entries } = (await app.get(`/api/audit-entries?checkoutId=${id}`)).body;
     expect(entries).toEqual([
@@ -200,7 +202,7 @@ describe('Replay', () => {
 
     const applied = await apply(id);
 
-    expect(applied.status).toBe(200);
+    expect(applied.status).toBe(202);
     const status = Object.fromEntries(applied.body.outcomes.map((o: any) => [o.messageId, [o.status, o.reason]]));
     expect(status).toEqual({
       lost: ['failed', expect.stringContaining(doomed)],

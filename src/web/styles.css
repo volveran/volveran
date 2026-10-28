@@ -499,6 +499,30 @@ dialog.prompt .confirm {
 .outcomes {
   margin: 1rem 0;
 }
+.apply-progress {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.apply-progress p {
+  margin: 0.4rem 0;
+}
+.progress-bar {
+  display: flex;
+  height: 10px;
+  margin: 0.5rem 0;
+  border-radius: 5px;
+  background: var(--border);
+  overflow: hidden;
+}
+.progress-done {
+  background: var(--accent);
+}
+.progress-failed {
+  background: var(--danger);
+}
 .awaiting-approval {
   margin: 0.75rem 0;
   border: 1px solid var(--border);

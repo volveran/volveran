@@ -4,6 +4,7 @@ import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
 import type { CheckoutTiming } from '../triage/checkout-timing.js';
+import type { ApplyProgressTracker } from '../apply/progress.js';
 import type { ActionDecision } from '../triage/decisions.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 import type { Role } from '../../shared/roles.js';
@@ -97,11 +98,31 @@ export interface Checkout extends QueueRef {
   /** Decisions other than Keep, by Message handle (staging.ts); a Message missing here is Keep. */
   decisions: Map<number, ActionDecision>;
   /**
-   * The Apply in progress, if any. Ending the Checkout (the Operator, its
-   * time limit, a missing heartbeat, shutdown) waits for it, so a Message
-   * whose step is done is never returned and a step is never cut short.
+   * The Apply running in the background, if any. Ending the Checkout (the
+   * Operator, shutdown) waits for it, so a Message whose step is done is never
+   * returned and a step is never cut short; the time limit asks it to stop
+   * before its next step.
    */
-  applying: Promise<unknown> | null;
+  applying: RunningApply | null;
+  /** The progress of the Checkout's Apply, from the moment it starts; kept once it has run. */
+  applyProgress: ApplyProgressTracker | null;
   /** The Apply's result, once it has run. */
   lastApply: AppliedResult | null;
+}
+
+/** An Apply running in the background on a Checkout (manager.ts). */
+export interface RunningApply {
+  /** Settles once the Apply has run and the Checkout has ended; never rejects. */
+  settled: Promise<void>;
+  /** Set to make the executor attempt no further step; null while it goes on. */
+  stop: ApplyStop | null;
+}
+
+/** Why an Apply attempts no further step, and how the Checkout ends afterwards. */
+export interface ApplyStop {
+  /** The reason of every step left `not-attempted`. */
+  reason: string;
+  endReason: EndReason;
+  /** The Operator who stopped it (display name), for `applyProgress.stoppedBy`; null for the time limit. */
+  stoppedBy: string | null;
 }

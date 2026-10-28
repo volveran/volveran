@@ -2,7 +2,7 @@
 // provider of test/broker/docker-compose.yml), every API route needs a
 // session, and the Operator is the signed-in identity.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { closedPort, purgeQueues, readyCount, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
+import { applyAndWait, closedPort, purgeQueues, readyCount, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, testOidc } from './oidc-provider.js';
 
 const alice = { sub: 'alice-sub-1', email: 'alice@example.com', name: 'Alice Doe' };
@@ -285,7 +285,7 @@ describe('Checkout in Team Mode', () => {
       const handle = (await a.get(`/api/checkouts/${id}`)).body.checkout.messages[0].handle;
       await a.post(`/api/checkouts/${id}/decisions`, { handles: [handle], decision: { kind: 'discard', reason: 'Not needed' } });
 
-      expect((await a.post(`/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(200);
+      expect((await applyAndWait(a, `/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(202);
 
       const { entries } = (await a.get(`/api/audit-entries?checkoutId=${id}`)).body;
       expect(entries).toEqual([

@@ -8,7 +8,7 @@
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { connectWithToken, managementWithToken, oauthBroker, oauthBrokerLog, signIn } from '../broker/oauth.js';
-import { closedPort, sleep, startApp, type ProfileFixture, type TestApp } from './harness.js';
+import { applyAndWait, closedPort, sleep, startApp, type ProfileFixture, type TestApp } from './harness.js';
 import { startShortTokenProvider, teamModeEnv, testOidc, TestBrowser, type ShortTokenProvider, type TestIdentity } from './oidc-provider.js';
 
 const LIFETIME_SECONDS = 6;
@@ -155,8 +155,8 @@ describe("Refreshing the Operator's token", () => {
       decision: DISCARD,
     });
     expect(decided.status).toBe(200);
-    const applied = await browser.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true });
-    expect(applied.status, JSON.stringify(applied.body)).toBe(200);
+    const applied = await applyAndWait(browser, `/api/checkouts/${checkout.id}/apply`, { confirm: true });
+    expect(applied.status, JSON.stringify(applied.body)).toBe(202);
     expect(applied.body.outcomes.map((o: any) => o.status)).toEqual(['done', 'kept']);
     expect((await ready(CLASSIC)).map((m) => m.id)).toEqual([`${CLASSIC}-1`]);
     const entries = (await browser.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body.entries;

@@ -2,9 +2,11 @@
 // Message at a time. Each step is independent and there is no rollback: a
 // failed step leaves its Message held, so it falls back to Keep.
 //
-// Before every step it asks whether the Checkout is still active: once it is
-// not (a Lost Checkout: the connection or channel closed), the remaining
-// steps are not attempted; the broker has already put their Messages back.
+// Before every step it asks whether to go on (`stopReason`): once told to
+// stop (a Lost Checkout, whose Messages the broker has already put back, or
+// the Checkout's time limit), the remaining steps are not attempted, with the
+// reason given. A step in progress always finishes. Each step's outcome is
+// reported as it settles (`onStep`), for the Apply's progress.
 //
 // For every attempted step an Audit Entry is written as `pending` (for a
 // Discard, with the full Message, in a durable commit) before the broker is
@@ -16,6 +18,8 @@ import { handlerFor } from './handlers.js';
 import { AckUncertainError, type ApplyContext, type AuditDetails, type HeldMessage, type MessageOutcome, type StepResult } from './types.js';
 
 const KIND_LABEL: Record<ActionDecision['kind'], string> = { discard: 'Discard', replay: 'Replay', move: 'Move' };
+/** The reason of a step not attempted because the Checkout stopped being active (a Lost Checkout). */
+export const NOT_ACTIVE_REASON = 'The Checkout stopped being active before this Message; it is back in the queue.';
 
 export interface ApplyRun {
   plan: ApplyPlan;
@@ -23,8 +27,14 @@ export interface ApplyRun {
   messages: ReadonlyMap<number, HeldMessage>;
   ctx: ApplyContext;
   audit: AuditStore;
-  /** False once the Checkout can no longer act on the broker; asked before every step. */
-  usable(): boolean;
+  /**
+   * Asked before every step: null to carry it out, or why no further step is
+   * attempted (the Checkout stopped being active, reached its time limit),
+   * which becomes the reason of each step left.
+   */
+  stopReason(): string | null;
+  /** Called as each step settles (done, failed or not attempted), in plan order. */
+  onStep?(outcome: MessageOutcome): void;
   /** Called as soon as a step is done, so its Message is no longer treated as held. */
   onDone(handle: number): void;
   /** Test seam: awaited after a step's `pending` Audit Entry is written, before the step touches the broker. */
@@ -40,8 +50,11 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     const id = messages.get(handle)?.properties.messageId;
     return typeof id === 'string' ? id : id == null ? null : String(id);
   };
-  const outcome = (handle: number, decision: Decision, status: MessageOutcome['status'], reason: string | null = null) =>
-    outcomes.set(handle, { handle, messageId: messageIdOf(handle), decision, status, reason });
+  const outcome = (handle: number, decision: Decision, status: MessageOutcome['status'], reason: string | null = null) => {
+    const o = { handle, messageId: messageIdOf(handle), decision, status, reason };
+    outcomes.set(handle, o);
+    if (status !== 'kept') run.onStep?.(o);
+  };
 
   for (const handle of plan.kept) outcome(handle, { kind: 'keep' }, 'kept');
 
@@ -57,8 +70,9 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       );
       continue;
     }
-    if (!message || !run.usable()) {
-      outcome(handle, decision, 'not-attempted', 'The Checkout stopped being active before this Message; it is back in the queue.');
+    const stop = message ? run.stopReason() : NOT_ACTIVE_REASON;
+    if (!message || stop !== null) {
+      outcome(handle, decision, 'not-attempted', stop ?? NOT_ACTIVE_REASON);
       continue;
     }
 

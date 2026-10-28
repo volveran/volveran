@@ -32,7 +32,7 @@ export function view(c: Checkout): CheckoutView {
     endsAt: c.endsAt.toISOString(),
     remainingMs: c.status === 'active' ? remainingMs(c.endsAt, new Date()) : 0,
     heartbeatWindowMs: c.timing.heartbeatWindowMs,
-    status: c.status === 'active' && c.approvalRequest ? 'awaiting_approval' : c.status,
+    status: statusOf(c),
     lostReason: c.lostReason,
     endReason: c.endReason,
     readyAtStart: c.readyAtStart,
@@ -60,8 +60,17 @@ export function view(c: Checkout): CheckoutView {
     }),
     approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString() },
     rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
+    applyProgress: c.applyProgress?.view() ?? null,
     lastApply: c.lastApply,
   };
+}
+
+/** An Applying Checkout stays `applying` until the Apply has ended it and returned the rest; a lost one shows `lost` at once. */
+function statusOf(c: Checkout): CheckoutView['status'] {
+  if (c.status === 'lost') return 'lost';
+  if (c.applying) return 'applying';
+  if (c.status !== 'active') return c.status;
+  return c.approvalRequest ? 'awaiting_approval' : 'active';
 }
 
 /** A Checkout waiting for Approval, as the approvers' list shows it. */

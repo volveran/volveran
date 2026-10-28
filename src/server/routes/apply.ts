@@ -1,6 +1,11 @@
 // The Apply route: carries out a Checkout's Decisions (ADR 0001).
 //
-//   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName? }  → { checkout, outcomes: MessageOutcome[] }
+//   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName? }  → 202 { checkout }
+//
+// The Apply runs in the background (ADR 0009): the answer comes at once,
+// with the Checkout `applying`. Its view shows the Apply's progress
+// (`applyProgress`), then the outcome for each Message (`lastApply`) once
+// the Checkout has ended. Every refusal below answers before anything starts.
 //
 // On a Protected Profile, an Apply with any Decision other than Keep also needs
 // `confirmQueueName` (400 `queue_name_confirmation_required`, protected-profile.ts).
@@ -12,7 +17,7 @@
 // `requireApproval`, any Decision other than Keep) it answers 409
 // `approval_required`, and `awaiting_approval` once requested: the owner
 // requests Approval instead (routes/approvals.ts).
-// A dropped connection mid-Apply is not an error: the response lists what was
+// A dropped connection mid-Apply is not an error: the outcomes list what was
 // done and what went back to the queue, and the Checkout is `lost`.
 import type { FastifyInstance } from 'fastify';
 import { ApplyError } from '../apply/errors.js';
@@ -47,11 +52,11 @@ export function checkApplyConfirmation(checkout: CheckoutView, body: ApplyReques
 
 export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts } = deps;
-  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', async (req) => {
+  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', async (req, reply) => {
     const { role } = checkoutAccess(deps, req, 'checkout');
     // 404 for an unknown Checkout before asking for confirmation. Nothing
     // awaits between this check and apply() reading the Decisions.
     checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-    return checkouts.apply(req.params.id, role);
+    return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role) });
   });
 }
