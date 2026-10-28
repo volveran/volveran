@@ -97,4 +97,64 @@ describe('Died Again', () => {
     });
     expect(message('f-1').diedAgain).toBeNull();
   });
+
+  it('counts 2 after a second round trip, following the chain through the earlier Audit Entry', async () => {
+    await deadLetter(route, [{ body: 'poison', options: { messageId: 'p-2' } }]);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== route.dlq));
+    await sendOut('p-2', REPLAY);
+    await rejectAll();
+    const second = await sendOut('p-2', REPLAY);
+    await rejectAll();
+
+    const { id, handle, message } = await startCheckout();
+
+    expect(message('p-2').diedAgain).toMatchObject({ replayId: second.replayId, count: 2, last: { auditEntryId: second.id } });
+    // The Message view says the same.
+    const view = await app.get(`/api/checkouts/${id}/messages/${handle('p-2')}`);
+    expect(view.body.message.diedAgain).toEqual(message('p-2').diedAgain);
+  });
+
+  it('flags a Moved Message that comes back', async () => {
+    await deadLetter(route, [{ body: 'poison', options: { messageId: 'm-1' } }]);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== route.dlq));
+    const move = await sendOut('m-1', { kind: 'move', destination: { queue: route.workQueue } });
+    await rejectAll();
+
+    const { message } = await startCheckout();
+
+    expect(message('m-1').diedAgain).toMatchObject({ count: 1, last: { auditEntryId: move.id, action: 'move', fromQueue: route.dlq } });
+  });
+
+  it('flags a Restored Message that comes back, counting the trip before its Discard', async () => {
+    await deadLetter(route, [{ body: 'poison', options: { messageId: 'r-1' } }]);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== route.dlq));
+    await sendOut('r-1', REPLAY);
+    await rejectAll();
+    const discard = await sendOut('r-1', { kind: 'discard', reason: 'looked broken' });
+    const restored = await app.post(`/api/audit-entries/${discard.id}/restore`, { confirm: true, queue: route.workQueue });
+    expect(restored.status).toBe(200);
+    await rejectAll();
+
+    const { message } = await startCheckout();
+
+    expect(message('r-1').diedAgain).toMatchObject({
+      replayId: restored.body.entry.replayId,
+      count: 2,
+      last: { auditEntryId: restored.body.entry.id, action: 'restore', fromQueue: route.dlq },
+    });
+  });
+
+  it('flags a Message whose replay id has no Audit Entry here, with no entry', async () => {
+    await withChannel('/', async (ch) => {
+      ch.sendToQueue(route.dlq, Buffer.from('elsewhere'), {
+        messageId: 'u-1',
+        headers: { 'x-volveran-replay-id': 'replayed-by-another-instance' },
+      });
+      await ch.waitForConfirms();
+    });
+
+    const { message } = await startCheckout();
+
+    expect(message('u-1').diedAgain).toEqual({ replayId: 'replayed-by-another-instance', count: 1, last: null });
+  });
 });
