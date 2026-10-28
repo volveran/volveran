@@ -142,7 +142,7 @@ names the missing value.
 | `oidc.clientId` | required | OIDC client ID. |
 | `oidc.redirectUrl` | required | The public callback URL the OIDC client registers, ending in `/auth/callback`, for example `https://volveran.example.com/auth/callback`. An `https` URL makes the session cookies `Secure`, also behind a TLS-terminating Gateway. |
 | `oidc.scopes` | `openid email profile` | Space-separated scopes; must include `openid`. |
-| `oidc.groupsClaim` | `groups` | The ID token claim holding the Operator's groups (`VOLVERAN_OIDC_GROUPS_CLAIM`), which each profile's `roles` maps. |
+| `oidc.groupsClaim` | `groups` | The claim holding the Operator's groups (`VOLVERAN_OIDC_GROUPS_CLAIM`), which each profile's `roles` maps: a name or dotted path such as `realm_access.roles`, read from the ID token, else from userinfo. |
 | `oidc.existingSecret` | required | An existing Secret holding the OIDC client secret and the session secret. |
 | `oidc.clientSecretKey` | `client-secret` | Key of `oidc.existingSecret` holding the OIDC client secret. |
 | `oidc.sessionSecretKey` | `session-secret` | Key of `oidc.existingSecret` holding the session secret (at least 32 characters; it signs the session cookies). |
