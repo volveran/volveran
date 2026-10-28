@@ -92,7 +92,7 @@ describe('Approval', () => {
     expect([refused.status, refused.body.error.code]).toEqual([409, 'approval_required']);
 
     // The request needs the same confirmation as the Apply.
-    const untyped = await requestApproval(requester, id, undefined);
+    const untyped = await requestApproval(requester, id, null);
     expect([untyped.status, untyped.body.error.code]).toEqual([400, 'queue_name_confirmation_required']);
     const requested = await requestApproval(requester, id);
     expect(requested.status).toBe(200);
