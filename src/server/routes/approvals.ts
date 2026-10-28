@@ -1,6 +1,6 @@
 // Approval routes (Team Mode, a Protected Profile with `requireApproval`):
 // the owner of a Checkout requests Approval of its Apply instead of Applying,
-// and a second Operator approves it.
+// and a second Operator approves or rejects it.
 //
 // The owner (under /api/checkouts/:id, so the owner check of
 // routes/checkouts.ts applies):
@@ -12,14 +12,18 @@
 //   GET  /api/approvals/:checkoutId                  → { checkout }  read-only, the owner's shape
 //   GET  /api/approvals/:checkoutId/messages/:handle → { message }
 //   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → { checkout, outcomes }
+//   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
 //
 // Errors: 409 `approval_not_required` (the Apply needs none), 409
 // `awaiting_approval` (already requested), 409 `not_awaiting_approval`
-// (nothing to withdraw or approve), 403 `cannot_approve_own_apply`, the role
+// (nothing to withdraw, approve or reject; the message says what happened to
+// the request), 403 `cannot_approve_own_apply`, the role
 // errors of profile-access.ts, and 400 `queue_name_confirmation_required`
-// for a missing or wrong typed queue name on request or approve.
+// for a missing or wrong typed queue name on request or approve, 400
+// `invalid_request` for a rejection without a reason.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { CheckoutError } from '../checkout/errors.js';
+import { InvalidRequestError } from '../http-error.js';
 import { view } from '../checkout/view.js';
 import { operatorOf } from '../operator.js';
 import { requireTypedQueueName } from '../protected-profile.js';
@@ -79,6 +83,18 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
       requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
       // Nothing awaits between these checks and approve() taking the request.
       return checkouts.approve(checkout.id, operatorOf(req));
+    },
+  );
+
+  app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(
+    '/api/approvals/:checkoutId/reject',
+    async (req) => {
+      const checkout = awaiting(req);
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+      if (reason === '') {
+        throw new InvalidRequestError('A rejection needs a "reason": the requester sees it, so they know what to change.');
+      }
+      return { checkout: checkouts.reject(checkout.id, operatorOf(req), reason) };
     },
   );
 }

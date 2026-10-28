@@ -3,7 +3,8 @@
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
 // In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
-// Applies waiting for an Approval this Operator may give.
+// Applies waiting for an Approval this Operator may give; a requester's link
+// (#/approvals/<checkout id>, approval-link.ts) opens it on their Checkout.
 // An Operator with no role on any profile (Team Mode) gets a page saying so,
 // listing the groups Volverán received (NoRolePage).
 // Only the profiles where the Operator has a Role are listed (the server
@@ -12,6 +13,7 @@
 // In the queue list j/k or the arrow keys move and Enter starts a Checkout
 // (keys mapped in keyboard-commands.ts).
 import { useEffect, useRef, useState } from 'react';
+import { waitingCheckoutIn } from '../shared/approval-link.js';
 import { product } from '../shared/product.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import {
@@ -71,7 +73,9 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
-  const [view, setView] = useState<'queues' | 'audit' | 'approvals'>('queues');
+  /** The waiting Checkout a requester's link points at (the URL fragment), until it is left. */
+  const [linkedApproval, setLinkedApproval] = useState(() => waitingCheckoutIn(window.location.hash));
+  const [view, setView] = useState<'queues' | 'audit' | 'approvals'>(linkedApproval ? 'approvals' : 'queues');
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
@@ -83,6 +87,18 @@ export function App() {
   const role = profileName ? session?.roles[profileName] : undefined;
   /** Team Mode, signed in with no role on any Broker Profile: NoRolePage instead of the app. */
   const noRoleAnywhere = session?.mode === 'team' && Object.keys(session.roles).length === 0;
+
+  // A link pasted into a tab already showing the app.
+  useEffect(() => {
+    const follow = () => {
+      const linked = waitingCheckoutIn(window.location.hash);
+      if (!linked) return;
+      setLinkedApproval(linked);
+      setView('approvals');
+    };
+    window.addEventListener('hashchange', follow);
+    return () => window.removeEventListener('hashchange', follow);
+  }, []);
 
   // A Protected Profile shows in the browser tab too, so it is visible from other tabs.
   useEffect(() => {
@@ -280,7 +296,14 @@ export function App() {
         {view === 'audit' && !checkoutId ? (
           <AuditView profiles={profiles} roles={session?.roles ?? {}} />
         ) : view === 'approvals' && !checkoutId ? (
-          <ApprovalsView />
+          <ApprovalsView
+            key={linkedApproval ?? ''}
+            initialOpen={linkedApproval}
+            onClosed={() => {
+              setLinkedApproval(null);
+              window.history.replaceState(null, '', window.location.pathname + window.location.search);
+            }}
+          />
         ) : (
           <>
             <div className="controls">

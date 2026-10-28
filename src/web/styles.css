@@ -503,6 +503,44 @@ td.select {
 .approval-note {
   color: var(--muted);
 }
+.copyable-link {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.copyable-link label {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+.copyable-link input {
+  font-family: ui-monospace, monospace;
+  width: 100%;
+}
+.rejection {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--danger);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.rejection p {
+  margin: 0.4rem 0;
+}
+.rejection-reason {
+  white-space: pre-wrap;
+}
+.reject-reason {
+  display: flex;
+  flex-direction: column;
+}
+.decision-counts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .outcome-failed td,
 .outcome-not-attempted td {
   color: var(--danger);
