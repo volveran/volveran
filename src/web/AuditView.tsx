@@ -232,6 +232,12 @@ function EntryRow({
         {ACTION_LABELS[entry.action]}
         {entry.restoreOf !== null && <small className="muted"> of #{entry.restoreOf}</small>}
         {entry.reason && <small className="muted"> ({entry.reason})</small>}
+        {entry.messageCount !== null && (
+          <small className="muted" title={entry.filter ? `Filter: ${JSON.stringify(entry.filter)}` : undefined}>
+            {' '}
+            of {entry.messageCount} Message(s){entry.filter ? ', filtered' : ''}
+          </small>
+        )}
       </td>
       <td className="name">{entry.messageId ?? <span className="muted">none</span>}</td>
       <td className="name">

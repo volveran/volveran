@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- NDJSON export: the owner of an active Checkout downloads its held Messages, all of them or those matching the current filter, as one lossless JSON line each (`POST /api/checkouts/:id/export`, the Export buttons). Lines carry the properties and headers in the lossless AMQP JSON of Audit Entries, the body as base64, the decoded `x-death`, the Delivery Budget, the current Decision and the Died Again replay id. The download is streamed and changes nothing on the broker. Each export writes an Audit Entry with the new action `export`, the filter and the Message count (audit schema v4). The line format is in the README. (#44)
+
 ### Fixed
 
 - Development: run from source (`npm run dev`), the server no longer serves the unbuilt `src/web` on `:8080`, which showed a blank page (`main.tsx` blocked for its MIME type). It serves no web app and answers `404` with a pointer to the Vite dev server on `http://localhost:5173`. `npm start` and the image still serve the built `dist/web`. (#32)

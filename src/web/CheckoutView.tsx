@@ -39,6 +39,9 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   const [selection, setSelection] = useState<ReadonlySet<number>>(new Set());
   /** Handles matching the current filter; null when no filter is set. */
   const [matched, setMatched] = useState<ReadonlySet<number> | null>(null);
+  /** The clauses of the current filter (what an export of the matching Messages sends). */
+  const [clauses, setClauses] = useState<FilterClause[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>();
   /** The Move destination picker's choices; a string says why they could not be loaded. */
@@ -123,11 +126,25 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     setBusy(true);
     try {
       setMatched(new Set((await api.matching(id, clauses)).handles));
+      setClauses(clauses);
       setError(undefined);
     } catch (err) {
       setError(err as ApiError);
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Downloads the Messages matching the current filter, or every held one, as NDJSON. */
+  const exportMessages = async (filtered: boolean) => {
+    setExporting(true);
+    try {
+      await api.exportMessages(id, filtered ? clauses : undefined);
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -242,6 +259,15 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
             onClearSelection={() => setSelection(new Set())}
           />
           {notice && <p className="notice">{notice}</p>}
+          <p className="export">
+            <button
+              disabled={exporting}
+              onClick={() => exportMessages(false)}
+              title="Download every held Message as NDJSON, one line each (recorded as an Audit Entry)"
+            >
+              {exporting ? 'Exporting…' : `Export all ${checkout.messages.length} Messages`}
+            </button>
+          </p>
           <FilterBar active={matched !== null} busy={busy} onFilter={filter} onClear={() => setMatched(null)} />
           {matched && (
             <div className="filter-result">
@@ -253,6 +279,13 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
                 onClick={() => setSelection((s) => new Set([...s, ...matched]))}
               >
                 Select all {matched.size} matching
+              </button>
+              <button
+                disabled={matched.size === 0 || exporting}
+                onClick={() => exportMessages(true)}
+                title="Download the matching Messages as NDJSON (recorded as an Audit Entry)"
+              >
+                Export {matched.size} matching
               </button>
             </div>
           )}
