@@ -47,8 +47,10 @@ export function view(c: Checkout): CheckoutView {
         ...messageSummary(handle, m, info),
         decision: c.decisions.get(handle) ?? { kind: 'keep' },
         replay: origin.ok ? { available: true } : { available: false, reason: origin.reason },
+        diedAgain: c.diedAgain.get(handle) ?? null,
       };
     }),
+    diedAgainCount: handles.filter((h) => c.diedAgain.has(h)).length,
     decisionSummary,
     decisionSummaryText: summaryText(decisionSummary),
     applyConfirmation: applyConfirmationFor({
