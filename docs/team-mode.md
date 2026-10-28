@@ -205,7 +205,7 @@ profiles:
 | What happened | Answer |
 |---|---|
 | The token has expired and could not be refreshed | `401 broker_token_expired` with `signInUrl`: sign in again for a new token. |
-| The token lacks a permission (read on the queue, configure on the lock queue, the `management` tag) | `403 broker_permission_denied`, naming the broker user, the resource (`type`, `name`, `vhost`) and the `permission`. |
+| The token lacks a permission (read on the queue, configure on the lock queue, the `management` tag, write on the default exchange for a Restore) | `403 broker_permission_denied`, naming the broker user, the resource (`type`, `name`, `vhost`) and the `permission`. In an Apply, a Replay or Move the token may not publish fails that Message, and its reason names the exchange and the write permission. |
 | The broker does not accept the token (audience, signing key) | `502 authentication_failed`, naming the Operator's token. |
 | The token expires during a Checkout (refresh failed) | The broker closes the connection: a Lost Checkout, with every Message back in the queue (on quorum queues at the cost of one delivery). |
 

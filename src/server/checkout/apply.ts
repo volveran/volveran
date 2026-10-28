@@ -9,6 +9,7 @@
 import type * as amqp from 'amqplib';
 import { executeApply } from '../apply/executor.js';
 import { ConfirmPublisher } from '../apply/publisher.js';
+import { permissionRefused } from '../broker-credentials.js';
 import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
 import { queueRefOf } from '../profiles.js';
@@ -51,7 +52,17 @@ export async function runApply(
     ack: (message) => ack(checkout, message),
     publish: async (exchange, routingKey, content, publishOptions) => {
       if (!checkout.connection) return { ok: false, reason: 'The Checkout has no connection to the broker any more.' };
-      publisher ??= new ConfirmPublisher(checkout.connection);
+      publisher ??= new ConfirmPublisher(
+        checkout.connection,
+        (refusedExchange) =>
+          permissionRefused(
+            checkout.profile,
+            checkout.brokerUser,
+            { type: 'exchange', name: refusedExchange, vhost: checkout.vhost },
+            'write',
+            'Replay and Move publish the Message, so the broker user needs write permission on that exchange.',
+          ).message,
+      );
       return publisher.publish(exchange, routingKey, content, publishOptions);
     },
   };

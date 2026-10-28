@@ -7,15 +7,17 @@
 // the dead-letter headers, plus a new `x-volveran-replay-id` and
 // `x-volveran-from`; published through the default exchange on a confirm
 // channel with `mandatory`, on a connection of its own, so a Message the
-// broker cannot route (or refuses) is reported as failed. The Restore writes
+// broker cannot route is reported as failed. One the broker refuses (no write
+// permission) is failed too, and answers 403 `broker_permission_denied`
+// naming the exchange and the permission. The Restore writes
 // its own Audit Entry (action `restore`, `restoreOf` the Discard, and the
 // replay id it published with), `pending` before the publish. A Discard whose body retention evicted cannot be
 // Restored.
 import { randomUUID } from 'node:crypto';
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
-import type { BrokerCredentials } from '../broker-credentials.js';
-import { ConfirmPublisher } from '../apply/publisher.js';
+import { permissionRefused, type BrokerCredentials } from '../broker-credentials.js';
+import { ConfirmPublisher, type DescribeRefusal } from '../apply/publisher.js';
 import { republishOptions } from '../apply/republish.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
 import type { Operator } from '../operator.js';
@@ -181,8 +183,17 @@ export class RestoreService {
         { ...message.properties, headers: message.headers },
         { replayId, from: discard.queue },
       );
-      const failure = await publish({ profile, vhost: discard.vhost, queue }, credentials, body, options);
-      this.audit.setOutcome(entryId, failure ? 'failed' : 'done', failure);
+      const refusal = permissionRefused(
+        profile,
+        credentials.brokerUser,
+        { type: 'exchange', name: '', vhost: discard.vhost },
+        'write',
+        'A Restore publishes through the default exchange, so the broker user needs write permission on it.',
+      );
+      const failure = await publish({ profile, vhost: discard.vhost, queue }, credentials, body, options, () => refusal.message);
+      this.audit.setOutcome(entryId, failure ? 'failed' : 'done', failure?.reason ?? null);
+      // Like a refused read or configure: the Operator learns which permission is missing.
+      if (failure?.refused) throw refusal;
       return this.audit.get(entryId)!;
     } finally {
       this.running.delete(id);
@@ -190,22 +201,27 @@ export class RestoreService {
   }
 }
 
-/** Publishes to `queue` through the default exchange on a connection of its own; returns why it failed, or null. */
+/**
+ * Publishes to `queue` through the default exchange on a connection of its
+ * own; returns why it failed (`refused`: the broker refused write
+ * permission), or null.
+ */
 async function publish(
   { profile, vhost, queue }: QueueRef,
   credentials: BrokerCredentials,
   body: Buffer,
   options: amqp.Options.Publish,
-): Promise<string | null> {
+  describeRefusal: DescribeRefusal,
+): Promise<{ reason: string; refused?: boolean } | null> {
   let connection: amqp.ChannelModel;
   try {
     connection = await openAmqpConnection(profile, credentials, vhost, `volveran restore ${vhost} ${queue}`);
   } catch (err) {
-    return (err as Error).message;
+    return { reason: (err as Error).message };
   }
   try {
-    const result = await new ConfirmPublisher(connection).publish('', queue, body, options);
-    return result.ok ? null : result.reason;
+    const result = await new ConfirmPublisher(connection, describeRefusal).publish('', queue, body, options);
+    return result.ok ? null : result;
   } finally {
     await connection.close().catch(() => {});
   }

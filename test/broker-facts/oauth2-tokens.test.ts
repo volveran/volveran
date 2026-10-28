@@ -209,7 +209,7 @@ describe('OAuth 2.0 tokens', () => {
       try {
         const ch = await tc.conn.createChannel();
         const closed = channelError(ch);
-        const lock = `volveran.lock.facts.${sub}`;
+        const lock = `volveran.checkout.facts.${sub}`;
         await expect(ch.assertQueue(lock, { exclusive: true, autoDelete: true, durable: false })).rejects.toMatchObject({ code: 403 });
         expect((await closed).message).toContain(`ACCESS_REFUSED - configure access to queue '${lock}' in vhost '/' refused for user '${sub}'`);
       } finally {

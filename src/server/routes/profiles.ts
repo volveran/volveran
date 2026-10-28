@@ -7,6 +7,7 @@
 //       ?search=&onlyDeadLetterQueues=true
 //   GET /api/profiles/:profile/vhosts/:vhost/move-destinations → { queues, exchanges }
 import type { FastifyInstance } from 'fastify';
+import { credentialsSummary } from '../broker-credentials.js';
 import { operatorOf } from '../operator.js';
 import type { ProfileAccessCheck } from '../profile-access.js';
 import { checkoutHolders, isLockQueue } from '../triage/checkout-lock.js';
@@ -18,12 +19,9 @@ export function registerProfileRoutes(app: FastifyInstance, access: ProfileAcces
   app.get('/api/profiles', async (req): Promise<{ profiles: ProfileSummary[] }> => ({
     profiles: access.list(operatorOf(req), 'see_profile').map((p) => ({
       name: p.name,
-      credentials: p.credentials.kind,
-      username: p.credentials.kind === 'shared' ? p.credentials.username : null,
+      ...credentialsSummary(p),
       managementUrl: p.managementUrl,
       amqpUrl: p.amqpUrl,
-      passwordEnv: p.credentials.kind === 'shared' ? p.credentials.passwordEnv : null,
-      passwordSet: p.credentials.kind === 'shared' && p.credentials.password !== undefined,
       vhosts: p.vhosts,
       defaultQueueFilter: p.defaultQueueFilter ?? null,
       protected: p.protected,

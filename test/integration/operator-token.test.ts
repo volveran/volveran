@@ -27,6 +27,14 @@ const vera: TestIdentity = {
   ...brokerClaims('rabbitmq.configure:*/volveran.* rabbitmq.read:*/other.* rabbitmq.tag:management'),
 };
 
+// Reads, configures and sees everything, but may not publish.
+const wanda: TestIdentity = {
+  sub: 'token-wanda',
+  email: 'wanda@example.com',
+  ...brokerClaims('rabbitmq.configure:*/* rabbitmq.read:*/* rabbitmq.tag:management'),
+};
+const OTHER = 'operator-token.other';
+
 const tokenProfile = (name: string, extra: Partial<ProfileFixture> = {}): ProfileFixture => ({
   name,
   managementUrl: oauthBroker.managementUrl,
@@ -88,6 +96,7 @@ describe('Broker Profile with the Operator\'s own token', () => {
   beforeAll(async () => {
     await withTokenChannel(async (ch) => {
       await ch.assertQueue(QUEUE, { durable: true });
+      await ch.assertQueue(OTHER, { durable: true });
     });
     const port = await closedPort();
     baseUrl = `http://127.0.0.1:${port}`;
@@ -105,12 +114,14 @@ describe('Broker Profile with the Operator\'s own token', () => {
     for (const [browser, id] of open.splice(0)) await browser.request('DELETE', `/api/checkouts/${id}`);
     await withTokenChannel(async (ch) => {
       await ch.purgeQueue(QUEUE);
+      await ch.purgeQueue(OTHER);
     });
   });
   afterAll(async () => {
     await app?.close();
     await withTokenChannel(async (ch) => {
       await ch.deleteQueue(QUEUE);
+      await ch.deleteQueue(OTHER);
     });
   });
 
@@ -158,6 +169,49 @@ describe('Broker Profile with the Operator\'s own token', () => {
     expect(await readyIds()).toEqual([`${QUEUE}-0`, `${QUEUE}-1`]);
     // The refused start leaves no Checkout behind.
     expect((await browser.get('/api/session')).body.checkoutId).toBeNull();
+  });
+
+  it('fails a Move the token may not publish, naming the exchange and the permission, and keeps the Message', async () => {
+    await seed(2);
+    const browser = await signedIn(wanda);
+    const started = await browser.post(checkoutPath('tokens'));
+    expect(started.status, JSON.stringify(started.body)).toBe(201);
+    const { id, messages } = started.body.checkout;
+    open.push([browser, id]);
+    const move = { kind: 'move', destination: { queue: OTHER } };
+    expect((await browser.post(`/api/checkouts/${id}/decisions`, { handles: [messages[0].handle], decision: move })).status).toBe(200);
+    const applied = await browser.post(`/api/checkouts/${id}/apply`, { confirm: true });
+    expect(applied.status, JSON.stringify(applied.body)).toBe(200);
+    const [moved] = applied.body.outcomes;
+    expect(moved.status).toBe('failed');
+    expect(moved.reason).toContain('The broker refused broker user "token-wanda" of Broker Profile "tokens" write permission on the default exchange in vhost "/"');
+    expect(await readyIds()).toEqual([`${QUEUE}-0`, `${QUEUE}-1`]);
+  });
+
+  it('answers a Restore the token may not publish with broker_permission_denied, naming the exchange and the permission', async () => {
+    await seed(1);
+    const discarder = await signedIn(rita);
+    const id = await checkoutWithDiscard(discarder, 'tokens');
+    expect((await discarder.post(`/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(200);
+    open.splice(open.findIndex(([, o]) => o === id), 1);
+    const [discard] = (await discarder.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
+
+    const browser = await signedIn(wanda);
+    const refused = await browser.post(`/api/audit-entries/${discard.id}/restore`, { confirm: true });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+    expect(refused.body.error).toMatchObject({
+      code: 'broker_permission_denied',
+      profile: 'tokens',
+      brokerUser: 'token-wanda',
+      resource: { type: 'exchange', name: '', vhost: '/' },
+      permission: 'write',
+    });
+    expect(await readyIds()).toEqual([]);
+    const [restore] = (await browser.get(`/api/audit-entries?action=restore&profile=tokens`)).body.entries;
+    expect(restore).toMatchObject({ restoreOf: discard.id, outcome: 'failed', brokerUser: 'token-wanda' });
+    // The failed Restore leaves the Discard restorable by someone who may publish.
+    expect((await discarder.post(`/api/audit-entries/${discard.id}/restore`, { confirm: true })).status).toBe(200);
+    expect(await readyIds()).toEqual([`${QUEUE}-0`]);
   });
 
   it("runs an approved Apply on the requester's connection and token, not the approver's", async () => {

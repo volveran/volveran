@@ -14,10 +14,23 @@
 // cached, so a management call sends the current (refreshed) token, and an
 // expired one answers 401 `broker_token_expired` then. A connection opened
 // with a token keeps it fresh with `update-secret` (amqp-connection.ts).
-import { BrokerError, brokerTokenExpired } from './broker-error.js';
+//
+// The credential kind also decides who fixes a refusal, so the wording of
+// those errors is decided here too: the Operator's own permissions answer
+// 403 `broker_permission_denied` (permissionRefused), the shared account's
+// may answer an error for whoever runs Volverán instead.
+import {
+  BrokerError,
+  brokerPermissionDenied,
+  brokerTokenExpired,
+  type BrokerPermission,
+  type BrokerResource,
+} from './broker-error.js';
+import type { HttpError } from './http-error.js';
 import type { Operator } from './operator.js';
 import type { OperatorToken } from './operator-token.js';
 import type { BrokerProfile } from './profiles.js';
+import type { ProfileSummary } from '../shared/queues.js';
 
 export interface BrokerCredentials {
   kind: BrokerProfile['credentials']['kind'];
@@ -31,6 +44,8 @@ export interface BrokerCredentials {
   brokerUser: string;
   /** Whose credentials these are, for error messages. */
   describe: string;
+  /** What to check when the broker rejects these credentials ('' when nothing beyond them). */
+  rejectedHint: string;
   /** operatorToken: the token itself, whose refreshes a connection opened with it follows. */
   token?: OperatorToken;
 }
@@ -51,6 +66,7 @@ export function brokerCredentials(profile: BrokerProfile, operator: Operator): B
       authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`,
       brokerUser: credentials.username,
       describe: `user "${credentials.username}", password from ${credentials.passwordEnv}`,
+      rejectedHint: '',
     };
   }
   const token = operator.brokerToken;
@@ -64,6 +80,42 @@ export function brokerCredentials(profile: BrokerProfile, operator: Operator): B
     authorization: `Bearer ${accessToken}`,
     brokerUser,
     describe: `the access token of ${operator.displayName}, broker user "${brokerUser}"`,
+    rejectedHint: "Check that the broker accepts the token's audience and signing key.",
     token,
   };
+}
+
+/** How a Broker Profile connects, as GET /api/profiles shows it (never the password). */
+export function credentialsSummary(
+  profile: BrokerProfile,
+): Pick<ProfileSummary, 'credentials' | 'username' | 'passwordEnv' | 'passwordSet'> {
+  const { credentials } = profile;
+  if (credentials.kind === 'shared') {
+    return {
+      credentials: 'shared',
+      username: credentials.username,
+      passwordEnv: credentials.passwordEnv,
+      passwordSet: credentials.password !== undefined,
+    };
+  }
+  return { credentials: 'operatorToken', username: null, passwordEnv: null, passwordSet: false };
+}
+
+/**
+ * The broker refused `brokerUser` the `permission` on `resource`: 403
+ * `broker_permission_denied`, naming both, with `hint` saying what to grant.
+ * On a shared account `sharedAccount`, when given, is answered instead: the
+ * error for whoever runs Volverán, as the Operator cannot change those
+ * permissions.
+ */
+export function permissionRefused(
+  profile: BrokerProfile,
+  brokerUser: string,
+  resource: BrokerResource,
+  permission: BrokerPermission,
+  hint: string,
+  sharedAccount?: HttpError,
+): HttpError {
+  if (profile.credentials.kind === 'shared' && sharedAccount) return sharedAccount;
+  return brokerPermissionDenied(profile, brokerUser, resource, permission, hint);
 }
