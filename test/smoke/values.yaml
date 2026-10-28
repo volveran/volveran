@@ -6,6 +6,8 @@ image:
 
 oidc:
   clientId: volveran-test
+  # The smoke Operator signs in with a `groups` claim (the chart's default).
+  groupsClaim: groups
   existingSecret: volveran-oidc
 
 brokerProfiles:
@@ -18,6 +20,9 @@ brokerProfiles:
       passwordEnv: VOLVERAN_SMOKE_PASSWORD
       vhosts: ["/"]
       defaultQueueFilter: "*.dlq"
+      roles:
+        viewer: [smoke-support]
+        operator: [smoke-triage]
 
 persistence:
   size: 100Mi
