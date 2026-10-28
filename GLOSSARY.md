@@ -69,7 +69,7 @@ What an Operator may do on one Broker Profile: `viewer` (look), `operator` (tria
 _Avoid_: Permission, access level
 
 **Approval**:
-A second Operator's consent, after reviewing its Decisions, to an Apply on a Protected Profile. In Team Mode, an Apply with any Decision other than Keep on a Protected Profile waits for it (unless the profile sets `requireApproval: false`); approving runs the Apply, and its Audit Entries record both people.
+A second Operator's consent, after reviewing its Decisions, to an Apply on a Protected Profile. In Team Mode, an Apply with any Decision other than Keep on a Protected Profile waits for it (unless the profile sets `requireApproval: false`); approving runs the Apply, and its Audit Entries record both people. Rejecting, with a reason, returns the Checkout to staging; withdrawing it or the Checkout ending cancels the request.
 _Avoid_: Sign-off, review, four-eyes (four-eyes may describe the feature in prose)
 
 ## Running
