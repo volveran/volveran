@@ -73,10 +73,14 @@ Observed on **RabbitMQ 4.4.0** (`rabbitmq:4-management`, October 2026) with AMQP
 
 ## OAuth 2.0 tokens
 
-Observed on a broker with the OAuth 2.0 backend only (`auth_backends.1 = rabbit_auth_backend_oauth2`), `resource_server_id` `rabbitmq` and the provider's signing key configured statically (`auth_oauth2.signing_keys`: RabbitMQ refuses to start with an `http` `jwks_url`). Tokens carry `aud: rabbitmq` and scopes such as `rabbitmq.read:*/*` and `rabbitmq.tag:management`. With no `auth_oauth2.issuer` configured, the broker does not check the token's `iss`. These facts are the gate for connecting with the Operator's own token (ADR 0004).
+Observed on a broker with the OAuth 2.0 backend only (`auth_backends.1 = rabbit_auth_backend_oauth2`), `resource_server_id` `rabbitmq` and the provider's signing key configured statically (`auth_oauth2.signing_keys`: RabbitMQ refuses to start with an `http` `jwks_url`). Tokens carry `aud: rabbitmq` and scopes such as `rabbitmq.read:*/*` and `rabbitmq.tag:management`. With no `auth_oauth2.issuer` configured, the broker does not check the token's `iss`. These facts are the gate for connecting with the Operator's own token (ADR 0008).
 
 - A connection opened with a valid access token as its password works. The broker user is the token's `sub`, whatever user name the client sends. An invalid token is refused at connection open.
 - `update-secret` with a refreshed access token for the same user is accepted, and the connection then outlives the old token's expiry.
 - `update-secret` with an invalid token, an expired token or another user's token is refused: the broker closes the whole connection with `530 NOT_ALLOWED`.
 - A connection whose token expires without a refresh is closed by the broker at the token's expiry, with `320 CONNECTION_FORCED` "credential expired".
 - The management API accepts the access token as a bearer token, and refuses an expired one with 401.
+- The management API refuses a token without a `tag:management` scope with 401 and the reason "Not management user", on every endpoint.
+- A token without read permission on a queue is refused `403 ACCESS_REFUSED` on consume and get, and the broker closes the channel. A passive declare of the queue (`checkQueue`) still succeeds.
+- A token without configure permission on a queue is refused `403 ACCESS_REFUSED` on declaring it, and the broker closes the channel.
+- A token without write permission on an exchange is refused `403 ACCESS_REFUSED` on publishing to it (`amq.default` for the default exchange). The broker closes the channel: the publish confirm fails with only "channel closed", and the channel's error carries the refusal, naming the exchange and the permission.
