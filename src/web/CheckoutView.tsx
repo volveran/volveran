@@ -40,8 +40,8 @@ import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
 import type { KeyboardCommand } from './keyboard-commands.js';
 
-/** An open prompt: the Discard reason or Move destination for some Messages, or the shortcut list. */
-type OpenPrompt = { kind: 'discard' | 'move'; handles: number[] } | { kind: 'shortcuts' };
+/** An open prompt: the Discard reason or Move destination for some Messages, the Apply confirmation, or the shortcut list. */
+type OpenPrompt = { kind: 'discard' | 'move'; handles: number[] } | { kind: 'apply' } | { kind: 'shortcuts' };
 
 /** `hidden`: the page shows another view (Approvals) meanwhile; the Checkout keeps its heartbeat, its keys are off. */
 export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidden?: boolean; onClose(): void }) {
@@ -380,6 +380,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             summaryText={checkout.decisionSummaryText}
             busy={busy}
             onApply={checkout.applyConfirmation.approvalRequired ? requestApproval : apply}
+            confirming={prompt?.kind === 'apply'}
+            onConfirming={(open) => setPrompt(open ? { kind: 'apply' } : null)}
           />
           <DecisionBar
             selected={selection.size}
@@ -389,7 +391,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             onDecide={(decision) => void decide(decision)}
             onClearSelection={() => setSelection(new Set())}
           />
-          {prompt && prompt.kind !== 'shortcuts' && (
+          {(prompt?.kind === 'discard' || prompt?.kind === 'move') && (
             <DecisionPrompt
               kind={prompt.kind}
               count={prompt.handles.length}

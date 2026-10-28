@@ -4,7 +4,9 @@
 // as the requester sees them. Approve asks for the queue name typed, then
 // runs the Apply on the requester's Checkout and shows its outcome; Reject
 // asks for a reason, which the requester sees. No key approves or rejects
-// (keyboard-commands.ts): both always need their confirmation. A requester's
+// (keyboard-commands.ts): both always need their confirmation, a Prompt
+// (keyboard.tsx) that focuses its typed field, closes on Escape and gives
+// the focus back to "Approve…" or "Reject…". A requester's
 // link (approval-link.ts) opens here on their waiting Checkout.
 import { useEffect, useState } from 'react';
 import { heldLine } from '../shared/held-line.js';
@@ -15,6 +17,7 @@ import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
 import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
+import { Prompt } from './keyboard.js';
 
 /** How often the list and an open waiting Checkout are read again. */
 const REFRESH_MS = 5_000;
@@ -187,6 +190,12 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
+  const closeConfirmation = () => {
+    setConfirming(null);
+    setTyped('');
+    setReason('');
+  };
+
   const back = <button onClick={onClose}>Back to Approvals</button>;
   if (result) {
     return (
@@ -247,84 +256,77 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
         <strong>Decisions:</strong> {checkout.decisionSummaryText}
       </p>
       <div className="apply-panel">
-        {confirming === null && (
-          <span>
-            <button disabled={busy} onClick={() => setConfirming('approve')}>
-              Approve…
-            </button>{' '}
-            <button disabled={busy} onClick={() => setConfirming('reject')}>
-              Reject…
-            </button>
-          </span>
-        )}
+        <span>
+          <button disabled={busy} onClick={() => setConfirming('approve')}>
+            Approve…
+          </button>{' '}
+          <button disabled={busy} onClick={() => setConfirming('reject')}>
+            Reject…
+          </button>
+        </span>
         {confirming === 'reject' && (
-          <div className="confirm" role="alertdialog" aria-label="Reject Apply">
-            <strong>
-              Reject the Apply of {checkout.operator} on {checkout.profile} · {checkout.queue}
-            </strong>
-            <span>The Checkout goes back to {checkout.operator}, who sees your reason and can change the Decisions.</span>
-            <label className="reject-reason">
-              <span>Reason (required)</span>
-              <textarea autoFocus value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
-            </label>
-            <span>
-              <button className="danger" disabled={busy || reason.trim() === ''} onClick={() => void reject()}>
-                Reject
-              </button>{' '}
-              <button
-                className="link"
-                onClick={() => {
-                  setConfirming(null);
-                  setReason('');
-                }}
-              >
-                Cancel
-              </button>
-            </span>
-          </div>
+          <Prompt label="Reject Apply" onClose={closeConfirmation}>
+            <div className="confirm">
+              <strong>
+                Reject the Apply of {checkout.operator} on {checkout.profile} · {checkout.queue}
+              </strong>
+              <span>The Checkout goes back to {checkout.operator}, who sees your reason and can change the Decisions.</span>
+              <label className="reject-reason">
+                <span>Reason (required)</span>
+                <textarea data-autofocus value={reason} onChange={(e) => setReason(e.target.value)} rows={3} />
+              </label>
+              <span>
+                <button className="danger" disabled={busy || reason.trim() === ''} onClick={() => void reject()}>
+                  Reject
+                </button>{' '}
+                <button className="link" onClick={closeConfirmation}>
+                  Cancel
+                </button>
+              </span>
+            </div>
+          </Prompt>
         )}
         {confirming === 'approve' && (
-          <div className="confirm" role="alertdialog" aria-label="Approve Apply">
-            <strong className="confirm-profile protected">
-              <span className="badge protected-badge">Protected Profile</span> Approve the Apply of {checkout.operator}{' '}
-              on {checkout.profile} · {checkout.queue}
-            </strong>
-            <ul className="confirm-counts">
-              {checkout.decisionSummary.map((l) => (
-                <li key={decisionLabel(l)}>
-                  <strong>{l.count}</strong> {decisionLabel(l)}
-                </li>
-              ))}
-            </ul>
-            <span>Approving runs the Apply now, on {checkout.operator}'s Checkout; its Audit Entries name you as the approver.</span>
-            <label className="type-queue-name">
+          <Prompt label="Approve Apply" onClose={closeConfirmation}>
+            <div className="confirm">
+              <strong className="confirm-profile protected">
+                <span className="badge protected-badge">Protected Profile</span> Approve the Apply of{' '}
+                {checkout.operator} on {checkout.profile} · {checkout.queue}
+              </strong>
+              <ul className="confirm-counts">
+                {checkout.decisionSummary.map((l) => (
+                  <li key={decisionLabel(l)}>
+                    <strong>{l.count}</strong> {decisionLabel(l)}
+                  </li>
+                ))}
+              </ul>
               <span>
-                Type <code>{checkout.queue}</code> to confirm
+                Approving runs the Apply now, on {checkout.operator}'s Checkout; its Audit Entries name you as the
+                approver.
               </span>
-              <input
-                autoFocus
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                aria-label="Queue name"
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </label>
-            <span>
-              <button className="danger" disabled={busy || typed !== checkout.queue} onClick={() => void approve()}>
-                Approve and Apply
-              </button>{' '}
-              <button
-                className="link"
-                onClick={() => {
-                  setConfirming(null);
-                  setTyped('');
-                }}
-              >
-                Cancel
-              </button>
-            </span>
-          </div>
+              <label className="type-queue-name">
+                <span>
+                  Type <code>{checkout.queue}</code> to confirm
+                </span>
+                <input
+                  data-autofocus
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  aria-label="Queue name"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </label>
+              <span>
+                <button className="danger" disabled={busy || typed !== checkout.queue} onClick={() => void approve()}>
+                  Approve and Apply
+                </button>{' '}
+                <button className="link" onClick={closeConfirmation}>
+                  Cancel
+                </button>
+              </span>
+            </div>
+          </Prompt>
         )}
       </div>
 
