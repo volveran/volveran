@@ -1,6 +1,6 @@
 // kind smoke test (npm run test:smoke): builds the image from this checkout,
 // loads it into a fresh kind cluster with RabbitMQ and the mock OIDC provider
-// (test/smoke/deps.yaml), installs the chart into a namespace that enforces
+// (test/smoke/deps.yaml, their images loaded from the host's Docker), installs the chart into a namespace that enforces
 // the restricted Pod Security Standard, then runs test/smoke/operator.test.ts.
 // Needs docker, kind, kubectl and helm on PATH. See README "Development".
 //
@@ -8,11 +8,14 @@
 // The cluster is deleted at the end unless VOLVERAN_SMOKE_KEEP_CLUSTER=1,
 // which also reuses a kept cluster on the next run.
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   appNamespace,
   caFile,
   clusterName,
+  dependencyImages,
   depsNamespace,
   helmInstallArgs,
   image,
@@ -56,6 +59,34 @@ function step(/** @type {string} */ name) {
   console.log(`\n[kind-smoke] ${name}`);
 }
 
+/**
+ * Loads the dependency images into kind from the host's Docker, pulling
+ * them there first (a no-op when cached), so the rollout timeout below
+ * covers readiness only, not a pull by the kind node. `kind load
+ * docker-image` cannot load these: it imports all platforms, and with
+ * Docker's containerd image store the host holds the layers of its own
+ * platform only ("content digest ... not found"). So the images are saved
+ * for the node's platform and loaded as an archive.
+ */
+function loadDependencyImages() {
+  const images = dependencyImages();
+  const platform = sh('docker', ['version', '--format', '{{.Server.Os}}/{{.Server.Arch}}'], { capture: true }).stdout.trim();
+  for (const ref of images) sh('docker', ['pull', '--platform', platform, ref]);
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'volveran-smoke-'));
+  const archive = path.join(dir, 'deps.tar');
+  try {
+    try {
+      sh('docker', ['save', '--platform', platform, '-o', archive, ...images]);
+    } catch {
+      // Docker before 28 has no `save --platform`; its classic image store holds one platform anyway.
+      sh('docker', ['save', '-o', archive, ...images]);
+    }
+    sh('kind', ['load', 'image-archive', archive, '--name', clusterName]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function clusterExists() {
   const { stdout } = sh('kind', ['get', 'clusters'], { capture: true });
   return stdout.split('\n').includes(clusterName);
@@ -96,6 +127,9 @@ try {
   step(`build ${imageRef} and load it into kind`);
   sh('docker', ['build', '-t', imageRef, '.']);
   sh('kind', ['load', 'docker-image', imageRef, '--name', clusterName]);
+
+  step('load the RabbitMQ and mock OIDC provider images into kind');
+  loadDependencyImages();
 
   step('RabbitMQ and the mock OIDC provider');
   applyGenerated('create', 'namespace', depsNamespace);
