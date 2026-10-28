@@ -3,7 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import { countSetupWarnings, setupWarnings, type CheckedQueue, type VhostTopology } from '../../src/server/triage/setup-checks.js';
 
-const vhost: VhostTopology = { exchanges: new Map([['dlx', { type: 'fanout' }]]), bindings: [] };
+const vhost: VhostTopology = {
+  exchanges: new Map([['dlx', { type: 'fanout' }]]),
+  bindings: [{ source: 'dlx', destination: 'orders.dlq', destinationType: 'queue', routingKey: '' }],
+};
 const codes = (q: CheckedQueue) => setupWarnings(q, vhost).map((w) => w.code);
 
 describe('the delivery-limit check', () => {
@@ -90,6 +93,74 @@ describe('the missing dead-letter exchange check', () => {
   it('never warns about the default exchange, nor about a queue without a dead-letter exchange', () => {
     expect(codes({ ...work, arguments: { 'x-dead-letter-exchange': '' } })).toEqual([]);
     expect(codes({ ...work, arguments: {} })).toEqual([]);
+  });
+});
+
+describe('the unroutable dead-letter exchange check', () => {
+  const work: CheckedQueue = {
+    name: 'orders.work',
+    deadLetterQueue: false,
+    type: 'classic',
+    arguments: { 'x-dead-letter-exchange': 'dlx', 'x-dead-letter-routing-key': 'parked' },
+    effectivePolicy: {},
+    deliveryLimit: null,
+  };
+  type Binding = VhostTopology['bindings'][number];
+  type Exchange = { type: string; alternateExchange?: string };
+  const toQueue = (source: string, routingKey: string, destination = 'orders.dlq'): Binding => ({ source, destination, destinationType: 'queue', routingKey });
+  const toExchange = (source: string, routingKey: string, destination: string): Binding => ({ source, destination, destinationType: 'exchange', routingKey });
+  const topology = (dlx: string | Exchange, bindings: Binding[], more: Array<[string, Exchange]> = []): VhostTopology => ({
+    exchanges: new Map([['dlx', typeof dlx === 'string' ? { type: dlx } : dlx], ...more]),
+    bindings,
+  });
+  const unroutable = (q: CheckedQueue, t: VhostTopology) => setupWarnings(q, t).some((w) => w.code === 'dead_letter_unroutable');
+
+  it('warns when no binding of a direct dead-letter exchange routes the dead-letter routing key, naming the exchange, the key and the fix', () => {
+    expect(setupWarnings(work, topology('direct', [toQueue('dlx', 'other')]))).toEqual([
+      {
+        code: 'dead_letter_unroutable',
+        severity: 'loses_messages',
+        deadLetterExchange: 'dlx',
+        routingKey: 'parked',
+        message: expect.stringMatching(/"dlx".*routing key "parked".*dropped.*Bind a queue to "dlx" with "parked".*alternate exchange/is),
+      },
+    ]);
+    expect(unroutable(work, topology('direct', [toQueue('dlx', 'parked')]))).toBe(false);
+  });
+
+  it('routes every key through a fanout exchange with any binding to a queue', () => {
+    expect(unroutable(work, topology('fanout', [toQueue('dlx', 'whatever')]))).toBe(false);
+    expect(unroutable(work, topology('fanout', []))).toBe(true);
+  });
+
+  it('without a dead-letter routing key, warns only when none of the keys the queue is bound with routes', () => {
+    const keyless = { ...work, arguments: { 'x-dead-letter-exchange': 'dlx' } };
+    const intoWork = [toQueue('orders', 'order.created', 'orders.work'), toQueue('orders', 'order.paid', 'orders.work')];
+    const orders: Array<[string, Exchange]> = [['orders', { type: 'direct' }]];
+    expect(setupWarnings(keyless, topology('direct', [...intoWork, toQueue('dlx', 'order.shipped')], orders))).toEqual([
+      expect.objectContaining({
+        code: 'dead_letter_unroutable',
+        routingKey: null,
+        message: expect.stringMatching(/"dlx".*routing keys it received.*"order\.created", "order\.paid"/is),
+      }),
+    ]);
+    expect(unroutable(keyless, topology('direct', [...intoWork, toQueue('dlx', 'order.paid')], orders))).toBe(false);
+  });
+
+  it('without a dead-letter routing key, does not warn when the keys the queue receives cannot be known', () => {
+    const keyless = { ...work, arguments: { 'x-dead-letter-exchange': 'dlx' } };
+    const fromFanout = topology('direct', [toQueue('events', '', 'orders.work')], [['events', { type: 'fanout' }]]);
+    const fromTopicWildcard = topology('direct', [toQueue('events', 'order.*', 'orders.work')], [['events', { type: 'topic' }]]);
+    const fromTopicLiteral = topology('direct', [toQueue('events', 'order.paid', 'orders.work')], [['events', { type: 'topic' }]]);
+    expect(unroutable(keyless, fromFanout)).toBe(false);
+    expect(unroutable(keyless, fromTopicWildcard)).toBe(false);
+    expect(unroutable(keyless, fromTopicLiteral)).toBe(true);
+  });
+
+  it('counts the queue\'s own name as a key it receives, through the default exchange', () => {
+    const keyless = { ...work, arguments: { 'x-dead-letter-exchange': 'dlx' } };
+    expect(unroutable(keyless, topology('direct', [toQueue('dlx', 'orders.work')]))).toBe(false);
+    expect(unroutable(keyless, topology('direct', []))).toBe(true);
   });
 });
 

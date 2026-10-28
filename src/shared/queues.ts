@@ -56,6 +56,8 @@ export type SetupWarningSeverity = 'loses_messages' | 'may_lose_messages';
 export type SetupWarning = { severity: SetupWarningSeverity; message: string } & (
   | { code: 'messages_dropped_at_delivery_limit'; deliveryLimit: number }
   | { code: 'dead_letter_exchange_missing'; deadLetterExchange: string }
+  /** routingKey is the dead-letter routing key, null when none is set (Messages keep their own). */
+  | { code: 'dead_letter_unroutable'; deadLetterExchange: string; routingKey: string | null }
 );
 
 export type SetupWarningCode = SetupWarning['code'];
