@@ -4,7 +4,9 @@
 // and test/smoke/operator.test.ts (which upgrades the release and restarts
 // port-forwards), so both drive the same install.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseAllDocuments } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 
 export { repoRoot };
@@ -54,6 +56,27 @@ export const oidc = {
 export const sessionSecret = 'smoke-session-secret-0123456789abcdef';
 /** RabbitMQ's administrator from test/broker/definitions.json. */
 export const brokerAdmin = { username: 'volveran-admin', password: 'volveran-admin-pass' };
+
+/**
+ * Every container image a manifest names, once each, in order.
+ * @param {string} manifest YAML, possibly several documents
+ * @returns {string[]}
+ */
+export function containerImages(manifest) {
+  const images = new Set();
+  for (const doc of parseAllDocuments(manifest)) {
+    const spec = doc.toJS()?.spec?.template?.spec;
+    for (const c of [...(spec?.initContainers ?? []), ...(spec?.containers ?? [])]) {
+      if (c.image) images.add(c.image);
+    }
+  }
+  return [...images];
+}
+
+/** The images of RabbitMQ and the mock OIDC provider (test/smoke/deps.yaml), loaded into kind before they start. */
+export function dependencyImages() {
+  return containerImages(readFileSync(path.join(smokeDir, 'deps.yaml'), 'utf8'));
+}
 
 /**
  * The arguments of `helm upgrade --install` for the chart in this checkout, plus `valuesFiles`.

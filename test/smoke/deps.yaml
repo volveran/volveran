@@ -22,6 +22,8 @@ spec:
       containers:
         - name: rabbitmq
           image: rabbitmq:4.4.0-management
+          # Loaded into kind by scripts/kind-smoke.mjs, never pulled by the node.
+          imagePullPolicy: IfNotPresent
           ports:
             - { name: amqp, containerPort: 5672 }
             - { name: management, containerPort: 15672 }
@@ -72,6 +74,8 @@ spec:
       containers:
         - name: oidc
           image: ghcr.io/navikt/mock-oauth2-server:2.1.10
+          # Loaded into kind by scripts/kind-smoke.mjs, never pulled by the node.
+          imagePullPolicy: IfNotPresent
           env:
             - name: JSON_CONFIG
               value: >-
