@@ -1,13 +1,16 @@
 // Running a Checkout's Apply (ADR 0001): the Decisions carried out one
 // Message at a time (apply/executor.ts), asking before every step whether
-// the Checkout is still active. An approved Apply runs here too, on the
+// the Checkout is still active and whether the manager asked it to stop
+// (the time limit), and counting each step in the Checkout's Apply progress.
+// An approved Apply runs here too, on the
 // requester's Checkout and connection, recorded as the requester's with the
 // approver alongside. Replay and Move publish on a confirm channel
 // of their own on the Checkout's connection (apply/publisher.ts, ADR 0006),
 // so a publish error never closes the channel holding the Messages. The
 // manager ends the Checkout afterwards.
 import type * as amqp from 'amqplib';
-import { executeApply } from '../apply/executor.js';
+import { executeApply, NOT_ACTIVE_REASON } from '../apply/executor.js';
+import { ApplyProgressTracker } from '../apply/progress.js';
 import { ConfirmPublisher } from '../apply/publisher.js';
 import { permissionRefused } from '../broker-credentials.js';
 import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../apply/types.js';
@@ -24,14 +27,17 @@ export interface RunApplyOptions {
   role: Role;
   /** The Operator who approved the Apply, for the Audit Entries; null when it needed no Approval. */
   approver: Pick<Operator, 'id' | 'displayName'> | null;
+  /** Asked before every step while the Checkout is active: null to go on, or why no further step is attempted. */
+  stopReason(): string | null;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
 }
 
 /**
  * Carries out every Decision of an active Checkout, removing each done
- * Message from `checkout.held`; `checkout.applying` is set while it runs.
- * Returns when it started and the outcome for each Message.
+ * Message from `checkout.held`. Sets `checkout.applyProgress` before its
+ * first await, and counts each step there as it settles. Returns when it
+ * started and the outcome for each Message.
  */
 export async function runApply(
   checkout: Checkout,
@@ -66,24 +72,25 @@ export async function runApply(
       return publisher.publish(exchange, routingKey, content, publishOptions);
     },
   };
-  const running = executeApply({
-    plan: buildApplyPlan([...checkout.held.keys()], checkout.decisions),
+  const plan = buildApplyPlan([...checkout.held.keys()], checkout.decisions);
+  const progress = new ApplyProgressTracker(plan.steps.length, ctx.startedAt);
+  checkout.applyProgress = progress;
+  const outcomes = await executeApply({
+    plan,
     messages: new Map(checkout.held),
     ctx,
     audit: options.audit,
-    usable: () => checkout.status === 'active',
+    stopReason: () => (checkout.status === 'active' ? options.stopReason() : NOT_ACTIVE_REASON),
+    onStep: (o) => {
+      if (o.status !== 'kept') progress.record(o.status);
+    },
     beforeStep: options.beforeStep,
     onDone: (handle) => {
       checkout.held.delete(handle);
       checkout.decisions.delete(handle);
     },
   });
-  checkout.applying = running;
-  try {
-    return { startedAt: ctx.startedAt, outcomes: await running };
-  } finally {
-    checkout.applying = null;
-  }
+  return { startedAt: ctx.startedAt, outcomes };
 }
 
 /**

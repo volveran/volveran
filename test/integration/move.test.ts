@@ -6,6 +6,7 @@
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  applyAndWait,
   deadLetter,
   deadLetterRoutes,
   drain,
@@ -42,7 +43,8 @@ describe('Move', () => {
   }
   const decide = (id: string, handles: number[], decision: unknown) =>
     app.post(`/api/checkouts/${id}/decisions`, { handles, decision });
-  const apply = (id: string) => app.post(`/api/checkouts/${id}/apply`, { confirm: true });
+  /** Applies and waits for the Apply to end; answers with the Checkout and its outcomes. */
+  const apply = (id: string) => applyAndWait(app, `/api/checkouts/${id}/apply`, { confirm: true });
   /** Takes every ready Message in `queue`, auto-acked. */
   const take = (queue: string) => withChannel('/', (ch) => drain(ch, queue));
 
@@ -100,7 +102,7 @@ describe('Move', () => {
 
     const applied = await apply(id);
 
-    expect(applied.status).toBe(200);
+    expect(applied.status).toBe(202);
     expect(applied.body.outcomes).toHaveLength(2);
     expect(applied.body.outcomes).toEqual(
       expect.arrayContaining([
@@ -213,7 +215,7 @@ describe('Move', () => {
 
     const applied = await apply(id);
 
-    expect(applied.status).toBe(200);
+    expect(applied.status).toBe(202);
     const status = Object.fromEntries(applied.body.outcomes.map((o: any) => [o.messageId, [o.status, o.reason]]));
     expect(status).toEqual({
       unroutable: ['failed', expect.stringMatching(/could not route/)],
@@ -239,7 +241,7 @@ describe('Move', () => {
     const { id, handle } = await startCheckout('orders.dlq');
     await decide(id, [handle('orders.dlq-0'), handle('orders.dlq-1')], toQueue('triage.manual'));
 
-    expect((await apply(id)).status).toBe(200);
+    expect((await apply(id)).status).toBe(202);
 
     const arrived = await take('triage.manual');
     const replayIds = Object.fromEntries(arrived.map((m) => [m.properties.messageId, m.properties.headers?.['x-volveran-replay-id']]));

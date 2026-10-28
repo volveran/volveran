@@ -74,6 +74,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
+    // Called only once the app below is listening.
+    onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
   });
   const access: Access =
     config.mode.kind === 'solo'

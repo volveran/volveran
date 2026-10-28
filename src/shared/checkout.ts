@@ -10,9 +10,11 @@ export type CheckoutQueueType = 'classic' | 'quorum';
 /**
  * `awaiting_approval`: active, with its Decisions frozen until a second
  * Operator approves the Apply (or the requester withdraws the request).
+ * `applying`: active, with its Apply running in the background
+ * (`applyProgress`); it ends once the Apply has run.
  * `lost`: the Checkout ended without Volverán ending it (a Lost Checkout).
  */
-export type CheckoutStatus = 'active' | 'awaiting_approval' | 'ended' | 'lost';
+export type CheckoutStatus = 'active' | 'awaiting_approval' | 'applying' | 'ended' | 'lost';
 
 /**
  * Why an ended Checkout ended: the Operator ended it, it was Applied, the app
@@ -133,8 +135,9 @@ export interface MessageRow extends MessageSummary {
 /**
  * What happened to one Message in an Apply. done: its Decision was carried
  * out. failed: it was not (the reason says why); it goes back to the queue.
- * not-attempted: Apply stopped before it (the Checkout stopped being active,
- * or this version cannot carry out its Decision); it goes back to the queue.
+ * not-attempted: Apply stopped before it (the Checkout stopped being active
+ * or reached its time limit, or this version cannot carry out its Decision);
+ * it goes back to the queue.
  * kept: its Decision was Keep.
  */
 export type OutcomeStatus = 'done' | 'failed' | 'not-attempted' | 'kept';
@@ -156,6 +159,27 @@ export interface AppliedResult {
   outcomes: MessageOutcome[];
   /** The Operator who approved the Apply (display name); null when it needed no Approval. */
   approvedBy: string | null;
+}
+
+/**
+ * How far a Checkout's Apply has got. Counts are of the Apply's steps (every
+ * Decision other than Keep); `remaining` is the steps neither done, failed
+ * nor not attempted yet.
+ */
+export interface ApplyProgress {
+  total: number;
+  done: number;
+  failed: number;
+  notAttempted: number;
+  remaining: number;
+  /** The Replay Rate the Apply runs at, in Messages per second; null when it runs as fast as the broker confirms. */
+  rate: number | null;
+  /** ISO 8601. */
+  startedAt: string;
+  /** When the Apply should end at its pace so far (ISO 8601); null until a step has run. */
+  estimatedEndAt: string | null;
+  /** The Operator who stopped the Apply (display name); null unless one did. */
+  stoppedBy: string | null;
 }
 
 /** The confirmation an Apply needs beyond the single confirmation. */
@@ -256,6 +280,8 @@ export interface CheckoutView {
   approvalRequest: ApprovalRequestView | null;
   /** The last request's rejection, until the next request; null otherwise. The Checkout is back in staging. */
   rejection: ApprovalRejection | null;
+  /** The progress of the Checkout's Apply, from the moment it starts (kept once it has run); null before. */
+  applyProgress: ApplyProgress | null;
   /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
   lastApply: AppliedResult | null;
 }

@@ -5,7 +5,7 @@
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AuditStore } from '../../src/server/audit/store.js';
-import { closedPort, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, withChannel, type TestApp } from './harness.js';
+import { applyAndWait, closedPort, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, withChannel, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, type TestIdentity } from './oidc-provider.js';
 
 const queue = 'triage.manual';
@@ -38,7 +38,7 @@ describe('Roles per Broker Profile', () => {
     const { checkout } = started.body;
     const handles = checkout.messages.map((m: any) => m.handle);
     await browser.post(`/api/checkouts/${checkout.id}/decisions`, { handles, decision: { kind: 'discard', reason: 'bad payload' } });
-    expect((await browser.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true })).status).toBe(200);
+    expect((await applyAndWait(browser, `/api/checkouts/${checkout.id}/apply`, { confirm: true })).status).toBe(202);
     return (await browser.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body.entries as any[];
   }
 
@@ -390,7 +390,7 @@ describe('Roles in Solo Mode', () => {
     expect(started.status).toBe(201);
     const { checkout } = started.body;
     await app.post(`/api/checkouts/${checkout.id}/decisions`, { handles: [checkout.messages[0].handle], decision: { kind: 'discard', reason: 'x' } });
-    expect((await app.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true })).status).toBe(200);
+    expect((await applyAndWait(app, `/api/checkouts/${checkout.id}/apply`, { confirm: true })).status).toBe(202);
     const [entry] = (await app.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body.entries;
     expect(entry.role).toBe('admin');
     expect((await app.post(`/api/audit-entries/${entry.id}/restore`, { confirm: true })).status).toBe(200);

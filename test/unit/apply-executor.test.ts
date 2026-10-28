@@ -49,7 +49,7 @@ describe('Apply executor', () => {
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),
       },
       audit,
-      usable: () => true,
+      stopReason: () => null,
       onDone: (handle) => done.push(handle),
       ...overrides,
     });
@@ -88,19 +88,25 @@ describe('Apply executor', () => {
     ]);
   });
 
-  it('checks the Checkout before every step and does not attempt the rest once it is no longer active', async () => {
-    let active = true;
+  it('asks before every step whether to go on, and reports the rest not attempted with the reason once told to stop', async () => {
+    let stop: string | null = null;
     const acked: number[] = [];
+    const steps: unknown[] = [];
     const { outcomes } = run(
       { kept: [], steps: [1, 2, 3].map((handle) => ({ handle, decision: DISCARD })) },
       async (m) => {
         acked.push(m.fields.deliveryTag);
-        active = false; // e.g. the connection dropped right after this ack
+        stop = 'The Checkout reached its time limit.'; // e.g. the time limit, right after this ack
       },
-      { usable: () => active },
+      { stopReason: () => stop, onStep: (o) => steps.push([o.handle, o.status]) },
     );
 
-    expect((await outcomes).map((o) => [o.handle, o.status])).toEqual([
+    expect((await outcomes).map((o) => [o.handle, o.status, o.reason])).toEqual([
+      [1, 'done', null],
+      [2, 'not-attempted', 'The Checkout reached its time limit.'],
+      [3, 'not-attempted', 'The Checkout reached its time limit.'],
+    ]);
+    expect(steps).toEqual([
       [1, 'done'],
       [2, 'not-attempted'],
       [3, 'not-attempted'],

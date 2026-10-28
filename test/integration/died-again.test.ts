@@ -5,6 +5,7 @@
 // earlier Audit Entries recorded).
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  applyAndWait,
   deadLetter,
   deadLetterRoutes,
   fixtureQueues,
@@ -35,8 +36,8 @@ describe('Died Again', () => {
   const decide = (id: string, handles: number[], decision: unknown) =>
     app.post(`/api/checkouts/${id}/decisions`, { handles, decision });
   async function apply(id: string) {
-    const res = await app.post(`/api/checkouts/${id}/apply`, { confirm: true });
-    expect(res.status).toBe(200);
+    const res = await applyAndWait(app, `/api/checkouts/${id}/apply`, { confirm: true });
+    expect(res.status).toBe(202);
     return res.body;
   }
   /** The Audit Entries of a Checkout's Apply, newest first. */

@@ -8,6 +8,7 @@ import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AuditStore, type NewAuditEntry } from '../../src/server/audit/store.js';
 import {
+  applyAndWait,
   deadLetter,
   deadLetterRoutes,
   drain,
@@ -46,8 +47,8 @@ async function discard(app: TestApp, queue: string, messageIds: string[], confir
   const handles = checkout.messages.filter((m: any) => messageIds.includes(m.messageId)).map((m: any) => m.handle);
   expect(handles).toHaveLength(messageIds.length);
   await app.post(`/api/checkouts/${checkout.id}/decisions`, { handles, decision: { kind: 'discard', reason: 'bad payload' } });
-  const applied = await app.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true, confirmQueueName });
-  expect(applied.status).toBe(200);
+  const applied = await applyAndWait(app, `/api/checkouts/${checkout.id}/apply`, { confirm: true, confirmQueueName });
+  expect(applied.status).toBe(202);
   const { entries } = (await app.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body;
   return entries as any[];
 }

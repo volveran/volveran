@@ -1,7 +1,7 @@
 // Thin typed client over Volverán's HTTP JSON API. The response shapes are
 // the server's own, from src/shared/.
 import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
-import type { ApprovalSummary, CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
+import type { ApprovalSummary, CheckoutView, MessageDetail } from '../shared/checkout.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
 import { product } from '../shared/product.js';
@@ -10,6 +10,7 @@ import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } f
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
 export type {
+  ApplyProgress,
   ApprovalSummary,
   CheckoutHolder,
   DeliveryBudget,
@@ -151,10 +152,7 @@ export const api = {
       handles,
       decision,
     }),
-  /**
-   * Carries out every Decision, then ends the Checkout; one outcome per Message.
-   * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
-   */
+
   auditEntries: (search: AuditSearch) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(search)) if (value?.trim()) params.set(key, value.trim());
@@ -192,11 +190,17 @@ export const api = {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   },
+  /**
+   * Starts carrying out every Decision in the background; returns the
+   * Checkout `applying`. Its `applyProgress` shows how far it has got, and
+   * its `lastApply` the outcome per Message once it has ended the Checkout.
+   * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
+   */
   apply: (id: string, confirmQueueName?: string) =>
-    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
-    }),
+    }).then((b) => b.checkout),
   /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions. */
   requestApproval: (id: string, confirmQueueName?: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
@@ -215,9 +219,13 @@ export const api = {
   /** Rejects the Apply of a waiting Checkout: it goes back to its requester's staging with `reason`. */
   reject: (id: string, reason: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
-  /** Approves the Apply of a waiting Checkout, which runs it; `confirmQueueName` is the queue name as typed. */
+  /**
+   * Approves the Apply of a waiting Checkout, which starts it in the
+   * background on the requester's Checkout; returns that Checkout
+   * `applying`. `confirmQueueName` is the queue name as typed.
+   */
   approve: (id: string, confirmQueueName: string) =>
-    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
       confirmQueueName,
-    }),
+    }).then((b) => b.checkout),
 };

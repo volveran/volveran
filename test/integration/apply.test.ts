@@ -1,13 +1,16 @@
 // Apply with Discard through the HTTP API, against the real broker (ADR 0001):
 // a Discarded Message is stored durably, then acked; every other Message goes
 // back to the queue in order; a Checkout that stops being active mid-Apply
-// stops the Apply there.
+// stops the Apply there. Apply runs in the background (ADR 0009): it answers
+// 202 at once, and its progress and outcomes are read from the Checkout.
 import type { ChildProcess } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   brokerUsers,
+  appliedCheckout,
+  applyAndWait,
   checkoutConnectionNames,
   closeConnection,
   deadLetter,
@@ -49,7 +52,9 @@ describe('Apply with Discard', () => {
 
   const decide = (id: string, handles: number[], decision: unknown, on: TestApp = app) =>
     on.post(`/api/checkouts/${id}/decisions`, { handles, decision });
-  const apply = (id: string, on: TestApp = app) => on.post(`/api/checkouts/${id}/apply`, { confirm: true });
+  const startApply = (id: string, on: TestApp = app) => on.post(`/api/checkouts/${id}/apply`, { confirm: true });
+  /** Applies and waits for the Apply to end; answers with the Checkout and its outcomes. */
+  const apply = (id: string, on: TestApp = app) => applyAndWait(on, `/api/checkouts/${id}/apply`, { confirm: true });
 
   beforeAll(async () => {
     app = await startApp({
@@ -78,7 +83,7 @@ describe('Apply with Discard', () => {
 
       const applied = await apply(id);
 
-      expect(applied.status).toBe(200);
+      expect(applied.status).toBe(202);
       expect(applied.body.outcomes).toEqual(
         [0, 1, 2, 3, 4].map((n) => ({
           handle: handle(`${queue}-${n}`),
@@ -95,6 +100,67 @@ describe('Apply with Discard', () => {
       await startCheckout(queue);
     },
   );
+
+  it('answers 202 at once and shows the progress of the Apply on the Checkout while it runs', async () => {
+    await seedMessages('/', 'orders.dlq', 4);
+    const { checkout, id, handle } = await startCheckout('orders.dlq');
+    const all: number[] = checkout.messages.map((m: any) => m.handle);
+    await decide(id, all.slice(0, 3), discard());
+    let steps = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    // Hold the second step, once the first is done.
+    beforeApplyStep = async () => {
+      if (++steps === 2) await held;
+    };
+
+    const started = await startApply(id);
+    try {
+      await expectProgress();
+    } finally {
+      release();
+    }
+    const ended = await appliedCheckout(app, id);
+
+    expect(ended).toMatchObject({ status: 'ended', endReason: 'applied', heldCount: 0 });
+
+    async function expectProgress() {
+      expect(started.status).toBe(202);
+      expect(started.body.outcomes).toBeUndefined();
+      expect(started.body.checkout).toMatchObject({ status: 'applying', lastApply: null });
+      const during = await eventually(async () => {
+        const { checkout: c } = (await app.get(`/api/checkouts/${id}`)).body;
+        expect(c.applyProgress.done).toBe(1);
+        return c;
+      });
+      expect(during.status).toBe('applying');
+      expect(during.applyProgress).toEqual({
+        total: 3,
+        done: 1,
+        failed: 0,
+        notAttempted: 0,
+        remaining: 2,
+        rate: null,
+        startedAt: expect.any(String),
+        estimatedEndAt: expect.any(String),
+        stoppedBy: null,
+      });
+      expect(Date.parse(during.applyProgress.estimatedEndAt)).toBeGreaterThanOrEqual(
+        Date.parse(during.applyProgress.startedAt),
+      );
+    }
+    expect(ended.applyProgress).toMatchObject({ total: 3, done: 3, remaining: 0 });
+    expect(ended.lastApply.outcomes).toEqual(
+      [0, 1, 2, 3].map((n) => ({
+        handle: handle(`orders.dlq-${n}`),
+        messageId: `orders.dlq-${n}`,
+        decision: n < 3 ? discard() : KEEP,
+        status: n < 3 ? 'done' : 'kept',
+        reason: null,
+      })),
+    );
+    expect(await readyMessageIds('/', 'orders.dlq')).toEqual(['orders.dlq-3']);
+  });
 
   it('stores a byte-identical copy of each Discarded Message with the reason, the Operator and the broker user', async () => {
     const body = Buffer.from([0x7b, 0x00, 0xff, 0x80, 0x0a, 0x7d]);
@@ -115,7 +181,7 @@ describe('Apply with Discard', () => {
     await decide(id, [handle('pay-1')], discard('  card declined twice  '));
     const before = Date.now();
 
-    expect((await apply(id)).status).toBe(200);
+    expect((await apply(id)).status).toBe(202);
 
     const listed = await app.get(`/api/audit-entries?checkoutId=${id}`);
     expect(listed.status).toBe(200);
@@ -208,7 +274,7 @@ describe('Apply with Discard', () => {
 
     const applied = await apply(id);
 
-    expect(applied.status).toBe(200);
+    expect(applied.status).toBe(202);
     expect(applied.body.checkout.status).toBe('lost');
     expect(applied.body.outcomes.map((o: any) => [o.messageId, o.status])).toEqual([
       ['orders.dlq-0', 'done'],
@@ -229,23 +295,53 @@ describe('Apply with Discard', () => {
     ]);
   });
 
-  it('does not let the time limit or a missing heartbeat end the Checkout while Apply runs', async () => {
+  it('does not let a missing heartbeat end the Checkout while Apply runs', async () => {
     const quick = await startApp({
       profiles: [testProfile({ name: 'local' })],
-      checkoutTiming: { timeLimitMs: 1_000, heartbeatWindowMs: 1_000 },
+      checkoutTiming: { heartbeatWindowMs: 1_000 },
       checkoutTestHooks: { beforeApplyStep: async (entryId) => beforeApplyStep?.(entryId) },
     });
     try {
       await seedMessages('/', 'orders.dlq', 3);
       const { checkout, id } = await startCheckout('orders.dlq', quick);
       await decide(id, checkout.messages.map((m: any) => m.handle).slice(0, 2), discard(), quick);
-      beforeApplyStep = () => sleep(1_500); // both timers fire during the first step
+      beforeApplyStep = () => sleep(1_500); // the heartbeat window passes during each step
 
       const applied = await apply(id, quick);
 
       expect(applied.body.outcomes.map((o: any) => o.status)).toEqual(['done', 'done', 'kept']);
       expect(applied.body.checkout).toMatchObject({ status: 'ended', endReason: 'applied' });
       expect(await readyMessageIds('/', 'orders.dlq')).toEqual(['orders.dlq-2']);
+    } finally {
+      open.length = 0;
+      await quick.close();
+    }
+  });
+
+  it('stops the Apply before its next step at the time limit, returning the rest to the queue in order', async () => {
+    const quick = await startApp({
+      profiles: [testProfile({ name: 'local' })],
+      checkoutTiming: { timeLimitMs: 1_000, heartbeatWindowMs: 1_000 },
+      checkoutTestHooks: { beforeApplyStep: async (entryId) => beforeApplyStep?.(entryId) },
+    });
+    try {
+      await seedMessages('/', 'orders.dlq', 4);
+      const { checkout, id } = await startCheckout('orders.dlq', quick);
+      await decide(id, checkout.messages.map((m: any) => m.handle).slice(0, 3), discard(), quick);
+      beforeApplyStep = () => sleep(1_500); // the time limit passes during the first step
+
+      const applied = await apply(id, quick);
+
+      expect(applied.body.outcomes.map((o: any) => [o.messageId, o.status, o.reason])).toEqual([
+        ['orders.dlq-0', 'done', null],
+        ['orders.dlq-1', 'not-attempted', expect.stringMatching(/time limit.*back in the queue/)],
+        ['orders.dlq-2', 'not-attempted', expect.stringMatching(/time limit.*back in the queue/)],
+        ['orders.dlq-3', 'kept', null],
+      ]);
+      expect(applied.body.checkout).toMatchObject({ status: 'ended', endReason: 'time-limit', heldCount: 0 });
+      expect(applied.body.checkout.applyProgress).toMatchObject({ total: 3, done: 1, notAttempted: 2, remaining: 0 });
+      expect(await readyMessageIds('/', 'orders.dlq')).toEqual(['orders.dlq-1', 'orders.dlq-2', 'orders.dlq-3']);
+      expect((await quick.get(`/api/audit-entries?checkoutId=${id}`)).body.entries).toHaveLength(1);
     } finally {
       open.length = 0;
       await quick.close();

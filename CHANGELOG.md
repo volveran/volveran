@@ -6,6 +6,12 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **API: Apply runs in the background and no longer returns its outcomes.** `POST /api/checkouts/:id/apply` and `POST /api/approvals/:checkoutId/approve` start the Apply and answer `202 { checkout }`, with the Checkout's status `applying`, instead of `200 { checkout, outcomes }`. Scripts read the outcomes from the Checkout view (`GET /api/checkouts/:id`) once its status is no longer `applying`: `lastApply.outcomes` has the same shape as before. Every refusal (`confirmation_required`, `queue_name_confirmation_required`, `approval_required`, `checkout_not_active`, `apply_in_progress`) still answers before anything starts. The Checkout view gains `applyProgress` (`total`, `done`, `failed`, `notAttempted`, `remaining`, `startedAt`, `estimatedEndAt`, and `rate` and `stoppedBy`, both `null` for now). See [ADR 0009](docs/adr/0009-apply-runs-in-the-background-paced-between-steps.md). (#54)
+- An Apply in progress no longer depends on the browser: the heartbeat window is suspended while it runs, so closing the page does not end the Checkout under it. The time limit stays a hard bound: at the limit the Apply attempts no further step, reports the rest `not-attempted` (back in the queue, in order) and the Checkout ends with `endReason: "time-limit"`; until now the time limit waited for the whole Apply. (#54)
+- The web app starts the Apply (or approves it) and then follows its progress on the Checkout, with a progress bar of the Messages done, failed and still to go, and shows the outcome list once the Apply ends. An approver sees that the Apply started on the requester's Checkout, where its progress and outcomes are shown. (#54)
+
 ## [0.3.0] - 2026-10-28
 
 Team safety (see the [roadmap](ROADMAP.md)): Roles per Broker Profile, Approval on Protected Profiles, Broker Profiles that connect with the Operator's own token, Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation.

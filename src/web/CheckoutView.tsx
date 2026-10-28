@@ -4,7 +4,8 @@
 // leaving the page ends it too (a beacon), so nothing stays held by accident.
 // While the page shows the Checkout it sends heartbeats (without them the
 // server ends it), and it counts down to the Checkout's time limit. Apply
-// carries out the Decisions and ends the Checkout; the page then shows what
+// carries out the Decisions in the background and ends the Checkout: while
+// it runs the page polls the Checkout and shows its progress, then what
 // happened to each Message. The keyboard moves through the Messages (the
 // Message view follows), builds the Selection and assigns Decisions; the
 // keys are mapped to commands in keyboard-commands.ts.
@@ -31,6 +32,7 @@ import {
 } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
+import { ApplyProgressPanel } from './ApplyProgress.js';
 import { formatCountdown } from './countdown.js';
 import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { FilterBar } from './FilterBar.js';
@@ -95,6 +97,22 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       everyMs: (c) => Math.max(1_000, Math.min(5_000, c.heartbeatWindowMs / 4)),
     },
     [id],
+  );
+
+  // While the Apply runs (a Lost Checkout's included, until its outcomes arrive), follow its progress.
+  const applying = checkout?.status === 'applying' || (checkout?.applyProgress != null && checkout.lastApply === null);
+  usePolling(
+    {
+      load: () => api.checkout(id),
+      received: (c: Checkout) => {
+        setCheckout(c);
+        setReceivedAt(Date.now());
+      },
+      failed: setError,
+      everyMs: APPLY_POLL_MS,
+      enabled: applying,
+    },
+    [id, applying],
   );
 
   useEffect(() => {
@@ -183,8 +201,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     setBusy(true);
     setNotice(undefined);
     try {
-      const res = await api.apply(id, confirmQueueName);
-      setCheckout(res.checkout);
+      setCheckout(await api.apply(id, confirmQueueName));
       setReceivedAt(Date.now());
       setSelection(new Set());
       setError(undefined);
@@ -225,8 +242,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
 
   const active = checkout?.status === 'active';
   const awaiting = checkout?.status === 'awaiting_approval';
-  /** Still holding its Messages: active, or waiting for Approval. */
-  const live = active || awaiting;
+  /** Still holding its Messages: active, waiting for Approval, or Applying. */
+  const live = active || awaiting || checkout?.status === 'applying';
   /** The Messages the list shows: all of them, or those matching the filter. */
   const shown = checkout ? (matched ? checkout.messages.filter((m) => matched.has(m.handle)) : checkout.messages) : [];
 
@@ -313,7 +330,15 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
           )}
         </div>
         {live ? (
-          <button onClick={end} disabled={ending} title={`Every held Message goes back to the queue ${returnOrder(checkout.queueType)}`}>
+          <button
+            onClick={end}
+            disabled={ending || applying}
+            title={
+              applying
+                ? 'The Apply ends the Checkout once it has run'
+                : `Every held Message goes back to the queue ${returnOrder(checkout.queueType)}`
+            }
+          >
             End Checkout
           </button>
         ) : (
@@ -334,6 +359,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       )}
       {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}
       {error && <ErrorBox error={error} />}
+      {applying && checkout.applyProgress && <ApplyProgressPanel progress={checkout.applyProgress} now={now} />}
       {checkout.lastApply && <ApplyOutcomes outcomes={checkout.lastApply.outcomes} approvedBy={checkout.lastApply.approvedBy} />}
 
       {awaiting && checkout.approvalRequest && (
@@ -495,10 +521,16 @@ function CopyableLink({ label, url }: { label: string; url: string }) {
   );
 }
 
+/** How often the page reads the Checkout while its Apply runs. */
+const APPLY_POLL_MS = 1_000;
+
 function endedLine(c: Checkout): string {
   const back = `its Messages are back in the queue ${returnOrder(c.queueType)}.`;
   switch (c.endReason) {
     case 'time-limit':
+      if (c.lastApply) {
+        return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes during the Apply, which stopped before its next step; the Messages not done are back in the queue ${returnOrder(c.queueType)}.`;
+      }
       return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes and ended; ${back}`;
     case 'no-heartbeat':
       return `This Checkout ended because this page stopped sending heartbeats; ${back}`;

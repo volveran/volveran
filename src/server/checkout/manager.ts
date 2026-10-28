@@ -15,11 +15,15 @@
 // (checkout-timing.ts). On quorum queues its consumer carries
 // `x-consumer-timeout` a margin past the time limit, as a backstop.
 //
-// Apply (ADR 0001) ends the Checkout ('applied') once it has run: what is
-// still held (Keep, failed, not attempted) goes back to the queue in order.
-// While Apply runs, nothing else ends the Checkout: the time limit, the
-// heartbeat window and an Operator's end wait for it. Only the broker can
-// cut it short (Lost Checkout).
+// Apply (ADR 0001, ADR 0009) runs in the background: starting it answers at
+// once with the Checkout `applying`, whose view shows the Apply's progress.
+// It ends the Checkout ('applied') once it has run: what is still held
+// (Keep, failed, not attempted) goes back to the queue in order. While it
+// runs, the heartbeat window is suspended (closing the browser does not
+// cancel an Apply), and an Operator's end and shutdown wait for it. The time
+// limit stays a hard bound: it asks the Apply to attempt no further step
+// (the rest is reported not attempted), and the Checkout then ends
+// ('time-limit'). The broker can still cut it short (Lost Checkout).
 //
 // Approval (Team Mode, a Protected Profile with `requireApproval`): an Apply
 // with any Decision other than Keep is not run by its owner. The owner
@@ -42,7 +46,6 @@ import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
-import type { MessageOutcome } from '../apply/types.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, ProfileScope } from '../audit/store.js';
 import { diedAgain } from '../triage/died-again.js';
@@ -63,7 +66,7 @@ import {
 } from './errors.js';
 import { startExport, type CheckoutExport } from './export.js';
 import { openCheckout, type StartOptions } from './open.js';
-import type { ApprovalClosed, ApprovalRequest, Checkout, EndReason } from './state.js';
+import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
 import { approvalSummary, queueInfo, view, type ApprovalSummary, type CheckoutView } from './view.js';
 
 export { checkoutConnectionName, type StartOptions } from './open.js';
@@ -110,7 +113,12 @@ export interface CheckoutManagerOptions {
   /** How long an ended or lost Checkout stays readable before it is forgotten. */
   endedRetentionMs?: number;
   testHooks?: CheckoutTestHooks;
+  /** An Apply running in the background failed unexpectedly (its steps report their own failures); the Checkout still ends. */
+  onApplyError?(checkoutId: string, err: unknown): void;
 }
+
+/** The reason of the steps an Apply did not reach before the Checkout's time limit. */
+const TIME_LIMIT_REASON = 'The Checkout reached its time limit before this Message; it is back in the queue.';
 
 const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
 
@@ -175,6 +183,7 @@ export class CheckoutManager {
       diedAgain: new Map(),
       decisions: new Map(),
       applying: null,
+      applyProgress: null,
       lastApply: null,
     };
     this.locks.set(lockKey, checkout);
@@ -200,7 +209,8 @@ export class CheckoutManager {
   /** The browser still shows the Checkout: it stays until the next heartbeat window passes. */
   heartbeat(id: string): CheckoutView {
     const checkout = this.find(id);
-    if (checkout.status === 'active') checkout.heartbeatTimer?.refresh();
+    // While an Apply runs the heartbeat window is suspended.
+    if (checkout.status === 'active' && !checkout.applying) checkout.heartbeatTimer?.refresh();
     return view(checkout);
   }
 
@@ -252,20 +262,22 @@ export class CheckoutManager {
   }
 
   /**
-   * Carries out every Decision of the Checkout (ADR 0001), then ends it:
-   * Messages whose Decision is Keep, failed or was not attempted go back to
-   * the queue in order. Returns the outcome for each Message. Throws
-   * `checkout_not_active` on a Checkout that is over or lost,
+   * Starts carrying out every Decision of the Checkout in the background (ADR
+   * 0001), which then ends it: Messages whose Decision is Keep, failed or was
+   * not attempted go back to the queue in order. Returns the Checkout
+   * `applying`; the outcome for each Message lands in its `lastApply`.
+   * Throws, before starting anything, `checkout_not_active` on a Checkout
+   * that is over or lost, `apply_in_progress` while one runs,
    * `approval_required` when the Apply needs Approval and
    * `awaiting_approval` while it waits for it. `role` is the Applying
    * Operator's Role on the profile, recorded in each Audit Entry.
    */
-  async apply(id: string, role: Role): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+  apply(id: string, role: Role): CheckoutView {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'only an approver can Apply it');
     if (view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
-    return this.runApply(checkout, role, null);
+    return this.startApply(checkout, role, null);
   }
 
   /**
@@ -317,14 +329,15 @@ export class CheckoutManager {
   }
 
   /**
-   * A second Operator approves the requested Apply: it runs on the owner's
-   * Checkout, recorded as the owner's (with the Role they held when they
-   * asked) and with `approver` alongside. Same checks as awaitingCheckout.
+   * A second Operator approves the requested Apply: it starts in the
+   * background on the owner's Checkout, recorded as the owner's (with the
+   * Role they held when they asked) and with `approver` alongside. Returns
+   * the Checkout `applying`. Same checks as awaitingCheckout.
    */
-  async approve(id: string, approver: Operator): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+  approve(id: string, approver: Operator): CheckoutView {
     const checkout = this.awaitingCheckout(id, approver);
     const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName });
-    return this.runApply(checkout, request.role, approver);
+    return this.startApply(checkout, request.role, approver);
   }
 
   /**
@@ -360,22 +373,47 @@ export class CheckoutManager {
     if (checkout.applying) throw applyInProgress(checkout);
   }
 
-  private async runApply(
-    checkout: Checkout,
-    role: Role,
-    approver: Operator | null,
-  ): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
-    const { startedAt, outcomes } = await runApply(checkout, {
-      audit: this.options.audit,
-      role,
-      approver: approver && { id: approver.id, displayName: approver.displayName },
-      beforeStep: this.hooks.beforeApplyStep,
-    });
-    checkout.lastApply = { at: startedAt.toISOString(), outcomes, approvedBy: approver?.displayName ?? null };
+  /**
+   * Starts the Apply in the background, with no await before the Checkout
+   * is `applying` (so a second Apply or approve finds it in progress), and
+   * suspends the heartbeat window while it runs.
+   */
+  private startApply(checkout: Checkout, role: Role, approver: Operator | null): CheckoutView {
+    clearTimeout(checkout.heartbeatTimer);
+    const running: RunningApply = { settled: Promise.resolve(), stop: null };
+    checkout.applying = running;
+    running.settled = this.carryOutApply(checkout, running, role, approver);
+    return view(checkout);
+  }
+
+  private async carryOutApply(checkout: Checkout, running: RunningApply, role: Role, approver: Operator | null) {
+    try {
+      const { startedAt, outcomes } = await runApply(checkout, {
+        audit: this.options.audit,
+        role,
+        approver: approver && { id: approver.id, displayName: approver.displayName },
+        stopReason: () => running.stop?.reason ?? null,
+        beforeStep: this.hooks.beforeApplyStep,
+      });
+      checkout.lastApply = { at: startedAt.toISOString(), outcomes, approvedBy: approver?.displayName ?? null };
+    } catch (err) {
+      this.options.onApplyError?.(checkout.id, err);
+    }
     // Straight to finish (no await first): an end() that waited for this
-    // Apply then finds the Checkout already ended as 'applied'.
-    await this.finish(checkout, 'applied');
-    return { checkout: view(checkout), outcomes };
+    // Apply then finds the Checkout already ended.
+    checkout.applying = null;
+    await this.finish(checkout, running.stop?.endReason ?? 'applied').catch(() => {});
+  }
+
+  /**
+   * Asks the Apply running on the Checkout to attempt no further step; the
+   * step in progress finishes. The first stop wins.
+   */
+  private stopApply(checkout: Checkout, stop: ApplyStop): void {
+    const running = checkout.applying;
+    if (!running || running.stop) return;
+    running.stop = stop;
+    if (stop.stoppedBy && checkout.applyProgress) checkout.applyProgress.stoppedBy = stop.stoppedBy;
   }
 
   /**
@@ -395,7 +433,7 @@ export class CheckoutManager {
     // a done step is never returned and no step is cut short. With none,
     // finish() runs now, before any await: an approve arriving meanwhile
     // finds the Checkout over instead of starting an Apply on it.
-    if (checkout.applying) await checkout.applying.catch(() => {});
+    if (checkout.applying) await checkout.applying.settled;
     return this.finish(checkout, reason);
   }
 
@@ -455,13 +493,25 @@ export class CheckoutManager {
     const left = checkout.endsAt.getTime() - Date.now();
     checkout.timeLimitTimer = setTimeout(async () => {
       await this.hooks.beforeTimeLimitEnd?.(checkout);
+      // An Apply attempts no further step; end() then waits for its step in progress.
+      this.stopApply(checkout, { reason: TIME_LIMIT_REASON, endReason: 'time-limit', stoppedBy: null });
       await this.end(checkout.id, 'time-limit').catch(() => {});
     }, Math.max(0, left));
+    checkout.timeLimitTimer.unref();
+    this.armHeartbeat(checkout);
+  }
+
+  /**
+   * (Re)starts the heartbeat window: the Checkout ends when no heartbeat
+   * arrives within it. Suspended while an Apply runs; an Apply that leaves
+   * the Checkout active re-arms it.
+   */
+  private armHeartbeat(checkout: Checkout) {
+    clearTimeout(checkout.heartbeatTimer);
     checkout.heartbeatTimer = setTimeout(
       () => this.end(checkout.id, 'no-heartbeat').catch(() => {}),
       checkout.timing.heartbeatWindowMs,
     );
-    checkout.timeLimitTimer.unref();
     checkout.heartbeatTimer.unref();
   }
 

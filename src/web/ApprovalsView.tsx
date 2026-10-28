@@ -2,7 +2,8 @@
 // this Operator may give (role `operator` or `admin` on the profile), and a
 // read-only view of one of them: its Decisions, Messages and Message view,
 // as the requester sees them. Approve asks for the queue name typed, then
-// runs the Apply on the requester's Checkout and shows its outcome; Reject
+// starts the Apply on the requester's Checkout (the requester sees its
+// progress and outcome there); Reject
 // asks for a reason, which the requester sees. No key approves or rejects
 // (keyboard-commands.ts): both always need their confirmation, a Prompt
 // (keyboard.tsx) that focuses its typed field, closes on Escape and gives
@@ -12,8 +13,7 @@ import { useEffect, useState } from 'react';
 import { heldLine } from '../shared/held-line.js';
 import { decisionLabel } from '../shared/decisions.js';
 import { formatCountdown } from './countdown.js';
-import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail, type MessageOutcome } from './api.js';
-import { ApplyOutcomes } from './ApplyOutcomes.js';
+import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail } from './api.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
 import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
@@ -126,8 +126,8 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [typed, setTyped] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  /** The Apply this Operator approved, once it has run. */
-  const [result, setResult] = useState<{ checkout: Checkout; outcomes: MessageOutcome[] }>();
+  /** The Checkout whose Apply this Operator approved, as the Apply started. */
+  const [result, setResult] = useState<Checkout>();
   /** The request this Operator rejected: the Checkout is back with its requester. */
   const [rejected, setRejected] = useState<Checkout>();
   const done = result !== undefined || rejected !== undefined;
@@ -201,10 +201,13 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
     return (
       <section className="checkout">
         <div className="checkout-head">
-          <h2>Approved: Apply of {result.checkout.queue}</h2>
+          <h2>Approved: Apply of {result.queue}</h2>
           {back}
         </div>
-        <ApplyOutcomes outcomes={result.outcomes} approvedBy={result.checkout.lastApply?.approvedBy ?? null} />
+        <p>
+          The Apply is running on {result.operator}'s Checkout ({result.decisionSummaryText}). {result.operator} sees
+          its progress and the outcome for each Message there; its Audit Entries name you as the approver.
+        </p>
       </section>
     );
   }

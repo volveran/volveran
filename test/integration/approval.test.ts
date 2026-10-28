@@ -2,9 +2,12 @@
 // Decision other than Keep waits for a second Operator with the `operator`
 // or `admin` role on the profile. The requester asks for Approval, the
 // approver reads the waiting Checkout under /api/approvals/ and approves it,
-// which runs the Apply on the requester's Checkout.
+// which starts the Apply on the requester's Checkout (202); its outcomes
+// appear on the requester's Checkout.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  appliedCheckout,
+  applyAndWait,
   checkoutConnectionNames,
   closeConnection,
   closedPort,
@@ -55,6 +58,9 @@ describe('Approval', () => {
 
   const requestApproval = (browser: TestBrowser, id: string, confirmQueueName: unknown = QUEUE) =>
     browser.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName });
+  /** Approves as `approver`; on 202 waits for the Apply to end, read from the requester's Checkout. */
+  const approve = (approver: TestBrowser, id: string, requester: TestBrowser) =>
+    applyAndWait(approver, `/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }, requester);
 
   beforeAll(async () => {
     await withChannel('/', (ch) => ch.assertQueue(QUEUE, { durable: true }));
@@ -144,16 +150,17 @@ describe('Approval', () => {
       expect([wrong.status, wrong.body.error.code]).toEqual([400, 'queue_name_confirmation_required']);
     }
     const approved = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
-    expect(approved.status).toBe(200);
-    expect(approved.body.outcomes.map((o: any) => [o.messageId, o.status])).toEqual([
+    expect(approved.status).toBe(202);
+    expect(approved.body.checkout).toMatchObject({ id, status: 'applying' });
+
+    // The requester sees the outcome in their Checkout.
+    const after = await appliedCheckout(requester, id);
+    expect(after.lastApply.outcomes.map((o: any) => [o.messageId, o.status])).toEqual([
       [`${QUEUE}-0`, 'done'],
       [`${QUEUE}-1`, 'done'],
       [`${QUEUE}-2`, 'kept'],
     ]);
     expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-2`]);
-
-    // The requester sees the outcome in their Checkout.
-    const after = (await requester.get(`/api/checkouts/${id}`)).body.checkout;
     expect([after.status, after.endReason]).toEqual(['ended', 'applied']);
     expect(after.lastApply).toMatchObject({ approvedBy: 'alan@example.com' });
     expect(after.lastApply.outcomes).toHaveLength(3);
@@ -232,7 +239,7 @@ describe('Approval', () => {
     const second = messages.find((m) => m.messageId === `${QUEUE}-1`).handle;
     expect((await requester.post(`/api/checkouts/${id}/decisions`, { handles: [second], decision: DISCARD })).status).toBe(200);
     expect((await requestApproval(requester, id)).body.checkout.status).toBe('awaiting_approval');
-    const approved = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
+    const approved = await approve(approver, id, requester);
     expect(approved.body.outcomes.filter((o: any) => o.status === 'done')).toHaveLength(2);
     expect(await readyMessageIds('/', QUEUE)).toEqual([]);
   });
@@ -279,7 +286,7 @@ describe('Approval', () => {
     expect((await requester.get(`/api/checkouts/${id}`)).body.checkout.rejection).not.toBeNull();
     const again = await requestApproval(requester, id);
     expect(again.body.checkout).toMatchObject({ status: 'awaiting_approval', rejection: null });
-    const approved = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
+    const approved = await approve(approver, id, requester);
     expect(approved.body.outcomes.filter((o: any) => o.status === 'done')).toHaveLength(2);
   });
 
@@ -334,15 +341,16 @@ describe('Approval', () => {
       expect((await requestApproval(requester, id)).status).toBe(200);
 
       const [approved, withdrawn] = await Promise.all([
-        approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }),
+        approve(approver, id, requester),
         requester.request('DELETE', `/api/checkouts/${id}/approval-request`),
       ]);
-      expect([approved.status, withdrawn.status].sort()).toEqual([200, 409]);
-      const loser = approved.status === 409 ? approved : withdrawn;
+      const approvedFirst = approved.status === 202;
+      expect([approved.status, withdrawn.status]).toEqual(approvedFirst ? [202, 409] : [409, 200]);
+      const loser = approvedFirst ? withdrawn : approved;
       expect(loser.body.error.code).toBe('not_awaiting_approval');
 
       const entries = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
-      if (approved.status === 200) {
+      if (approvedFirst) {
         expect(loser.body.error.message).toMatch(/alan@example\.com approved it/);
         expect(entries).toHaveLength(1);
         expect(await readyMessageIds('/', QUEUE)).toEqual([]);
@@ -360,11 +368,9 @@ describe('Approval', () => {
       const { id } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`, `${QUEUE}-1`]);
       expect((await requestApproval(requester, id)).status).toBe(200);
 
-      const results = await Promise.all(
-        approvers.map((a) => a.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE })),
-      );
-      expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-      const winner = results.find((r) => r.status === 200)!;
+      const results = await Promise.all(approvers.map((a) => approve(a, id, requester)));
+      expect(results.map((r) => r.status).sort()).toEqual([202, 409]);
+      const winner = results.find((r) => r.status === 202)!;
       const loser = results.find((r) => r.status === 409)!;
       expect(loser.body.error.code).toBe('not_awaiting_approval');
       expect(loser.body.error.message).toMatch(/(alan|ada)@example\.com approved it/);
@@ -386,7 +392,8 @@ describe('Approval', () => {
       ]);
       expect(ended.status).toBe(200);
       const entries = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
-      if (approved.status === 200) {
+      // The end waits for an Apply in progress, so once it answers the Apply has run.
+      if (approved.status === 202) {
         expect(ended.body.checkout.endReason).toBe('applied');
         expect(entries.map((e: any) => e.outcome)).toEqual(['done', 'done']);
         expect(await readyMessageIds('/', QUEUE)).toEqual([]);
@@ -413,8 +420,8 @@ describe('Approval', () => {
     const requester = await signedIn(rita);
     const { id, checkout } = await checkoutWithDiscards(requester, 'lax', [`${QUEUE}-0`]);
     expect(checkout.applyConfirmation).toEqual({ typeQueueName: true, approvalRequired: false });
-    const applied = await requester.post(`/api/checkouts/${id}/apply`, { confirm: true, confirmQueueName: QUEUE });
-    expect(applied.status).toBe(200);
+    const applied = await applyAndWait(requester, `/api/checkouts/${id}/apply`, { confirm: true, confirmQueueName: QUEUE });
+    expect(applied.status).toBe(202);
     expect(await readyMessageIds('/', QUEUE)).toEqual([]);
     const [entry] = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
     expect(entry).toMatchObject({ operatorId: 'rita-sub', approverId: null, approverName: null });
