@@ -33,7 +33,7 @@ describe.concurrent('Dead-letter set-up', () => {
     });
   });
 
-  describe('A dead-letter exchange that routes the dead-letter routing key nowhere drops the Message; an alternate exchange on it saves the Message.', () => {
+  describe('A dead-letter exchange that routes the dead-letter routing key to no queue drops the Message, on classic and quorum queues alike. A binding added afterwards gets nothing.', () => {
     it.for(queueTypes)('%s: the rejected Message reaches no queue, and a binding added later gets nothing', async (type, ctx) => {
       const s = await scratchFor(ctx);
       const dlx = await s.exchange('dls-unroutable-dlx', 'direct');
@@ -55,7 +55,9 @@ describe.concurrent('Dead-letter set-up', () => {
       await sleep(500);
       expect(await s.bodies(dlq)).toEqual([]);
     });
+  });
 
+  describe('An alternate exchange on the dead-letter exchange saves the Message: it reaches the alternate exchange\'s queues.', () => {
     it.for(queueTypes)('%s: with an alternate exchange on the dead-letter exchange, the Message reaches the alternate exchange\'s queue', async (type, ctx) => {
       const s = await scratchFor(ctx);
       const alternate = await s.exchange('dls-alternate', 'fanout');
