@@ -42,7 +42,8 @@ import type { KeyboardCommand } from './keyboard-commands.js';
 /** An open prompt: the Discard reason or Move destination for some Messages, or the shortcut list. */
 type OpenPrompt = { kind: 'discard' | 'move'; handles: number[] } | { kind: 'shortcuts' };
 
-export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
+/** `hidden`: the page shows another view (Approvals) meanwhile; the Checkout keeps its heartbeat, its keys are off. */
+export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidden?: boolean; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
   /** The focused Message: the one the Message view shows. */
   const [focused, setFocused] = useState<number>();
@@ -284,7 +285,7 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
   useKeyboardCommands(
-    active,
+    active && !hidden,
     {
       view: 'checkout',
       prompt: prompt !== null,

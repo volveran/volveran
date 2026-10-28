@@ -106,7 +106,7 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
                   </ul>
                 </td>
                 <td>
-                  <button onClick={() => setOpen(a.checkoutId)}>Review</button>
+                  <button onClick={() => setOpen(a.checkoutId)}>Open</button>
                 </td>
               </tr>
             ))}
@@ -159,7 +159,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
         .catch((err) => {
           if (cancelled) return;
           setError(err);
-          // No longer waiting (withdrawn, approved, rejected, over): the error says why; nothing to review.
+          // No longer waiting (withdrawn, approved, rejected, over): the error says why; nothing to show.
           if (err instanceof ApiError && err.code === 'not_awaiting_approval') setCheckout(undefined);
         });
     void load();
