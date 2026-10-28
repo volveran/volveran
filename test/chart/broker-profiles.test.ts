@@ -52,6 +52,23 @@ describe('Broker Profiles', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, requireApproval: 'sometimes' }] } })).toMatch(/requireApproval/);
   });
 
+  it("accepts credentials: operatorToken with tokenUsernameClaim and no username or passwordEnv, and writes them into profiles.yaml", () => {
+    const { username: _u, passwordEnv: _p, ...rest } = prod;
+    const tokenProfile = { ...rest, credentials: 'operatorToken', tokenUsernameClaim: 'preferred_username' };
+    const configMap = render({ brokerProfiles: { profiles: [tokenProfile] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [tokenProfile] });
+    expect(parse(render({ brokerProfiles: { profiles: [{ ...prod, credentials: 'shared' }] } }).one('ConfigMap').data!['profiles.yaml']!))
+      .toEqual({ profiles: [{ ...prod, credentials: 'shared' }] });
+  });
+
+  it('refuses an unknown credentials value, and a shared profile without username or passwordEnv', () => {
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, credentials: 'oauth' }] } })).toMatch(/credentials/);
+    const { username: _u, ...noUsername } = prod;
+    expect(renderRefusal({ brokerProfiles: { profiles: [noUsername] } })).toMatch(/username/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, credentials: 'operatorToken' }] } })).toMatch(/brokerProfiles/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, tokenUsernameClaim: 'sub' }] } })).toMatch(/brokerProfiles/);
+  });
+
   it('refuses an unknown role name, or an empty group list', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { owner: ['platform'] } }] } })).toMatch(/roles/);
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { admin: [] } }] } })).toMatch(/admin/);
