@@ -13,7 +13,8 @@ import { formatCountdown } from './countdown.js';
 import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail, type MessageOutcome } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
-import { SignInAgain } from './SignInAgain.js';
+import { ErrorBox } from './ErrorBox.js';
+import { useNow, usePolling } from './timers.js';
 
 /** How often the list and an open waiting Checkout are read again. */
 const REFRESH_MS = 5_000;
@@ -28,26 +29,20 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
   const [receivedAt, setReceivedAt] = useState(0);
   const now = useNow(open === null);
 
-  useEffect(() => {
-    if (open) return;
-    let cancelled = false;
-    const load = () =>
-      api
-        .approvals()
-        .then((list) => {
-          if (cancelled) return;
-          setApprovals(list);
-          setReceivedAt(Date.now());
-          setError(undefined);
-        })
-        .catch((err) => !cancelled && setError(err));
-    void load();
-    const timer = setInterval(load, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [open, tick]);
+  usePolling(
+    {
+      load: api.approvals,
+      received: (list) => {
+        setApprovals(list);
+        setReceivedAt(Date.now());
+        setError(undefined);
+      },
+      failed: setError,
+      everyMs: REFRESH_MS,
+      enabled: open === null,
+    },
+    [open, tick],
+  );
 
   if (open) {
     return (
@@ -117,17 +112,6 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
   );
 }
 
-/** Date.now(), every second while `ticking`. */
-function useNow(ticking: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!ticking) return;
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, [ticking]);
-  return now;
-}
-
 /** One waiting Checkout, read-only, with Approve and Reject. */
 function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
@@ -145,30 +129,23 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [rejected, setRejected] = useState<Checkout>();
   const done = result !== undefined || rejected !== undefined;
 
-  useEffect(() => {
-    if (done) return;
-    let cancelled = false;
-    const load = () =>
-      api
-        .approvalCheckout(id)
-        .then((c) => {
-          if (cancelled) return;
-          setCheckout(c);
-          setError(undefined);
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setError(err);
-          // No longer waiting (withdrawn, approved, rejected, over): the error says why; nothing to show.
-          if (err instanceof ApiError && err.code === 'not_awaiting_approval') setCheckout(undefined);
-        });
-    void load();
-    const timer = setInterval(load, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [id, done]);
+  usePolling(
+    {
+      load: () => api.approvalCheckout(id),
+      received: (c) => {
+        setCheckout(c);
+        setError(undefined);
+      },
+      failed: (err) => {
+        setError(err);
+        // No longer waiting (withdrawn, approved, rejected, over): the error says why; nothing to show.
+        if (err instanceof ApiError && err.code === 'not_awaiting_approval') setCheckout(undefined);
+      },
+      everyMs: REFRESH_MS,
+      enabled: !done,
+    },
+    [id, done],
+  );
 
   useEffect(() => {
     if (focused === undefined || done) return setDetail(undefined);
@@ -362,15 +339,5 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
         {detail && <MessageDetailView message={detail} />}
       </div>
     </section>
-  );
-}
-
-function ErrorBox({ error }: { error: ApiError }) {
-  return (
-    <div className="error" role="alert">
-      <p>{error.message}</p>
-      <code>{error.code}</code>
-      <SignInAgain error={error} />
-    </div>
   );
 }
