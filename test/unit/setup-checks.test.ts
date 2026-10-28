@@ -133,6 +133,54 @@ describe('the unroutable dead-letter exchange check', () => {
     expect(unroutable(work, topology('fanout', []))).toBe(true);
   });
 
+  it('matches topic bindings word by word, "*" standing for exactly one word and "#" for zero or more', () => {
+    const withKey = (routingKey: string) => ({ ...work, arguments: { 'x-dead-letter-exchange': 'dlx', 'x-dead-letter-routing-key': routingKey } });
+    const routed = (routingKey: string, bindingKey: string) => !unroutable(withKey(routingKey), topology('topic', [toQueue('dlx', bindingKey)]));
+    expect(routed('dead.orders', 'dead.orders')).toBe(true);
+    expect(routed('dead.orders', 'dead.*')).toBe(true);
+    expect(routed('dead.orders.eu', 'dead.*')).toBe(false);
+    expect(routed('dead', 'dead.*')).toBe(false);
+    expect(routed('dead.orders.eu', 'dead.#')).toBe(true);
+    expect(routed('dead', 'dead.#')).toBe(true);
+    expect(routed('dead.orders.eu', '#.eu')).toBe(true);
+    expect(routed('dead.orders.eu', '*.eu')).toBe(false);
+    expect(routed('anything.at.all', '#')).toBe(true);
+    expect(routed('dead.orders.eu', 'dead.#.eu')).toBe(true);
+    expect(routed('dead.eu', 'dead.#.eu')).toBe(true);
+    expect(routed('parked', 'dead.#')).toBe(false);
+    expect(routed('dead.orders', 'dead.order')).toBe(false);
+  });
+
+  it('does not warn when the dead-letter exchange has an alternate exchange', () => {
+    expect(unroutable(work, topology({ type: 'direct', alternateExchange: 'unrouted' }, []))).toBe(false);
+  });
+
+  it('follows exchange-to-exchange bindings, matching the key at each exchange and stopping at cycles', () => {
+    const regional: Array<[string, Exchange]> = [['dead.regional', { type: 'topic' }]];
+    expect(unroutable(work, topology('direct', [toExchange('dlx', 'parked', 'dead.regional'), toQueue('dead.regional', 'parked.#')], regional))).toBe(false);
+    expect(unroutable(work, topology('direct', [toExchange('dlx', 'parked', 'dead.regional'), toQueue('dead.regional', 'other.#')], regional))).toBe(true);
+    expect(unroutable(work, topology('direct', [toExchange('dlx', 'other', 'dead.regional'), toQueue('dead.regional', '#')], regional))).toBe(true);
+    expect(unroutable(work, topology('direct', [toExchange('dlx', 'parked', 'dead.regional'), toExchange('dead.regional', '#', 'dlx')], regional))).toBe(true);
+  });
+
+  it('never warns about a headers exchange, or one of a plugin\'s type, whose routing bindings alone cannot decide', () => {
+    expect(unroutable(work, topology('headers', []))).toBe(false);
+    expect(unroutable(work, topology('x-consistent-hash', []))).toBe(false);
+    expect(unroutable(work, topology('direct', [toExchange('dlx', 'parked', 'by-headers')], [['by-headers', { type: 'headers' }]]))).toBe(false);
+  });
+
+  it('never warns about the default exchange, a missing exchange or a queue without a dead-letter exchange', () => {
+    expect(unroutable({ ...work, arguments: { 'x-dead-letter-exchange': '', 'x-dead-letter-routing-key': 'nowhere' } }, topology('direct', []))).toBe(false);
+    expect(unroutable({ ...work, arguments: { 'x-dead-letter-exchange': 'gone' } }, topology('direct', []))).toBe(false);
+    expect(unroutable({ ...work, arguments: {} }, topology('direct', []))).toBe(false);
+  });
+
+  it('reads the dead-letter exchange and routing key from a policy too', () => {
+    const byPolicy = { ...work, arguments: {}, effectivePolicy: { 'dead-letter-exchange': 'dlx', 'dead-letter-routing-key': 'parked' } };
+    expect(unroutable(byPolicy, topology('direct', [toQueue('dlx', 'other')]))).toBe(true);
+    expect(unroutable(byPolicy, topology('direct', [toQueue('dlx', 'parked')]))).toBe(false);
+  });
+
   it('without a dead-letter routing key, warns only when none of the keys the queue is bound with routes', () => {
     const keyless = { ...work, arguments: { 'x-dead-letter-exchange': 'dlx' } };
     const intoWork = [toQueue('orders', 'order.created', 'orders.work'), toQueue('orders', 'order.paid', 'orders.work')];

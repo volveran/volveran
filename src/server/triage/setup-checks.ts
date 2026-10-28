@@ -155,14 +155,17 @@ function receivedKeys(name: string, vhost: VhostTopology): string[] | null {
 
 /**
  * Whether `exchange` routes `routingKey` to at least one queue, following
- * exchange-to-exchange bindings. An exchange whose routing cannot be decided
- * from bindings (headers or a plugin's type) counts as routing.
+ * exchange-to-exchange bindings. An exchange with an alternate exchange, or
+ * whose routing cannot be decided from bindings (headers or a plugin's type),
+ * counts as routing.
  */
 function routes(exchange: string, routingKey: string, vhost: VhostTopology, seen: Set<string>): boolean {
   if (seen.has(exchange)) return false;
   seen.add(exchange);
   const x = vhost.exchanges.get(exchange);
   if (!x) return false;
+  // What it cannot route goes to its alternate exchange.
+  if (x.alternateExchange) return true;
   if (x.type !== 'direct' && x.type !== 'fanout' && x.type !== 'topic') return true;
   return vhost.bindings.some(
     (b) =>
@@ -175,7 +178,17 @@ function routes(exchange: string, routingKey: string, vhost: VhostTopology, seen
 /** Whether a binding with key `bindingKey` on an exchange of `type` matches `routingKey`. */
 function matches(type: string, bindingKey: string, routingKey: string): boolean {
   if (type === 'fanout') return true;
+  if (type === 'topic') return topicMatches(bindingKey.split('.'), routingKey.split('.'));
   return bindingKey === routingKey;
+}
+
+/** Topic matching by words: "*" is exactly one word, "#" zero or more. */
+function topicMatches(pattern: string[], words: string[]): boolean {
+  if (pattern.length === 0) return words.length === 0;
+  const [head, ...rest] = pattern;
+  if (head === '#') return words.some((_, i) => topicMatches(rest, words.slice(i))) || topicMatches(rest, []);
+  if (words.length === 0) return false;
+  return (head === '*' || head === words[0]) && topicMatches(rest, words.slice(1));
 }
 
 /** Every check, in the order their warnings are listed within a severity. */
