@@ -2,8 +2,12 @@
 // in localStorage) and see its queues, dead-letter queues first; start a
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
+// Only the profiles where the Operator has a Role are listed (the server
+// filters them), and actions their Role does not allow are shown as
+// unavailable, naming the role they need.
 import { useEffect, useState } from 'react';
 import { product } from '../shared/product.js';
+import { roleIncludes, type Role } from '../shared/roles.js';
 import { api, ApiError, signOut, type Profile, type Queue, type Session } from './api.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
@@ -54,6 +58,7 @@ export function App() {
   const debouncedSearch = useDebounced(search, 200);
 
   const profile = profiles.find((p) => p.name === profileName);
+  const role = profileName ? session?.roles[profileName] : undefined;
 
   // A Protected Profile shows in the browser tab too, so it is visible from other tabs.
   useEffect(() => {
@@ -178,6 +183,11 @@ export function App() {
           </span>
         )}
         {profile?.protected && <span className="badge protected-badge">Protected Profile</span>}
+        {session?.mode === 'team' && role && (
+          <span className="who">
+            role <code>{role}</code>
+          </span>
+        )}
         {session?.mode === 'solo' && (
           <span className="who">
             Solo Mode · Operator <strong>{session.operator}</strong>
@@ -195,7 +205,7 @@ export function App() {
 
       <main>
         {view === 'audit' && !checkoutId ? (
-          <AuditView profiles={profiles} />
+          <AuditView profiles={profiles} roles={session?.roles ?? {}} />
         ) : (
           <>
             <div className="controls">
@@ -259,7 +269,7 @@ export function App() {
                       and every Restore, needs the queue name typed.
                     </p>
                   )}
-                  <QueueTable queues={queues} onCheckout={startCheckout} />
+                  <QueueTable queues={queues} role={role} onCheckout={startCheckout} />
                 </>
               )
             )}
@@ -289,12 +299,17 @@ function errorTitle(error: ApiError): string {
       return 'You already have a Checkout';
     case 'lock_not_permitted':
       return 'Missing permission for the Checkout lock';
+    case 'no_role_on_profile':
+      return 'No role on this Broker Profile';
+    case 'role_required':
+      return 'Your role does not allow this';
     default:
       return 'Something went wrong';
   }
 }
 
-function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue: string): void }) {
+function QueueTable({ queues, role, onCheckout }: { queues: Queue[]; role: Role | undefined; onCheckout(queue: string): void }) {
+  const mayCheckout = role !== undefined && roleIncludes(role, 'operator');
   if (queues.length === 0) return <p className="empty">No queues match.</p>;
   return (
     <table className="queues">
@@ -336,6 +351,11 @@ function QueueTable({ queues, onCheckout }: { queues: Queue[]; onCheckout(queue:
                   <small>
                     by {q.checkedOutBy.operator} since {new Date(q.checkedOutBy.since).toLocaleTimeString()}
                   </small>
+                </span>
+              ) : !mayCheckout ? (
+                <span className="unavailable">
+                  Needs the role <code>operator</code>
+                  <small>your role here is {role ?? 'none'}</small>
                 </span>
               ) : q.checkout.available ? (
                 <button onClick={() => onCheckout(q.name)}>Check out</button>
