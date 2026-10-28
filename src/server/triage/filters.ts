@@ -5,6 +5,7 @@ import { parseXDeath, type Delivery } from './message-view.js';
 import { matchesQueueFilter as matchesGlob } from './queue-list.js';
 import { parseKind } from './parse-kind.js';
 import { replayIdOf } from './died-again.js';
+import { failureDetails } from './failure-details.js';
 import type { Filter, FilterClause } from '../../shared/filters.js';
 
 export type { Filter, FilterClause };
@@ -19,6 +20,7 @@ const KINDS: readonly FilterKind[] = [
   'body-text',
   'json-path',
   'died-again',
+  'failure',
 ];
 
 /** Reads a Filter from untrusted input (an API request body). */
@@ -61,7 +63,7 @@ function parseClause(raw: unknown): FilterClause | string {
       return { kind };
     default:
       if (typeof c.value !== 'string' || c.value === '') return `The ${kind} filter needs a "value".`;
-      return { kind: kind as 'routing-key' | 'x-death-reason' | 'original-queue' | 'body-text', value: c.value };
+      return { kind: kind as 'routing-key' | 'x-death-reason' | 'original-queue' | 'body-text' | 'failure', value: c.value };
   }
 }
 
@@ -99,6 +101,11 @@ function matchesClause(clause: FilterClause, m: Delivery): boolean {
       const nodes = selectJsonPath(body.value, path.segments);
       if (clause.value === undefined) return nodes.length > 0;
       return nodes.some((node) => jsonScalarText(node) === clause.value);
+    }
+    case 'failure': {
+      const details = failureDetails(m.properties.headers);
+      const value = clause.value.toLowerCase();
+      return [details?.exceptionType, details?.message].some((t) => t != null && t.toLowerCase().includes(value));
     }
     case 'died-again':
       // The same test that flags the Message in the list (triage/died-again.ts).

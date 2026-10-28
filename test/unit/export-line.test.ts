@@ -30,7 +30,23 @@ describe('exportLine', () => {
       deliveryBudget: null,
       decision: { kind: 'replay' },
       diedAgain: null,
+      failureDetails: null,
     });
+  });
+
+  it('carries the Failure Details', () => {
+    const line = exportLine(
+      1,
+      {
+        fields: { exchange: '', routingKey: 'submit-order_error', redelivered: false },
+        properties: { headers: { 'MT-Reason': 'skip', 'MT-Fault-InputAddress': Buffer.from('rabbitmq://localhost/submit-order') } },
+        content: Buffer.from('{}'),
+      },
+      classic,
+      { kind: 'keep' },
+    );
+    expect(line.v).toBe(1);
+    expect(line.failureDetails).toMatchObject({ framework: 'masstransit', reason: 'skip', inputQueue: 'submit-order' });
   });
 
   it('carries the replay id of a Died Again Message, and null for one Volverán never sent out', () => {

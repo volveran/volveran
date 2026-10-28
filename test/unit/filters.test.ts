@@ -124,6 +124,27 @@ describe('Died Again filter', () => {
   });
 });
 
+describe('failure filter', () => {
+  const mt = delivery({ headers: { 'MT-Fault-ExceptionType': 'System.TimeoutException', 'MT-Fault-Message': 'Payment API timed out' } });
+  const spring = delivery({ headers: { 'x-exception-message': Buffer.from('Order 42 has NO lines') } });
+
+  it('matches a case-insensitive substring of the exception type or message', () => {
+    expect(matches([{ kind: 'failure', value: 'timeoutexception' }], mt)).toBe(true);
+    expect(matches([{ kind: 'failure', value: 'payment api' }], mt)).toBe(true);
+    expect(matches([{ kind: 'failure', value: 'no lines' }], spring)).toBe(true);
+    expect(matches([{ kind: 'failure', value: 'no lines' }], mt)).toBe(false);
+  });
+
+  it('never matches a Message without Failure Details', () => {
+    expect(matches([{ kind: 'failure', value: 'timeout' }], delivery({ body: 'timeout' }))).toBe(false);
+  });
+
+  it('needs a value', () => {
+    expect(parseFilter([{ kind: 'failure', value: 'Timeout' }])).toEqual({ ok: true, filter: [{ kind: 'failure', value: 'Timeout' }] });
+    expect(parseFilter([{ kind: 'failure' }])).toEqual({ ok: false, error: 'The failure filter needs a "value".' });
+  });
+});
+
 describe('body text filter', () => {
   it('matches a case-insensitive substring of the body as sent', () => {
     const d = delivery({ body: '{"error":"Card DECLINED","order":42}', contentType: 'application/json' });

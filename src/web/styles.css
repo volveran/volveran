@@ -176,6 +176,19 @@ main {
   margin-left: 4px;
 }
 
+/* A MassTransit Message no consumer handled (MT-Reason: skip), not a fault. */
+.badge.skipped {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: var(--warning);
+  margin-left: 4px;
+}
+
+.message-detail .failure-details dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .held {
   color: var(--warning);
   font-size: 0.9em;

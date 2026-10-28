@@ -33,6 +33,7 @@ export function exportLine(position: number, d: Delivery, queue: QueueInfo, deci
     decision,
     // Died Again (#40): the Message's x-volveran-replay-id, the same test the Checkout uses.
     diedAgain: replayId ? { replayId } : null,
+    failureDetails: summary.failureDetails,
   };
 }
 
