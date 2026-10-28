@@ -2,8 +2,10 @@
 // Operator's ID token, mapped by each profile's `roles` to `viewer`,
 // `operator` or `admin`. Every route on a profile checks the role before it
 // touches the broker or the audit store.
+import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { closedPort, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, type TestApp } from './harness.js';
+import { AuditStore } from '../../src/server/audit/store.js';
+import { closedPort, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, type TestIdentity } from './oidc-provider.js';
 
 const queue = 'triage.manual';
@@ -253,6 +255,82 @@ describe('Roles per Broker Profile', () => {
     // The newest entry is on prod: `limit` still finds nora's.
     const found = (await (await signedIn(nora)).get('/api/audit-entries?limit=1')).body.entries;
     expect(found.map((e: any) => e.id)).toEqual([devEntry.id]);
+  });
+});
+
+describe('Audit Entries of a Broker Profile no longer configured', () => {
+  let app: TestApp;
+  let baseUrl: string;
+  let dataDir: string;
+  let retired: number;
+  const body = Buffer.from('{"card":"4111"}');
+
+  beforeAll(async () => {
+    dataDir = await makeTempDir('roles-retired');
+    const store = new AuditStore(dataDir);
+    retired = store.record({
+      at: new Date(),
+      operator: { id: 'someone', displayName: 'someone' },
+      brokerUser: 'volveran-admin',
+      profile: 'retired',
+      vhost: '/',
+      queue,
+      messageId: 'm-1',
+      action: 'discard',
+      reason: 'bad payload',
+      destination: null,
+      checkoutId: 'c',
+      message: { body, properties: { messageId: 'm-1' }, headers: {} },
+    });
+    store.close();
+    const port = await closedPort();
+    baseUrl = `http://127.0.0.1:${port}`;
+    // Every configured profile has roles: an Operator in no mapped group has no role anywhere.
+    app = await startApp({
+      profiles: [testProfile({ name: 'prod', roles: { viewer: ['support'], operator: ['oncall'], admin: ['platform'] } })],
+      port,
+      env: teamModeEnv(baseUrl),
+      dataDir,
+    });
+  });
+  afterAll(async () => {
+    await app?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function signedIn(identity: TestIdentity) {
+    const browser = new TestBrowser(baseUrl);
+    await browser.signIn(identity);
+    return browser;
+  }
+
+  it('gives the Operator the highest role they hold on any configured profile', async () => {
+    const viewer = await signedIn(vera);
+    const read = await viewer.get(`/api/audit-entries/${retired}`);
+    expect(read.status).toBe(200);
+    expect(read.body.entry.message).not.toHaveProperty('body');
+    expect((await viewer.get('/api/audit-entries?profile=retired')).body.entries.map((e: any) => e.id)).toEqual([retired]);
+
+    const operator = await signedIn(otto);
+    expect((await operator.get(`/api/audit-entries/${retired}`)).body.entry.message.body).toBe(body.toString('base64'));
+    const restore = await operator.post(`/api/audit-entries/${retired}/restore`, { confirm: true });
+    expect(restore.body.error).toMatchObject({ code: 'role_required', profile: 'retired', required: 'admin', held: 'operator' });
+  });
+
+  it('withholds them from an Operator with no role anywhere', async () => {
+    const browser = await signedIn(nora);
+    const read = await browser.get(`/api/audit-entries/${retired}`);
+    expect(read.status).toBe(403);
+    expect(read.body.error).toMatchObject({ code: 'no_role_on_profile', profile: 'retired' });
+    expect((await browser.get('/api/audit-entries')).body.entries).toEqual([]);
+    expect((await browser.get('/api/audit-entries?profile=retired')).body.entries).toEqual([]);
+  });
+
+  it("refuses the audit store's usage to an Operator with no role anywhere", async () => {
+    const refused = await (await signedIn(nora)).get('/api/audit-store');
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe('no_role');
+    expect((await (await signedIn(vera)).get('/api/audit-store')).status).toBe(200);
   });
 });
 

@@ -11,9 +11,11 @@
 // Role on the profile (`roleOn`) and the role each capability needs
 // (`REQUIRED_ROLE`). Roles (Team Mode) come from the Operator's groups and
 // the profile's `roles` mapping; the highest matching role wins, and no
-// match means no role. A profile without `roles`, and one no longer
-// configured (its Audit Entries stay readable), give everyone `admin` (ADR
-// 0007). In Solo Mode the Operator is `admin` everywhere.
+// match means no role. A profile without `roles` gives everyone `admin` (ADR
+// 0007). On a profile no longer configured (only its Audit Entries are
+// left) the Operator holds the highest Role they hold on any configured
+// profile, and no role when they hold none. In Solo Mode the Operator is
+// `admin` everywhere.
 //
 // Errors: 404 `profile_not_found` for an unknown profile name, 404
 // `vhost_not_in_profile` for a vhost the profile is not configured for, 403
@@ -24,7 +26,9 @@ import { brokerCredentials, type BrokerCredentials } from './broker-credentials.
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import type { Operator } from './operator.js';
+import type { ProfileScope } from './audit/store.js';
 import { profileHasVhost, type BrokerProfile, type QueueRef } from './profiles.js';
+import type { RunMode } from './run-mode.js';
 import { highestRole, roleIncludes, ROLES, type Role } from '../shared/roles.js';
 
 /** What an Operator may do on one Broker Profile: a closed list. */
@@ -74,7 +78,7 @@ export type QueueAccess = QueueRef & ProfileAccess;
 export class ProfileAccessCheck {
   constructor(
     private readonly profiles: BrokerProfile[],
-    private readonly mode: 'solo' | 'team',
+    private readonly mode: RunMode['kind'],
   ) {}
 
   /**
@@ -82,11 +86,27 @@ export class ProfileAccessCheck {
    * when they have none.
    */
   roleOn(operator: Operator, profileName: string): Role | null {
+    const found = this.profiles.find((p) => p.name === profileName);
+    if (!found) return this.highestConfiguredRole(operator);
+    return this.roleOnConfigured(operator, found);
+  }
+
+  private roleOnConfigured(operator: Operator, profile: BrokerProfile): Role | null {
     if (this.mode === 'solo') return 'admin';
-    const mapping = this.profiles.find((p) => p.name === profileName)?.roles;
+    const mapping = profile.roles;
     if (!mapping) return 'admin';
     const groups = new Set(operator.groups ?? []);
     return highestRole(ROLES.filter((role) => mapping[role]?.some((g) => groups.has(g))));
+  }
+
+  /**
+   * The Operator's Role on a profile no longer configured (only its Audit
+   * Entries are left): the highest Role they hold on any configured profile,
+   * so a Discarded body is never readable to someone who could read none.
+   */
+  private highestConfiguredRole(operator: Operator): Role | null {
+    if (this.mode === 'solo') return 'admin';
+    return highestRole(this.profiles.map((p) => this.roleOnConfigured(operator, p)).filter((r): r is Role => r !== null));
   }
 
   /** The Operator's Role on each configured Broker Profile where they have one, in file order. */
@@ -135,9 +155,28 @@ export class ProfileAccessCheck {
     return this.profiles.filter((p) => this.holds(operator, capability, p.name));
   }
 
-  /** The names of the configured Broker Profiles on which `operator` does not hold `capability`. */
-  withheld(operator: Operator, capability: Capability): string[] {
-    return this.profiles.filter((p) => !this.holds(operator, capability, p.name)).map((p) => p.name);
+  /**
+   * The Broker Profiles whose Audit Entries `operator` may see with
+   * `capability`, for an audit store query: every profile but the configured
+   * ones withheld, or, when profiles no longer configured are withheld too
+   * (no role anywhere), only the configured ones held.
+   */
+  auditScope(operator: Operator, capability: Capability): ProfileScope {
+    const unconfigured = this.highestConfiguredRole(operator);
+    if (!unconfigured || !roleIncludes(unconfigured, REQUIRED_ROLE[capability])) {
+      return { only: this.list(operator, capability).map((p) => p.name) };
+    }
+    return { except: this.profiles.filter((p) => !this.holds(operator, capability, p.name)).map((p) => p.name) };
+  }
+
+  /** Throws 403 `no_role` unless `operator` has a Role on at least one Broker Profile. */
+  assertSomeRole(operator: Operator): void {
+    if (this.highestConfiguredRole(operator)) return;
+    throw new HttpError(
+      403,
+      'no_role',
+      'You have no role on any Broker Profile. Ask whoever runs Volverán to map one of your groups to a role.',
+    );
   }
 
   /** The named Broker Profile; throws 404 `profile_not_found`, or the denial. */
@@ -172,8 +211,8 @@ export class ProfileAccessCheck {
 
   /**
    * The Broker Profile an Audit Entry belongs to; throws the denial. Null
-   * when that profile is no longer configured: the entry stays readable,
-   * but nothing can be done on its broker.
+   * when that profile is no longer configured: the entry stays readable to
+   * those with a role somewhere, but nothing can be done on its broker.
    */
   ofAuditEntry(operator: Operator, capability: Capability, entry: { profile: string }): ProfileAccess | null {
     const denied = this.denial(operator, capability, entry.profile);
