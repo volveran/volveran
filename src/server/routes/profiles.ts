@@ -18,11 +18,12 @@ export function registerProfileRoutes(app: FastifyInstance, access: ProfileAcces
   app.get('/api/profiles', async (req): Promise<{ profiles: ProfileSummary[] }> => ({
     profiles: access.list(operatorOf(req), 'see_profile').map((p) => ({
       name: p.name,
-      username: p.username,
+      credentials: p.credentials.kind,
+      username: p.credentials.kind === 'shared' ? p.credentials.username : null,
       managementUrl: p.managementUrl,
       amqpUrl: p.amqpUrl,
-      passwordEnv: p.passwordEnv,
-      passwordSet: p.password !== undefined,
+      passwordEnv: p.credentials.kind === 'shared' ? p.credentials.passwordEnv : null,
+      passwordSet: p.credentials.kind === 'shared' && p.credentials.password !== undefined,
       vhosts: p.vhosts,
       defaultQueueFilter: p.defaultQueueFilter ?? null,
       protected: p.protected,

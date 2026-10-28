@@ -10,7 +10,7 @@ Team Mode (`VOLVERAN_AUTH=oidc`) signs Operators in through any OpenID Connect p
 - The **Operator** is the ID token's `sub`, which Volverán stores as the Operator's identity. It shows the `email` claim, or the `name` claim, or `sub` when neither is present. Ask for the `email` and `profile` scopes (the default) so people see names rather than opaque ids.
 - Every `/api/` route answers `401 not_signed_in` without a session; the web app then sends the browser to sign in.
 - It reads the Operator's **groups** from the ID token at sign-in (or the userinfo endpoint, when the ID token does not carry them), and gives them a Role on each Broker Profile from the profile's `roles` (see [Roles](#roles) and [The groups claim](#the-groups-claim)).
-- Broker access does not change: every Operator acts on a broker with the Broker Profile's shared credentials ([ADR 0004](adr/0004-shared-broker-credentials-first.md)).
+- Broker access: by default every Operator acts on a broker with the Broker Profile's shared credentials ([ADR 0004](adr/0004-shared-broker-credentials-first.md)). A profile with `credentials: operatorToken` connects with each Operator's own access token instead (see [The Operator's own broker token](#the-operators-own-broker-token)). Volverán keeps the access token from sign-in in the server-side session; the browser never sees it.
 
 ## Generic provider set-up
 
@@ -169,6 +169,44 @@ profiles:
 ```
 
 Startup refuses `requireApproval` on a profile that is not protected. Solo Mode ignores it: there is nobody to approve.
+
+## The Operator's own broker token
+
+A Broker Profile can connect with each signed-in Operator's own OAuth 2.0 access token instead of a shared service account, on a broker that uses RabbitMQ's [OAuth 2.0 backend](https://www.rabbitmq.com/docs/oauth2). RabbitMQ then applies that person's own permissions (scopes), and its connection list and logs show the person ([ADR 0008](adr/0008-operator-token-pass-through-per-profile.md)).
+
+```yaml
+profiles:
+  - name: prod
+    managementUrl: https://rabbit.example.com:15671
+    amqpUrl: amqps://rabbit.example.com:5671
+    credentials: operatorToken
+    tokenUsernameClaim: preferred_username   # optional; default sub
+    vhosts: ["/"]
+```
+
+- An `operatorToken` profile has no `username` or `passwordEnv` (startup refuses them), and Solo Mode refuses the profile: it has no sign-in, so no token.
+- Every AMQP connection Volverán opens for the Operator on that profile (a Checkout, a Restore) uses the token as its password, and every management API call (vhosts, queue list, Move destinations) sends it as a bearer token.
+- An approved Apply runs on the requester's Checkout connection, so with the **requester's** token: the approver needs no broker permissions on the queue.
+- Volverán's [roles](#roles) still apply on top: an Operator needs both the role in Volverán and the permission at the broker.
+
+### Set-up
+
+1. **One token for every such profile.** Volverán has one OIDC client, and the access token it gets at sign-in serves every `operatorToken` profile. Each of those brokers must accept that token: its audience must include the broker's `auth_oauth2.resource_server_id` (or the broker sets `auth_oauth2.verify_aud = false`), and its scopes must grant what the Operator needs. Per-profile clients or audiences are not supported.
+2. **Audience and scopes at the provider.** Configure the provider to put the broker's audience in the access token issued to Volverán's client, and the RabbitMQ scopes the person should have, e.g. `rabbitmq.read:*/*`, `rabbitmq.write:*/*`, `rabbitmq.configure:*/volveran.*` and `rabbitmq.tag:management`. If they come as scopes Volverán must request, add them to `VOLVERAN_OIDC_SCOPES` (chart `oidc.scopes`) next to `openid email profile`. Providers that cannot use the `rabbitmq.` prefix can be mapped with the broker's `auth_oauth2.scope_aliases` or `additional_scopes_key`.
+3. **What an Operator needs at the broker:** the `management` tag (Volverán reads queues through the management API); configure on queues matching `volveran.*` in the vhost (each Checkout declares its lock queue `volveran.checkout.<queue>`); read on the queues they triage; write on the exchanges a Replay or Move publishes to and on the default exchange for Restore.
+4. **The user name.** RabbitMQ takes the broker user from the token: `sub`, or the first claim of `auth_oauth2.preferred_username_claims`. Set the profile's `tokenUsernameClaim` to the same claim, so the broker user Volverán records in each Audit Entry is the one the broker's logs show.
+5. **Signing keys.** RabbitMQ fetches the provider's keys only over `https` (`auth_oauth2.jwks_url`); with a provider on plain `http`, configure the signing key statically (`auth_oauth2.signing_keys`).
+
+### When the broker says no
+
+| What happened | Answer |
+|---|---|
+| The token has expired | `401 broker_token_expired` with `signInUrl`: sign in again for a new token. |
+| The token lacks a permission (read on the queue, configure on the lock queue, the `management` tag) | `403 broker_permission_denied`, naming the broker user, the resource (`type`, `name`, `vhost`) and the `permission`. |
+| The broker does not accept the token (audience, signing key) | `502 authentication_failed`, naming the Operator's token. |
+| The token expires during a Checkout | The broker closes the connection: a Lost Checkout, with every Message back in the queue (on quorum queues at the cost of one delivery). |
+
+A Checkout cannot yet outlive the sign-in token: Volverán does not refresh it yet. Keep the provider's access token lifetime longer than a Checkout's time limit (30 minutes by default), or expect Lost Checkouts near its end.
 
 ## Kubernetes
 

@@ -246,7 +246,13 @@ export function App() {
         </label>
         {profile && (
           <span className="who">
-            as broker user <strong>{profile.username}</strong>
+            {profile.username !== null ? (
+              <>
+                as broker user <strong>{profile.username}</strong>
+              </>
+            ) : (
+              'with your own broker token'
+            )}
           </span>
         )}
         {profile?.protected && <span className="badge protected-badge">Protected Profile</span>}

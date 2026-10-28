@@ -7,7 +7,7 @@ import { AckUncertainError, type ApplyContext } from '../../src/server/apply/typ
 import type { BrokerProfile } from '../../src/server/profiles.js';
 import type { ApplyPlan } from '../../src/server/triage/decisions.js';
 
-const profile = { name: 'local', username: 'volveran-admin', protected: false } as BrokerProfile;
+const profile = { name: 'local', protected: false } as BrokerProfile;
 const operator = { id: 'sub-1', displayName: 'ana@example.com' };
 const DISCARD = { kind: 'discard', reason: 'duplicate' } as const;
 
@@ -34,7 +34,16 @@ describe('Apply executor', () => {
       plan,
       messages: new Map(handles.map((h) => [h, held(h)])),
       ctx: {
-        target: { checkoutId: 'c-1', profile, vhost: '/', queue: 'orders.dlq', operator, role: 'operator', approver: null },
+        target: {
+          checkoutId: 'c-1',
+          profile,
+          vhost: '/',
+          queue: 'orders.dlq',
+          operator,
+          role: 'operator',
+          brokerUser: 'volveran-admin',
+          approver: null,
+        },
         startedAt: new Date(),
         ack,
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),

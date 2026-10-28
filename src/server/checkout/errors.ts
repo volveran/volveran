@@ -83,10 +83,10 @@ export function hasConsumers({ vhost, queue }: Queue, consumers: number): Checko
   );
 }
 
-export function lockNotPermitted({ profile, vhost, queue }: QueueRef): CheckoutError {
+export function lockNotPermitted({ profile, vhost, queue, brokerUser }: QueueRef & { brokerUser: string }): CheckoutError {
   return new CheckoutError(
     'lock_not_permitted',
-    `Broker user "${profile.username}" of Broker Profile "${profile.name}" may not declare the Checkout lock queue for "${queue}" in vhost "${vhost}". ` +
+    `Broker user "${brokerUser}" of Broker Profile "${profile.name}" may not declare the Checkout lock queue for "${queue}" in vhost "${vhost}". ` +
       `A Checkout needs configure permission on queues matching ^volveran\\. in that vhost; grant it, e.g. a configure pattern of "^volveran\\." (or wider).`,
   );
 }

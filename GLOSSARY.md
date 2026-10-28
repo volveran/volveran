@@ -65,7 +65,7 @@ _Avoid_: Repeat offender, recurring, boomerang
 ## Accountability
 
 **Operator**:
-The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account.
+The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account, or the Operator themself on a profile that connects with their own token (`credentials: operatorToken`).
 _Avoid_: User, who, actor
 
 **Role**:

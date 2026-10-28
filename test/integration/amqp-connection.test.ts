@@ -4,12 +4,14 @@
 // profile's CA file for amqps.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openAmqpConnection } from '../../src/server/amqp-connection.js';
+import { brokerCredentials } from '../../src/server/broker-credentials.js';
 import { BrokerError } from '../../src/server/broker-error.js';
 import { parseProfiles, type BrokerProfile } from '../../src/server/profiles.js';
 import { readFile } from 'node:fs/promises';
 import { brokerUsers, closedPort, startTlsProxy, testBroker, tlsFixtures } from './harness.js';
 
-function profile(overrides: Partial<BrokerProfile> = {}): BrokerProfile {
+/** The test profile; `login` overrides its shared username and password. */
+function profile(overrides: Partial<BrokerProfile> = {}, login: { username?: string; password?: string } = {}): BrokerProfile {
   const [p] = parseProfiles(
     JSON.stringify({
       profiles: [
@@ -24,12 +26,16 @@ function profile(overrides: Partial<BrokerProfile> = {}): BrokerProfile {
     }),
     { PW: brokerUsers.admin.password },
   );
-  return { ...p!, ...overrides };
+  return { ...p!, credentials: { ...p!.credentials, ...login } as BrokerProfile['credentials'], ...overrides };
 }
+
+/** Opens a connection with the profile's credentials (Solo Mode's Operator: the shared account). */
+const open = (p: BrokerProfile, vhost: string) =>
+  openAmqpConnection(p, brokerCredentials(p, { id: 'test', displayName: 'test' }), vhost, 'volveran test');
 
 async function failure(p: BrokerProfile, vhost = '/'): Promise<BrokerError> {
   try {
-    const conn = await openAmqpConnection(p, vhost, 'volveran test');
+    const conn = await open(p, vhost);
     await conn.close();
   } catch (err) {
     if (err instanceof BrokerError) return err;
@@ -48,7 +54,7 @@ describe('openAmqpConnection', () => {
   });
 
   it('opens a named connection to a vhost', async () => {
-    const conn = await openAmqpConnection(profile(), 'other', 'volveran test');
+    const conn = await open(profile(), 'other');
     try {
       const ch = await conn.createChannel();
       expect((await ch.checkQueue('other.dlq')).queue).toBe('other.dlq');
@@ -58,10 +64,9 @@ describe('openAmqpConnection', () => {
   });
 
   it('connects over amqps trusting the profile CA file', async () => {
-    const conn = await openAmqpConnection(
+    const conn = await open(
       profile({ amqpUrl: `amqps://127.0.0.1:${tlsProxy.port}`, ca: await readFile(tlsFixtures.caFile), caFile: tlsFixtures.caFile }),
       '/',
-      'volveran test',
     );
     await conn.close();
   });
@@ -72,13 +77,13 @@ describe('openAmqpConnection', () => {
   });
 
   it('reports rejected credentials', async () => {
-    const err = await failure(profile({ password: 'wrong' }));
+    const err = await failure(profile({}, { password: 'wrong' }));
     expect(err.code).toBe('authentication_failed');
     expect(err.message).not.toContain('wrong');
   });
 
   it('reports a vhost the user has no permissions on', async () => {
-    const err = await failure(profile({ username: brokerUsers.noPerm.username, password: brokerUsers.noPerm.password }));
+    const err = await failure(profile({}, { username: brokerUsers.noPerm.username, password: brokerUsers.noPerm.password }));
     expect(err.code).toBe('vhost_not_accessible');
   });
 
@@ -89,7 +94,7 @@ describe('openAmqpConnection', () => {
   });
 
   it('reports a password variable that is not set', async () => {
-    const err = await failure(profile({ password: undefined }));
+    const err = await failure(profile({}, { password: undefined }));
     expect(err.code).toBe('password_not_set');
   });
 });

@@ -35,6 +35,9 @@ export interface ProfileFixture {
   defaultQueueFilter?: string;
   protected?: boolean;
   requireApproval?: boolean;
+  /** `operatorToken`: connect with the signed-in Operator's access token (then no username or passwordEnv). */
+  credentials?: 'shared' | 'operatorToken';
+  tokenUsernameClaim?: string;
   /** Team Mode: the groups holding each Role on the profile. */
   roles?: Partial<Record<'viewer' | 'operator' | 'admin', unknown>>;
 }

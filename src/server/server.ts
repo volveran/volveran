@@ -12,7 +12,7 @@ import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { loadConfig } from './config.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
-import { loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { checkProfilesForRunMode, loadProfilesFile, type BrokerProfile } from './profiles.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
 import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
@@ -65,6 +65,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const { config } = loaded;
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
+  checkProfilesForRunMode(profiles, config.mode.kind);
   const audit = new AuditStore(options.dataDir);
   const checkouts = new CheckoutManager({
     audit,

@@ -31,11 +31,15 @@ export type Session = (
 /** A Broker Profile as listed, without its password. */
 export interface ProfileSummary {
   name: string;
-  username: string;
+  /** `shared`: one service account; `operatorToken`: each Operator's own access token (no username or password). */
+  credentials: 'shared' | 'operatorToken';
+  /** The shared broker user; null with `operatorToken`. */
+  username: string | null;
   managementUrl: string;
   amqpUrl: string;
-  passwordEnv: string;
-  /** Whether the password variable is set; a profile without one cannot connect. */
+  /** The shared password's variable; null with `operatorToken`. */
+  passwordEnv: string | null;
+  /** Whether the password variable is set; a shared profile without one cannot connect. False with `operatorToken`. */
   passwordSet: boolean;
   vhosts: 'all' | string[];
   defaultQueueFilter: string | null;

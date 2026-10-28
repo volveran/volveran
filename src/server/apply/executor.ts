@@ -71,7 +71,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         operator: target.operator,
         role: target.role,
         approver: target.approver,
-        brokerUser: target.profile.username,
+        brokerUser: target.brokerUser,
         profile: target.profile.name,
         vhost: target.vhost,
         queue: target.queue,

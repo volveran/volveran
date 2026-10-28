@@ -119,7 +119,10 @@ export class CheckoutManager {
     this.endedRetentionMs = options.endedRetentionMs ?? DEFAULT_ENDED_RETENTION_MS;
   }
 
-  /** Starts a Checkout of `target`, a queue resolved through the access check (its management client included). */
+  /**
+   * Starts a Checkout of `target`, a queue resolved through the access check
+   * (its management client and the Operator's broker credentials included).
+   */
   async start(target: QueueAccess, operator: Operator, options: StartOptions = {}): Promise<CheckoutView> {
     const ref = queueRefOf(target);
     const mine = this.byOperator.get(operator.id);
@@ -133,6 +136,8 @@ export class CheckoutManager {
       ...ref,
       id: randomUUID(),
       operator,
+      // Set from the credentials the connection opens with (open.ts).
+      brokerUser: '',
       queueType: 'classic',
       deliveryLimit: null,
       deadLetterExchange: false,
@@ -162,7 +167,7 @@ export class CheckoutManager {
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
-      await openCheckout(checkout, target.management, options, {
+      await openCheckout(checkout, target, options, {
         onLost: (reason) => this.markLost(checkout, reason),
         afterLock: this.hooks.afterLock,
         afterCollectWait: this.hooks.afterCollectWait,
