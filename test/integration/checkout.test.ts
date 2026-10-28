@@ -374,6 +374,7 @@ describe('Checkout', () => {
           decision: { kind: 'keep' },
           replay: { available: true },
           diedAgain: null,
+          failureDetails: null,
         },
       ]);
 
