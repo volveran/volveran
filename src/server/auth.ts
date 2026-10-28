@@ -18,7 +18,7 @@ import { groupsAtSignIn } from './groups-claim.js';
 import { HttpError } from './http-error.js';
 import { isLoopback } from './is-loopback.js';
 import { attachOperator, notSignedIn, teamOperator, type Operator } from './operator.js';
-import { OperatorToken } from './operator-token.js';
+import { OperatorToken, RefreshRefused, type TokenGrant } from './operator-token.js';
 import type { OidcSettings } from './run-mode.js';
 
 const sessionCookie = 'volveran_session';
@@ -77,7 +77,11 @@ export interface TeamAuth {
  * Reads the provider's discovery document (throwing a ConfigError when it
  * cannot) and returns the sign-in routes and session guard to register.
  */
-export async function createTeamAuth(settings: OidcSettings, sessionSecret: string): Promise<TeamAuth> {
+export async function createTeamAuth(
+  settings: OidcSettings,
+  sessionSecret: string,
+  options: { refreshBrokerTokens: boolean },
+): Promise<TeamAuth> {
   const issuer = new URL(settings.issuer);
   let config: oidc.Configuration;
   try {
@@ -117,6 +121,18 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
     path,
     maxAge: Math.floor(maxAgeMs / 1000),
   });
+
+  /** The refresh grant, for a Broker Profile with `credentials: operatorToken` (operator-token.ts). */
+  const refreshGrant = async (refreshToken: string): Promise<TokenGrant> => {
+    try {
+      const tokens = await oidc.refreshTokenGrant(config, refreshToken);
+      return { accessToken: tokens.access_token, expiresIn: tokens.expiresIn(), refreshToken: tokens.refresh_token };
+    } catch (err) {
+      // The provider answered with an OAuth error (e.g. invalid_grant: revoked or expired).
+      if (err instanceof oidc.ResponseBodyError) throw new RefreshRefused(describe(err));
+      throw new Error(describe(err));
+    }
+  };
 
   return {
     async register(app) {
@@ -162,8 +178,9 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
         // request's query, since a reverse proxy may change host and path.
         const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
         let operator: Operator;
+        let tokens: Awaited<ReturnType<typeof oidc.authorizationCodeGrant>>;
         try {
-          const tokens = await oidc.authorizationCodeGrant(config, new URL(redirectUrl.origin + redirectUrl.pathname + query), {
+          tokens = await oidc.authorizationCodeGrant(config, new URL(redirectUrl.origin + redirectUrl.pathname + query), {
             pkceCodeVerifier: login.codeVerifier,
             expectedState: login.state,
             expectedNonce: login.nonce,
@@ -180,20 +197,40 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
             log: req.log,
           });
           operator = teamOperator(claims, groups);
-          // Kept with the session's Operator, never sent to the browser: profiles
-          // with `credentials: operatorToken` connect with it (ADR 0008).
-          operator.brokerToken = new OperatorToken(tokens.access_token, tokens.expiresIn());
         } catch (err) {
           throw signInFailed(describe(err));
         }
 
-        const sessionId = sessions.add({ operator, expiresAt: Date.now() + sessionLifetimeMs });
+        const expiresAt = Date.now() + sessionLifetimeMs;
+        // Kept with the session's Operator, never sent to the browser or logged:
+        // profiles with `credentials: operatorToken` connect with it (ADR 0008),
+        // and it refreshes itself until the session ends.
+        const { id } = operator;
+        operator.brokerToken = new OperatorToken(
+          { accessToken: tokens.access_token, expiresIn: tokens.expiresIn(), refreshToken: tokens.refresh_token },
+          options.refreshBrokerTokens
+            ? {
+                refresh: refreshGrant,
+                until: expiresAt,
+                onFailure: (reason, final) =>
+                  app.log.warn(
+                    { operator: id, reason },
+                    final
+                      ? "Could not refresh the Operator's access token: their broker connections close when it expires, and they must sign in again"
+                      : "Could not refresh the Operator's access token; trying again",
+                  ),
+              }
+            : {},
+        );
+        const sessionId = sessions.add({ operator, expiresAt });
         reply.setCookie(sessionCookie, sessionId, cookieOptions(sessionLifetimeMs, '/'));
         return reply.redirect(login.returnTo);
       });
 
       app.post('/auth/logout', async (req, reply) => {
-        sessions.delete(readCookie(req, sessionCookie));
+        const sessionId = readCookie(req, sessionCookie);
+        sessions.get(sessionId)?.operator.brokerToken?.stop();
+        sessions.delete(sessionId);
         reply.clearCookie(sessionCookie, { path: '/' });
         return reply.status(204).send();
       });

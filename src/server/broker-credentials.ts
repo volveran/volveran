@@ -11,9 +11,12 @@
 //                  falls back) as the broker user in Audit Entries.
 //
 // Resolved each time a connection opens or a management call is made, never
-// cached, so an expired token answers 401 `broker_token_expired` then.
+// cached, so a management call sends the current (refreshed) token, and an
+// expired one answers 401 `broker_token_expired` then. A connection opened
+// with a token keeps it fresh with `update-secret` (amqp-connection.ts).
 import { BrokerError, brokerTokenExpired } from './broker-error.js';
 import type { Operator } from './operator.js';
+import type { OperatorToken } from './operator-token.js';
 import type { BrokerProfile } from './profiles.js';
 
 export interface BrokerCredentials {
@@ -28,6 +31,8 @@ export interface BrokerCredentials {
   brokerUser: string;
   /** Whose credentials these are, for error messages. */
   describe: string;
+  /** operatorToken: the token itself, whose refreshes a connection opened with it follows. */
+  token?: OperatorToken;
 }
 
 export function brokerCredentials(profile: BrokerProfile, operator: Operator): BrokerCredentials {
@@ -59,5 +64,6 @@ export function brokerCredentials(profile: BrokerProfile, operator: Operator): B
     authorization: `Bearer ${accessToken}`,
     brokerUser,
     describe: `the access token of ${operator.displayName}, broker user "${brokerUser}"`,
+    token,
   };
 }

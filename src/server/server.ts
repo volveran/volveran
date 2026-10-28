@@ -78,7 +78,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const access: Access =
     config.mode.kind === 'solo'
       ? { kind: 'solo', operator: config.mode.operator }
-      : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret) };
+      : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret, {
+          // Refreshing the access token is for profiles that connect with it.
+          refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
+        }),
+      };
   const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
