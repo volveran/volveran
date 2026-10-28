@@ -2,11 +2,14 @@
 // broker's connection list shows what it is for. Failures become BrokerErrors
 // with the same codes as the management API. `credentials` come from
 // broker-credentials.ts: the shared account, or the Operator's own token as
-// the password (ADR 0008).
+// the password (ADR 0008). A connection opened with a token sends each
+// refreshed token to the broker with `update-secret` while it is open, so it
+// outlives the token it opened with.
 import tls from 'node:tls';
 import * as amqp from 'amqplib';
 import type { BrokerCredentials } from './broker-credentials.js';
 import { BrokerError, connectionFailed } from './broker-error.js';
+import type { OperatorToken } from './operator-token.js';
 import type { BrokerProfile } from './profiles.js';
 
 /**
@@ -37,7 +40,21 @@ export async function openAmqpConnection(
     throw amqpFailure(profile, credentials, vhost, err);
   }
   conn.on('error', () => {});
+  if (credentials.token) followRefreshes(conn, credentials.token);
   return conn;
+}
+
+/**
+ * Sends each refreshed access token on `conn` with `update-secret`. The broker
+ * re-checks it; a refusal closes the connection (530), which its `close`
+ * listener reports (a Checkout becomes a Lost Checkout), so the answer is not
+ * awaited: amqplib never settles a refused update-secret.
+ */
+function followRefreshes(conn: amqp.ChannelModel, token: OperatorToken): void {
+  const unsubscribe = token.onRefresh((accessToken) => {
+    conn.updateSecret(Buffer.from(accessToken), 'Volverán refreshed the access token').catch(() => {});
+  });
+  conn.on('close', unsubscribe);
 }
 
 function amqpFailure(profile: BrokerProfile, credentials: BrokerCredentials, vhost: string, err: unknown): BrokerError {

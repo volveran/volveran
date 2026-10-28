@@ -10,7 +10,7 @@ Team Mode (`VOLVERAN_AUTH=oidc`) signs Operators in through any OpenID Connect p
 - The **Operator** is the ID token's `sub`, which Volverán stores as the Operator's identity. It shows the `email` claim, or the `name` claim, or `sub` when neither is present. Ask for the `email` and `profile` scopes (the default) so people see names rather than opaque ids.
 - Every `/api/` route answers `401 not_signed_in` without a session; the web app then sends the browser to sign in.
 - It reads the Operator's **groups** from the ID token at sign-in (or the userinfo endpoint, when the ID token does not carry them), and gives them a Role on each Broker Profile from the profile's `roles` (see [Roles](#roles) and [The groups claim](#the-groups-claim)).
-- Broker access: by default every Operator acts on a broker with the Broker Profile's shared credentials ([ADR 0004](adr/0004-shared-broker-credentials-first.md)). A profile with `credentials: operatorToken` connects with each Operator's own access token instead (see [The Operator's own broker token](#the-operators-own-broker-token)). Volverán keeps the access token from sign-in in the server-side session; the browser never sees it.
+- Broker access: by default every Operator acts on a broker with the Broker Profile's shared credentials ([ADR 0004](adr/0004-shared-broker-credentials-first.md)). A profile with `credentials: operatorToken` connects with each Operator's own access token instead (see [The Operator's own broker token](#the-operators-own-broker-token)). Volverán keeps the access and refresh tokens from sign-in in the server-side session, and refreshes the access token before it expires; the browser never sees either.
 
 ## Generic provider set-up
 
@@ -203,12 +203,18 @@ profiles:
 
 | What happened | Answer |
 |---|---|
-| The token has expired | `401 broker_token_expired` with `signInUrl`: sign in again for a new token. |
+| The token has expired and could not be refreshed | `401 broker_token_expired` with `signInUrl`: sign in again for a new token. |
 | The token lacks a permission (read on the queue, configure on the lock queue, the `management` tag) | `403 broker_permission_denied`, naming the broker user, the resource (`type`, `name`, `vhost`) and the `permission`. |
 | The broker does not accept the token (audience, signing key) | `502 authentication_failed`, naming the Operator's token. |
-| The token expires during a Checkout | The broker closes the connection: a Lost Checkout, with every Message back in the queue (on quorum queues at the cost of one delivery). |
+| The token expires during a Checkout (refresh failed) | The broker closes the connection: a Lost Checkout, with every Message back in the queue (on quorum queues at the cost of one delivery). |
 
-A Checkout cannot yet outlive the sign-in token: Volverán does not refresh it yet. Keep the provider's access token lifetime longer than a Checkout's time limit (30 minutes by default), or expect Lost Checkouts near its end.
+### Token refresh
+
+Volverán keeps the refresh token from sign-in in the server-side session with the access token (the browser never sees either, and neither is logged), and refreshes the access token **60 seconds before it expires**, or halfway through its lifetime when it lasts less than two minutes. Every AMQP connection the Operator has open on an `operatorToken` profile (a Checkout, a Restore in progress) receives the new token with `update-secret`, so a Checkout outlives any number of token lifetimes on the same connection; the broker logs `updated secret` for each. Management API calls send the current token. Refreshing stops when the session ends (sign-out, or 12 hours after sign-in).
+
+- **The provider must issue a refresh token** to Volverán's client. Many do only when asked for offline access: add `offline_access` to `VOLVERAN_OIDC_SCOPES` (chart `oidc.scopes`) if yours does (Keycloak issues one by default; Okta and Entra need `offline_access`). Without a refresh token, a Checkout cannot outlive the access token: keep its lifetime longer than a Checkout's time limit (30 minutes by default).
+- **The refreshed token must keep the audience and scopes** the broker needs; providers normally keep those of the sign-in.
+- **When refresh fails.** If the provider refuses the refresh (the refresh token was revoked or has expired, or the refreshed token would not expire later), Volverán stops refreshing and logs a warning naming the Operator. A refresh that fails for another reason (the provider cannot be reached) is tried again every 10 seconds while the token is valid. Once the token expires, routes on `operatorToken` profiles answer `401 broker_token_expired` and the web app asks the Operator to sign in again; the broker closes the connections opened with the token, so a live Checkout ends as a Lost Checkout, with every Message back in the queue (on quorum queues at the cost of one delivery, as for any Lost Checkout).
 
 ## Kubernetes
 

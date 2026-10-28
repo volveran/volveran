@@ -13,6 +13,7 @@ import { formatCountdown } from './countdown.js';
 import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail, type MessageOutcome } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
+import { SignInAgain } from './SignInAgain.js';
 
 /** How often the list and an open waiting Checkout are read again. */
 const REFRESH_MS = 5_000;
@@ -369,6 +370,7 @@ function ErrorBox({ error }: { error: ApiError }) {
     <div className="error" role="alert">
       <p>{error.message}</p>
       <code>{error.code}</code>
+      <SignInAgain error={error} />
     </div>
   );
 }

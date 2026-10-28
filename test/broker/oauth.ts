@@ -6,8 +6,9 @@
 // with the username are merged into the access token, so a test chooses the
 // audience, scopes and expiry. Refresh tokens are real: the refresh grant
 // returns a new access token with the same claims.
+import { execFileSync } from 'node:child_process';
 import * as amqp from 'amqplib';
-import { publishedPorts, repoRoot, testBrokerSettings } from '../../scripts/test-broker-env.mjs';
+import { composeFile, publishedPorts, repoRoot, testBrokerSettings } from '../../scripts/test-broker-env.mjs';
 
 function resolvePorts(): { amqpPort: number; mgmtPort: number; oidcPort: number } {
   const settings = testBrokerSettings(repoRoot, process.env);
@@ -156,4 +157,14 @@ export async function managementWithToken(path: string, accessToken: string): Pr
     // not JSON: keep the text
   }
   return { status: res.status, body };
+}
+
+/** The OAuth 2.0 broker's log (docker compose logs, no colours), e.g. its "updated secret" lines. */
+export function oauthBrokerLog(): string {
+  const { project } = testBrokerSettings(repoRoot, process.env);
+  return execFileSync('docker', ['compose', '-p', project, '-f', composeFile, 'logs', '--no-color', 'rabbitmq-oauth'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024 * 1024,
+  });
 }

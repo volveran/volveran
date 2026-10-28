@@ -31,6 +31,7 @@ import { ApprovalsView } from './ApprovalsView.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
+import { SignInAgain } from './SignInAgain.js';
 import type { KeyboardCommand } from './keyboard-commands.js';
 
 const STORAGE_KEY = 'volveran.location';
@@ -332,6 +333,7 @@ export function App() {
                 <strong>{errorTitle(error)}</strong>
                 <p>{error.message}</p>
                 <code>{error.code}</code>
+                <SignInAgain error={error} />
               </div>
             )}
 
@@ -453,6 +455,8 @@ function errorTitle(error: ApiError): string {
       return 'Missing permissions';
     case 'password_not_set':
       return 'Password not configured';
+    case 'broker_token_expired':
+      return 'Sign in again';
     case 'checkout_in_progress':
       return 'Already checked out';
     case 'operator_has_checkout':

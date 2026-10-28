@@ -41,11 +41,11 @@ export class BrokerError extends HttpError<BrokerErrorCode> {
   }
 }
 
-/** The Operator's access token has expired (or the broker no longer accepts it): they sign in again for a new one. */
+/** The Operator's access token has expired and could not be refreshed: they sign in again for a new one. */
 export function brokerTokenExpired(profile: BrokerProfile): BrokerError {
   return new BrokerError(
     'broker_token_expired',
-    `Broker Profile "${profile.name}" connects with your own access token, and it has expired. Sign in again to get a new one.`,
+    `Broker Profile "${profile.name}" connects with your own access token, which has expired and could not be refreshed. Sign in again to get a new one.`,
     { profile: profile.name, signInUrl: '/auth/login' },
   );
 }
