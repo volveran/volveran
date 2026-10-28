@@ -251,6 +251,27 @@ table.queues {
   max-width: 480px;
 }
 
+.badge.severity-loses_messages {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.badge.severity-may_lose_messages {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.setup-warning-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
 .queues th small {
   font-weight: normal;
 }

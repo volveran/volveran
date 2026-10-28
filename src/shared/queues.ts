@@ -37,12 +37,26 @@ export interface ProfileSummary {
   protected: boolean;
 }
 
-/** A dead-letter set-up that silently loses Messages (src/server/triage/queue-list.ts). */
-export interface SetupWarning {
-  code: 'messages_dropped_at_delivery_limit';
-  deliveryLimit: number;
-  message: string;
-}
+/**
+ * How bad a set-up warning is: `loses_messages` when the broker drops
+ * Messages as the queue is set up, `may_lose_messages` when it can lose them
+ * (on a broker failure, say).
+ */
+export type SetupWarningSeverity = 'loses_messages' | 'may_lose_messages';
+
+/**
+ * A dead-letter set-up that silently loses Messages (src/server/triage/setup-checks.ts).
+ * `message` says what is lost, why, and the change that fixes it.
+ */
+export type SetupWarning = { severity: SetupWarningSeverity; message: string } & (
+  | { code: 'messages_dropped_at_delivery_limit'; deliveryLimit: number }
+  | { code: 'dead_letter_exchange_missing'; deadLetterExchange: string }
+);
+
+export type SetupWarningCode = SetupWarning['code'];
+
+/** Set-up warnings of a whole vhost, by severity. */
+export type SetupWarningCounts = Record<SetupWarningSeverity, number>;
 
 export type CheckoutAvailability = { available: true } | { available: false; reason: string };
 
@@ -59,9 +73,18 @@ export interface QueueRow {
   /** The queues that dead-letter into it, by name. */
   deadLetteredFrom: string[];
   checkout: CheckoutAvailability;
-  setupWarning: SetupWarning | null;
+  /** Every set-up warning that applies, most severe first; [] for none. */
+  setupWarnings: SetupWarning[];
   /** Who holds the queue in a Checkout, from any Volverán instance; null when nobody does. */
   checkedOutBy: CheckoutHolder | null;
+}
+
+/** The queue list of a vhost. */
+export interface QueueList {
+  defaultQueueFilter: string | null;
+  queues: QueueRow[];
+  /** Every queue of the vhost counts, whatever the search and dead-letter queue filter leave listed. */
+  setupWarningCounts: SetupWarningCounts;
 }
 
 /** Where a Move can go in a vhost: its queues and the exchanges a client can publish to, by name. */
