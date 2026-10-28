@@ -52,6 +52,15 @@ describe('Team Mode settings', () => {
     expect(result.ok && result.mode.kind === 'team' && result.mode.oidc.groupsClaim).toBe('teams');
   });
 
+  it('takes a dotted path as the groups claim', () => {
+    const result = resolveRunMode({ ...teamEnv, VOLVERAN_OIDC_GROUPS_CLAIM: 'realm_access.roles' }, '0.0.0.0');
+    expect(result.ok && result.mode.kind === 'team' && result.mode.oidc.groupsClaim).toBe('realm_access.roles');
+  });
+
+  it.each(['.groups', 'realm_access.', 'realm_access..roles'])('refuses the groups claim path "%s", which has an empty step', (claim) => {
+    expect(errorOf({ ...teamEnv, VOLVERAN_OIDC_GROUPS_CLAIM: claim })).toMatch(/VOLVERAN_OIDC_GROUPS_CLAIM.*realm_access\.roles/);
+  });
+
   it('requires the openid scope', () => {
     expect(errorOf({ ...teamEnv, VOLVERAN_OIDC_SCOPES: 'email profile' })).toMatch(/VOLVERAN_OIDC_SCOPES.*openid/);
   });

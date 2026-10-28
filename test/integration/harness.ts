@@ -93,6 +93,8 @@ export interface StartAppOptions {
   dataDir?: string;
   /** Overrides the body retention limits and interval (ms) from the environment. */
   bodyRetention?: Partial<BodyRetention>;
+  /** Collects the app's log lines (parsed JSON) here; default no logging. */
+  logs?: Array<Record<string, any>>;
 }
 
 /**
@@ -126,6 +128,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTestHooks: options.checkoutTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,
+      logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {
     await rm(dir, { recursive: true, force: true });
