@@ -11,7 +11,9 @@
 // of one delivery on quorum queues.
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
-import { ManagementClient } from '../management.js';
+import { permissionRefused } from '../broker-credentials.js';
+import type { ManagementClient } from '../management.js';
+import type { ProfileAccess } from '../profile-access.js';
 import type { QueueRef } from '../profiles.js';
 import { checkoutSize } from '../triage/checkout-collection.js';
 import { consumerTimeoutMs } from '../triage/checkout-timing.js';
@@ -43,12 +45,23 @@ export interface OpenHooks {
 }
 
 /**
- * Fills in `checkout` (queue facts, connection, channel, held Messages). On
- * a throw the caller closes `checkout.connection`, which releases the lock.
+ * Fills in `checkout` (queue facts, broker user, connection, channel, held
+ * Messages); `access` is its Broker Profile's management client and the
+ * Operator's broker credentials, from the access check. On a throw the
+ * caller closes `checkout.connection`, which releases the lock.
+ *
+ * The connection opens with the Operator's credentials, so on a profile with
+ * `credentials: operatorToken` the broker checks their own permissions: a
+ * refused read of the queue answers 403 `broker_permission_denied`.
  */
-export async function openCheckout(checkout: Checkout, options: StartOptions, hooks: OpenHooks): Promise<void> {
+export async function openCheckout(
+  checkout: Checkout,
+  access: Pick<ProfileAccess, 'management' | 'credentials'>,
+  options: StartOptions,
+  hooks: OpenHooks,
+): Promise<void> {
   const { vhost, queue } = checkout;
-  const management = new ManagementClient(checkout.profile);
+  const { management } = access;
   const info = await management.getQueue(vhost, queue);
   if (!info) throw queueNotFound(checkout);
   if (!isCheckoutQueueType(info.type)) throw new CheckoutError('queue_not_checkoutable', notCheckoutableReason(info.type));
@@ -58,7 +71,9 @@ export async function openCheckout(checkout: Checkout, options: StartOptions, ho
     typeof info.arguments['x-dead-letter-exchange'] === 'string' ||
     typeof info.effectivePolicy['dead-letter-exchange'] === 'string';
 
-  const connection = await openAmqpConnection(checkout.profile, vhost, checkoutConnectionName(vhost, queue));
+  const credentials = access.credentials();
+  checkout.brokerUser = credentials.brokerUser;
+  const connection = await openAmqpConnection(checkout.profile, credentials, vhost, checkoutConnectionName(vhost, queue));
   checkout.connection = connection;
   connection.on('close', (err?: Error) =>
     hooks.onLost(
@@ -76,16 +91,30 @@ export async function openCheckout(checkout: Checkout, options: StartOptions, ho
   // consumer is cancelled (ADR 0006); the Messages are back in order. A
   // channel closed with its connection has no error of its own: the
   // connection's close reports that.
-  channel.on('error', (err: Error) =>
-    hooks.onLost(`The broker closed the channel holding the Messages (${err.message}). Every Message is back in the queue.`),
-  );
+  // A refused read (403 ACCESS_REFUSED) closes the channel the same way; it
+  // arrives before the refused call fails, so the start reports it instead.
+  let readRefused = false;
+  channel.on('error', (err: Error & { code?: number }) => {
+    if (err.code === 403) readRefused = true;
+    hooks.onLost(`The broker closed the channel holding the Messages (${err.message}). Every Message is back in the queue.`);
+  });
+  const readDenied = () =>
+    permissionRefused(
+      checkout.profile,
+      checkout.brokerUser,
+      { type: 'queue', name: queue, vhost },
+      'read',
+      'A Checkout consumes the queue, so it needs read permission on it.',
+    );
 
   let ready: number;
   let consumers: number;
   try {
     ({ messageCount: ready, consumerCount: consumers } = await channel.checkQueue(queue));
   } catch (err) {
-    if ((err as { code?: number }).code === 404) throw queueNotFound(checkout);
+    const code = (err as { code?: number }).code;
+    if (code === 404) throw queueNotFound(checkout);
+    if (code === 403) throw readDenied();
     throw err;
   }
   // Exact, unlike the management API's count; the lock queue is not a consumer of the queue.
@@ -95,7 +124,8 @@ export async function openCheckout(checkout: Checkout, options: StartOptions, ho
   checkout.limitedBy = limitedBy;
   if (take === 0) return;
 
-  const lost = () => new CheckoutError('checkout_failed', checkout.lostReason ?? 'The Checkout was lost.');
+  const lost = () =>
+    readRefused ? readDenied() : new CheckoutError('checkout_failed', checkout.lostReason ?? 'The Checkout was lost.');
   let collected;
   try {
     collected = await collect(channel, queue, {
@@ -144,7 +174,16 @@ async function takeLock(checkout: Checkout, connection: amqp.ChannelModel, manag
       const lock = await management.getQueue(checkout.vhost, lockQueue).catch(() => null);
       throw inCheckout(checkout, lock ? (holderFromLockArguments(lock.arguments)?.holder ?? null) : null);
     }
-    if (code === 403) throw lockNotPermitted(checkout);
+    if (code === 403) {
+      throw permissionRefused(
+        checkout.profile,
+        checkout.brokerUser,
+        { type: 'queue', name: lockQueue, vhost: checkout.vhost },
+        'configure',
+        'A Checkout declares its lock queue, so the token needs configure permission on queues matching volveran.* in that vhost.',
+        lockNotPermitted(checkout),
+      );
+    }
     throw new CheckoutError('checkout_failed', `Cannot declare the Checkout lock queue "${lockQueue}": ${(err as Error).message}`);
   }
   await channel.close().catch(() => {});

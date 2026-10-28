@@ -7,9 +7,9 @@ import { messageSummary, type QueueInfo } from '../triage/message-view.js';
 import { replayOrigin } from '../triage/replay-origin.js';
 import { remainingMs } from '../triage/checkout-timing.js';
 import type { Checkout } from './state.js';
-import type { CheckoutView, MessageRow, ReplayAvailability } from '../../shared/checkout.js';
+import type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability } from '../../shared/checkout.js';
 
-export type { CheckoutView, MessageRow, ReplayAvailability };
+export type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability };
 
 export function queueInfo(c: Checkout): QueueInfo {
   return { type: c.queueType, deliveryLimit: c.deliveryLimit, deadLetterExchange: c.deadLetterExchange };
@@ -32,7 +32,7 @@ export function view(c: Checkout): CheckoutView {
     endsAt: c.endsAt.toISOString(),
     remainingMs: c.status === 'active' ? remainingMs(c.endsAt, new Date()) : 0,
     heartbeatWindowMs: c.timing.heartbeatWindowMs,
-    status: c.status,
+    status: c.status === 'active' && c.approvalRequest ? 'awaiting_approval' : c.status,
     lostReason: c.lostReason,
     endReason: c.endReason,
     readyAtStart: c.readyAtStart,
@@ -47,14 +47,38 @@ export function view(c: Checkout): CheckoutView {
         ...messageSummary(handle, m, info),
         decision: c.decisions.get(handle) ?? { kind: 'keep' },
         replay: origin.ok ? { available: true } : { available: false, reason: origin.reason },
+        diedAgain: c.diedAgain.get(handle) ?? null,
       };
     }),
+    diedAgainCount: handles.filter((h) => c.diedAgain.has(h)).length,
     decisionSummary,
     decisionSummaryText: summaryText(decisionSummary),
     applyConfirmation: applyConfirmationFor({
       protectedProfile: c.profile.protected,
+      requireApproval: c.requireApproval,
       actionCount: handles.filter((h) => c.decisions.has(h)).length,
     }),
+    approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString() },
+    rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
     lastApply: c.lastApply,
+  };
+}
+
+/** A Checkout waiting for Approval, as the approvers' list shows it. */
+export function approvalSummary(c: Checkout & { approvalRequest: NonNullable<Checkout['approvalRequest']> }): ApprovalSummary {
+  const decisionSummary = summarizeDecisions([...c.held.keys()], c.decisions);
+  return {
+    checkoutId: c.id,
+    requester: c.operator.displayName,
+    profile: c.profile.name,
+    vhost: c.vhost,
+    queue: c.queue,
+    queueType: c.queueType,
+    requestedAt: c.approvalRequest.requestedAt.toISOString(),
+    waitingMs: Math.max(0, Date.now() - c.approvalRequest.requestedAt.getTime()),
+    endsAt: c.endsAt.toISOString(),
+    remainingMs: remainingMs(c.endsAt, new Date()),
+    decisionSummary,
+    decisionSummaryText: summaryText(decisionSummary),
   };
 }

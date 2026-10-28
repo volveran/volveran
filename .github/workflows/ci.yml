@@ -1,8 +1,9 @@
 # Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform), the
 # kind smoke test (pushes and pull requests only) and
 # the broker-facts suite. Pushes and pull requests test
-# against the pinned RabbitMQ image (test/broker/docker-compose.yml). The
-# weekly run tests against the latest rabbitmq:4-management, so a RabbitMQ
+# against the pinned RabbitMQ image (test/broker/docker-compose.yml, which
+# runs it twice: the main test broker and the OAuth 2.0 one). The
+# weekly run tests both against the latest rabbitmq:4-management, so a RabbitMQ
 # release that changes a fact in docs/rabbitmq-behaviour.md opens an issue.
 name: CI
 

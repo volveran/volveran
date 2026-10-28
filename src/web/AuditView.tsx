@@ -4,7 +4,10 @@
 // existing one.
 // A Discard whose body retention evicted shows "body expired" and offers no
 // Restore. Warns when the store of Discarded bodies is near its size limit.
+// Restore needs the role `admin` on the entry's Broker Profile; below it the
+// action is shown as unavailable.
 import { useEffect, useState } from 'react';
+import { roleIncludes, type Role } from '../shared/roles.js';
 import { api, ApiError, type AuditAction, type AuditEntry, type AuditSearch, type AuditStoreUsage, type Profile } from './api.js';
 
 const ACTION_LABELS: Record<AuditAction, string> = {
@@ -12,6 +15,7 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   replay: 'Replay',
   move: 'Move',
   restore: 'Restore',
+  export: 'Export',
 };
 
 const EMPTY_SEARCH: AuditSearch = { profile: '', queue: '', messageId: '', action: '', operator: '', replayId: '', from: '', to: '' };
@@ -27,7 +31,7 @@ function formatBytes(bytes: number): string {
   return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function AuditView({ profiles }: { profiles: Profile[] }) {
+export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Record<string, Role> }) {
   const [form, setForm] = useState<AuditSearch>(EMPTY_SEARCH);
   const [search, setSearch] = useState<AuditSearch>(EMPTY_SEARCH);
   const [entries, setEntries] = useState<AuditEntry[]>();
@@ -153,6 +157,7 @@ export function AuditView({ profiles }: { profiles: Profile[] }) {
                 key={entry.id}
                 entry={entry}
                 profile={profiles.find((p) => p.name === entry.profile)}
+                mayRestore={roles[entry.profile] !== undefined && roleIncludes(roles[entry.profile]!, 'admin')}
                 restored={entries.some((e) => e.restoreOf === entry.id && e.outcome !== 'failed')}
                 onRestored={() => setTick((n) => n + 1)}
               />
@@ -168,10 +173,13 @@ function EntryRow({
   entry,
   profile,
   restored,
+  mayRestore,
   onRestored,
 }: {
   entry: AuditEntry;
   profile: Profile | undefined;
+  /** Whether the Operator's Role on the entry's profile allows a Restore. */
+  mayRestore: boolean;
   restored: boolean;
   onRestored: () => void;
 }) {
@@ -231,6 +239,12 @@ function EntryRow({
         {ACTION_LABELS[entry.action]}
         {entry.restoreOf !== null && <small className="muted"> of #{entry.restoreOf}</small>}
         {entry.reason && <small className="muted"> ({entry.reason})</small>}
+        {entry.messageCount !== null && (
+          <small className="muted" title={entry.filter ? `Filter: ${JSON.stringify(entry.filter)}` : undefined}>
+            {' '}
+            of {entry.messageCount} Message(s){entry.filter ? ', filtered' : ''}
+          </small>
+        )}
       </td>
       <td className="name">{entry.messageId ?? <span className="muted">none</span>}</td>
       <td className="name">
@@ -249,6 +263,7 @@ function EntryRow({
       </td>
       <td title={entry.operatorId}>
         {entry.operatorName}
+        {entry.role && <small className="muted"> ({entry.role})</small>}
         <small className="muted"> as {entry.brokerUser}</small>
       </td>
       <td title={entry.outcomeReason ?? undefined}>
@@ -261,7 +276,12 @@ function EntryRow({
             body expired
           </span>
         )}
-        {restorable && !confirming && <button onClick={() => setConfirming(true)}>Restore…</button>}
+        {restorable && !mayRestore && (
+          <span className="unavailable">
+            Restore needs the role <code>admin</code>
+          </span>
+        )}
+        {restorable && mayRestore && !confirming && <button onClick={() => setConfirming(true)}>Restore…</button>}
         {restorable && confirming && !uncertainWarning && (
           <span className="confirm" role="alertdialog" aria-label="Confirm Restore">
             Restore to queue{' '}

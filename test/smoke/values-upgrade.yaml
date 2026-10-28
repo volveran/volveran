@@ -9,3 +9,6 @@ brokerProfiles:
       passwordEnv: VOLVERAN_SMOKE_PASSWORD
       vhosts: ["/"]
       defaultQueueFilter: "orders.*"
+      roles:
+        viewer: [smoke-support]
+        operator: [smoke-triage]

@@ -65,6 +65,11 @@
           "type": "string",
           "minLength": 1
         },
+        "groupsClaim": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The ID token claim holding the Operator's groups, for Roles."
+        },
         "existingSecret": {
           "type": "string",
           "description": "Required. An existing Secret holding the OIDC client secret and the session secret."
@@ -510,11 +515,58 @@
       "required": [
         "name",
         "managementUrl",
-        "amqpUrl",
-        "username",
-        "passwordEnv"
+        "amqpUrl"
       ],
+      "if": {
+        "required": [
+          "credentials"
+        ],
+        "properties": {
+          "credentials": {
+            "const": "operatorToken"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "username"
+              ]
+            },
+            {
+              "required": [
+                "passwordEnv"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "username",
+          "passwordEnv"
+        ],
+        "not": {
+          "required": [
+            "tokenUsernameClaim"
+          ]
+        }
+      },
       "properties": {
+        "credentials": {
+          "description": "shared (default): username and the password from passwordEnv. operatorToken (Team Mode only): each signed-in Operator's own OAuth 2.0 access token, without username or passwordEnv.",
+          "enum": [
+            "shared",
+            "operatorToken"
+          ]
+        },
+        "tokenUsernameClaim": {
+          "description": "Only with credentials: operatorToken. The access token claim the broker uses as the user name, recorded as the broker user in Audit Entries. Default sub.",
+          "type": "string",
+          "minLength": 1
+        },
         "name": {
           "type": "string",
           "minLength": 1
@@ -558,6 +610,42 @@
         },
         "protected": {
           "type": "boolean"
+        },
+        "requireApproval": {
+          "description": "Only with protected: true (Volverán refuses it otherwise). Default true: an Apply waits for a second Operator's Approval.",
+          "type": "boolean"
+        },
+        "roles": {
+          "description": "Team Mode: the OIDC groups holding each Role on this profile. Without it, every signed-in Operator is admin.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "viewer": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "operator": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "admin": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     },

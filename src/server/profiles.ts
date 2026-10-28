@@ -1,12 +1,42 @@
 // Broker Profiles: loaded once at startup from a YAML file (mounted into the
 // container). Passwords are never in the file: each profile names the
 // environment variable that holds its password. A missing variable does not
-// stop startup; using that profile reports `password_not_set`.
+// stop startup; using that profile reports `password_not_set`. A profile
+// with `credentials: operatorToken` has no password at all: it connects with
+// the signed-in Operator's own access token (Team Mode, ADR 0008).
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { ConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
+import type { RunMode } from './run-mode.js';
+import { ROLES, type Role } from '../shared/roles.js';
+
+/**
+ * Which OIDC groups hold which Role on a Broker Profile (Team Mode). An
+ * Operator in groups of several roles holds the highest of them.
+ */
+export type RoleMapping = Partial<Record<Role, string[]>>;
+
+/**
+ * How Volverán authenticates to the broker of a profile: one shared service
+ * account, or each signed-in Operator's own OAuth 2.0 access token (ADR
+ * 0008). Resolved per request in broker-credentials.ts.
+ */
+export type ProfileCredentials =
+  | {
+      kind: 'shared';
+      username: string;
+      /** Name of the environment variable holding the password. */
+      passwordEnv: string;
+      /** Resolved from `passwordEnv`; undefined when the variable is not set. */
+      password: string | undefined;
+    }
+  | {
+      kind: 'operatorToken';
+      /** The access token claim the broker takes as the user name (its `preferred_username_claims`); default `sub`. */
+      tokenUsernameClaim: string;
+    };
 
 export interface BrokerProfile {
   name: string;
@@ -18,15 +48,23 @@ export interface BrokerProfile {
   ca: Buffer | undefined;
   /** Where `ca` was read from, for messages. */
   caFile: string | undefined;
-  username: string;
-  /** Name of the environment variable holding the password. */
-  passwordEnv: string;
-  /** Resolved from `passwordEnv`; undefined when the variable is not set. */
-  password: string | undefined;
+  credentials: ProfileCredentials;
   vhosts: 'all' | string[];
   /** Glob on queue names (`*`, `?`); matching queues are dead-letter queues. */
   defaultQueueFilter: string | undefined;
   protected: boolean;
+  /**
+   * Team Mode: an Apply with any Decision other than Keep waits for a second
+   * Operator's Approval. Only allowed on a Protected Profile, where it
+   * defaults to true; always false on any other. Solo Mode ignores it.
+   */
+  requireApproval: boolean;
+  /**
+   * Team Mode: the Role each group holds on this profile. Undefined when the
+   * profile has no `roles`: every Operator is `admin` on it (ADR 0007).
+   * Solo Mode ignores it.
+   */
+  roles: RoleMapping | undefined;
 }
 
 /** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
@@ -105,21 +143,63 @@ export function parseProfiles(
     const name = requireString(raw, 'name', where);
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
-    const passwordEnv = requireString(raw, 'passwordEnv', where);
+    const isProtected = parseProtected(raw.protected, where);
     return {
       name,
       managementUrl: requireUrl(raw, 'managementUrl', ['http:', 'https:'], where).replace(/\/+$/, ''),
       amqpUrl: requireUrl(raw, 'amqpUrl', ['amqp:', 'amqps:'], where),
       ca: undefined,
       caFile: optionalString(raw, 'caFile', where),
-      username: requireString(raw, 'username', where),
-      passwordEnv,
-      password: env[passwordEnv],
+      credentials: parseCredentials(raw, env, where, `${where} ("${name}")`),
       vhosts: parseVhosts(raw.vhosts, where),
       defaultQueueFilter: optionalString(raw, 'defaultQueueFilter', where),
-      protected: parseProtected(raw.protected, where),
+      protected: isProtected,
+      requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
+      roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
     };
   });
+}
+
+function parseCredentials(
+  raw: Record<string, unknown>,
+  env: Record<string, string | undefined>,
+  where: string,
+  named: string,
+): ProfileCredentials {
+  const kind = raw.credentials ?? 'shared';
+  if (kind === 'operatorToken') {
+    for (const key of ['username', 'passwordEnv']) {
+      if (raw[key] !== undefined) throw new ProfilesConfigError(`${named}.${key} is not allowed with credentials: operatorToken`);
+    }
+    const claim = raw.tokenUsernameClaim ?? 'sub';
+    if (typeof claim !== 'string' || claim.trim() === '') {
+      throw new ProfilesConfigError(`${named}.tokenUsernameClaim must be a non-empty string`);
+    }
+    return { kind, tokenUsernameClaim: claim };
+  }
+  if (kind !== 'shared') {
+    throw new ProfilesConfigError(`${named}.credentials must be "shared" or "operatorToken", not "${String(kind)}"`);
+  }
+  if (raw.tokenUsernameClaim !== undefined) {
+    throw new ProfilesConfigError(`${named}.tokenUsernameClaim is only allowed with credentials: operatorToken`);
+  }
+  const passwordEnv = requireString(raw, 'passwordEnv', where);
+  return { kind, username: requireString(raw, 'username', where), passwordEnv, password: env[passwordEnv] };
+}
+
+/**
+ * Startup check of the profiles against the run mode: Solo Mode has no
+ * signed-in Operator, so no token to connect with.
+ */
+export function checkProfilesForRunMode(profiles: BrokerProfile[], mode: RunMode['kind']): void {
+  if (mode === 'team') return;
+  const tokenProfile = profiles.find((p) => p.credentials.kind === 'operatorToken');
+  if (tokenProfile) {
+    throw new ProfilesConfigError(
+      `Broker Profile "${tokenProfile.name}" has credentials: operatorToken, which needs Team Mode (VOLVERAN_AUTH=oidc): ` +
+        'Solo Mode has no signed-in Operator whose token it could connect with. Give it username and passwordEnv instead.',
+    );
+  }
 }
 
 function parseVhosts(value: unknown, where: string): 'all' | string[] {
@@ -130,10 +210,35 @@ function parseVhosts(value: unknown, where: string): 'all' | string[] {
   throw new ProfilesConfigError(`${where}.vhosts must be "all" or a non-empty list of vhost names`);
 }
 
+function parseRoles(value: unknown, where: string): RoleMapping | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value) || Object.keys(value).length === 0) {
+    throw new ProfilesConfigError(`${where} must be a mapping of viewer, operator or admin to lists of group names`);
+  }
+  const roles: RoleMapping = {};
+  for (const [key, groups] of Object.entries(value)) {
+    if (!(ROLES as readonly string[]).includes(key)) {
+      throw new ProfilesConfigError(`${where}.${key} is not a role; the roles are viewer, operator and admin`);
+    }
+    if (!Array.isArray(groups) || groups.length === 0 || !groups.every((g) => typeof g === 'string' && g !== '')) {
+      throw new ProfilesConfigError(`${where}.${key} must be a non-empty list of group names`);
+    }
+    roles[key as Role] = groups as string[];
+  }
+  return roles;
+}
+
 function parseProtected(value: unknown, where: string): boolean {
   if (value === undefined) return false;
   if (typeof value === 'boolean') return value;
   throw new ProfilesConfigError(`${where}.protected must be true or false`);
+}
+
+function parseRequireApproval(value: unknown, isProtected: boolean, where: string): boolean {
+  if (value === undefined || value === null) return isProtected;
+  if (!isProtected) throw new ProfilesConfigError(`${where} is only allowed with protected: true`);
+  if (typeof value === 'boolean') return value;
+  throw new ProfilesConfigError(`${where} must be true or false`);
 }
 
 function requireUrl(raw: Record<string, unknown>, key: string, schemes: string[], where: string): string {

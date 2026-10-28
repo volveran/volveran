@@ -1,13 +1,18 @@
 // A Checkout as the API sends it (src/server/checkout/view.ts), with its held
 // Messages and the outcome of its Apply. Types only, shared by the server
 // and the web app.
+import type { AuditAction } from './audit.js';
 import type { Decision, DecisionSummaryLine } from './decisions.js';
 
 /** The queue types a Checkout can hold Messages from. */
 export type CheckoutQueueType = 'classic' | 'quorum';
 
-/** `lost`: the Checkout ended without Volverán ending it (a Lost Checkout). */
-export type CheckoutStatus = 'active' | 'ended' | 'lost';
+/**
+ * `awaiting_approval`: active, with its Decisions frozen until a second
+ * Operator approves the Apply (or the requester withdraws the request).
+ * `lost`: the Checkout ended without Volverán ending it (a Lost Checkout).
+ */
+export type CheckoutStatus = 'active' | 'awaiting_approval' | 'ended' | 'lost';
 
 /**
  * Why an ended Checkout ended: the Operator ended it, it was Applied, the app
@@ -84,16 +89,45 @@ export interface MessageDetail extends MessageSummary {
   headers: Record<string, unknown>;
   xDeath: XDeathEntry[];
   body: RenderedBody;
+  /** Null unless the Message is Died Again. */
+  diedAgain: DiedAgain | null;
 }
 
 /** Whether a Message can be given Replay; when not, why (shown to the Operator). */
 export type ReplayAvailability = { available: true } | { available: false; reason: string };
+
+/** The Audit Entry of the Replay, Move or Restore that last sent a Died Again Message out. */
+export interface DiedAgainSource {
+  auditEntryId: number;
+  action: Exclude<AuditAction, 'discard' | 'export'>;
+  /** ISO time of the Audit Entry. */
+  at: string;
+  /** The Operator who acted, as shown (display name). */
+  operatorName: string;
+  /** The queue the Message was taken from then. */
+  fromQueue: string;
+}
+
+/**
+ * A Message that Volverán Replayed, Moved or Restored and that was
+ * dead-lettered again, recognised by its `x-volveran-replay-id` header.
+ */
+export interface DiedAgain {
+  /** The `x-volveran-replay-id` the Message carries. */
+  replayId: string;
+  /** How many times it has died again: the replay ids followed back through the Audit Entries, this one included. */
+  count: number;
+  /** Null when no Audit Entry here has the replay id (another Volverán instance sent it out, or the store was reset). */
+  last: DiedAgainSource | null;
+}
 
 /** A row of the Message list. */
 export interface MessageRow extends MessageSummary {
   /** The Message's Decision; Keep until told otherwise. */
   decision: Decision;
   replay: ReplayAvailability;
+  /** Null unless the Message is Died Again. */
+  diedAgain: DiedAgain | null;
 }
 
 /**
@@ -120,12 +154,58 @@ export interface AppliedResult {
   at: string;
   /** One per Message the Checkout held, in Checkout order. */
   outcomes: MessageOutcome[];
+  /** The Operator who approved the Apply (display name); null when it needed no Approval. */
+  approvedBy: string | null;
 }
 
 /** The confirmation an Apply needs beyond the single confirmation. */
 export interface ApplyConfirmation {
   /** The operator must type the queue name (`confirmQueueName`) to Apply. */
   typeQueueName: boolean;
+  /**
+   * Team Mode, Protected Profile with `requireApproval`, any Decision other
+   * than Keep: the Apply needs a second Operator's Approval. The requester
+   * requests it (POST /api/checkouts/:id/approval-request) instead of Applying.
+   */
+  approvalRequired: boolean;
+}
+
+/** A pending request for Approval of a Checkout's Apply. */
+export interface ApprovalRequestView {
+  /** When the requester asked for Approval (ISO 8601). */
+  requestedAt: string;
+}
+
+/** The last rejection of the Checkout's request for Approval, shown to the requester until they request again. */
+export interface ApprovalRejection {
+  /** Why the approver rejected it (required). */
+  reason: string;
+  /** The Operator who rejected it (display name). */
+  rejectedBy: string;
+  /** ISO 8601. */
+  at: string;
+}
+
+/** A Checkout waiting for Approval, as GET /api/approvals lists it. */
+export interface ApprovalSummary {
+  checkoutId: string;
+  /** The Operator who requested Approval (display name). */
+  requester: string;
+  profile: string;
+  vhost: string;
+  queue: string;
+  queueType: CheckoutQueueType;
+  /** ISO 8601. */
+  requestedAt: string;
+  /** Milliseconds since requestedAt, measured by the server. */
+  waitingMs: number;
+  /** When the Checkout ends itself, and with it the request (ISO 8601). */
+  endsAt: string;
+  /** Milliseconds left until endsAt, measured by the server. */
+  remainingMs: number;
+  /** Messages per Decision. */
+  decisionSummary: DecisionSummaryLine[];
+  decisionSummaryText: string;
 }
 
 export interface CheckoutView {
@@ -164,12 +244,18 @@ export interface CheckoutView {
   deliveryLimit: number | null;
   /** Held Messages in queue order. */
   messages: MessageRow[];
+  /** Held Messages that are Died Again. */
+  diedAgainCount: number;
   /** Messages per Decision (Discard, Replay, Move per destination, Keep last), for the Apply confirmation. */
   decisionSummary: DecisionSummaryLine[];
   /** The summary on one line, e.g. "12 Discard, 40 Replay, 3 Move to orders.manual, 145 Keep". */
   decisionSummaryText: string;
   /** The confirmation an Apply of the current Decisions needs. */
   applyConfirmation: ApplyConfirmation;
+  /** The pending request for Approval (status `awaiting_approval`); null otherwise. */
+  approvalRequest: ApprovalRequestView | null;
+  /** The last request's rejection, until the next request; null otherwise. The Checkout is back in staging. */
+  rejection: ApprovalRejection | null;
   /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
   lastApply: AppliedResult | null;
 }

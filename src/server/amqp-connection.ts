@@ -1,9 +1,15 @@
 // Opens an AMQP connection for a Broker Profile to one vhost, named so the
 // broker's connection list shows what it is for. Failures become BrokerErrors
-// with the same codes as the management API.
+// with the same codes as the management API. `credentials` come from
+// broker-credentials.ts: the shared account, or the Operator's own token as
+// the password (ADR 0008). A connection opened with a token sends each
+// refreshed token to the broker with `update-secret` while it is open, so it
+// outlives the token it opened with.
 import tls from 'node:tls';
 import * as amqp from 'amqplib';
-import { BrokerError, connectionFailed, requirePassword } from './broker-error.js';
+import type { BrokerCredentials } from './broker-credentials.js';
+import { BrokerError, connectionFailed } from './broker-error.js';
+import type { OperatorToken } from './operator-token.js';
 import type { BrokerProfile } from './profiles.js';
 
 /**
@@ -13,13 +19,13 @@ import type { BrokerProfile } from './profiles.js';
  */
 export async function openAmqpConnection(
   profile: BrokerProfile,
+  credentials: BrokerCredentials,
   vhost: string,
   connectionName: string,
 ): Promise<amqp.ChannelModel> {
-  const password = requirePassword(profile);
   const url = new URL(profile.amqpUrl);
-  url.username = encodeURIComponent(profile.username);
-  url.password = encodeURIComponent(password);
+  url.username = encodeURIComponent(credentials.username);
+  url.password = encodeURIComponent(credentials.password);
   url.pathname = '/' + encodeURIComponent(vhost);
   let conn: amqp.ChannelModel;
   try {
@@ -31,18 +37,32 @@ export async function openAmqpConnection(
       ...(profile.ca ? { ca: [...tls.rootCertificates, profile.ca.toString('utf8')] } : {}),
     });
   } catch (err) {
-    throw amqpFailure(profile, vhost, err);
+    throw amqpFailure(profile, credentials, vhost, err);
   }
   conn.on('error', () => {});
+  if (credentials.token) followRefreshes(conn, credentials.token);
   return conn;
 }
 
-function amqpFailure(profile: BrokerProfile, vhost: string, err: unknown): BrokerError {
+/**
+ * Sends each refreshed access token on `conn` with `update-secret`. The broker
+ * re-checks it; a refusal closes the connection (530), which its `close`
+ * listener reports (a Checkout becomes a Lost Checkout), so the answer is not
+ * awaited: amqplib never settles a refused update-secret.
+ */
+function followRefreshes(conn: amqp.ChannelModel, token: OperatorToken): void {
+  const unsubscribe = token.onRefresh((accessToken) => {
+    conn.updateSecret(Buffer.from(accessToken), 'Volverán refreshed the access token').catch(() => {});
+  });
+  conn.on('close', unsubscribe);
+}
+
+function amqpFailure(profile: BrokerProfile, credentials: BrokerCredentials, vhost: string, err: unknown): BrokerError {
   const message = err instanceof Error ? err.message : String(err);
   if (/ACCESS[-_]REFUSED/.test(message)) {
     return new BrokerError(
       'authentication_failed',
-      `The broker rejected the credentials of Broker Profile "${profile.name}" over AMQP (user "${profile.username}", password from ${profile.passwordEnv}).`,
+      `The broker rejected the credentials of Broker Profile "${profile.name}" over AMQP (${credentials.describe}).`,
     );
   }
   // The broker refuses connection.open (530 NOT_ALLOWED) when the vhost is
@@ -51,7 +71,7 @@ function amqpFailure(profile: BrokerProfile, vhost: string, err: unknown): Broke
   if (/NOT[-_]ALLOWED|Expected ConnectionOpenOk; got <ConnectionClose/.test(message)) {
     return new BrokerError(
       'vhost_not_accessible',
-      `Vhost "${vhost}" on Broker Profile "${profile.name}" does not exist, or user "${profile.username}" has no permissions on it.`,
+      `Vhost "${vhost}" on Broker Profile "${profile.name}" does not exist, or user "${credentials.brokerUser}" has no permissions on it.`,
     );
   }
   return connectionFailed(profile, 'the AMQP port', profile.amqpUrl, err);

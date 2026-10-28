@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: v0.2.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. Team safety (roles, four-eyes approval) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
+> **Status: v0.3.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.3: team safety (Roles per Broker Profile, four-eyes Approval on Protected Profiles, and connecting with the Operator's own OAuth 2.0 token), Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation. Upgrading from 0.2: Protected Profiles in Team Mode now require Approval by default (see the [changelog](CHANGELOG.md)). Replay at scale is next; see the [roadmap](ROADMAP.md).
 
 ## Why
 
@@ -14,10 +14,14 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 
 ## How it works
 
-1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue.
-2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**.
-3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message.
-4. **Audit and Restore.** Every action is recorded with who did it. Discarded Messages are kept so they can be Restored.
+1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue. The held Messages can be exported as lossless NDJSON ([Exporting Messages](#exporting-messages)).
+2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. A Message that Volverán sent out before and that was dead-lettered again is flagged **Died Again**, with how many times and a link to the Audit Entry of its last trip, so you don't Replay the same poison Message over and over. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
+3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message. On a Protected Profile in Team Mode, an Apply that changes where Messages end up first waits for a second Operator's **Approval**.
+4. **Audit and Restore.** Every action is recorded with who did it (and who approved it). Discarded Messages are kept so they can be Restored.
+
+The queue list also checks each queue's dead-letter set-up and warns about the ways the broker silently loses Messages: a dead-letter exchange that is missing or routes nowhere, a dead-letter queue whose TTL, length limit or expiry drops Messages, a quorum queue past its delivery limit with nowhere to dead-letter, and a quorum queue that dead-letters at-most-once.
+
+In Team Mode, each Broker Profile can map your OIDC groups to a **Role** (`viewer`, `operator` or `admin`), and can connect to the broker with each Operator's own OAuth 2.0 token instead of shared credentials, so RabbitMQ applies their own permissions ([Team Mode guide](docs/team-mode.md)).
 
 Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
 
@@ -25,7 +29,7 @@ There are two modes. **Solo Mode** runs on your laptop with no sign-in and liste
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.2.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.3.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
 
 ### Solo Mode
 
@@ -41,7 +45,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.2.0
+  ghcr.io/volveran/volveran:0.3.0
 ```
 
 4. Open <http://127.0.0.1:8080>.
@@ -54,7 +58,7 @@ Why `--network host`: a container's own loopback cannot be reached through a pub
 
 ### Team Mode
 
-Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service: Operators sign in through your OIDC provider (Keycloak, JumpCloud, Okta, Entra ID, ...) and every API call needs a session. The Operator recorded for an action is the signed-in person (the provider's `sub`, shown as their email or name); brokers are still reached with each Broker Profile's shared credentials.
+Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service: Operators sign in through your OIDC provider (Keycloak, JumpCloud, Okta, Entra ID, ...) and every API call needs a session. The Operator recorded for an action is the signed-in person (the provider's `sub`, shown as their email or name); brokers are reached with each Broker Profile's shared credentials, or, on a profile with `credentials: operatorToken`, with the signed-in Operator's own OAuth 2.0 access token, so RabbitMQ applies their own permissions (see the [Team Mode guide](docs/team-mode.md#the-operators-own-broker-token)).
 
 1. Register Volverán at your provider as a confidential client using the authorization code flow, with redirect URL `https://<volveran-host>/auth/callback`. [docs/team-mode.md](docs/team-mode.md) has a generic guide and a worked example for Keycloak brokering JumpCloud.
 2. Run the image listening on the network (`-e VOLVERAN_HOST=0.0.0.0 -p 8080:8080` instead of `--network host`; only Team Mode may), behind your TLS-terminating proxy or load balancer:
@@ -71,7 +75,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.2.0
+  ghcr.io/volveran/volveran:0.3.0
 ```
 
 | Variable | Default | Meaning |
@@ -83,6 +87,7 @@ docker run --rm --read-only -p 8080:8080 \
 | `VOLVERAN_OIDC_CLIENT_SECRET` | required | client secret (sent as `client_secret_post`) |
 | `VOLVERAN_OIDC_REDIRECT_URL` | required | `https://<volveran-host>/auth/callback`, as the browser reaches it |
 | `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
+| `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](docs/team-mode.md#the-groups-claim)) |
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
 
 The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
@@ -98,7 +103,7 @@ kubectl -n volveran create secret generic volveran-oidc \
   --from-literal=session-secret="$(openssl rand -base64 48)"
 kubectl -n volveran create secret generic volveran-broker-passwords \
   --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.2.0 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.3.0 \
   --namespace volveran -f values.yaml
 ```
 
@@ -128,6 +133,29 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)).
+
+### Exporting Messages
+
+The owner of an active Checkout can download its held Messages as NDJSON, every one or only those matching the current filter (the **Export** buttons, or `POST /api/checkouts/:id/export` with an optional `{ "filter": [...] }`). Exporting only reads: it never acks, rejects or reorders a Message, and leaves the Decisions as they are. The file is named `volveran-<profile>-<queue>-<UTC time>.ndjson` and is streamed, so even a Checkout at the 100 MB limit is never copied whole into memory. Each export is recorded as an Audit Entry (action `export`) with the Operator, profile, queue, Checkout, filter and number of Messages, but no copy of the Messages.
+
+Each line is one JSON object per Message, in queue order:
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Line format version, `1`. |
+| `position` | Where the Message stood in the Checkout, `1` being the head of the queue. A filtered export keeps these positions. |
+| `messageId` | The `message_id` property, or `null`. |
+| `exchange`, `routingKey` | What the Message was delivered with (for a dead-lettered Message, the dead-letter exchange's). |
+| `properties` | Every AMQP property that is set except headers, with amqplib's names (`contentType`, `deliveryMode`, `timestamp` in seconds, ...). |
+| `headers` | The headers. |
+| `body` | The body exactly as sent, base64. |
+| `bodyKind` | `json`, `text` or `binary`: how the Message view shows the body. |
+| `xDeath` | The decoded `x-death` history, most recent first: `{ queue, reason, count, time, exchange, routingKeys, originalExpiration }`. |
+| `deliveryBudget` | `{ remaining, warning }` on a quorum queue with a delivery limit, otherwise `null`. |
+| `decision` | The Message's Decision when exported: `{ "kind": "keep" }`, `{ "kind": "discard", "reason": ... }`, `{ "kind": "replay" }` or `{ "kind": "move", "destination": { "queue": ... } \| { "exchange": ..., "routingKey": ... } }`. |
+| `diedAgain` | `{ "replayId": ... }` when the Message carries a Volverán replay id (`x-volveran-replay-id`), otherwise `null`. |
+
+`properties` and `headers` use the same lossless AMQP JSON as Audit Entries, so they hold the Message byte for byte: a byte array is `{ "$bytes": "<base64>" }`, a 64-bit integer `{ "$bigint": "<decimal>" }`, and a table with a key starting with `$` is wrapped as `{ "$table": { ... } }`. Typed values such as decimals stay as amqplib decodes them (`{ "!": "decimal", "value": { "places": 2, "digits": 1234 } }`). For example, `jq -r 'select(.bodyKind == "json") | .body | @base64d' export.ndjson` prints the JSON bodies.
 
 ## Learn more
 
@@ -171,7 +199,7 @@ docker build -t volveran .   # the image, as the release workflow builds it
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
-**Test broker.** `test/broker/` holds the compose file, `rabbitmq.conf` (15 s global `consumer_timeout`) and `definitions.json` (users, vhosts, origin queues and dead-letter queues). The compose file also runs a mock OIDC provider ([mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), issuer `http://127.0.0.1:<port>/default`) for the Team Mode tests; `TestBrowser` in `test/integration/oidc-provider.ts` signs in through it as any `sub`, email and name. Every checkout gets its own broker: the compose project is named after the checkout's directory and path (`volveran-test-<dir>-<hash>`), and the host ports are random free ports on 127.0.0.1, so several worktrees can run tests at once. `npm run test:broker` and `test:integration` always tear their broker down. To iterate against a running broker:
+**Test broker.** `test/broker/` holds the compose file, `rabbitmq.conf` (15 s global `consumer_timeout`) and `definitions.json` (users, vhosts, origin queues and dead-letter queues). The compose file also runs a mock OIDC provider ([mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), issuer `http://127.0.0.1:<port>/default`) for the Team Mode tests; `TestBrowser` in `test/integration/oidc-provider.ts` signs in through it as any `sub`, email and name. A second RabbitMQ, `rabbitmq-oauth` (`rabbitmq-oauth.conf`), has the OAuth 2.0 backend only and trusts the mock provider's signing key, which `oidc.json` pins (`oidc-signing-key.pem` is its public half), because RabbitMQ fetches signing keys over https only; the OAuth 2.0 broker facts connect to it with tokens from `test/broker/oauth.ts`. Every checkout gets its own broker: the compose project is named after the checkout's directory and path (`volveran-test-<dir>-<hash>`), and the host ports are random free ports on 127.0.0.1, so several worktrees can run tests at once. `npm run test:broker` and `test:integration` always tear their broker down. To iterate against a running broker:
 
 ```sh
 npm run broker:up      # prints the project name and ports
@@ -186,8 +214,9 @@ The test helpers find the running broker of the checkout on their own. Environme
 | `VOLVERAN_TEST_PROJECT` | derived from the checkout path | compose project name |
 | `VOLVERAN_TEST_AMQP_PORT`, `VOLVERAN_TEST_MGMT_PORT` | random free ports | host ports of the broker |
 | `VOLVERAN_TEST_OIDC_PORT` | random free port | host port of the mock OIDC provider |
+| `VOLVERAN_TEST_OAUTH_AMQP_PORT`, `VOLVERAN_TEST_OAUTH_MGMT_PORT` | random free ports | host ports of the OAuth 2.0 broker |
 | `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
-| `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against |
+| `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against (both brokers) |
 
 **kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard, with the chart's NetworkPolicy on (kindnet enforces it, so the pod becoming ready shows the probes get through). `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).
 

@@ -17,6 +17,8 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
 import type { AuditAction, AuditDestination, AuditOutcome } from '../../shared/audit.js';
+import type { Filter } from '../../shared/filters.js';
+import type { Role } from '../../shared/roles.js';
 
 export type { AuditAction, AuditDestination, AuditOutcome };
 
@@ -36,6 +38,10 @@ export interface NewAuditEntry {
   at: Date;
   /** Who acted: `id` is the stable identity, `displayName` what people see. */
   operator: Pick<Operator, 'id' | 'displayName'>;
+  /** The Operator's Role on the Broker Profile when they acted (`admin` in Solo Mode). */
+  role?: Role | null;
+  /** The second Operator who approved the Apply (Protected Profile, Team Mode); null or left out otherwise. */
+  approver?: Pick<Operator, 'id' | 'displayName'> | null;
   /** The Broker Profile's RabbitMQ user, often a shared service account. */
   brokerUser: string;
   profile: string;
@@ -57,13 +63,28 @@ export interface NewAuditEntry {
   replayId?: string | null;
   /** A Restore: the Audit Entry of the Discard whose Message it republished. */
   restoreOf?: number | null;
+  /** An export: the filter its Messages matched; null (or left out) when it exported every held Message. */
+  filter?: Filter | null;
+  /** An export: how many Messages it holds. */
+  messageCount?: number | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' | 'replayId' | 'restoreOf'> {
+export interface AuditEntry
+  extends Omit<
+    NewAuditEntry,
+    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount'
+  > {
   id: number;
+  /** The Operator's Role when they acted; null on entries written before v0.3. */
+  role: Role | null;
+  /** Who approved the Apply that wrote the entry; null when it needed no Approval (and on entries before v0.3). */
+  approverId: string | null;
+  approverName: string | null;
   replayId: string | null;
   restoreOf: number | null;
+  filter: Filter | null;
+  messageCount: number | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
   operatorId: string;
@@ -78,6 +99,9 @@ export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'message' |
   } | null;
 }
 
+/** Broker Profiles by name: only the ones listed, or every one except those listed. */
+export type ProfileScope = { only: string[] } | { except: string[] };
+
 /** A search over Audit Entries; every given field must match. */
 export interface AuditQuery {
   /** The queue a Message was taken from or sent to. */
@@ -91,6 +115,8 @@ export interface AuditQuery {
   profile?: string;
   /** The Operator: their stable id or their display name. */
   operator?: string;
+  /** Keeps only the entries of these Broker Profiles (see ProfileScope). */
+  profiles?: ProfileScope;
   /** Restores of this Audit Entry. */
   restoreOf?: number;
   /** Entries at or after this time. */
@@ -152,6 +178,14 @@ const MIGRATIONS: string[] = [
    CREATE INDEX audit_entries_restore_of ON audit_entries (restore_of);
    CREATE INDEX audit_entries_stored_bodies ON audit_entries (created_at, id)
      WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL;`,
+  // v4 (#38): the Operator's Role on the Broker Profile; null on older entries.
+  `ALTER TABLE audit_entries ADD COLUMN operator_role TEXT;`,
+  // v5 (#45): the Operator who approved the Apply; null when it needed no Approval.
+  `ALTER TABLE audit_entries ADD COLUMN approver_id TEXT;
+   ALTER TABLE audit_entries ADD COLUMN approver_name TEXT;`,
+  // v6 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
+  `ALTER TABLE audit_entries ADD COLUMN filter TEXT;
+   ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -179,8 +213,10 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
+             approver_id, approver_name,
+             filter, message_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -202,6 +238,11 @@ export class AuditStore {
           message?.body ? message.body.length : null,
           entry.replayId ?? null,
           entry.restoreOf ?? null,
+          entry.role ?? null,
+          entry.approver?.id ?? null,
+          entry.approver?.displayName ?? null,
+          entry.filter ? JSON.stringify(entry.filter) : null,
+          entry.messageCount ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -233,6 +274,12 @@ export class AuditStore {
     if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
     if (query.replayId !== undefined) match('replay_id = ?', query.replayId);
     if (query.profile !== undefined) match('profile = ?', query.profile);
+    const scope = query.profiles;
+    if (scope && 'only' in scope) {
+      match(scope.only.length ? `profile IN (${scope.only.map(() => '?').join(', ')})` : '0', ...scope.only);
+    } else if (scope?.except.length) {
+      match(`profile NOT IN (${scope.except.map(() => '?').join(', ')})`, ...scope.except);
+    }
     if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
     if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
     if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
@@ -353,6 +400,11 @@ interface Row {
   replay_id: string | null;
   restore_of: number | null;
   body_expired_at: number | null;
+  operator_role: Role | null;
+  approver_id: string | null;
+  approver_name: string | null;
+  filter: string | null;
+  message_count: number | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -361,6 +413,9 @@ function toEntry(row: Row): AuditEntry {
     at: new Date(row.created_at),
     operatorId: row.operator_id,
     operatorName: row.operator_name,
+    role: row.operator_role,
+    approverId: row.approver_id,
+    approverName: row.approver_name,
     brokerUser: row.broker_user,
     profile: row.profile,
     vhost: row.vhost,
@@ -382,6 +437,8 @@ function toEntry(row: Row): AuditEntry {
     replayId: row.replay_id,
     restoreOf: row.restore_of,
     bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
+    filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
+    messageCount: row.message_count,
     message:
       row.message_properties === null
         ? null

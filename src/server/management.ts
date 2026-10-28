@@ -6,7 +6,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
-import { BrokerError, connectionFailed, requirePassword } from './broker-error.js';
+import { permissionRefused, type BrokerCredentials } from './broker-credentials.js';
+import { BrokerError, connectionFailed } from './broker-error.js';
 import { isRecord } from './is-record.js';
 import type { BrokerProfile } from './profiles.js';
 
@@ -39,12 +40,22 @@ export interface ManagementExchange {
   type: string;
   /** An internal exchange only receives from other exchanges: clients cannot publish to it. */
   internal: boolean;
+  /** Where Messages it cannot route go, by argument or policy (the argument wins); null for none. */
+  alternateExchange: string | null;
 }
 
 const REQUEST_TIMEOUT_MS = 5_000;
 
 export class ManagementClient {
-  constructor(private readonly profile: BrokerProfile) {}
+  /**
+   * `credentials` is asked on every request (basic auth with the shared
+   * account, or the Operator's token as a bearer token), so an expired token
+   * answers `broker_token_expired` then.
+   */
+  constructor(
+    private readonly profile: BrokerProfile,
+    private readonly credentials: () => BrokerCredentials,
+  ) {}
 
   async listVhosts(): Promise<string[]> {
     const body = (await this.request('/api/vhosts?columns=name')) as Array<{ name: string }>;
@@ -69,8 +80,16 @@ export class ManagementClient {
 
   /** The named exchanges of `vhost`, the default exchange left out. */
   async listExchanges(vhost: string): Promise<ManagementExchange[]> {
-    const body = await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal`);
-    return (body as any[]).map(toExchange).filter((e) => e.name !== '');
+    const body = (await this.inVhost(vhost, `/api/exchanges/${encodeURIComponent(vhost)}?columns=name,type,internal,arguments,policy`)) as any[];
+    // An exchange names its policy but not the policy's definition: read those only when needed.
+    const policies = body.some((e) => typeof e.policy === 'string') ? await this.policyDefinitions(vhost) : new Map();
+    return body.map((e) => toExchange(e, policies)).filter((e) => e.name !== '');
+  }
+
+  /** The definitions of the vhost's policies, by name (readable with the "management" tag). */
+  private async policyDefinitions(vhost: string): Promise<Map<string, Record<string, unknown>>> {
+    const body = (await this.inVhost(vhost, `/api/policies/${encodeURIComponent(vhost)}`)) as any[];
+    return new Map(body.filter((p) => isRecord(p.definition)).map((p) => [String(p.name), p.definition]));
   }
 
   /** One exchange, or null when it does not exist. */
@@ -101,7 +120,7 @@ export class ManagementClient {
       if (err instanceof NotFound) {
         throw new BrokerError(
           'vhost_not_accessible',
-          `Vhost "${vhost}" on Broker Profile "${this.profile.name}" does not exist, or user "${this.profile.username}" has no permissions on it.`,
+          `Vhost "${vhost}" on Broker Profile "${this.profile.name}" does not exist, or user "${this.credentials().brokerUser}" has no permissions on it.`,
         );
       }
       throw err;
@@ -110,11 +129,11 @@ export class ManagementClient {
 
   private async request(path: string): Promise<unknown> {
     const { profile } = this;
-    const auth = Buffer.from(`${profile.username}:${requirePassword(profile)}`).toString('base64');
+    const credentials = this.credentials();
     const url = new URL(profile.managementUrl + path);
     let res: { status: number; text: string };
     try {
-      res = await get(url, { authorization: `Basic ${auth}`, accept: 'application/json' }, profile.ca);
+      res = await get(url, { authorization: credentials.authorization, accept: 'application/json' }, profile.ca);
     } catch (err) {
       throw connectionFailed(profile, 'the management API', profile.managementUrl, err);
     }
@@ -128,15 +147,23 @@ export class ManagementClient {
       // not JSON: no detail
     }
     if (res.status === 401 && /not management user/i.test(detail.reason ?? '')) {
-      throw new BrokerError(
-        'not_management_user',
-        `User "${profile.username}" of Broker Profile "${profile.name}" may not use the management API (it needs the "management" tag or higher).`,
+      throw permissionRefused(
+        profile,
+        credentials.brokerUser,
+        { type: 'management', name: '' },
+        'management',
+        'Volverán reads queues through the management API: the token needs a scope like <resource_server_id>.tag:management.',
+        new BrokerError(
+          'not_management_user',
+          `User "${credentials.brokerUser}" of Broker Profile "${profile.name}" may not use the management API (it needs the "management" tag or higher).`,
+        ),
       );
     }
     if (res.status === 401) {
       throw new BrokerError(
         'authentication_failed',
-        `The broker rejected the credentials of Broker Profile "${profile.name}" (user "${profile.username}", password from ${profile.passwordEnv}).`,
+        `The broker rejected the credentials of Broker Profile "${profile.name}" (${credentials.describe}).` +
+          (credentials.rejectedHint ? ` ${credentials.rejectedHint}` : ''),
       );
     }
     if (res.status === 404) throw new NotFound();
@@ -182,6 +209,14 @@ function toQueue(q: any): ManagementQueue {
   };
 }
 
-function toExchange(e: any): ManagementExchange {
-  return { name: String(e.name ?? ''), type: String(e.type ?? 'direct'), internal: e.internal === true };
+/** `policies` resolves the exchange's policy by name; without it, only an argument gives the alternate exchange. */
+function toExchange(e: any, policies = new Map<string, Record<string, unknown>>()): ManagementExchange {
+  const argument = isRecord(e.arguments) ? e.arguments['alternate-exchange'] : undefined;
+  const policy = typeof e.policy === 'string' ? policies.get(e.policy)?.['alternate-exchange'] : undefined;
+  return {
+    name: String(e.name ?? ''),
+    type: String(e.type ?? 'direct'),
+    internal: e.internal === true,
+    alternateExchange: typeof argument === 'string' ? argument : typeof policy === 'string' ? policy : null,
+  };
 }

@@ -2,7 +2,7 @@
 // mounted where the image reads it, and a change to them rolls the pod.
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { env, render, volumeAt, type Rendered } from './render.js';
+import { env, render, renderRefusal, volumeAt, type Rendered } from './render.js';
 
 const prod = {
   name: 'prod',
@@ -38,6 +38,40 @@ describe('Broker Profiles', () => {
       render({ brokerProfiles: { profiles: [{ ...prod, defaultQueueFilter: '*.dead' }] } }),
     );
     expect(after).not.toEqual(before);
+  });
+
+  it('accepts roles, and writes them into profiles.yaml', () => {
+    const roles = { viewer: ['support'], operator: ['oncall', 'sre'], admin: ['platform'] };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, roles }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, roles }] });
+  });
+
+  it('accepts requireApproval, and writes it into profiles.yaml', () => {
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, requireApproval: false }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, requireApproval: false }] });
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, requireApproval: 'sometimes' }] } })).toMatch(/requireApproval/);
+  });
+
+  it("accepts credentials: operatorToken with tokenUsernameClaim and no username or passwordEnv, and writes them into profiles.yaml", () => {
+    const { username: _u, passwordEnv: _p, ...rest } = prod;
+    const tokenProfile = { ...rest, credentials: 'operatorToken', tokenUsernameClaim: 'preferred_username' };
+    const configMap = render({ brokerProfiles: { profiles: [tokenProfile] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [tokenProfile] });
+    expect(parse(render({ brokerProfiles: { profiles: [{ ...prod, credentials: 'shared' }] } }).one('ConfigMap').data!['profiles.yaml']!))
+      .toEqual({ profiles: [{ ...prod, credentials: 'shared' }] });
+  });
+
+  it('refuses an unknown credentials value, and a shared profile without username or passwordEnv', () => {
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, credentials: 'oauth' }] } })).toMatch(/credentials/);
+    const { username: _u, ...noUsername } = prod;
+    expect(renderRefusal({ brokerProfiles: { profiles: [noUsername] } })).toMatch(/username/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, credentials: 'operatorToken' }] } })).toMatch(/brokerProfiles/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, tokenUsernameClaim: 'sub' }] } })).toMatch(/brokerProfiles/);
+  });
+
+  it('refuses an unknown role name, or an empty group list', () => {
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { owner: ['platform'] } }] } })).toMatch(/roles/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { admin: [] } }] } })).toMatch(/admin/);
   });
 
   it('keeps the pod template annotations when nothing about the profiles changes', () => {

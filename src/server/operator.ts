@@ -8,6 +8,7 @@
 // Checkout per Operator, Audit Entries) uses `operator.id`.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from './http-error.js';
+import type { OperatorToken } from './operator-token.js';
 
 export interface Operator {
   /**
@@ -21,6 +22,17 @@ export interface Operator {
   email?: string;
   /** Team Mode: the `name` claim, when the provider gives one. */
   name?: string;
+  /**
+   * Team Mode: the groups read from the groups claim at sign-in, which give
+   * the Operator a Role on each Broker Profile (profile-access.ts). Fixed for
+   * the session: a change at the provider applies at the next sign-in.
+   */
+  groups?: string[];
+  /**
+   * Team Mode: the access token from sign-in, kept server-side. Profiles
+   * with `credentials: operatorToken` connect with it (broker-credentials.ts).
+   */
+  brokerToken?: OperatorToken;
 }
 
 declare module 'fastify' {
@@ -30,8 +42,8 @@ declare module 'fastify' {
   }
 }
 
-/** The signed-in identity as an Operator. */
-export function teamOperator(claims: { sub: string; email?: unknown; name?: unknown }): Operator {
+/** The signed-in identity as an Operator, with the groups read from its claims. */
+export function teamOperator(claims: { sub: string; email?: unknown; name?: unknown }, groups: string[]): Operator {
   const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
   const email = text(claims.email);
   const name = text(claims.name);
@@ -40,6 +52,7 @@ export function teamOperator(claims: { sub: string; email?: unknown; name?: unkn
     displayName: email ?? name ?? claims.sub,
     ...(email !== undefined && { email }),
     ...(name !== undefined && { name }),
+    groups,
   };
 }
 

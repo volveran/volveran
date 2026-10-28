@@ -9,7 +9,7 @@ A named set of connection details for one RabbitMQ broker (e.g. dev, staging, pr
 _Avoid_: Connection, environment, cluster
 
 **Protected Profile**:
-A Broker Profile on which every Apply that changes where a Message ends up, and every Restore, needs a typed confirmation.
+A Broker Profile on which every Apply that changes where a Message ends up, and every Restore, needs a typed confirmation. In Team Mode such an Apply also needs an Approval, unless the profile sets `requireApproval: false`.
 _Avoid_: Prod mode, locked profile
 
 ## Triage
@@ -58,11 +58,23 @@ _Avoid_: Transfer, copy, shovel
 Returning a Message to its source queue unchanged at the end of a Checkout, without using up any of its Delivery Budget.
 _Avoid_: Skip, requeue, ignore
 
+**Died Again**:
+Said of a Message that Volverán Replayed, Moved or Restored and that has been dead-lettered again, recognised by the replay id (`x-volveran-replay-id`) it carries. How many times it has died again comes from following the replay ids back through the Audit Entries.
+_Avoid_: Repeat offender, recurring, boomerang
+
 ## Accountability
 
 **Operator**:
-The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account.
+The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account, or the Operator themself on a profile that connects with their own token (`credentials: operatorToken`).
 _Avoid_: User, who, actor
+
+**Role**:
+What an Operator may do on one Broker Profile: `viewer` (look), `operator` (triage) or `admin` (also Restore). Each one includes the ones before it. In Team Mode it comes from the Operator's groups and the profile's `roles`; in Solo Mode the Operator is `admin` everywhere. The role `operator` is written in code format, so it reads apart from the Operator, the person.
+_Avoid_: Permission, access level
+
+**Approval**:
+A second Operator's consent, after reviewing its Decisions, to an Apply on a Protected Profile. In Team Mode, an Apply with any Decision other than Keep on a Protected Profile waits for it (unless the profile sets `requireApproval: false`); approving runs the Apply, and its Audit Entries record both people. Rejecting, with a reason, returns the Checkout to staging; withdrawing it or the Checkout ending cancels the request.
+_Avoid_: Sign-off, review, four-eyes (four-eyes may describe the feature in prose)
 
 ## Running
 

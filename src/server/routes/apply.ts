@@ -8,13 +8,17 @@
 // Under /api/checkouts/:id, so only the Checkout's owner may Apply it (the
 // owner check in routes/checkouts.ts). Refused with 409 `checkout_not_active`
 // on a Checkout that is over or lost, `apply_in_progress` while one runs.
+// When the Apply needs Approval (Team Mode, a Protected Profile with
+// `requireApproval`, any Decision other than Keep) it answers 409
+// `approval_required`, and `awaiting_approval` once requested: the owner
+// requests Approval instead (routes/approvals.ts).
 // A dropped connection mid-Apply is not an error: the response lists what was
 // done and what went back to the queue, and the Checkout is `lost`.
 import type { FastifyInstance } from 'fastify';
 import { ApplyError } from '../apply/errors.js';
-import type { CheckoutManager } from '../checkout/manager.js';
 import type { CheckoutView } from '../checkout/view.js';
 import { requireTypedQueueName } from '../protected-profile.js';
+import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 
 export interface ApplyRequestBody {
   /** The Operator's single confirmation of the whole Apply, after seeing the summary of Decisions. */
@@ -41,11 +45,13 @@ export function checkApplyConfirmation(checkout: CheckoutView, body: ApplyReques
   }
 }
 
-export function registerApplyRoutes(app: FastifyInstance, checkouts: CheckoutManager) {
+export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
+  const { checkouts } = deps;
   app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', async (req) => {
+    const { role } = checkoutAccess(deps, req, 'checkout');
     // 404 for an unknown Checkout before asking for confirmation. Nothing
     // awaits between this check and apply() reading the Decisions.
     checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-    return checkouts.apply(req.params.id);
+    return checkouts.apply(req.params.id, role);
   });
 }

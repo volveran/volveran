@@ -1,17 +1,19 @@
 // Thin typed client over Volverán's HTTP JSON API. The response shapes are
 // the server's own, from src/shared/.
 import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
-import type { CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
+import type { ApprovalSummary, CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
 import { product } from '../shared/product.js';
-import type { MoveDestinations, ProfileSummary, QueueRow, Session } from '../shared/queues.js';
+import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
 export type {
+  ApprovalSummary,
   CheckoutHolder,
   DeliveryBudget,
+  DiedAgain,
   MessageDetail,
   MessageOutcome,
   MessageRow,
@@ -20,7 +22,15 @@ export type {
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
-export type { CheckoutAvailability, MoveDestinations, Session, SetupWarning } from '../shared/queues.js';
+export type {
+  CheckoutAvailability,
+  MoveDestinations,
+  QueueList,
+  Session,
+  SetupWarning,
+  SetupWarningCounts,
+  SetupWarningSeverity,
+} from '../shared/queues.js';
 export type Checkout = CheckoutView;
 export type Profile = ProfileSummary;
 export type Queue = QueueRow;
@@ -113,9 +123,7 @@ export const api = {
     if (opts.search.trim()) params.set('search', opts.search.trim());
     if (opts.onlyDeadLetterQueues) params.set('onlyDeadLetterQueues', 'true');
     const qs = params.size > 0 ? `?${params}` : '';
-    return getJson<{ queues: Queue[] }>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`).then(
-      (b) => b.queues,
-    );
+    return getJson<QueueList>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`);
   },
   moveDestinations: (profile: string, vhost: string) =>
     getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
@@ -159,9 +167,57 @@ export const api = {
     getJson<{ entry: AuditEntry }>(`/api/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(
       (b) => b.entry,
     ),
+  /**
+   * Downloads the held Messages as NDJSON (those matching `filter`, or every
+   * one) and hands the file to the browser. Recorded as an Audit Entry.
+   */
+  exportMessages: async (id: string, filter?: FilterClause[]) => {
+    const res = await fetch(`/api/checkouts/${segment(id)}/export`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(filter ? { filter } : {}),
+    }).catch((err: Error) => {
+      throw new ApiError(0, 'app_unreachable', `Cannot reach ${product.name}: ${err.message}`);
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => undefined);
+      const { code, message, ...details } = (json?.error ?? {}) as { code?: string; message?: string };
+      throw new ApiError(res.status, code ?? 'http_error', message ?? `Export failed with ${res.status}`, details);
+    }
+    const filename = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'volveran-export.ndjson';
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
   apply: (id: string, confirmQueueName?: string) =>
     getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
+    }),
+  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions. */
+  requestApproval: (id: string, confirmQueueName?: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
+      confirm: true,
+      ...(confirmQueueName !== undefined && { confirmQueueName }),
+    }).then((b) => b.checkout),
+  withdrawApproval: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
+  /** Other Operators' Checkouts waiting for an Approval this Operator may give. */
+  approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals').then((b) => b.approvals),
+  /** A waiting Checkout, read-only. */
+  approvalCheckout: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
+  approvalMessage: (id: string, handle: number) =>
+    getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  /** Rejects the Apply of a waiting Checkout: it goes back to its requester's staging with `reason`. */
+  reject: (id: string, reason: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
+  /** Approves the Apply of a waiting Checkout, which runs it; `confirmQueueName` is the queue name as typed. */
+  approve: (id: string, confirmQueueName: string) =>
+    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
+      confirmQueueName,
     }),
 };

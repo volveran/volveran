@@ -8,6 +8,7 @@ import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { ActionDecision } from '../triage/decisions.js';
 import type { MessageOutcome, OutcomeStatus } from '../../shared/checkout.js';
+import type { Role } from '../../shared/roles.js';
 
 export type { MessageOutcome, OutcomeStatus };
 
@@ -18,10 +19,23 @@ export type HeldMessage = amqp.ConsumeMessage;
 export interface ApplyTarget extends QueueRef {
   checkoutId: string;
   operator: Pick<Operator, 'id' | 'displayName'>;
+  /** The Operator's Role on the Broker Profile, recorded in each Audit Entry. */
+  role: Role;
+  /** Who the broker sees acting: the Checkout's broker user (the shared account, or the requester's token user), recorded in each Audit Entry. */
+  brokerUser: string;
+  /** The second Operator who approved this Apply (Protected Profile, Team Mode); null when it needed no Approval. */
+  approver: Pick<Operator, 'id' | 'displayName'> | null;
 }
 
 /** The outcome of one publish: ok only when confirmed without a preceding basic.return. */
-export type PublishResult = { ok: true } | { ok: false; reason: string };
+export type PublishResult =
+  | { ok: true }
+  /**
+   * `refused`: the broker refused the broker user write permission on the
+   * exchange (403 ACCESS_REFUSED); `reason` then names the exchange and the
+   * permission.
+   */
+  | { ok: false; reason: string; refused?: boolean };
 
 /** What a handler can do on the broker during Apply. */
 export interface ApplyContext {

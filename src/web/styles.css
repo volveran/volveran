@@ -168,6 +168,14 @@ main {
   border: 1px solid var(--warning);
 }
 
+/* A Message that came back after a Replay, Move or Restore. */
+.badge.died-again {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+  margin-left: 4px;
+}
+
 .held {
   color: var(--warning);
   font-size: 0.9em;
@@ -251,6 +259,27 @@ table.queues {
   max-width: 480px;
 }
 
+.badge.severity-loses_messages {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.badge.severity-may_lose_messages {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.setup-warning-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
 .queues th small {
   font-weight: normal;
 }
@@ -279,8 +308,82 @@ table.queues {
 .messages tr {
   cursor: pointer;
 }
-.messages tr.selected td {
+.messages tr.focused td {
   outline: 1px solid var(--accent);
+}
+
+/* Keyboard focus: always visible. The Message list keeps the DOM focus and
+   marks its focused Message (the active descendant) instead. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.listbox:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.listbox:focus tr.focused td {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.queues tr.focused:focus td {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.queues tr:focus {
+  outline: none;
+}
+.message-list .checkbox {
+  display: inline-flex;
+  margin-bottom: 0.25rem;
+}
+kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0 0.3em;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+}
+.shortcut-hint {
+  margin-top: 1rem;
+  font-size: 0.9em;
+}
+dialog.prompt {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  max-width: min(40rem, calc(100vw - 2rem));
+}
+dialog.prompt::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+.decision-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.decision-prompt h3 {
+  margin: 0;
+}
+.decision-prompt label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+}
+.shortcuts > div {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  gap: 1rem;
+  padding: 0.2rem 0;
+}
+.shortcuts dd {
+  margin: 0;
 }
 .message-detail {
   background: var(--surface);
@@ -374,17 +477,66 @@ td.select {
 .apply-panel {
   margin: 0.5rem 0;
 }
-.apply-panel .confirm {
+dialog.prompt .confirm {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 16px;
 }
 .outcomes {
   margin: 1rem 0;
+}
+.awaiting-approval {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--warning-bg);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.awaiting-approval p {
+  margin: 0.4rem 0;
+}
+.approval-note {
+  color: var(--muted);
+}
+.copyable-link {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.copyable-link label {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+.copyable-link input {
+  font-family: ui-monospace, monospace;
+  width: 100%;
+}
+.rejection {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--danger);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.rejection p {
+  margin: 0.4rem 0;
+}
+.rejection-reason {
+  white-space: pre-wrap;
+}
+.reject-reason {
+  display: flex;
+  flex-direction: column;
+}
+.decision-counts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 .outcome-failed td,
 .outcome-not-attempted td {
@@ -461,4 +613,14 @@ td.select {
 .badge.outcome-pending {
   color: var(--danger);
   border: 1px solid var(--danger);
+}
+
+.no-role .groups {
+  margin: 8px 0 16px;
+  padding-left: 20px;
+  user-select: all;
+}
+
+.no-role .groups li {
+  margin: 2px 0;
 }

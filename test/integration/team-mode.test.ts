@@ -66,6 +66,8 @@ describe('Team Mode', () => {
       email: 'alice@example.com',
       name: 'Alice Doe',
       checkoutId: null,
+      roles: { dev: 'admin' },
+      groups: [],
     });
     expect((await browser.get('/api/profiles')).status).toBe(200);
   });
@@ -94,11 +96,11 @@ describe('Team Mode', () => {
   it('shows the name when the provider gives no email, and the sub when it gives neither', async () => {
     const named = new TestBrowser(baseUrl);
     await named.signIn({ sub: 'bob-sub', name: 'Bob' });
-    expect((await named.get('/api/session')).body).toEqual({ mode: 'team', operator: 'Bob', operatorId: 'bob-sub', name: 'Bob', checkoutId: null });
+    expect((await named.get('/api/session')).body).toEqual({ mode: 'team', operator: 'Bob', operatorId: 'bob-sub', name: 'Bob', checkoutId: null, roles: { dev: 'admin' }, groups: [] });
 
     const bare = new TestBrowser(baseUrl);
     await bare.signIn({ sub: 'carol-sub' });
-    expect((await bare.get('/api/session')).body).toEqual({ mode: 'team', operator: 'carol-sub', operatorId: 'carol-sub', checkoutId: null });
+    expect((await bare.get('/api/session')).body).toEqual({ mode: 'team', operator: 'carol-sub', operatorId: 'carol-sub', checkoutId: null, roles: { dev: 'admin' }, groups: [] });
   });
 
   it('gives each signed-in person their own session', async () => {
@@ -235,6 +237,7 @@ describe('Checkout in Team Mode', () => {
       ['POST', '/api/checkouts/:id/matching', { filter: [] }],
       ['POST', '/api/checkouts/:id/decisions', { handles: [1], decision: { kind: 'discard', reason: 'Not needed' } }],
       ['POST', '/api/checkouts/:id/apply', { confirm: true }],
+      ['POST', '/api/checkouts/:id/export', {}],
       ['POST', '/api/checkouts/:id/end', {}],
       ['DELETE', '/api/checkouts/:id'],
     ];
@@ -270,6 +273,7 @@ describe('Checkout in Team Mode', () => {
       expect((await a.get(`/api/checkouts/${id}/messages/${handle}`)).status).toBe(200);
       expect((await a.post(`/api/checkouts/${id}/heartbeat`)).status).toBe(200);
       expect((await a.post(`/api/checkouts/${id}/matching`, { filter: [] })).status).toBe(200);
+      expect((await a.post(`/api/checkouts/${id}/export`)).status).toBe(200);
       expect((await a.post(`/api/checkouts/${id}/decisions`, { handles: [handle], decision: { kind: 'discard', reason: 'Not needed' } })).status).toBe(200);
       expect((await a.post(`/api/checkouts/${id}/end`)).status).toBe(200);
       expect((await a.request('DELETE', `/api/checkouts/${id}`)).status).toBe(200);

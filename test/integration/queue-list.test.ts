@@ -138,15 +138,20 @@ describe('queue list', () => {
   it('flags a quorum dead-letter queue whose delivery limit drops Messages for lack of a dead-letter exchange', async () => {
     const res = await app.get('/api/profiles/local/vhosts/%2F/queues');
     const byName = Object.fromEntries(res.body.queues.map((q: any) => [q.name, q]));
-    expect(byName['orders.dlq.quorum'].setupWarning).toEqual({
-      code: 'messages_dropped_at_delivery_limit',
-      deliveryLimit: 20,
-      message: expect.stringMatching(/default delivery-limit \(20\).*dropped.*delivery-limit = -1.*dead-letter exchange/is),
-    });
-    expect(byName['orders.dlq.quorum-dlx'].setupWarning).toBeNull();
-    expect(byName['payments.dlq'].setupWarning).toMatchObject({ deliveryLimit: 5 });
-    expect(byName['payments.work'].setupWarning).toBeNull();
-    expect(byName['orders.dlq'].setupWarning).toBeNull();
+    expect(byName['orders.dlq.quorum'].setupWarnings).toEqual([
+      {
+        code: 'messages_dropped_at_delivery_limit',
+        severity: 'loses_messages',
+        deliveryLimit: 20,
+        message: expect.stringMatching(/default delivery-limit \(20\).*dropped.*delivery-limit = -1.*dead-letter exchange/is),
+      },
+    ]);
+    // Only the at-most-once notice of a quorum queue that dead-letters.
+    const notice = [expect.objectContaining({ code: 'quorum_at_most_once_dead_lettering' })];
+    expect(byName['orders.dlq.quorum-dlx'].setupWarnings).toEqual(notice);
+    expect(byName['payments.dlq'].setupWarnings).toEqual([expect.objectContaining({ deliveryLimit: 5 })]);
+    expect(byName['payments.work'].setupWarnings).toEqual(notice);
+    expect(byName['orders.dlq'].setupWarnings).toEqual([]);
   });
 
   it('sees a dead-letter exchange or an unlimited delivery limit set by a policy', async () => {
@@ -165,7 +170,7 @@ describe('queue list', () => {
       // A new queue's delivery limit shows up with its first management statistics.
       await eventually(async () => {
         const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
-        expect(res.body.queues.map((q: any) => q.setupWarning?.deliveryLimit)).toEqual([20, 20]);
+        expect(res.body.queues.map((q: any) => q.setupWarnings.map((w: any) => w.deliveryLimit))).toEqual([[20], [20]]);
       }, 20_000, 500);
 
       for (const [name, { pattern, definition }] of Object.entries(policies)) {
@@ -174,15 +179,254 @@ describe('queue list', () => {
       }
       await eventually(async () => {
         const res = await filtered.get('/api/profiles/setupcheck/vhosts/%2F/queues?search=setupcheck');
-        expect(res.body.queues.map((q: any) => [q.name, q.setupWarning])).toEqual([
-          ['setupcheck.dlx.dlq', null],
-          ['setupcheck.unlimited.dlq', null],
+        expect(res.body.queues.map((q: any) => [q.name, q.setupWarnings])).toEqual([
+          // Only the at-most-once notice of a quorum queue that dead-letters.
+          ['setupcheck.dlx.dlq', [expect.objectContaining({ code: 'quorum_at_most_once_dead_lettering' })]],
+          ['setupcheck.unlimited.dlq', []],
         ]);
       }, 20_000, 500);
     } finally {
       await filtered.close();
       for (const name of Object.keys(policies)) await management(`/policies/${vhost}/${name}`, { method: 'DELETE' });
       for (const q of queues) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('flags a queue whose dead-letter exchange does not exist, set by an argument or by a policy, until it is declared', async () => {
+    const vhost = encodeURIComponent('/');
+    const byArgument = 'missingdlx.argument.work';
+    const byPolicy = 'missingdlx.policy.work';
+    const missing = 'missingdlx.nowhere';
+    const created = [
+      [byArgument, { durable: true, arguments: { 'x-dead-letter-exchange': missing } }],
+      [byPolicy, { durable: true }],
+    ] as const;
+    for (const [q, body] of created) {
+      expect((await management(`/queues/${vhost}/${q}`, { method: 'PUT', body })).status).toBeLessThan(300);
+    }
+    const policy = await management(`/policies/${vhost}/missingdlx`, {
+      method: 'PUT',
+      body: { pattern: '^missingdlx\\.policy\\.work$', 'apply-to': 'queues', definition: { 'dead-letter-exchange': missing } },
+    });
+    expect(policy.status).toBeLessThan(300);
+    try {
+      await eventually(async () => {
+        const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=missingdlx');
+        expect(names(res.body.queues)).toEqual([byArgument, byPolicy]);
+        for (const q of res.body.queues) {
+          expect(q.setupWarnings).toEqual([
+            {
+              code: 'dead_letter_exchange_missing',
+              severity: 'loses_messages',
+              deadLetterExchange: missing,
+              message: expect.stringMatching(/"missingdlx\.nowhere".*does not exist.*dropped.*Declare/is),
+            },
+          ]);
+        }
+      });
+
+      const declare = await management(`/exchanges/${vhost}/${missing}`, { method: 'PUT', body: { type: 'fanout', durable: true } });
+      expect(declare.status).toBeLessThan(300);
+      // The exchange exists now, but routes nothing yet: only the unroutable warning is left.
+      const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=missingdlx');
+      expect(res.body.queues.map((q: any) => q.setupWarnings.map((w: any) => w.code))).toEqual([['dead_letter_unroutable'], ['dead_letter_unroutable']]);
+    } finally {
+      await management(`/policies/${vhost}/missingdlx`, { method: 'DELETE' });
+      await management(`/exchanges/${vhost}/${missing}`, { method: 'DELETE' });
+      for (const [q] of created) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('flags a dead-letter queue whose message TTL, queue expiry or drop-head length limit drops Messages, by argument or by policy', async () => {
+    const vhost = encodeURIComponent('/');
+    const ttl = 'dropping.ttl.dlq';
+    const maxLength = 'dropping.maxlength.dlq';
+    const expires = 'dropping.expires.dlq';
+    const created = [
+      [ttl, {}],
+      [maxLength, { 'x-max-length': 100 }],
+      [expires, { 'x-expires': 3_600_000, 'x-dead-letter-exchange': 'orders.dlx' }],
+    ] as const;
+    for (const [q, args] of created) {
+      expect((await management(`/queues/${vhost}/${q}`, { method: 'PUT', body: { durable: true, arguments: args } })).status).toBeLessThan(300);
+    }
+    const policy = (name: string, pattern: string, definition: Record<string, unknown>) =>
+      management(`/policies/${vhost}/${name}`, { method: 'PUT', body: { pattern, 'apply-to': 'queues', definition } });
+    expect((await policy('dropping-ttl', '^dropping\\.ttl\\.dlq$', { 'message-ttl': 60_000 })).status).toBeLessThan(300);
+    const filtered = await startApp({ profiles: [testProfile({ name: 'dropping', defaultQueueFilter: 'dropping.*' })] });
+    const warnings = async () => {
+      const res = await filtered.get('/api/profiles/dropping/vhosts/%2F/queues?search=dropping');
+      return Object.fromEntries(res.body.queues.map((q: any) => [q.name, q.setupWarnings]));
+    };
+    try {
+      await eventually(async () => {
+        expect(await warnings()).toEqual({
+          [ttl]: [
+            {
+              code: 'dead_letter_queue_drops_messages',
+              severity: 'loses_messages',
+              settings: ['message-ttl'],
+              message: expect.stringMatching(/message TTL of 60000 ms.*dropped.*dead-letter exchange/is),
+            },
+          ],
+          [maxLength]: [expect.objectContaining({ settings: ['max-length'], message: expect.stringContaining('drop-head') })],
+          [expires]: [expect.objectContaining({ settings: ['expires'], message: expect.stringContaining('expires after 3600000 ms') })],
+        });
+      });
+
+      // Dead-lettering onward clears the TTL and the length limit, not the expiry, which deletes the queue's Messages.
+      expect((await policy('dropping-ttl', '^dropping\\.ttl\\.dlq$', { 'message-ttl': 60_000, 'dead-letter-exchange': 'orders.dlx' })).status).toBeLessThan(300);
+      expect((await policy('dropping-maxlength', '^dropping\\.maxlength\\.dlq$', { 'dead-letter-exchange': 'orders.dlx' })).status).toBeLessThan(300);
+      await eventually(async () => {
+        expect(await warnings()).toEqual({ [ttl]: [], [maxLength]: [], [expires]: [expect.objectContaining({ settings: ['expires'] })] });
+      });
+    } finally {
+      await filtered.close();
+      for (const name of ['dropping-ttl', 'dropping-maxlength']) await management(`/policies/${vhost}/${name}`, { method: 'DELETE' });
+      for (const [q] of created) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('notes a quorum queue that dead-letters with the default at-most-once strategy, not one set to at-least-once', async () => {
+    const vhost = encodeURIComponent('/');
+    const atMostOnce = 'strategy.atmostonce.work';
+    const atLeastOnce = 'strategy.atleastonce.work';
+    const created = [
+      [atMostOnce, {}],
+      [atLeastOnce, { 'x-dead-letter-strategy': 'at-least-once', 'x-overflow': 'reject-publish' }],
+    ] as const;
+    for (const [q, args] of created) {
+      const body = { durable: true, arguments: { 'x-queue-type': 'quorum', 'x-dead-letter-exchange': 'orders.dlx', ...args } };
+      expect((await management(`/queues/${vhost}/${q}`, { method: 'PUT', body })).status).toBeLessThan(300);
+    }
+    try {
+      await eventually(async () => {
+        const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=strategy');
+        expect(res.body.queues.map((q: any) => [q.name, q.setupWarnings])).toEqual([
+          [atLeastOnce, []],
+          [
+            atMostOnce,
+            [
+              {
+                code: 'quorum_at_most_once_dead_lettering',
+                severity: 'may_lose_messages',
+                message: expect.stringMatching(/default at-most-once.*lost.*at-least-once.*reject-publish/is),
+              },
+            ],
+          ],
+        ]);
+      });
+    } finally {
+      for (const [q] of created) await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+    }
+  });
+
+  it('flags a queue whose dead-letter routing key no binding routes, until a binding or an alternate exchange routes it', async () => {
+    const vhost = encodeURIComponent('/');
+    const q = 'unroutabledlx.work';
+    const dlq = 'unroutabledlx.dlq';
+    const dlx = 'unroutabledlx.dlx';
+    const alternate = 'unroutabledlx.alternate';
+    const warningsOf = async () => {
+      const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=unroutabledlx.work');
+      expect(names(res.body.queues)).toEqual([q]);
+      return res.body.queues[0].setupWarnings;
+    };
+    try {
+      for (const x of [dlx, alternate]) {
+        expect((await management(`/exchanges/${vhost}/${x}`, { method: 'PUT', body: { type: 'direct', durable: true } })).status).toBeLessThan(300);
+      }
+      for (const [name, args] of [[dlq, {}], [q, { 'x-dead-letter-exchange': dlx, 'x-dead-letter-routing-key': 'parked' }]] as const) {
+        expect((await management(`/queues/${vhost}/${name}`, { method: 'PUT', body: { durable: true, arguments: args } })).status).toBeLessThan(300);
+      }
+      const bind = (key: string) =>
+        management(`/bindings/${vhost}/e/${dlx}/q/${dlq}`, { method: 'POST', body: { routing_key: key } });
+      expect((await bind('other')).status).toBeLessThan(300);
+
+      expect(await warningsOf()).toEqual([
+        {
+          code: 'dead_letter_unroutable',
+          severity: 'loses_messages',
+          deadLetterExchange: dlx,
+          routingKey: 'parked',
+          message: expect.stringMatching(/"unroutabledlx\.dlx" with the routing key "parked".*dropped.*Bind a queue/is),
+        },
+      ]);
+
+      // An alternate exchange set by a policy saves the Messages too.
+      const policy = await management(`/policies/${vhost}/unroutabledlx`, {
+        method: 'PUT',
+        body: { pattern: '^unroutabledlx\\.dlx$', 'apply-to': 'exchanges', definition: { 'alternate-exchange': alternate } },
+      });
+      expect(policy.status).toBeLessThan(300);
+      await eventually(async () => expect(await warningsOf()).toEqual([]));
+      await management(`/policies/${vhost}/unroutabledlx`, { method: 'DELETE' });
+      await eventually(async () => expect(await warningsOf()).toHaveLength(1));
+
+      expect((await bind('parked')).status).toBeLessThan(300);
+      expect(await warningsOf()).toEqual([]);
+    } finally {
+      await management(`/policies/${vhost}/unroutabledlx`, { method: 'DELETE' });
+      for (const name of [q, dlq]) await management(`/queues/${vhost}/${name}`, { method: 'DELETE' });
+      for (const x of [dlx, alternate]) await management(`/exchanges/${vhost}/${x}`, { method: 'DELETE' });
+    }
+  });
+
+  it('reads an alternate exchange set by an exchange argument', async () => {
+    const vhost = encodeURIComponent('/');
+    const q = 'aedlx.work';
+    const dlx = 'aedlx.dlx';
+    try {
+      const put = await management(`/exchanges/${vhost}/${dlx}`, {
+        method: 'PUT',
+        body: { type: 'direct', durable: true, arguments: { 'alternate-exchange': 'aedlx.alternate' } },
+      });
+      expect(put.status).toBeLessThan(300);
+      const queue = await management(`/queues/${vhost}/${q}`, { method: 'PUT', body: { durable: true, arguments: { 'x-dead-letter-exchange': dlx } } });
+      expect(queue.status).toBeLessThan(300);
+      const res = await app.get('/api/profiles/local/vhosts/%2F/queues?search=aedlx');
+      expect(res.body.queues.map((r: any) => [r.name, r.setupWarnings])).toEqual([[q, []]]);
+    } finally {
+      await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
+      await management(`/exchanges/${vhost}/${dlx}`, { method: 'DELETE' });
+    }
+  });
+
+  it('shows every warning on a queue, and counts the warnings of the whole vhost by severity', async () => {
+    const vhost = encodeURIComponent('/');
+    const q = 'bothwarnings.dlq';
+    const put = await management(`/queues/${vhost}/${q}`, {
+      method: 'PUT',
+      body: { durable: true, arguments: { 'x-queue-type': 'quorum', 'x-dead-letter-exchange': 'bothwarnings.nowhere' } },
+    });
+    expect(put.status).toBeLessThan(300);
+    const filtered = await startApp({ profiles: [testProfile({ name: 'bothwarnings', defaultQueueFilter: 'bothwarnings.*' })] });
+    try {
+      // A new queue's delivery limit shows up with its first management statistics.
+      const all = await eventually(async () => {
+        const res = await filtered.get('/api/profiles/bothwarnings/vhosts/%2F/queues');
+        const row = res.body.queues.find((r: any) => r.name === q);
+        expect(row.setupWarnings.map((w: any) => [w.code, w.severity])).toEqual([
+          ['messages_dropped_at_delivery_limit', 'loses_messages'],
+          ['dead_letter_exchange_missing', 'loses_messages'],
+        ]);
+        return res.body;
+      }, 20_000, 500);
+
+      const tally = { loses_messages: 0, may_lose_messages: 0 };
+      for (const row of all.queues) for (const w of row.setupWarnings) tally[w.severity as keyof typeof tally]++;
+      // The two fixture delivery limits (orders.dlq.quorum, payments.dlq) and this queue's two; the
+      // at-most-once notices of the fixture quorum queues that dead-letter (orders.dlq.quorum-dlx, payments.work).
+      expect(tally).toEqual({ loses_messages: 4, may_lose_messages: 2 });
+      expect(all.setupWarningCounts).toEqual(tally);
+
+      // The count is the whole vhost's, whatever the search and the dead-letter queue filter leave listed.
+      const narrowed = await filtered.get(`/api/profiles/bothwarnings/vhosts/%2F/queues?search=${q}&onlyDeadLetterQueues=true`);
+      expect(names(narrowed.body.queues)).toEqual([q]);
+      expect(narrowed.body.setupWarningCounts).toEqual(tally);
+    } finally {
+      await filtered.close();
+      await management(`/queues/${vhost}/${q}`, { method: 'DELETE' });
     }
   });
 

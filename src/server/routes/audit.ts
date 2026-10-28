@@ -7,8 +7,13 @@
 //       → { entry: AuditEntryJson } the Restore's own Audit Entry (outcome done or failed)
 //   GET /api/audit-store → BodyStoreUsage (stored body bytes vs the size limit, for the UI warning)
 //
-// Anyone who may use Volverán may browse and Restore (no roles in v0.1); the
-// Restore is recorded as the requesting Operator's.
+// Each route resolves the entry's Broker Profile through the access check
+// (profile-access.ts): search returns only the entries the Operator may read, a
+// body comes only with `read_discarded_bodies`, Restore needs `restore`. On
+// an entry of a profile no longer configured the Operator holds the highest
+// Role they hold anywhere. The body store's size needs a Role on some
+// profile (403 `no_role`). The Restore is recorded as the requesting
+// Operator's.
 //
 // Properties and headers use the lossless AMQP JSON of audit/amqp-json.ts
 // (byte arrays as { "$bytes": base64 }, 64-bit integers as { "$bigint": "..." }).
@@ -20,6 +25,7 @@ import type { AuditEntry, AuditQuery, AuditStore } from '../audit/store.js';
 import { AUDIT_ACTIONS, type AuditAction, type AuditEntryJson } from '../../shared/audit.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
 import { operatorOf } from '../operator.js';
+import type { ProfileAccessCheck } from '../profile-access.js';
 
 /** An Audit Entry as JSON; `body` (base64) only when given. */
 export function auditEntryJson(entry: AuditEntry, body?: Buffer | null): AuditEntryJson {
@@ -105,24 +111,42 @@ export interface AuditRouteDeps {
   usage: () => BodyStoreUsage;
 }
 
-export function registerAuditRoutes(app: FastifyInstance, { audit, restore, usage }: AuditRouteDeps) {
-  app.get<{ Querystring: AuditSearchParams }>('/api/audit-entries', async (req) => ({
-    entries: audit.list(parseAuditSearch(req.query)).map((e) => auditEntryJson(e)),
-  }));
+export function registerAuditRoutes(
+  app: FastifyInstance,
+  { audit, restore, usage }: AuditRouteDeps,
+  access: ProfileAccessCheck,
+) {
+  const entryOf = (param: string): AuditEntry => {
+    const id = Number(param);
+    const entry = Number.isSafeInteger(id) ? audit.get(id) : null;
+    if (!entry) throw new HttpError(404, 'audit_entry_not_found', `No Audit Entry ${param}.`);
+    return entry;
+  };
+
+  app.get<{ Querystring: AuditSearchParams }>('/api/audit-entries', async (req) => {
+    const operator = operatorOf(req);
+    // Left out in the query, so `limit` counts only the entries the Operator may read.
+    const entries = audit.list({ ...parseAuditSearch(req.query), profiles: access.auditScope(operator, 'read_audit_entries') });
+    return { entries: entries.map((e) => auditEntryJson(e)) };
+  });
 
   app.get<{ Params: { id: string } }>('/api/audit-entries/:id', async (req) => {
-    const id = Number(req.params.id);
-    const entry = Number.isSafeInteger(id) ? audit.get(id) : null;
-    if (!entry) throw new HttpError(404, 'audit_entry_not_found', `No Audit Entry ${req.params.id}.`);
-    return { entry: auditEntryJson(entry, audit.body(id)) };
+    const operator = operatorOf(req);
+    const entry = entryOf(req.params.id);
+    access.ofAuditEntry(operator, 'read_audit_entries', entry);
+    const body = access.holds(operator, 'read_discarded_bodies', entry.profile) ? audit.body(entry.id) : undefined;
+    return { entry: auditEntryJson(entry, body) };
   });
 
   app.post<{ Params: { id: string }; Body: RestoreRequest | undefined }>('/api/audit-entries/:id/restore', async (req) => {
     const operator = operatorOf(req);
-    const id = Number(req.params.id);
-    if (!Number.isSafeInteger(id)) throw new HttpError(404, 'audit_entry_not_found', `No Audit Entry ${req.params.id}.`);
-    return { entry: auditEntryJson(await restore.restore(id, req.body ?? undefined, operator)) };
+    const entry = entryOf(req.params.id);
+    const target = access.ofAuditEntry(operator, 'restore', entry);
+    return { entry: auditEntryJson(await restore.restore(entry.id, req.body ?? undefined, operator, target)) };
   });
 
-  app.get('/api/audit-store', async () => usage());
+  app.get('/api/audit-store', async (req) => {
+    access.assertSomeRole(operatorOf(req));
+    return usage();
+  });
 }
