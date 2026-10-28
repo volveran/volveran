@@ -6,8 +6,12 @@ import type { Decision, DecisionSummaryLine } from './decisions.js';
 /** The queue types a Checkout can hold Messages from. */
 export type CheckoutQueueType = 'classic' | 'quorum';
 
-/** `lost`: the Checkout ended without Volverán ending it (a Lost Checkout). */
-export type CheckoutStatus = 'active' | 'ended' | 'lost';
+/**
+ * `awaiting_approval`: active, with its Decisions frozen until a second
+ * Operator approves the Apply (or the requester withdraws the request).
+ * `lost`: the Checkout ended without Volverán ending it (a Lost Checkout).
+ */
+export type CheckoutStatus = 'active' | 'awaiting_approval' | 'ended' | 'lost';
 
 /**
  * Why an ended Checkout ended: the Operator ended it, it was Applied, the app
@@ -120,12 +124,46 @@ export interface AppliedResult {
   at: string;
   /** One per Message the Checkout held, in Checkout order. */
   outcomes: MessageOutcome[];
+  /** The Operator who approved the Apply (display name); null when it needed no Approval. */
+  approvedBy: string | null;
 }
 
 /** The confirmation an Apply needs beyond the single confirmation. */
 export interface ApplyConfirmation {
   /** The operator must type the queue name (`confirmQueueName`) to Apply. */
   typeQueueName: boolean;
+  /**
+   * Team Mode, Protected Profile with `requireApproval`, any Decision other
+   * than Keep: the Apply needs a second Operator's Approval. The requester
+   * requests it (POST /api/checkouts/:id/approval-request) instead of Applying.
+   */
+  approvalRequired: boolean;
+}
+
+/** A pending request for Approval of a Checkout's Apply. */
+export interface ApprovalRequestView {
+  /** When the requester asked for Approval (ISO 8601). */
+  requestedAt: string;
+}
+
+/** A Checkout waiting for Approval, as GET /api/approvals lists it. */
+export interface ApprovalSummary {
+  checkoutId: string;
+  /** The Operator who requested Approval (display name). */
+  requester: string;
+  profile: string;
+  vhost: string;
+  queue: string;
+  queueType: CheckoutQueueType;
+  /** ISO 8601. */
+  requestedAt: string;
+  /** When the Checkout ends itself, and with it the request (ISO 8601). */
+  endsAt: string;
+  /** Milliseconds left until endsAt, measured by the server. */
+  remainingMs: number;
+  /** Messages per Decision. */
+  decisionSummary: DecisionSummaryLine[];
+  decisionSummaryText: string;
 }
 
 export interface CheckoutView {
@@ -170,6 +208,8 @@ export interface CheckoutView {
   decisionSummaryText: string;
   /** The confirmation an Apply of the current Decisions needs. */
   applyConfirmation: ApplyConfirmation;
+  /** The pending request for Approval (status `awaiting_approval`); null otherwise. */
+  approvalRequest: ApprovalRequestView | null;
   /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
   lastApply: AppliedResult | null;
 }

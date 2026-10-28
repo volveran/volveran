@@ -1,0 +1,84 @@
+// Approval routes (Team Mode, a Protected Profile with `requireApproval`):
+// the owner of a Checkout requests Approval of its Apply instead of Applying,
+// and a second Operator approves it.
+//
+// The owner (under /api/checkouts/:id, so the owner check of
+// routes/checkouts.ts applies):
+//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName }  → { checkout }
+//   DELETE /api/checkouts/:id/approval-request  withdraws it                        → { checkout }
+//
+// Approvers (`operator` or `admin` on the Checkout's profile, never its owner):
+//   GET  /api/approvals                              → { approvals: ApprovalSummary[] }
+//   GET  /api/approvals/:checkoutId                  → { checkout }  read-only, the owner's shape
+//   GET  /api/approvals/:checkoutId/messages/:handle → { message }
+//   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → { checkout, outcomes }
+//
+// Errors: 409 `approval_not_required` (the Apply needs none), 409
+// `awaiting_approval` (already requested), 409 `not_awaiting_approval`
+// (nothing to withdraw or approve), 403 `cannot_approve_own_apply`, the role
+// errors of profile-access.ts, and 400 `queue_name_confirmation_required`
+// for a missing or wrong typed queue name on request or approve.
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { CheckoutError } from '../checkout/errors.js';
+import { view } from '../checkout/view.js';
+import { operatorOf } from '../operator.js';
+import { requireTypedQueueName } from '../protected-profile.js';
+import { checkApplyConfirmation, type ApplyRequestBody } from './apply.js';
+import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
+
+export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
+  const { checkouts, access } = deps;
+
+  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>(
+    '/api/checkouts/:id/approval-request',
+    async (req) => {
+      const { role } = checkoutAccess(deps, req, 'checkout');
+      checkApplyConfirmation(checkouts.get(req.params.id), req.body);
+      return { checkout: checkouts.requestApproval(req.params.id, role) };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>('/api/checkouts/:id/approval-request', async (req) => {
+    checkoutAccess(deps, req, 'checkout');
+    return { checkout: checkouts.withdrawApproval(req.params.id) };
+  });
+
+  app.get('/api/approvals', async (req) => {
+    const approver = operatorOf(req);
+    const approvals = checkouts.awaitingApproval(approver).filter((a) => access.holds(approver, 'approve', a.profile));
+    return { approvals };
+  });
+
+  /** The waiting Checkout, after the approver's Role, then that it is not theirs and still waits. */
+  const awaiting = (req: FastifyRequest<{ Params: { checkoutId: string } }>) => {
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return checkouts.awaitingCheckout(req.params.checkoutId, approver);
+  };
+
+  app.get<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId', async (req) => {
+    return { checkout: view(awaiting(req)) };
+  });
+
+  app.get<{ Params: { checkoutId: string; handle: string } }>(
+    '/api/approvals/:checkoutId/messages/:handle',
+    async (req) => {
+      const checkout = awaiting(req);
+      const handle = Number(req.params.handle);
+      if (!Number.isSafeInteger(handle)) {
+        throw new CheckoutError('message_not_found', `"${req.params.handle}" is not a Message handle.`);
+      }
+      return { message: checkouts.message(checkout.id, handle) };
+    },
+  );
+
+  app.post<{ Params: { checkoutId: string }; Body: { confirmQueueName?: unknown } | undefined }>(
+    '/api/approvals/:checkoutId/approve',
+    async (req) => {
+      const checkout = awaiting(req);
+      requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
+      // Nothing awaits between these checks and approve() taking the request.
+      return checkouts.approve(checkout.id, operatorOf(req));
+    },
+  );
+}

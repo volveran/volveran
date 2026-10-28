@@ -21,6 +21,15 @@
 // heartbeat window and an Operator's end wait for it. Only the broker can
 // cut it short (Lost Checkout).
 //
+// Approval (Team Mode, a Protected Profile with `requireApproval`): an Apply
+// with any Decision other than Keep is not run by its owner. The owner
+// requests Approval, which freezes the Decisions (the Checkout is
+// `awaiting_approval`, still active: the time limit and heartbeat keep
+// running), and a second Operator approves it, which runs the Apply on the
+// owner's Checkout and connection. Withdraw, approve and the Checkout's end
+// each check and change the request without awaiting first, so the first
+// one wins and the others find no request. Ending the Checkout cancels it.
+//
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
 import { randomUUID } from 'node:crypto';
@@ -34,10 +43,22 @@ import type { MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
-import { applyInProgress, CheckoutError, checkoutNotActive, inCheckout, notCheckoutOwner, operatorHasCheckout } from './errors.js';
+import {
+  applyInProgress,
+  approvalNotRequired,
+  approvalRequired,
+  awaitingApproval,
+  cannotApproveOwnApply,
+  CheckoutError,
+  checkoutNotActive,
+  inCheckout,
+  notAwaitingApproval,
+  notCheckoutOwner,
+  operatorHasCheckout,
+} from './errors.js';
 import { openCheckout, type StartOptions } from './open.js';
-import type { Checkout, EndReason } from './state.js';
-import { queueInfo, view, type CheckoutView } from './view.js';
+import type { ApprovalRequest, Checkout, EndReason } from './state.js';
+import { approvalSummary, queueInfo, view, type ApprovalSummary, type CheckoutView } from './view.js';
 
 export { checkoutConnectionName, type StartOptions } from './open.js';
 
@@ -62,6 +83,11 @@ export interface CheckoutManagerOptions {
   /** Where Apply writes its Audit Entries. */
   audit: AuditStore;
   limits: CheckoutLimits;
+  /**
+   * Team Mode: Protected Profiles with `requireApproval` need Approval for an
+   * Apply. False in Solo Mode, which ignores `requireApproval`.
+   */
+  approvals?: boolean;
   /** Time limit, heartbeat window and quorum backstop margin (default DEFAULT_CHECKOUT_TIMING). */
   timing?: CheckoutTiming;
   /** How long an ended or lost Checkout stays readable before it is forgotten. */
@@ -110,6 +136,8 @@ export class CheckoutManager {
       timeLimitTimer: undefined,
       heartbeatTimer: undefined,
       status: 'active',
+      requireApproval: (this.options.approvals ?? false) && target.profile.protected && target.profile.requireApproval,
+      approvalRequest: null,
       lostReason: null,
       endReason: null,
       readyAtStart: 0,
@@ -192,19 +220,101 @@ export class CheckoutManager {
    * Carries out every Decision of the Checkout (ADR 0001), then ends it:
    * Messages whose Decision is Keep, failed or was not attempted go back to
    * the queue in order. Returns the outcome for each Message. Throws
-   * `checkout_not_active` on a Checkout that is over or lost. `role` is the
-   * Applying Operator's Role on the profile, recorded in each Audit Entry.
+   * `checkout_not_active` on a Checkout that is over or lost,
+   * `approval_required` when the Apply needs Approval and
+   * `awaiting_approval` while it waits for it. `role` is the Applying
+   * Operator's Role on the profile, recorded in each Audit Entry.
    */
   async apply(id: string, role: Role): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
     const checkout = this.find(id);
+    this.assertCanApply(checkout);
+    if (checkout.approvalRequest) throw awaitingApproval(checkout, 'only an approver can Apply it');
+    if (view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
+    return this.runApply(checkout, role, null);
+  }
+
+  /**
+   * The owner asks for Approval of the Apply of the current Decisions, which
+   * freezes them. `role` is the owner's Role on the profile, recorded when
+   * the Apply runs. Throws `approval_not_required` when the Apply needs no
+   * Approval, `awaiting_approval` when it is already requested.
+   */
+  requestApproval(id: string, role: Role): CheckoutView {
+    const checkout = this.find(id);
+    this.assertCanApply(checkout);
+    if (checkout.approvalRequest) throw awaitingApproval(checkout, 'Approval is already requested');
+    if (!view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
+    checkout.approvalRequest = { requestedAt: new Date(), role };
+    return view(checkout);
+  }
+
+  /** The owner withdraws the request: the Decisions can change again. Throws `not_awaiting_approval`. */
+  withdrawApproval(id: string): CheckoutView {
+    const checkout = this.find(id);
+    this.takeApprovalRequest(checkout);
+    return view(checkout);
+  }
+
+  /** The Checkouts waiting for Approval, oldest request first, except `approver`'s own. */
+  awaitingApproval(approver: Operator): ApprovalSummary[] {
+    return [...this.checkouts.values()]
+      .filter(
+        (c): c is Checkout & { approvalRequest: ApprovalRequest } =>
+          c.status === 'active' && c.approvalRequest !== null && c.operator.id !== approver.id,
+      )
+      .sort((a, b) => a.approvalRequest.requestedAt.getTime() - b.approvalRequest.requestedAt.getTime())
+      .map(approvalSummary);
+  }
+
+  /**
+   * Checkout `id` as `approver` may see it before approving: throws 404
+   * `checkout_not_found`, 403 `cannot_approve_own_apply` for its owner, 409
+   * `not_awaiting_approval` unless it waits for Approval. The caller checks
+   * the approver's Role first (profile-access.ts, capability `approve`).
+   */
+  awaitingCheckout(id: string, approver: Operator): Checkout {
+    const checkout = this.find(id);
+    if (checkout.operator.id === approver.id) throw cannotApproveOwnApply(checkout);
+    if (checkout.status !== 'active' || !checkout.approvalRequest) throw notAwaitingApproval(checkout);
+    return checkout;
+  }
+
+  /**
+   * A second Operator approves the requested Apply: it runs on the owner's
+   * Checkout, recorded as the owner's (with the Role they held when they
+   * asked) and with `approver` alongside. Same checks as awaitingCheckout.
+   */
+  async approve(id: string, approver: Operator): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
+    const checkout = this.awaitingCheckout(id, approver);
+    const request = this.takeApprovalRequest(checkout);
+    return this.runApply(checkout, request.role, approver);
+  }
+
+  /** Removes the request for Approval, which must exist; no await before the caller acts on it. */
+  private takeApprovalRequest(checkout: Checkout): ApprovalRequest {
+    const request = checkout.approvalRequest;
+    if (checkout.status !== 'active' || !request) throw notAwaitingApproval(checkout);
+    checkout.approvalRequest = null;
+    return request;
+  }
+
+  private assertCanApply(checkout: Checkout) {
     if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
+  }
+
+  private async runApply(
+    checkout: Checkout,
+    role: Role,
+    approver: Operator | null,
+  ): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
     const { startedAt, outcomes } = await runApply(checkout, {
       audit: this.options.audit,
       role,
+      approver: approver && { id: approver.id, displayName: approver.displayName },
       beforeStep: this.hooks.beforeApplyStep,
     });
-    checkout.lastApply = { at: startedAt.toISOString(), outcomes };
+    checkout.lastApply = { at: startedAt.toISOString(), outcomes, approvedBy: approver?.displayName ?? null };
     // Straight to finish (no await first): an end() that waited for this
     // Apply then finds the Checkout already ended as 'applied'.
     await this.finish(checkout, 'applied');
@@ -224,6 +334,8 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return view(checkout);
     checkout.status = 'ended';
     checkout.endReason = reason;
+    // A waiting request is cancelled with the Checkout.
+    checkout.approvalRequest = null;
     const { channel, connection } = checkout;
     try {
       if (channel) {
@@ -289,6 +401,7 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return;
     checkout.status = 'lost';
     checkout.lostReason = reason;
+    checkout.approvalRequest = null;
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);

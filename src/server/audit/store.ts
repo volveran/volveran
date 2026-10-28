@@ -39,6 +39,8 @@ export interface NewAuditEntry {
   operator: Pick<Operator, 'id' | 'displayName'>;
   /** The Operator's Role on the Broker Profile when they acted (`admin` in Solo Mode). */
   role?: Role | null;
+  /** The second Operator who approved the Apply (Protected Profile, Team Mode); null or left out otherwise. */
+  approver?: Pick<Operator, 'id' | 'displayName'> | null;
   /** The Broker Profile's RabbitMQ user, often a shared service account. */
   brokerUser: string;
   profile: string;
@@ -63,10 +65,14 @@ export interface NewAuditEntry {
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry extends Omit<NewAuditEntry, 'operator' | 'role' | 'message' | 'replayId' | 'restoreOf'> {
+export interface AuditEntry
+  extends Omit<NewAuditEntry, 'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf'> {
   id: number;
   /** The Operator's Role when they acted; null on entries written before v0.3. */
   role: Role | null;
+  /** Who approved the Apply that wrote the entry; null when it needed no Approval (and on entries before v0.3). */
+  approverId: string | null;
+  approverName: string | null;
   replayId: string | null;
   restoreOf: number | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
@@ -161,6 +167,9 @@ const MIGRATIONS: string[] = [
      WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL;`,
   // v4 (#38): the Operator's Role on the Broker Profile; null on older entries.
   `ALTER TABLE audit_entries ADD COLUMN operator_role TEXT;`,
+  // v5 (#45): the Operator who approved the Apply; null when it needed no Approval.
+  `ALTER TABLE audit_entries ADD COLUMN approver_id TEXT;
+   ALTER TABLE audit_entries ADD COLUMN approver_name TEXT;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -188,8 +197,9 @@ export class AuditStore {
         .prepare(
           `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
+             approver_id, approver_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -212,6 +222,8 @@ export class AuditStore {
           entry.replayId ?? null,
           entry.restoreOf ?? null,
           entry.role ?? null,
+          entry.approver?.id ?? null,
+          entry.approver?.displayName ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -367,6 +379,8 @@ interface Row {
   restore_of: number | null;
   body_expired_at: number | null;
   operator_role: Role | null;
+  approver_id: string | null;
+  approver_name: string | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -376,6 +390,8 @@ function toEntry(row: Row): AuditEntry {
     operatorId: row.operator_id,
     operatorName: row.operator_name,
     role: row.operator_role,
+    approverId: row.approver_id,
+    approverName: row.approver_name,
     brokerUser: row.broker_user,
     profile: row.profile,
     vhost: row.vhost,

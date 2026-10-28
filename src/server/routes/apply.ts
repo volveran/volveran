@@ -8,6 +8,10 @@
 // Under /api/checkouts/:id, so only the Checkout's owner may Apply it (the
 // owner check in routes/checkouts.ts). Refused with 409 `checkout_not_active`
 // on a Checkout that is over or lost, `apply_in_progress` while one runs.
+// When the Apply needs Approval (Team Mode, a Protected Profile with
+// `requireApproval`, any Decision other than Keep) it answers 409
+// `approval_required`, and `awaiting_approval` once requested: the owner
+// requests Approval instead (routes/approvals.ts).
 // A dropped connection mid-Apply is not an error: the response lists what was
 // done and what went back to the queue, and the Checkout is `lost`.
 import type { FastifyInstance } from 'fastify';

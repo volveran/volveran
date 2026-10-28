@@ -2,6 +2,8 @@
 // in localStorage) and see its queues, dead-letter queues first; start a
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
+// In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
+// Applies waiting for an Approval this Operator may give.
 // An Operator with no role on any profile (Team Mode) gets a page saying so,
 // listing the groups Volverán received (NoRolePage).
 // Only the profiles where the Operator has a Role are listed (the server
@@ -23,6 +25,7 @@ import {
   type SetupWarningCounts,
   type SetupWarningSeverity,
 } from './api.js';
+import { ApprovalsView } from './ApprovalsView.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
@@ -68,7 +71,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
-  const [view, setView] = useState<'queues' | 'audit'>('queues');
+  const [view, setView] = useState<'queues' | 'audit' | 'approvals'>('queues');
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
@@ -210,6 +213,11 @@ export function App() {
           <button type="button" aria-pressed={view === 'audit'} onClick={() => setView('audit')}>
             Audit
           </button>
+          {session?.mode === 'team' && (
+            <button type="button" aria-pressed={view === 'approvals'} onClick={() => setView('approvals')}>
+              Approvals
+            </button>
+          )}
         </nav>
         <label>
           Broker Profile
@@ -265,6 +273,8 @@ export function App() {
       <main>
         {view === 'audit' && !checkoutId ? (
           <AuditView profiles={profiles} roles={session?.roles ?? {}} />
+        ) : view === 'approvals' && !checkoutId ? (
+          <ApprovalsView />
         ) : (
           <>
             <div className="controls">

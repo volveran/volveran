@@ -46,6 +46,12 @@ describe('Broker Profiles', () => {
     expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, roles }] });
   });
 
+  it('accepts requireApproval, and writes it into profiles.yaml', () => {
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, requireApproval: false }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, requireApproval: false }] });
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, requireApproval: 'sometimes' }] } })).toMatch(/requireApproval/);
+  });
+
   it('refuses an unknown role name, or an empty group list', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { owner: ['platform'] } }] } })).toMatch(/roles/);
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, roles: { admin: [] } }] } })).toMatch(/admin/);

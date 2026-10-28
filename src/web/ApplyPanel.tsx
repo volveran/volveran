@@ -4,6 +4,10 @@
 // Checkout's applyConfirmation asks for it (any Decision other than Keep),
 // Confirm Apply stays disabled until the Operator types the queue name.
 // The server checks the typed name too (routes/apply.ts).
+//
+// When the Apply needs Approval (Team Mode, a Protected Profile), the same
+// confirmation requests Approval instead: the Checkout then waits for a
+// second Operator (routes/approvals.ts).
 import { useState } from 'react';
 import type { DecisionSummaryLine } from './api.js';
 import { decisionLabel } from '../shared/decisions.js';
@@ -16,6 +20,7 @@ export function ApplyPanel({
   queue,
   queueType,
   typeQueueName,
+  approvalRequired,
   summary,
   summaryText,
   busy,
@@ -26,6 +31,7 @@ export function ApplyPanel({
   queue: string;
   queueType: CheckoutQueueType;
   typeQueueName: boolean;
+  approvalRequired: boolean;
   summary: DecisionSummaryLine[];
   summaryText: string;
   busy: boolean;
@@ -46,10 +52,10 @@ export function ApplyPanel({
     <div className="apply-panel">
       {!confirming ? (
         <button disabled={busy || actions === 0} onClick={() => setConfirming(true)}>
-          Apply…
+          {approvalRequired ? 'Request Approval…' : 'Apply…'}
         </button>
       ) : (
-        <div className="confirm" role="alertdialog" aria-label="Confirm Apply">
+        <div className="confirm" role="alertdialog" aria-label={approvalRequired ? 'Request Approval' : 'Confirm Apply'}>
           <strong className={protectedProfile ? 'confirm-profile protected' : 'confirm-profile'}>
             {protectedProfile && <span className="badge protected-badge">Protected Profile</span>} Apply on{' '}
             {profile} · {queue}
@@ -70,6 +76,13 @@ export function ApplyPanel({
               'Moved Messages are sent to the destination you chose, without their dead-letter headers. '}
             Every other Message goes back to the queue {returnOrder(queueType)}, and the Checkout ends.
           </span>
+          {approvalRequired && (
+            <span className="approval-note">
+              {profile} requires Approval: this Apply runs only once another Operator with the role{' '}
+              <code>operator</code> or <code>admin</code> on it approves. Until then your Decisions cannot change; you
+              can withdraw the request.
+            </span>
+          )}
           {typeQueueName && (
             <label className="type-queue-name">
               <span>
@@ -95,7 +108,7 @@ export function ApplyPanel({
                 onApply(confirmQueueName);
               }}
             >
-              Confirm Apply
+              {approvalRequired ? 'Request Approval' : 'Confirm Apply'}
             </button>{' '}
             <button className="link" onClick={close}>
               Cancel

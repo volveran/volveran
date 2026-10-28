@@ -34,7 +34,7 @@ describe('Apply executor', () => {
       plan,
       messages: new Map(handles.map((h) => [h, held(h)])),
       ctx: {
-        target: { checkoutId: 'c-1', profile, vhost: '/', queue: 'orders.dlq', operator, role: 'operator' },
+        target: { checkoutId: 'c-1', profile, vhost: '/', queue: 'orders.dlq', operator, role: 'operator', approver: null },
         startedAt: new Date(),
         ack,
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),

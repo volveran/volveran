@@ -564,6 +564,10 @@
         "protected": {
           "type": "boolean"
         },
+        "requireApproval": {
+          "description": "Only with protected: true (Volverán refuses it otherwise). Default true: an Apply waits for a second Operator's Approval.",
+          "type": "boolean"
+        },
         "roles": {
           "description": "Team Mode: the OIDC groups holding each Role on this profile. Without it, every signed-in Operator is admin.",
           "type": "object",
