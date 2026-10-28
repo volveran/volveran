@@ -9,9 +9,11 @@ All notable changes to Volverán are recorded here. The format is based on
 ### Added
 
 - Set-up check `dead_letter_exchange_missing`: the queue list warns about a queue whose dead-letter exchange (by argument or policy) does not exist in the vhost, since the broker drops every Message the queue dead-letters. The queue list header counts the vhost's set-up warnings by severity. (#41)
+- Keyboard navigation. Queue list: `j`/`k` or the arrow keys move, Enter starts a Checkout on the focused queue. Checkout: `j`/`k` or the arrow keys move and the Message view follows, Space adds the focused Message to the Selection or takes it out, Shift+↑/↓ extends the Selection, Shift+`D`/`R`/`M`/`K` assign Discard, Replay, Move or Keep to the Selection or else the focused Message, `/` focuses the filter, Escape closes a prompt or clears the Selection, and `?` lists every shortcut. No key Applies, approves, rejects or Restores, and shortcuts do nothing while a text field has focus. The Message list is a listbox for screen readers, with the focused Message as its active descendant, and keyboard focus is always visible. (#47)
 
 ### Changed
 
+- Discard and Move open a prompt for the reason or the destination, the same prompt their keys open, instead of taking them from fields in the Decision bar. (#47)
 - API: a queue list row's `setupWarning` (one warning or `null`) is now `setupWarnings`, a list (`[]` for none), so a queue shows every warning that applies. Each warning gains a `severity`: `loses_messages` or `may_lose_messages`. The delivery-limit warning keeps its code, `messages_dropped_at_delivery_limit`, and now also fires when the queue's dead-letter exchange does not exist. The queue list response gains `setupWarningCounts`, the warnings of the whole vhost by severity, whatever the search or dead-letter queue filter. (#41)
 
 ### Fixed
