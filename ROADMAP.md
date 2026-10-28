@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.2.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.2.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v0.3.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.3.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -54,15 +54,17 @@ Volverán **v0.2.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.
 - A kind-cluster smoke test in CI: the chart installs under restricted pod security, an Operator signs in and Applies a Checkout, and the audit store survives a pod restart.
 - The OIDC set-up docs planned here (Keycloak with a brokered identity provider such as JumpCloud, and direct providers) were delivered in v0.1 ([`docs/team-mode.md`](docs/team-mode.md)).
 
-## v0.3: Team safety
+## v0.3: Team safety (released in 0.3.0)
 
-- Roles (viewer, operator, admin) mapped from an OIDC groups claim, per Broker Profile.
-- Four-eyes approval for Apply on Protected Profiles.
-- Per-profile option to connect to the broker with the Operator's own OAuth2 token instead of shared credentials. The broker-facts gate passed: with the OAuth 2.0 backend, `update-secret` accepts a refreshed token for the same user and refuses an invalid, expired or other user's token (the internal backend accepts any password); see [RabbitMQ behaviour](docs/rabbitmq-behaviour.md#oauth-20-tokens).
-- "Died again" detection: flag a Replayed Message that is dead-lettered again, matched by its replay id (already recorded in every Audit Entry since v0.1).
-- NDJSON export of a Checkout.
-- More dead-letter set-up checks, beyond the delivery-limit check that shipped in v0.1.
-- Keyboard navigation.
+Everything planned for v0.3 shipped, including the Operator token option. Upgrading from 0.2: Protected Profiles in Team Mode now require Approval by default, and the queue list API's `setupWarning` became `setupWarnings` (see the [changelog](CHANGELOG.md)).
+
+- Roles (`viewer`, `operator`, `admin`) per Broker Profile, mapped from an OIDC groups claim (a dotted path, read from the ID token, else from userinfo), with groups claim set-ups for Keycloak, JumpCloud, Okta and Entra ID in the [Team Mode guide](docs/team-mode.md#roles). A profile without `roles` keeps everyone `admin`, as before ([ADR 0007](docs/adr/0007-profiles-without-roles-keep-everyone-admin.md)).
+- Four-eyes Approval for Apply on Protected Profiles in Team Mode, on by default (`requireApproval: false` turns it off per profile): request, withdraw, approve or reject with a reason, and an Approvals view. Both people are recorded in the Audit Entries.
+- Per-profile option to connect to the broker with the Operator's own OAuth 2.0 token instead of shared credentials (`credentials: operatorToken`, Team Mode only), with the token refreshed on live connections through `update-secret` ([ADR 0008](docs/adr/0008-operator-token-pass-through-per-profile.md)). The broker-facts gate passed: with the OAuth 2.0 backend, `update-secret` accepts a refreshed token for the same user and refuses an invalid, expired or other user's token (the internal backend accepts any password); see [RabbitMQ behaviour](docs/rabbitmq-behaviour.md#oauth-20-tokens).
+- Died Again detection: a Replayed, Moved or Restored Message that is dead-lettered again is flagged by its replay id, with how many times and a link to the Audit Entry of its last trip, a `died-again` filter and a warning before Replaying it again.
+- NDJSON export of a Checkout (every held Message, or those matching the filter), lossless and streamed, recorded as an Audit Entry.
+- More dead-letter set-up checks, beyond the delivery-limit check that shipped in v0.1: a missing or unroutable dead-letter exchange, a dead-letter queue that drops Messages (TTL, length limit, expiry), and a quorum queue that dead-letters at-most-once. A queue shows every warning that applies, and the broker behaviour behind each check is in [RabbitMQ behaviour](docs/rabbitmq-behaviour.md#dead-letter-set-up).
+- Keyboard navigation of the queue list and the Checkout, with a `?` shortcut list. No key Applies, approves, rejects or Restores.
 
 ## v0.4: Replay at scale
 
