@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: v0.2.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. Team safety (roles, four-eyes approval) is next. See the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
+> **Status: v0.3.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.3: team safety (Roles per Broker Profile, four-eyes Approval on Protected Profiles, and connecting with the Operator's own OAuth 2.0 token), Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation. Upgrading from 0.2: Protected Profiles in Team Mode now require Approval by default (see the [changelog](CHANGELOG.md)). Replay at scale is next; see the [roadmap](ROADMAP.md).
 
 ## Why
 
@@ -14,10 +14,14 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 
 ## How it works
 
-1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue.
+1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue. The held Messages can be exported as lossless NDJSON ([Exporting Messages](#exporting-messages)).
 2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. A Message that Volverán sent out before and that was dead-lettered again is flagged **Died Again**, with how many times and a link to the Audit Entry of its last trip, so you don't Replay the same poison Message over and over. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
-3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message.
-4. **Audit and Restore.** Every action is recorded with who did it. Discarded Messages are kept so they can be Restored.
+3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message. On a Protected Profile in Team Mode, an Apply that changes where Messages end up first waits for a second Operator's **Approval**.
+4. **Audit and Restore.** Every action is recorded with who did it (and who approved it). Discarded Messages are kept so they can be Restored.
+
+The queue list also checks each queue's dead-letter set-up and warns about the ways the broker silently loses Messages: a dead-letter exchange that is missing or routes nowhere, a dead-letter queue whose TTL, length limit or expiry drops Messages, a quorum queue past its delivery limit with nowhere to dead-letter, and a quorum queue that dead-letters at-most-once.
+
+In Team Mode, each Broker Profile can map your OIDC groups to a **Role** (`viewer`, `operator` or `admin`), and can connect to the broker with each Operator's own OAuth 2.0 token instead of shared credentials, so RabbitMQ applies their own permissions ([Team Mode guide](docs/team-mode.md)).
 
 Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
 
