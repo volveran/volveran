@@ -17,6 +17,8 @@ export type FilterClause =
    * `value` is left out, otherwise a scalar whose text is exactly `value`.
    */
   | { kind: 'json-path'; path: string; value?: string | undefined }
+  /** Case-insensitive substring of the Failure Details' exception type or message (Spring AMQP, MassTransit). */
+  | { kind: 'failure'; value: string }
   /** The Message is Died Again: it carries an `x-volveran-replay-id`. */
   | { kind: 'died-again' };
 

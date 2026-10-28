@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Failure Details from Spring AMQP and MassTransit headers. Volverán reads the headers Spring AMQP's `RepublishMessageRecoverer` (`x-exception-*`, `x-original-exchange`, `x-original-routingKey`) and MassTransit (`MT-Reason`, `MT-Fault-*`, `MT-Host-*`) write when they give up on a Message. Message summaries, the Message view and NDJSON export lines gain `failureDetails` (`null` when none; the export stays `v: 1`). Without `x-death`, the dead-letter reason falls back to the exception type and message, and the original queue to MassTransit's input queue. The new filter clause `{ "kind": "failure", "value": ... }` matches the exception type or message in any case. Queues whose name ends in `_error` are listed as dead-letter queues. The web app shows a Failure Details section (stack trace collapsed), a skipped marker for `MT-Reason: skip` and the Failure filter. See [Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md). (#60)
+
 ## [0.3.0] - 2026-10-28
 
 Team safety (see the [roadmap](ROADMAP.md)): Roles per Broker Profile, Approval on Protected Profiles, Broker Profiles that connect with the Operator's own token, Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation.

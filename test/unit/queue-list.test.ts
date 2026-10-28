@@ -92,6 +92,16 @@ describe('arrangeQueues', () => {
   const queues = [{ name: 'orders.work' }, { name: 'payments.dlq' }, { name: 'audit' }, { name: 'orders.dlq' }, { name: 'parked' }];
   const deadLetterSources = new Map([['parked', ['orders.dlq']]]);
 
+  it('counts MassTransit _error queues as dead-letter queues, but not _skipped ones', () => {
+    const mt = [{ name: 'submit-order' }, { name: 'submit-order_skipped' }, { name: 'submit-order_error' }];
+    const result = arrangeQueues(mt, { deadLetterSources: new Map() });
+    expect(result.map((q) => [q.name, q.deadLetterQueue, q.matchesDefaultFilter])).toEqual([
+      ['submit-order_error', true, false],
+      ['submit-order', false, false],
+      ['submit-order_skipped', false, false],
+    ]);
+  });
+
   it('lists dead-letter queues first, by filter or because queues dead-letter into them, each group by name', () => {
     const result = arrangeQueues(queues, { defaultQueueFilter: '*.dlq', deadLetterSources });
     expect(result.map((q) => [q.name, q.deadLetterQueue, q.matchesDefaultFilter, q.deadLetteredFrom])).toEqual([

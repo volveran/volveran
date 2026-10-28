@@ -1,5 +1,5 @@
 // The Message filter: conditions that must all hold (routing key, header,
-// x-death reason, original queue, body text, JSON path, Died Again). Submitting narrows
+// x-death reason, original queue, body text, JSON path, failure, Died Again). Submitting narrows
 // the Message list; "Select all matching" lives with the list. `/` focuses
 // the first condition's value (firstFieldRef).
 import { useState, type Ref } from 'react';
@@ -14,6 +14,7 @@ const KINDS: Array<{ kind: Kind; label: string; placeholder: string }> = [
   { kind: 'original-queue', label: 'Original queue', placeholder: 'orders.work (wildcards allowed)' },
   { kind: 'body-text', label: 'Body text', placeholder: 'text in the body (any case)' },
   { kind: 'json-path', label: 'JSON path', placeholder: 'value (empty = path present)' },
+  { kind: 'failure', label: 'Failure', placeholder: 'exception type or message (any case)' },
   // Takes no value: the Messages that came back after a Replay, Move or Restore.
   { kind: 'died-again', label: 'Died Again', placeholder: '' },
 ];
