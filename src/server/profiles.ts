@@ -35,6 +35,12 @@ export interface BrokerProfile {
   defaultQueueFilter: string | undefined;
   protected: boolean;
   /**
+   * Team Mode: an Apply with any Decision other than Keep waits for a second
+   * Operator's Approval. Only allowed on a Protected Profile, where it
+   * defaults to true; always false on any other. Solo Mode ignores it.
+   */
+  requireApproval: boolean;
+  /**
    * Team Mode: the Role each group holds on this profile. Undefined when the
    * profile has no `roles`: every Operator is `admin` on it (ADR 0007).
    * Solo Mode ignores it.
@@ -119,6 +125,7 @@ export function parseProfiles(
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
     const passwordEnv = requireString(raw, 'passwordEnv', where);
+    const isProtected = parseProtected(raw.protected, where);
     return {
       name,
       managementUrl: requireUrl(raw, 'managementUrl', ['http:', 'https:'], where).replace(/\/+$/, ''),
@@ -130,7 +137,8 @@ export function parseProfiles(
       password: env[passwordEnv],
       vhosts: parseVhosts(raw.vhosts, where),
       defaultQueueFilter: optionalString(raw, 'defaultQueueFilter', where),
-      protected: parseProtected(raw.protected, where),
+      protected: isProtected,
+      requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
     };
   });
@@ -166,6 +174,13 @@ function parseProtected(value: unknown, where: string): boolean {
   if (value === undefined) return false;
   if (typeof value === 'boolean') return value;
   throw new ProfilesConfigError(`${where}.protected must be true or false`);
+}
+
+function parseRequireApproval(value: unknown, isProtected: boolean, where: string): boolean {
+  if (value === undefined || value === null) return isProtected;
+  if (!isProtected) throw new ProfilesConfigError(`${where} is only allowed with protected: true`);
+  if (typeof value === 'boolean') return value;
+  throw new ProfilesConfigError(`${where} must be true or false`);
 }
 
 function requireUrl(raw: Record<string, unknown>, key: string, schemes: string[], where: string): string {
