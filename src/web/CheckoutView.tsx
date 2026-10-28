@@ -223,7 +223,13 @@ export function CheckoutView({ id, onClose }: { id: string; onClose(): void }) {
   };
   useKeyboardCommands(
     active,
-    { view: 'checkout', prompt: prompt !== null, selection: selection.size, focusedItem: focused !== undefined },
+    {
+      view: 'checkout',
+      prompt: prompt !== null,
+      selection: selection.size,
+      // A Message the filter hides is not focused.
+      focusedItem: shown.some((m) => m.handle === focused),
+    },
     run,
   );
 
