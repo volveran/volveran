@@ -1,7 +1,7 @@
 // Health endpoints for Kubernetes probes: /healthz (the process serves HTTP)
-// and /readyz (startup has finished). Both sit outside /api/, answer without
-// a session, never depend on a broker and reveal nothing about Broker
-// Profiles, queues or Operators.
+// and /readyz (startup has finished; Fastify answers 503 once shutdown
+// starts). Both sit outside /api/, answer without a session, never depend on
+// a broker and reveal nothing about Broker Profiles, queues or Operators.
 import type { ChildProcess } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import { connect, type Socket } from 'node:net';
@@ -113,14 +113,14 @@ describe('/readyz during shutdown', () => {
     };
   }
 
-  it('answers 503 once shutdown has begun', async () => {
+  it('answers 503 once shutdown has begun, revealing nothing', async () => {
     // A Checkout start that waits at its lock keeps one connection busy, so
     // shutdown cannot close it while the probe is sent on it.
     let locked!: () => void;
     const isLocked = new Promise<void>((resolve) => (locked = resolve));
     let release!: () => void;
     const app = await startApp({
-      profiles: [testProfile({ name: 'local' })],
+      profiles: [testProfile({ name: 'secret-profile' })],
       checkoutTestHooks: {
         afterLock: () => {
           locked();
@@ -134,7 +134,7 @@ describe('/readyz during shutdown', () => {
     let closing: Promise<void> | undefined;
     try {
       client.send(
-        `POST /api/profiles/local/vhosts/%2F/queues/${QUEUE}/checkouts HTTP/1.1\r\n` +
+        `POST /api/profiles/secret-profile/vhosts/%2F/queues/${QUEUE}/checkouts HTTP/1.1\r\n` +
           'Host: volveran\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}',
       );
       await isLocked;
@@ -147,6 +147,12 @@ describe('/readyz during shutdown', () => {
       release();
 
       await expect.poll(statuses, { timeout: 5_000 }).toEqual([201, 503]);
+      // The 503 comes from Fastify itself, not the route; it is the last response on the connection.
+      const shutdownResponse = () => client.received().slice(client.received().lastIndexOf('HTTP/1.1 503 '));
+      await expect.poll(shutdownResponse, { timeout: 5_000 }).toMatch(/\r\n\r\n\{.*\}$/s);
+      for (const leak of ['secret-profile', 'dlq', testOperator, product.version]) {
+        expect(shutdownResponse()).not.toContain(leak);
+      }
     } finally {
       client.destroy();
       release?.();
