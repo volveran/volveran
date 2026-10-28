@@ -31,9 +31,10 @@ export function useKeyboardCommands(
 }
 
 /**
- * A modal prompt (native <dialog>): opening focuses its first field or
- * button, it holds the focus while open, Escape closes it, and closing gives
- * the focus back to where it was.
+ * A modal prompt (native <dialog>): opening focuses the element marked
+ * `data-autofocus`, or else its first field or button; it holds the focus
+ * while open, Escape closes it (even from a text field), and closing gives
+ * the focus back to where it was, so the opener must stay mounted.
  */
 export function Prompt({ label, onClose, children }: { label: string; onClose(): void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -41,6 +42,8 @@ export function Prompt({ label, onClose, children }: { label: string; onClose():
     const dialog = ref.current;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (dialog && !dialog.open) dialog.showModal();
+    // Not React's autoFocus: it would focus before showModal, which moves the focus again.
+    dialog?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
     return () => {
       if (dialog?.open) dialog.close();
       previous?.focus();

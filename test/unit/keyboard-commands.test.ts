@@ -104,6 +104,19 @@ describe('Keyboard commands in a Checkout', () => {
     }
   });
 
+  it('only closes the Apply confirmation while it is open, whatever button has focus', () => {
+    // The Apply confirmation opens with Cancel (or the typed queue name) focused and counts as a prompt.
+    for (const focus of ['control', 'other'] as const) {
+      const confirming = { ...checkout, focus, prompt: true, selection: 2 };
+      for (const p of everyPress()) {
+        const escape = p.key === 'Escape' && !p.shiftKey && !p.ctrlKey && !p.altKey && !p.metaKey;
+        expect(commandFor(p, confirming), `${focus} ${JSON.stringify(p)}`).toEqual(
+          escape ? { kind: 'close-prompt' } : null,
+        );
+      }
+    }
+  });
+
   it('leaves Ctrl, Alt and Meta combinations to the browser', () => {
     expect(commandFor({ key: 'R', shiftKey: true, ctrlKey: true }, checkout)).toBeNull();
     expect(commandFor({ key: 'k', shiftKey: false, metaKey: true }, checkout)).toBeNull();
