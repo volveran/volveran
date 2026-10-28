@@ -99,7 +99,7 @@ export type ReplayAvailability = { available: true } | { available: false; reaso
 /** The Audit Entry of the Replay, Move or Restore that last sent a Died Again Message out. */
 export interface DiedAgainSource {
   auditEntryId: number;
-  action: Exclude<AuditAction, 'discard'>;
+  action: Exclude<AuditAction, 'discard' | 'export'>;
   /** ISO time of the Audit Entry. */
   at: string;
   /** The Operator who acted, as shown (display name). */
