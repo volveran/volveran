@@ -1,21 +1,28 @@
 // The one access check: every /api/ route that acts on a Broker Profile, or
 // on a Checkout or Audit Entry that belongs to one, resolves the profile
 // here, with the requesting Operator and the capability the route needs. It
-// answers with the Broker Profile and a management API client for it, so no
-// route builds a client on its own.
+// answers with the Broker Profile, the Operator's Role on it and a
+// management API client for it, so no route builds a client on its own.
 //
 // Each route names its capability where it resolves the profile. Who holds
-// which capability is decided in one place (`denial`): today every Operator
-// holds every capability on every profile, in both modes. Roles per profile
-// (and the Operator's own broker token, for the client) change only this
-// module, not the routes.
+// which capability is decided in one place (`denial`), from the Operator's
+// Role on the profile (`roleOn`) and the role each capability needs
+// (`REQUIRED_ROLE`). Roles (Team Mode) come from the Operator's groups and
+// the profile's `roles` mapping; the highest matching role wins, and no
+// match means no role. A profile without `roles`, and one no longer
+// configured (its Audit Entries stay readable), give everyone `admin` (ADR
+// 0007). In Solo Mode the Operator is `admin` everywhere.
 //
 // Errors: 404 `profile_not_found` for an unknown profile name, 404
-// `vhost_not_in_profile` for a vhost the profile is not configured for.
+// `vhost_not_in_profile` for a vhost the profile is not configured for, 403
+// `no_role_on_profile` without a role on it, 403 `role_required` (with
+// `required` and `held`) for too low a role. Each is thrown before the route
+// touches the broker or the audit store.
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import type { Operator } from './operator.js';
 import { profileHasVhost, type BrokerProfile, type QueueRef } from './profiles.js';
+import { highestRole, roleIncludes, ROLES, type Role } from '../shared/roles.js';
 
 /** What an Operator may do on one Broker Profile: a closed list. */
 export const CAPABILITIES = [
@@ -35,9 +42,20 @@ export const CAPABILITIES = [
 
 export type Capability = (typeof CAPABILITIES)[number];
 
-/** A Broker Profile the Operator may act on, with its management API client. */
+/** The lowest Role that holds each capability. */
+export const REQUIRED_ROLE: Record<Capability, Role> = {
+  see_profile: 'viewer',
+  read_audit_entries: 'viewer',
+  read_discarded_bodies: 'operator',
+  checkout: 'operator',
+  approve: 'operator',
+  restore: 'admin',
+};
+
+/** A Broker Profile the Operator may act on, with their Role on it and its management API client. */
 export interface ProfileAccess {
   profile: BrokerProfile;
+  role: Role;
   management: ManagementClient;
 }
 
@@ -45,14 +63,56 @@ export interface ProfileAccess {
 export type QueueAccess = QueueRef & ProfileAccess;
 
 export class ProfileAccessCheck {
-  constructor(private readonly profiles: BrokerProfile[]) {}
+  constructor(
+    private readonly profiles: BrokerProfile[],
+    private readonly mode: 'solo' | 'team',
+  ) {}
+
+  /**
+   * The Operator's Role on the Broker Profile named `profileName`, or null
+   * when they have none.
+   */
+  roleOn(operator: Operator, profileName: string): Role | null {
+    if (this.mode === 'solo') return 'admin';
+    const mapping = this.profiles.find((p) => p.name === profileName)?.roles;
+    if (!mapping) return 'admin';
+    const groups = new Set(operator.groups ?? []);
+    return highestRole(ROLES.filter((role) => mapping[role]?.some((g) => groups.has(g))));
+  }
+
+  /** The Operator's Role on each configured Broker Profile where they have one, in file order. */
+  roles(operator: Operator): Record<string, Role> {
+    const roles: Record<string, Role> = {};
+    for (const p of this.profiles) {
+      const role = this.roleOn(operator, p.name);
+      if (role) roles[p.name] = role;
+    }
+    return roles;
+  }
 
   /**
    * The check itself: why `operator` may not use `capability` on the
-   * Broker Profile named `profileName`, or null when they may. Every
-   * Operator holds every capability on every profile for now.
+   * Broker Profile named `profileName`, or null when they may.
    */
-  private denial(_operator: Operator, _capability: Capability, _profileName: string): HttpError | null {
+  private denial(operator: Operator, capability: Capability, profileName: string): HttpError | null {
+    const held = this.roleOn(operator, profileName);
+    if (!held) {
+      return new HttpError(
+        403,
+        'no_role_on_profile',
+        `You have no role on Broker Profile "${profileName}". Ask whoever runs Volverán to map one of your groups to a role on it.`,
+        { profile: profileName },
+      );
+    }
+    const required = REQUIRED_ROLE[capability];
+    if (!roleIncludes(held, required)) {
+      return new HttpError(
+        403,
+        'role_required',
+        `This needs the role "${required}" on Broker Profile "${profileName}"; you have "${held}".`,
+        { profile: profileName, required, held },
+      );
+    }
     return null;
   }
 
@@ -64,6 +124,11 @@ export class ProfileAccessCheck {
   /** The configured Broker Profiles on which `operator` holds `capability`, in file order. */
   list(operator: Operator, capability: Capability): BrokerProfile[] {
     return this.profiles.filter((p) => this.holds(operator, capability, p.name));
+  }
+
+  /** The names of the configured Broker Profiles on which `operator` does not hold `capability`. */
+  withheld(operator: Operator, capability: Capability): string[] {
+    return this.profiles.filter((p) => !this.holds(operator, capability, p.name)).map((p) => p.name);
   }
 
   /** The named Broker Profile; throws 404 `profile_not_found`, or the denial. */
@@ -105,12 +170,12 @@ export class ProfileAccessCheck {
     const denied = this.denial(operator, capability, entry.profile);
     if (denied) throw denied;
     const found = this.profiles.find((p) => p.name === entry.profile);
-    return found ? { profile: found, management: new ManagementClient(found) } : null;
+    return found ? this.grant(operator, capability, found) : null;
   }
 
   private grant(operator: Operator, capability: Capability, profile: BrokerProfile): ProfileAccess {
     const denied = this.denial(operator, capability, profile.name);
     if (denied) throw denied;
-    return { profile, management: new ManagementClient(profile) };
+    return { profile, role: this.roleOn(operator, profile.name)!, management: new ManagementClient(profile) };
   }
 }

@@ -115,7 +115,7 @@ export class RestoreService {
     if (!target) {
       throw new RestoreError('profile_not_found', `Broker Profile "${discard.profile}" is no longer configured.`);
     }
-    const { profile, management } = target;
+    const { profile, role, management } = target;
     requireTypedQueueName(profile, queue, request, 'Restore');
     // `pending` is also the normal state of a step being carried out right now:
     // only once its Checkout is gone (ended, lost, or Volverán restarted) can
@@ -160,6 +160,7 @@ export class RestoreService {
       const entryId = this.audit.record({
         at: new Date(),
         operator,
+        role,
         brokerUser: profile.username,
         profile: profile.name,
         vhost: discard.vhost,

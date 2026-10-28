@@ -83,6 +83,7 @@ docker run --rm --read-only -p 8080:8080 \
 | `VOLVERAN_OIDC_CLIENT_SECRET` | required | client secret (sent as `client_secret_post`) |
 | `VOLVERAN_OIDC_REDIRECT_URL` | required | `https://<volveran-host>/auth/callback`, as the browser reaches it |
 | `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
+| `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the ID token claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role ([Team Mode guide](docs/team-mode.md#roles)) |
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
 
 The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.

@@ -8,7 +8,7 @@
 //   GET /api/audit-store → BodyStoreUsage (stored body bytes vs the size limit, for the UI warning)
 //
 // Each route resolves the entry's Broker Profile through the access check
-// (profile-access.ts): search keeps the entries the Operator may read, a
+// (profile-access.ts): search returns only the entries the Operator may read, a
 // body comes only with `read_discarded_bodies`, Restore needs `restore`. An
 // entry of a profile no longer configured stays readable. The Restore is
 // recorded as the requesting Operator's.
@@ -123,12 +123,9 @@ export function registerAuditRoutes(
 
   app.get<{ Querystring: AuditSearchParams }>('/api/audit-entries', async (req) => {
     const operator = operatorOf(req);
-    const entries = audit.list(parseAuditSearch(req.query));
-    return {
-      entries: entries
-        .filter((e) => access.holds(operator, 'read_audit_entries', e.profile))
-        .map((e) => auditEntryJson(e)),
-    };
+    // Left out in the query, so `limit` counts only the entries the Operator may read.
+    const entries = audit.list({ ...parseAuditSearch(req.query), excludeProfiles: access.withheld(operator, 'read_audit_entries') });
+    return { entries: entries.map((e) => auditEntryJson(e)) };
   });
 
   app.get<{ Params: { id: string } }>('/api/audit-entries/:id', async (req) => {

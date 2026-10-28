@@ -2,6 +2,7 @@
 // (src/server/routes/session.ts, routes/profiles.ts). Types only, shared by
 // the server and the web app.
 import type { CheckoutHolder } from './checkout.js';
+import type { Role } from './roles.js';
 
 export type Session = (
   | {
@@ -17,10 +18,14 @@ export type Session = (
       operatorId: string;
       email?: string;
       name?: string;
+      /** The groups Volverán read from the groups claim at sign-in. */
+      groups: string[];
     }
 ) & {
   /** The Operator's active Checkout, if any. */
   checkoutId: string | null;
+  /** The Operator's Role on each Broker Profile where they have one (always `admin` in Solo Mode). */
+  roles: Record<string, Role>;
 };
 
 /** A Broker Profile as listed, without its password. */

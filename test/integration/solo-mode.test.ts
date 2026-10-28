@@ -30,7 +30,7 @@ describe('Solo Mode', () => {
     app = await startApp({ profiles: [testProfile({ name: 'dev' })], env: { USER: 'login-name' } });
     const res = await app.get('/api/session');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ mode: 'solo', operator: testOperator, checkoutId: null });
+    expect(res.body).toEqual({ mode: 'solo', operator: testOperator, checkoutId: null, roles: { dev: 'admin' } });
   });
 
   it('falls back to $USER for the Operator', async () => {

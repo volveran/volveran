@@ -65,6 +65,11 @@
           "type": "string",
           "minLength": 1
         },
+        "groupsClaim": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The ID token claim holding the Operator's groups, for Roles."
+        },
         "existingSecret": {
           "type": "string",
           "description": "Required. An existing Secret holding the OIDC client secret and the session secret."
@@ -558,6 +563,38 @@
         },
         "protected": {
           "type": "boolean"
+        },
+        "roles": {
+          "description": "Team Mode: the OIDC groups holding each Role on this profile. Without it, every signed-in Operator is admin.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "viewer": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "operator": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "admin": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     },
