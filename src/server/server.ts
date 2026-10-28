@@ -18,6 +18,7 @@ import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
+import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerProfileRoutes } from './routes/profiles.js';
@@ -37,7 +38,8 @@ export interface ServerOptions {
   webRoot?: string;
   /** Directory of the audit store (VOLVERAN_DATA_DIR); omitted means in memory only (tests). */
   dataDir?: string;
-  logger?: boolean;
+  /** Logs as JSON lines: true to stdout, or into `stream` (tests). Default off. */
+  logger?: boolean | { stream: { write(line: string): void } };
   /** Overrides the Checkout limits from VOLVERAN_CHECKOUT_MAX_MESSAGES / VOLVERAN_CHECKOUT_MAX_MB. */
   checkoutLimits?: Partial<CheckoutLimits>;
   /** Overrides the Checkout timing from VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES / VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS. */
@@ -66,6 +68,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const checkouts = new CheckoutManager({
     audit,
     limits: { ...config.checkoutLimits, ...options.checkoutLimits },
+    approvals: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
@@ -76,8 +79,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret) };
   const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
-  // /readyz answers 200 only between the end of startup and the start of shutdown.
-  let ready = false;
   const app = await buildApp({
     profiles,
     access,
@@ -85,7 +86,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     audit: { audit, restore, usage },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
-    isReady: () => ready,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -95,6 +95,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       app.log.info({ profiles: mapped }, 'Solo Mode ignores the roles of Broker Profiles: the Operator is admin on every profile');
     }
   } else {
+    // Approval (v0.3): the one change for v0.2 users of Protected Profiles in Team Mode.
+    for (const p of profiles.filter((p) => p.protected)) {
+      if (p.requireApproval) {
+        app.log.info(
+          { profile: p.name },
+          `Protected Profile "${p.name}" requires Approval: an Apply that changes where a Message ends up waits for a second Operator. Set requireApproval: false on it to Apply alone`,
+        );
+      } else {
+        app.log.info({ profile: p.name }, `Protected Profile "${p.name}" has requireApproval: false: an Apply needs no Approval`);
+      }
+    }
     for (const p of profiles.filter((p) => !p.roles)) {
       app.log.warn(
         { profile: p.name },
@@ -116,9 +127,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retentionTimer = setInterval(evict, retention.intervalMs);
   retentionTimer.unref();
 
-  app.addHook('preClose', async () => {
-    ready = false;
-  });
   // Every held Message goes back to its queue (an Apply in progress finishes
   // first) before the audit store closes and the process exits.
   app.addHook('onClose', async () => {
@@ -126,7 +134,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await checkouts.endAll();
     audit.close();
   });
-  ready = true;
+  // Listening comes last, so /readyz is only reachable once startup has finished.
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
@@ -147,12 +155,10 @@ interface AppOptions {
   audit: AuditRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
-  logger: boolean;
-  /** Whether startup has finished, for /readyz. */
-  isReady: () => boolean;
+  logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, isReady }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -164,7 +170,7 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
-  registerHealthRoutes(app, { isReady });
+  registerHealthRoutes(app);
 
   // Every request carries its Operator (operator.ts); in Team Mode, /api/
   // routes refuse requests without a session before any handler runs.
@@ -184,6 +190,7 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
+  registerApprovalRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {

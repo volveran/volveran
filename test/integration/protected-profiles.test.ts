@@ -51,7 +51,8 @@ describe('Protected Profiles', () => {
     await seedMessages('/', QUEUE, 2);
     const { id, checkout } = await checkoutWithDiscard('prod');
     expect(checkout.protectedProfile).toBe(true);
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: true });
+    // Solo Mode: no Approval, whatever requireApproval says.
+    expect(checkout.applyConfirmation).toEqual({ typeQueueName: true, approvalRequired: false });
 
     for (const confirmQueueName of [undefined, 'orders.dl', 'ORDERS.DLQ', ` ${QUEUE}`]) {
       const refused = await apply(id, { confirm: true, confirmQueueName });
@@ -82,7 +83,7 @@ describe('Protected Profiles', () => {
   it('needs no typed queue name for an Apply with only Keep Decisions', async () => {
     await seedMessages('/', QUEUE, 2);
     const { id, checkout } = await startCheckout('prod');
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false });
+    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
 
     const ok = await apply(id, { confirm: true });
     expect(ok.status).toBe(200);
@@ -93,7 +94,7 @@ describe('Protected Profiles', () => {
     await seedMessages('/', QUEUE, 2);
     const { id, checkout } = await checkoutWithDiscard('dev');
     expect(checkout.protectedProfile).toBe(false);
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false });
+    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
 
     const ok = await apply(id, { confirm: true });
     expect(ok.status).toBe(200);

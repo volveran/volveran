@@ -21,6 +21,8 @@ profiles:
     vhosts: ["/"]
     defaultQueueFilter: "*.dlq"
     protected: true              # Apply and Restore need the queue name typed
+    requireApproval: true        # Team Mode (the default when protected): an Apply waits for a second
+                                 #   Operator's Approval; false keeps typed confirmation only.
     roles:                       # Team Mode: OIDC groups per role (VOLVERAN_OIDC_GROUPS_CLAIM);
       viewer: [support]          #   without roles, every Operator is admin here.
       operator: [oncall, sre]    #   Solo Mode ignores roles.

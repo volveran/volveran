@@ -21,6 +21,8 @@ export interface ApplyTarget extends QueueRef {
   operator: Pick<Operator, 'id' | 'displayName'>;
   /** The Operator's Role on the Broker Profile, recorded in each Audit Entry. */
   role: Role;
+  /** The second Operator who approved this Apply (Protected Profile, Team Mode); null when it needed no Approval. */
+  approver: Pick<Operator, 'id' | 'displayName'> | null;
 }
 
 /** The outcome of one publish: ok only when confirmed without a preceding basic.return. */

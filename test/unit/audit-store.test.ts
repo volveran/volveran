@@ -157,7 +157,8 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 3 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
+             ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
              VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);
     db.close();
@@ -166,7 +167,15 @@ describe('AuditStore', () => {
 
     const id = store.record(entry({ role: 'operator' }));
     expect(store.get(id)?.role).toBe('operator');
-    expect(store.list()[1]).toMatchObject({ queue: 'orders.dlq', role: null });
+    expect(store.list()[1]).toMatchObject({ queue: 'orders.dlq', role: null, approverId: null, approverName: null });
+  });
+
+  it('records who approved an Apply, and no one when it needed no Approval', () => {
+    store = new AuditStore();
+    const approved = store.record(entry({ approver: { id: 'alan-sub', displayName: 'alan@example.com' } }));
+    const alone = store.record(entry());
+    expect(store.get(approved)).toMatchObject({ approverId: 'alan-sub', approverName: 'alan@example.com' });
+    expect(store.get(alone)).toMatchObject({ approverId: null, approverName: null });
   });
 
   it('upgrades a store written before replay ids existed, keeping its entries', async () => {
@@ -177,6 +186,7 @@ describe('AuditStore', () => {
     db.exec(`DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;
              ALTER TABLE audit_entries DROP COLUMN restore_of; ALTER TABLE audit_entries DROP COLUMN body_expired_at;
              DROP INDEX audit_entries_replay_id; ALTER TABLE audit_entries DROP COLUMN replay_id;
+             ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 1;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
              VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);

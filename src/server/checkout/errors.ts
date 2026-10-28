@@ -3,6 +3,7 @@
 import { HttpError } from '../http-error.js';
 import type { QueueRef } from '../profiles.js';
 import { describeHolder, type CheckoutHolder } from '../triage/checkout-lock.js';
+import type { CheckoutState } from './state.js';
 
 export type CheckoutErrorCode =
   | 'queue_not_found'
@@ -17,7 +18,12 @@ export type CheckoutErrorCode =
   | 'apply_in_progress'
   | 'message_not_found'
   | 'decision_not_allowed'
-  | 'checkout_failed';
+  | 'checkout_failed'
+  | 'approval_required'
+  | 'approval_not_required'
+  | 'awaiting_approval'
+  | 'not_awaiting_approval'
+  | 'cannot_approve_own_apply';
 
 const STATUS: Record<CheckoutErrorCode, number> = {
   queue_not_found: 404,
@@ -33,6 +39,11 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   message_not_found: 404,
   decision_not_allowed: 422,
   checkout_failed: 502,
+  approval_required: 409,
+  approval_not_required: 409,
+  awaiting_approval: 409,
+  not_awaiting_approval: 409,
+  cannot_approve_own_apply: 403,
 };
 
 export class CheckoutError extends HttpError<CheckoutErrorCode> {
@@ -97,7 +108,7 @@ export function notCheckoutOwner(id: string): CheckoutError {
  * Applied") holds. A Lost Checkout's message says why it was lost.
  */
 export function checkoutNotActive(
-  checkout: Queue & { status: 'active' | 'ended' | 'lost'; lostReason: string | null },
+  checkout: Queue & { status: CheckoutState; lostReason: string | null },
   consequence: string,
 ): CheckoutError {
   const which = `The Checkout of "${checkout.queue}" in vhost "${checkout.vhost}"`;
@@ -113,4 +124,42 @@ export function checkoutNotActive(
 
 export function applyInProgress({ id }: { id: string }): CheckoutError {
   return new CheckoutError('apply_in_progress', `Checkout ${id} is being Applied. Wait for that Apply to finish.`);
+}
+
+/** Team Mode, a Protected Profile requiring Approval: the requester asks for it instead of Applying. */
+export function approvalRequired({ id, profile, queue }: Queue & { id: string; profile: { name: string } }): CheckoutError {
+  return new CheckoutError(
+    'approval_required',
+    `${profile.name} is a Protected Profile: an Apply of "${queue}" that changes where a Message ends up needs a second Operator's Approval. ` +
+      `Request Approval (POST /api/checkouts/${id}/approval-request) instead of Applying.`,
+  );
+}
+
+/** Approval was requested for a Checkout whose Apply needs none: it can be Applied directly. */
+export function approvalNotRequired({ queue, profile }: Queue & { profile: { name: string } }): CheckoutError {
+  return new CheckoutError(
+    'approval_not_required',
+    `An Apply of "${queue}" on Broker Profile "${profile.name}" with these Decisions needs no Approval: Apply it directly.`,
+  );
+}
+
+/** The Checkout waits for Approval: its Decisions are frozen and only an approver can Apply it. */
+export function awaitingApproval({ vhost, queue }: Queue, consequence: string): CheckoutError {
+  return new CheckoutError(
+    'awaiting_approval',
+    `The Checkout of "${queue}" in vhost "${vhost}" is waiting for Approval, so ${consequence}. Withdraw the request first.`,
+  );
+}
+
+/** The Checkout is not (or no longer) waiting for Approval: never requested, withdrawn, approved or over. */
+export function notAwaitingApproval({ id, status }: { id: string; status: CheckoutState }): CheckoutError {
+  const why = status === 'active' ? 'no Approval is requested for it' : 'it is over';
+  return new CheckoutError('not_awaiting_approval', `Checkout ${id} is not waiting for Approval: ${why}.`, { status });
+}
+
+export function cannotApproveOwnApply({ id }: { id: string }): CheckoutError {
+  return new CheckoutError(
+    'cannot_approve_own_apply',
+    `Checkout ${id} is yours: its Apply needs Approval by another Operator with the role \`operator\` or \`admin\` on its Broker Profile.`,
+  );
 }

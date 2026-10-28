@@ -1,7 +1,7 @@
 // Thin typed client over Volverán's HTTP JSON API. The response shapes are
 // the server's own, from src/shared/.
 import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
-import type { CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
+import type { ApprovalSummary, CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
 import { product } from '../shared/product.js';
@@ -10,6 +10,7 @@ import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } f
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
 export type {
+  ApprovalSummary,
   CheckoutHolder,
   DeliveryBudget,
   MessageDetail,
@@ -169,5 +170,25 @@ export const api = {
     getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
+    }),
+  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions. */
+  requestApproval: (id: string, confirmQueueName?: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
+      confirm: true,
+      ...(confirmQueueName !== undefined && { confirmQueueName }),
+    }).then((b) => b.checkout),
+  withdrawApproval: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
+  /** Other Operators' Checkouts waiting for an Approval this Operator may give. */
+  approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals').then((b) => b.approvals),
+  /** A waiting Checkout, read-only. */
+  approvalCheckout: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
+  approvalMessage: (id: string, handle: number) =>
+    getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  /** Approves the Apply of a waiting Checkout, which runs it; `confirmQueueName` is the queue name as typed. */
+  approve: (id: string, confirmQueueName: string) =>
+    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
+      confirmQueueName,
     }),
 };

@@ -1,7 +1,8 @@
 // The Message filter: conditions that must all hold (routing key, header,
 // x-death reason, original queue, body text, JSON path). Submitting narrows
-// the Message list; "Select all matching" lives with the list.
-import { useState } from 'react';
+// the Message list; "Select all matching" lives with the list. `/` focuses
+// the first condition's value (firstFieldRef).
+import { useState, type Ref } from 'react';
 import type { FilterClause } from './api.js';
 
 type Kind = FilterClause['kind'];
@@ -35,11 +36,13 @@ export function FilterBar({
   busy,
   onFilter,
   onClear,
+  firstFieldRef,
 }: {
   active: boolean;
   busy: boolean;
   onFilter: (filter: FilterClause[]) => void;
   onClear: () => void;
+  firstFieldRef?: Ref<HTMLInputElement>;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>([{ kind: 'routing-key', key: '', value: '' }]);
   const update = (i: number, patch: Partial<Draft>) =>
@@ -79,6 +82,7 @@ export function FilterBar({
               />
             )}
             <input
+              ref={i === 0 ? firstFieldRef : undefined}
               type="search"
               aria-label={`${meta.label} value`}
               placeholder={meta.placeholder}

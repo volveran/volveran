@@ -1,6 +1,7 @@
 // The typed confirmation a Protected Profile asks for: the Operator types the
 // queue name, and the server checks it, not only the UI. Apply calls it when
-// the Checkout's applyConfirmation asks for it (any Decision other than Keep);
+// the Checkout's applyConfirmation asks for it (any Decision other than Keep),
+// and so do a request for Approval and the Approval itself;
 // Restore (#10) calls it for every Restore on a Protected Profile.
 import { HttpError } from './http-error.js';
 
@@ -15,7 +16,7 @@ export class TypedConfirmationError extends HttpError<TypedConfirmationErrorCode
 }
 
 /** The change being confirmed, as named in the error message. */
-export type ConfirmedAction = 'Apply' | 'Restore';
+export type ConfirmedAction = 'Apply' | 'Approval' | 'Restore';
 
 /**
  * Throws TypedConfirmationError unless `body.confirmQueueName` is exactly
