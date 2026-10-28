@@ -7,7 +7,9 @@
 // Only the profiles where the Operator has a Role are listed (the server
 // filters them), and actions their Role does not allow are shown as
 // unavailable, naming the role they need.
-import { useEffect, useState } from 'react';
+// In the queue list j/k or the arrow keys move and Enter starts a Checkout
+// (keys mapped in keyboard-commands.ts).
+import { useEffect, useRef, useState } from 'react';
 import { product } from '../shared/product.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import {
@@ -23,6 +25,8 @@ import {
 } from './api.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
+import { ShortcutList, useKeyboardCommands } from './keyboard.js';
+import type { KeyboardCommand } from './keyboard-commands.js';
 
 const STORAGE_KEY = 'volveran.location';
 
@@ -68,9 +72,14 @@ export function App() {
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
+  /** The queue the keyboard is on. */
+  const [focusedQueue, setFocusedQueue] = useState<string>();
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const profile = profiles.find((p) => p.name === profileName);
   const role = profileName ? session?.roles[profileName] : undefined;
+  /** Team Mode, signed in with no role on any Broker Profile: NoRolePage instead of the app. */
+  const noRoleAnywhere = session?.mode === 'team' && Object.keys(session.roles).length === 0;
 
   // A Protected Profile shows in the browser tab too, so it is visible from other tabs.
   useEffect(() => {
@@ -152,7 +161,41 @@ export function App() {
     }
   };
 
-  if (session?.mode === 'team' && Object.keys(session.roles).length === 0) {
+  const queues = queueList?.queues ?? [];
+  const run = (command: KeyboardCommand) => {
+    switch (command.kind) {
+      case 'move': {
+        if (queues.length === 0) return;
+        const at = queues.findIndex((q) => q.name === focusedQueue);
+        setFocusedQueue(queues[at < 0 ? 0 : Math.max(0, Math.min(queues.length - 1, at + command.by))]!.name);
+        return;
+      }
+      case 'start-checkout': {
+        const q = queues.find((q) => q.name === focusedQueue);
+        const mayCheckout = role !== undefined && roleIncludes(role, 'operator');
+        if (q && mayCheckout && q.checkout.available && !q.checkedOutBy) void startCheckout(q.name);
+        return;
+      }
+      case 'show-shortcuts':
+        return setShortcutsOpen(true);
+      case 'close-prompt':
+        return setShortcutsOpen(false);
+      default:
+        return;
+    }
+  };
+  useKeyboardCommands(
+    view === 'queues' && !checkoutId && !noRoleAnywhere,
+    {
+      view: 'queue-list',
+      prompt: shortcutsOpen,
+      selection: 0,
+      focusedItem: queues.some((q) => q.name === focusedQueue),
+    },
+    run,
+  );
+
+  if (noRoleAnywhere) {
     return <NoRolePage operator={session.operator} operatorId={session.operatorId} groups={session.groups} />;
   }
 
@@ -286,12 +329,22 @@ export function App() {
                     </p>
                   )}
                   <VhostWarningCounts counts={queueList.setupWarningCounts} vhost={vhost} />
-                  <QueueTable queues={queueList.queues} role={role} onCheckout={startCheckout} />
+                  <QueueTable
+                    queues={queueList.queues}
+                    role={role}
+                    focused={focusedQueue}
+                    onFocus={setFocusedQueue}
+                    onCheckout={startCheckout}
+                  />
+                  <p className="muted shortcut-hint">
+                    Press <kbd>?</kbd> for keyboard shortcuts.
+                  </p>
                 </>
               )
             )}
           </>
         )}
+        {shortcutsOpen && <ShortcutList onClose={() => setShortcutsOpen(false)} />}
       </main>
     </div>
   );
@@ -397,7 +450,24 @@ function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vho
   );
 }
 
-function QueueTable({ queues, role, onCheckout }: { queues: Queue[]; role: Role | undefined; onCheckout(queue: string): void }) {
+/** The queue list. The keyboard's queue row takes the DOM focus, so it is visible and announced. */
+function QueueTable({
+  queues,
+  role,
+  focused,
+  onFocus,
+  onCheckout,
+}: {
+  queues: Queue[];
+  role: Role | undefined;
+  focused: string | undefined;
+  onFocus(queue: string): void;
+  onCheckout(queue: string): void;
+}) {
+  const rows = useRef(new Map<string, HTMLTableRowElement>());
+  useEffect(() => {
+    if (focused !== undefined) rows.current.get(focused)?.focus();
+  }, [focused]);
   const mayCheckout = role !== undefined && roleIncludes(role, 'operator');
   if (queues.length === 0) return <p className="empty">No queues match.</p>;
   return (
@@ -415,7 +485,17 @@ function QueueTable({ queues, role, onCheckout }: { queues: Queue[]; role: Role 
       </thead>
       <tbody>
         {queues.map((q) => (
-          <tr key={q.name} className={q.deadLetterQueue ? 'match' : undefined}>
+          <tr
+            key={q.name}
+            ref={(row) => {
+              if (row) rows.current.set(q.name, row);
+              else rows.current.delete(q.name);
+            }}
+            tabIndex={-1}
+            aria-current={q.name === focused ? 'true' : undefined}
+            className={[q.deadLetterQueue && 'match', q.name === focused && 'focused'].filter(Boolean).join(' ') || undefined}
+            onFocus={(e) => e.target === e.currentTarget && onFocus(q.name)}
+          >
             <td className="name">
               {q.name} {q.deadLetterQueue && <span className="badge dlq">DLQ</span>}
               {q.deadLetteredFrom.length > 0 && (
