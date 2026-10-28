@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Roles per Broker Profile (Team Mode). A profile's optional `roles` maps OIDC groups to `viewer` (sees the profile, its queues and Audit Entries without Discarded bodies), `operator` (also reads Discarded bodies and starts Checkouts, Decisions and Apply) or `admin` (also Restores); the highest matching role wins. The groups come from the ID token claim named by `VOLVERAN_OIDC_GROUPS_CLAIM` (default `groups`; chart value `oidc.groupsClaim`) and are fixed until the next sign-in. Routes answer `403 no_role_on_profile` or `403 role_required` (with `required` and `held`) before touching the broker, `GET /api/profiles` and Audit Entry search leave out profiles without a role, `GET /api/session` gains `roles` and (Team Mode) `groups`, and every new Audit Entry records the Operator's `role` (`null` on older entries). The web app shows the actions a role does not allow as unavailable. Startup refuses unknown roles, empty group lists and non-string groups. **Upgrading changes nothing until you add `roles`:** a profile without them keeps every Operator `admin`, with a startup warning per profile ([ADR 0007](docs/adr/0007-profiles-without-roles-keep-everyone-admin.md)), and Solo Mode ignores them. (#38)
+
 ### Fixed
 
 - Development: run from source (`npm run dev`), the server no longer serves the unbuilt `src/web` on `:8080`, which showed a blank page (`main.tsx` blocked for its MIME type). It serves no web app and answers `404` with a pointer to the Vite dev server on `http://localhost:5173`. `npm start` and the image still serve the built `dist/web`. (#32)
