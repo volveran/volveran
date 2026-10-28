@@ -20,10 +20,10 @@ import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
-import { profileLookup } from './routes/profile-lookup.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { attachOperator } from './operator.js';
+import { ProfileAccessCheck } from './profile-access.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
@@ -74,11 +74,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     config.mode.kind === 'solo'
       ? { kind: 'solo', operator: config.mode.operator }
       : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret) };
-  const restore = new RestoreService(
-    audit,
-    (name) => profiles.find((p) => p.name === name),
-    (id) => checkouts.isRunning(id),
-  );
+  const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   // /readyz answers 200 only between the end of startup and the start of shutdown.
   let ready = false;
@@ -164,13 +160,16 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger, i
     await access.auth.register(app);
   }
 
-  const lookup = profileLookup(profiles);
+  // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
+  // the profile through this one check (profile-access.ts).
+  const profileAccess = new ProfileAccessCheck(profiles);
+  const checkoutDeps = { checkouts, access: profileAccess };
   registerSessionRoutes(app, { mode: access.kind, checkouts });
-  registerProfileRoutes(app, { profiles, lookup });
-  registerCheckoutRoutes(app, { checkouts, queueRef: lookup.queueRef });
-  registerDecisionRoutes(app, checkouts);
-  registerApplyRoutes(app, checkouts);
-  registerAuditRoutes(app, audit);
+  registerProfileRoutes(app, profileAccess);
+  registerCheckoutRoutes(app, checkoutDeps);
+  registerDecisionRoutes(app, checkoutDeps);
+  registerApplyRoutes(app, checkoutDeps);
+  registerAuditRoutes(app, audit, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {

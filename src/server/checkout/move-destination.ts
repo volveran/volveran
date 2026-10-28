@@ -3,14 +3,21 @@
 // Checkout's vhost. Apply checks again for free: a destination deleted since
 // makes the publish fail, and the Message falls back to Keep.
 import type { MoveDestination } from '../../shared/decisions.js';
-import { ManagementClient } from '../management.js';
+import type { ManagementClient } from '../management.js';
 import type { QueueRef } from '../profiles.js';
 import { isLockQueue } from '../triage/checkout-lock.js';
 import { CheckoutError } from './errors.js';
 
-/** Throws `decision_not_allowed` when `destination` is not an existing queue or exchange of `checkout`'s vhost. */
-export async function assertMoveDestinationExists(checkout: QueueRef, destination: MoveDestination): Promise<void> {
-  const client = new ManagementClient(checkout.profile);
+/**
+ * Throws `decision_not_allowed` when `destination` is not an existing queue or
+ * exchange of `checkout`'s vhost; `client` is the management API client of its
+ * Broker Profile, from the access check.
+ */
+export async function assertMoveDestinationExists(
+  client: ManagementClient,
+  checkout: QueueRef,
+  destination: MoveDestination,
+): Promise<void> {
   const { vhost } = checkout;
   if ('queue' in destination) {
     const queue = isLockQueue(destination.queue) ? null : await client.getQueue(vhost, destination.queue);
