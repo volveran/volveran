@@ -146,6 +146,16 @@ export interface ApprovalRequestView {
   requestedAt: string;
 }
 
+/** The last rejection of the Checkout's request for Approval, shown to the requester until they request again. */
+export interface ApprovalRejection {
+  /** Why the approver rejected it (required). */
+  reason: string;
+  /** The Operator who rejected it (display name). */
+  rejectedBy: string;
+  /** ISO 8601. */
+  at: string;
+}
+
 /** A Checkout waiting for Approval, as GET /api/approvals lists it. */
 export interface ApprovalSummary {
   checkoutId: string;
@@ -210,6 +220,8 @@ export interface CheckoutView {
   applyConfirmation: ApplyConfirmation;
   /** The pending request for Approval (status `awaiting_approval`); null otherwise. */
   approvalRequest: ApprovalRequestView | null;
+  /** The last request's rejection, until the next request; null otherwise. The Checkout is back in staging. */
+  rejection: ApprovalRejection | null;
   /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
   lastApply: AppliedResult | null;
 }

@@ -24,6 +24,24 @@ export interface ApprovalRequest {
   role: Role;
 }
 
+/**
+ * How the last request for Approval stopped waiting: withdrawn by the
+ * requester, approved or rejected by `by` (display name), or cancelled by the
+ * Checkout's end (its status and end or lost reason say which).
+ */
+export type ApprovalClosed =
+  | { how: 'withdrawn' }
+  | { how: 'approved' | 'rejected'; by: string }
+  | { how: 'cancelled' };
+
+/** The last rejection of a request for Approval, kept until the next request. */
+export interface Rejection {
+  reason: string;
+  /** The approver who rejected it (display name). */
+  rejectedBy: string;
+  at: Date;
+}
+
 export interface Checkout extends QueueRef {
   id: string;
   /** Who started it: `id` keys one active Checkout per Operator, `displayName` is shown. */
@@ -47,8 +65,12 @@ export interface Checkout extends QueueRef {
    * Decision other than Keep waits for a second Operator's Approval.
    */
   requireApproval: boolean;
-  /** Set while the Checkout waits for Approval (its Decisions are frozen); cleared by withdraw, approve, or its end. */
+  /** Set while the Checkout waits for Approval (its Decisions are frozen); cleared by withdraw, approve, reject, or its end. */
   approvalRequest: ApprovalRequest | null;
+  /** How the last request stopped waiting, so a late approver is told why; null while one waits or none was made. */
+  approvalClosed: ApprovalClosed | null;
+  /** The last request's rejection, shown to the requester until the next request. */
+  rejection: Rejection | null;
   lostReason: string | null;
   endReason: EndReason | null;
   /** Ready Messages in the queue when the Checkout started (passive declare). */

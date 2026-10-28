@@ -3,7 +3,7 @@
 import { HttpError } from '../http-error.js';
 import type { QueueRef } from '../profiles.js';
 import { describeHolder, type CheckoutHolder } from '../triage/checkout-lock.js';
-import type { CheckoutState } from './state.js';
+import type { ApprovalClosed, CheckoutState, EndReason } from './state.js';
 
 export type CheckoutErrorCode =
   | 'queue_not_found'
@@ -151,10 +151,58 @@ export function awaitingApproval({ vhost, queue }: Queue, consequence: string): 
   );
 }
 
-/** The Checkout is not (or no longer) waiting for Approval: never requested, withdrawn, approved or over. */
-export function notAwaitingApproval({ id, status }: { id: string; status: CheckoutState }): CheckoutError {
-  const why = status === 'active' ? 'no Approval is requested for it' : 'it is over';
-  return new CheckoutError('not_awaiting_approval', `Checkout ${id} is not waiting for Approval: ${why}.`, { status });
+/**
+ * The Checkout is not (or no longer) waiting for Approval: never requested,
+ * withdrawn, approved, rejected, or cancelled by the Checkout's end. The
+ * message says which, so a late approver knows what happened.
+ */
+export function notAwaitingApproval(
+  checkout: Queue & {
+    id: string;
+    operator: { displayName: string };
+    status: CheckoutState;
+    endReason: EndReason | null;
+    lostReason: string | null;
+    approvalClosed: ApprovalClosed | null;
+  },
+): CheckoutError {
+  const { id, status, endReason, approvalClosed } = checkout;
+  const requester = checkout.operator.displayName;
+  const closed = approvalClosed?.how;
+  let why: string;
+  if (approvalClosed?.how === 'rejected') why = `${approvalClosed.by} rejected it`;
+  else if (approvalClosed?.how === 'approved') why = `${approvalClosed.by} approved it`;
+  else if (closed === 'withdrawn') why = `${requester} withdrew the request`;
+  else if (status === 'active') why = 'no Approval is requested for it';
+  else {
+    const ended =
+      status === 'lost'
+        ? `the Checkout was lost${checkout.lostReason ? ` (${checkout.lostReason.replace(/\.$/, '')})` : ''}`
+        : endedBecause(endReason, requester);
+    why = closed === 'cancelled' ? `${ended}, which cancelled the request` : ended;
+  }
+  return new CheckoutError(
+    'not_awaiting_approval',
+    `The Checkout of "${checkout.queue}" in vhost "${checkout.vhost}" (${id}) is not waiting for Approval: ${why}.`,
+    { status, endReason, approvalClosed: closed ?? null },
+  );
+}
+
+function endedBecause(reason: EndReason | null, requester: string): string {
+  switch (reason) {
+    case 'time-limit':
+      return 'the Checkout reached its time limit';
+    case 'no-heartbeat':
+      return `the Checkout ended when ${requester}'s browser stopped sending heartbeats (the tab was closed)`;
+    case 'operator':
+      return `${requester} ended the Checkout`;
+    case 'shutdown':
+      return 'the Checkout ended when Volverán shut down';
+    case 'applied':
+      return 'the Checkout was Applied';
+    case null:
+      return 'the Checkout is over';
+  }
 }
 
 export function cannotApproveOwnApply({ id }: { id: string }): CheckoutError {

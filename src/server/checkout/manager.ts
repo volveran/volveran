@@ -26,9 +26,11 @@
 // requests Approval, which freezes the Decisions (the Checkout is
 // `awaiting_approval`, still active: the time limit and heartbeat keep
 // running), and a second Operator approves it, which runs the Apply on the
-// owner's Checkout and connection. Withdraw, approve and the Checkout's end
-// each check and change the request without awaiting first, so the first
-// one wins and the others find no request. Ending the Checkout cancels it.
+// owner's Checkout and connection, or rejects it with a reason, which puts
+// the Checkout back in staging. Withdraw, approve, reject and the Checkout's
+// end each check and change the request without awaiting first, so the first
+// one wins and the others find no request (409 `not_awaiting_approval`, which
+// says what happened to it). Ending the Checkout cancels it.
 //
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
 // most one (checked before the broker's lock, so the holder is known exactly).
@@ -57,7 +59,7 @@ import {
   operatorHasCheckout,
 } from './errors.js';
 import { openCheckout, type StartOptions } from './open.js';
-import type { ApprovalRequest, Checkout, EndReason } from './state.js';
+import type { ApprovalClosed, ApprovalRequest, Checkout, EndReason } from './state.js';
 import { approvalSummary, queueInfo, view, type ApprovalSummary, type CheckoutView } from './view.js';
 
 export { checkoutConnectionName, type StartOptions } from './open.js';
@@ -138,6 +140,8 @@ export class CheckoutManager {
       status: 'active',
       requireApproval: (this.options.approvals ?? false) && target.profile.protected && target.profile.requireApproval,
       approvalRequest: null,
+      approvalClosed: null,
+      rejection: null,
       lostReason: null,
       endReason: null,
       readyAtStart: 0,
@@ -245,13 +249,15 @@ export class CheckoutManager {
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'Approval is already requested');
     if (!view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
     checkout.approvalRequest = { requestedAt: new Date(), role };
+    checkout.approvalClosed = null;
+    checkout.rejection = null;
     return view(checkout);
   }
 
   /** The owner withdraws the request: the Decisions can change again. Throws `not_awaiting_approval`. */
   withdrawApproval(id: string): CheckoutView {
     const checkout = this.find(id);
-    this.takeApprovalRequest(checkout);
+    this.takeApprovalRequest(checkout, { how: 'withdrawn' });
     return view(checkout);
   }
 
@@ -286,16 +292,36 @@ export class CheckoutManager {
    */
   async approve(id: string, approver: Operator): Promise<{ checkout: CheckoutView; outcomes: MessageOutcome[] }> {
     const checkout = this.awaitingCheckout(id, approver);
-    const request = this.takeApprovalRequest(checkout);
+    const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName });
     return this.runApply(checkout, request.role, approver);
   }
 
+  /**
+   * A second Operator rejects the requested Apply: the Checkout is back in
+   * staging, and its owner sees `reason` and who rejected it until they
+   * request again. Same checks as awaitingCheckout.
+   */
+  reject(id: string, approver: Operator, reason: string): CheckoutView {
+    const checkout = this.awaitingCheckout(id, approver);
+    this.takeApprovalRequest(checkout, { how: 'rejected', by: approver.displayName });
+    checkout.rejection = { reason, rejectedBy: approver.displayName, at: new Date() };
+    return view(checkout);
+  }
+
   /** Removes the request for Approval, which must exist; no await before the caller acts on it. */
-  private takeApprovalRequest(checkout: Checkout): ApprovalRequest {
+  private takeApprovalRequest(checkout: Checkout, closed: ApprovalClosed): ApprovalRequest {
     const request = checkout.approvalRequest;
     if (checkout.status !== 'active' || !request) throw notAwaitingApproval(checkout);
     checkout.approvalRequest = null;
+    checkout.approvalClosed = closed;
     return request;
+  }
+
+  /** The Checkout is ending: a request still waiting is cancelled with it. */
+  private cancelApprovalRequest(checkout: Checkout) {
+    if (!checkout.approvalRequest) return;
+    checkout.approvalRequest = null;
+    checkout.approvalClosed = { how: 'cancelled' };
   }
 
   private assertCanApply(checkout: Checkout) {
@@ -325,8 +351,10 @@ export class CheckoutManager {
   async end(id: string, reason: EndReason = 'operator'): Promise<CheckoutView> {
     const checkout = this.find(id);
     // An Apply in progress finishes first (it ends the Checkout itself), so
-    // a done step is never returned and no step is cut short.
-    await checkout.applying?.catch(() => {});
+    // a done step is never returned and no step is cut short. With none,
+    // finish() runs now, before any await: an approve arriving meanwhile
+    // finds the Checkout over instead of starting an Apply on it.
+    if (checkout.applying) await checkout.applying.catch(() => {});
     return this.finish(checkout, reason);
   }
 
@@ -334,8 +362,7 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return view(checkout);
     checkout.status = 'ended';
     checkout.endReason = reason;
-    // A waiting request is cancelled with the Checkout.
-    checkout.approvalRequest = null;
+    this.cancelApprovalRequest(checkout);
     const { channel, connection } = checkout;
     try {
       if (channel) {
@@ -401,7 +428,7 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return;
     checkout.status = 'lost';
     checkout.lostReason = reason;
-    checkout.approvalRequest = null;
+    this.cancelApprovalRequest(checkout);
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);

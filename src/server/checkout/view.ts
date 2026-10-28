@@ -57,6 +57,7 @@ export function view(c: Checkout): CheckoutView {
       actionCount: handles.filter((h) => c.decisions.has(h)).length,
     }),
     approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString() },
+    rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
     lastApply: c.lastApply,
   };
 }

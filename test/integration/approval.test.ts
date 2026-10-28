@@ -5,7 +5,10 @@
 // which runs the Apply on the requester's Checkout.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  checkoutConnectionNames,
+  closeConnection,
   closedPort,
+  eventually,
   purgeQueues,
   readyMessageIds,
   seedMessages,
@@ -233,6 +236,168 @@ describe('Approval', () => {
     expect(await readyMessageIds('/', QUEUE)).toEqual([]);
   });
 
+  it('returns a rejected request to staging with the reason, until the next request', async () => {
+    await seedMessages('/', QUEUE, 2);
+    const requester = await signedIn(rita);
+    const approver = await signedIn(alan);
+    const { id, messages } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`]);
+    expect((await requestApproval(requester, id)).status).toBe(200);
+
+    for (const body of [{}, { reason: '' }, { reason: '   ' }, { reason: 42 }]) {
+      const unexplained = await approver.post(`/api/approvals/${id}/reject`, body);
+      expect([unexplained.status, unexplained.body.error.code]).toEqual([400, 'invalid_request']);
+    }
+    // The requester may not reject their own request either.
+    const own = await requester.post(`/api/approvals/${id}/reject`, { reason: 'no' });
+    expect([own.status, own.body.error.code]).toEqual([403, 'cannot_approve_own_apply']);
+
+    const rejected = await approver.post(`/api/approvals/${id}/reject`, { reason: 'Keep order 7, it is still valid' });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.checkout).toMatchObject({ status: 'active', approvalRequest: null });
+    expect((await approver.get('/api/approvals')).body.approvals).toEqual([]);
+
+    // The requester sees why, and who rejected it.
+    const seen = (await requester.get(`/api/checkouts/${id}`)).body.checkout;
+    expect(seen).toMatchObject({
+      status: 'active',
+      rejection: { reason: 'Keep order 7, it is still valid', rejectedBy: 'alan@example.com', at: expect.any(String) },
+    });
+    // Rejecting or approving it again: nothing waits, and the message says why.
+    for (const res of [
+      await approver.post(`/api/approvals/${id}/reject`, { reason: 'again' }),
+      await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }),
+      await approver.get(`/api/approvals/${id}`),
+    ]) {
+      expect([res.status, res.body.error.code]).toEqual([409, 'not_awaiting_approval']);
+      expect(res.body.error.message).toMatch(/alan@example\.com rejected/);
+    }
+
+    // The requester edits the Decisions and asks again; the rejection is gone.
+    const second = messages.find((m) => m.messageId === `${QUEUE}-1`).handle;
+    expect((await requester.post(`/api/checkouts/${id}/decisions`, { handles: [second], decision: DISCARD })).status).toBe(200);
+    expect((await requester.get(`/api/checkouts/${id}`)).body.checkout.rejection).not.toBeNull();
+    const again = await requestApproval(requester, id);
+    expect(again.body.checkout).toMatchObject({ status: 'awaiting_approval', rejection: null });
+    const approved = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
+    expect(approved.body.outcomes.filter((o: any) => o.status === 'done')).toHaveLength(2);
+  });
+
+  it('cancels the request when the requester ends the Checkout, and tells a late approver why', async () => {
+    await seedMessages('/', QUEUE, 1);
+    const requester = await signedIn(rita);
+    const approver = await signedIn(alan);
+    const { id } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`]);
+    expect((await requestApproval(requester, id)).status).toBe(200);
+    expect((await approver.get(`/api/approvals/${id}`)).status).toBe(200);
+
+    expect((await requester.request('DELETE', `/api/checkouts/${id}`)).body.checkout.status).toBe('ended');
+    expect((await approver.get('/api/approvals')).body.approvals).toEqual([]);
+    for (const res of [
+      await approver.get(`/api/approvals/${id}`),
+      await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }),
+    ]) {
+      expect([res.status, res.body.error.code]).toEqual([409, 'not_awaiting_approval']);
+      expect(res.body.error.message).toMatch(/rita@example\.com ended the Checkout, which cancelled the request/);
+    }
+    expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-0`]);
+  });
+
+  it('cancels the request when the Checkout becomes a Lost Checkout', async () => {
+    await seedMessages('/', QUEUE, 1);
+    const requester = await signedIn(rita);
+    const approver = await signedIn(alan);
+    const { id } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`]);
+    expect((await requestApproval(requester, id)).status).toBe(200);
+
+    const [name] = await eventually(async () => {
+      const found = await checkoutConnectionNames(QUEUE);
+      expect(found).toHaveLength(1);
+      return found;
+    });
+    await closeConnection(name!);
+    await eventually(async () => expect((await requester.get(`/api/checkouts/${id}`)).body.checkout.status).toBe('lost'));
+
+    expect((await approver.get('/api/approvals')).body.approvals).toEqual([]);
+    const late = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
+    expect([late.status, late.body.error.code]).toEqual([409, 'not_awaiting_approval']);
+    expect(late.body.error.message).toMatch(/the Checkout was lost .*, which cancelled the request/);
+    expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-0`]);
+  });
+
+  describe('races: the first of approve, withdraw, reject and the end wins', () => {
+    it('approve and withdraw at once: exactly one wins', async () => {
+      await seedMessages('/', QUEUE, 1);
+      const requester = await signedIn(rita);
+      const approver = await signedIn(alan);
+      const { id } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`]);
+      expect((await requestApproval(requester, id)).status).toBe(200);
+
+      const [approved, withdrawn] = await Promise.all([
+        approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }),
+        requester.request('DELETE', `/api/checkouts/${id}/approval-request`),
+      ]);
+      expect([approved.status, withdrawn.status].sort()).toEqual([200, 409]);
+      const loser = approved.status === 409 ? approved : withdrawn;
+      expect(loser.body.error.code).toBe('not_awaiting_approval');
+
+      const entries = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
+      if (approved.status === 200) {
+        expect(loser.body.error.message).toMatch(/alan@example\.com approved it/);
+        expect(entries).toHaveLength(1);
+        expect(await readyMessageIds('/', QUEUE)).toEqual([]);
+      } else {
+        expect(loser.body.error.message).toMatch(/rita@example\.com withdrew the request/);
+        expect(entries).toEqual([]);
+        expect(withdrawn.body.checkout).toMatchObject({ status: 'active', heldCount: 1 });
+      }
+    });
+
+    it('two approvers at once: the Apply runs once', async () => {
+      await seedMessages('/', QUEUE, 2);
+      const requester = await signedIn(rita);
+      const approvers = [await signedIn(alan), await signedIn(ada)];
+      const { id } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`, `${QUEUE}-1`]);
+      expect((await requestApproval(requester, id)).status).toBe(200);
+
+      const results = await Promise.all(
+        approvers.map((a) => a.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE })),
+      );
+      expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+      const winner = results.find((r) => r.status === 200)!;
+      const loser = results.find((r) => r.status === 409)!;
+      expect(loser.body.error.code).toBe('not_awaiting_approval');
+      expect(loser.body.error.message).toMatch(/(alan|ada)@example\.com approved it/);
+      expect(winner.body.outcomes.filter((o: any) => o.status === 'done')).toHaveLength(2);
+      expect((await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries).toHaveLength(2);
+      expect(await readyMessageIds('/', QUEUE)).toEqual([]);
+    });
+
+    it('approve and the Checkout ending at once: the Apply runs fully or not at all', async () => {
+      await seedMessages('/', QUEUE, 2);
+      const requester = await signedIn(rita);
+      const approver = await signedIn(alan);
+      const { id } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`, `${QUEUE}-1`]);
+      expect((await requestApproval(requester, id)).status).toBe(200);
+
+      const [approved, ended] = await Promise.all([
+        approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }),
+        requester.request('DELETE', `/api/checkouts/${id}`),
+      ]);
+      expect(ended.status).toBe(200);
+      const entries = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
+      if (approved.status === 200) {
+        expect(ended.body.checkout.endReason).toBe('applied');
+        expect(entries.map((e: any) => e.outcome)).toEqual(['done', 'done']);
+        expect(await readyMessageIds('/', QUEUE)).toEqual([]);
+      } else {
+        expect(approved.body.error.code).toBe('not_awaiting_approval');
+        expect(ended.body.checkout.endReason).toBe('operator');
+        expect(entries).toEqual([]);
+        expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-0`, `${QUEUE}-1`]);
+      }
+    });
+  });
+
   it('needs no Approval for a Checkout whose Decisions are all Keep', async () => {
     await seedMessages('/', QUEUE, 1);
     const requester = await signedIn(rita);
@@ -252,5 +417,55 @@ describe('Approval', () => {
     expect(await readyMessageIds('/', QUEUE)).toEqual([]);
     const [entry] = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
     expect(entry).toMatchObject({ operatorId: 'rita-sub', approverId: null, approverName: null });
+  });
+});
+
+describe('Approval and the time limit', () => {
+  let app: TestApp;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    await withChannel('/', (ch) => ch.assertQueue(QUEUE, { durable: true }));
+    const port = await closedPort();
+    baseUrl = `http://127.0.0.1:${port}`;
+    app = await startApp({
+      profiles: [testProfile({ name: 'prod', protected: true, roles: { operator: ['oncall'] } })],
+      port,
+      env: teamModeEnv(baseUrl),
+      checkoutTiming: { timeLimitMs: 4_000, heartbeatWindowMs: 60_000 },
+    });
+  });
+  afterAll(async () => {
+    await app?.close();
+    await purgeQueues('/', [QUEUE]);
+    await withChannel('/', (ch) => ch.deleteQueue(QUEUE));
+  });
+
+  it('cancels a waiting request when the Checkout reaches its time limit', async () => {
+    await seedMessages('/', QUEUE, 1);
+    const requester = new TestBrowser(baseUrl);
+    await requester.signIn(rita);
+    const approver = new TestBrowser(baseUrl);
+    await approver.signIn(alan);
+    const started = await requester.post(checkoutPath('prod'));
+    const { id, messages } = started.body.checkout;
+    await requester.post(`/api/checkouts/${id}/decisions`, { handles: [messages[0].handle], decision: DISCARD });
+    const requested = await requester.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName: QUEUE });
+    expect(requested.body.checkout.status).toBe('awaiting_approval');
+    // The waiting screen and the approvers' list both show the time left.
+    expect(requested.body.checkout.remainingMs).toBeGreaterThan(0);
+    expect((await approver.get('/api/approvals')).body.approvals[0].remainingMs).toBeGreaterThan(0);
+
+    const ended = await eventually(async () => {
+      const res = await requester.get(`/api/checkouts/${id}`);
+      expect(res.body.checkout.status).toBe('ended');
+      return res.body.checkout;
+    }, 10_000);
+    expect([ended.endReason, ended.approvalRequest]).toEqual(['time-limit', null]);
+    expect((await approver.get('/api/approvals')).body.approvals).toEqual([]);
+    const late = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
+    expect([late.status, late.body.error.code]).toEqual([409, 'not_awaiting_approval']);
+    expect(late.body.error.message).toMatch(/reached its time limit, which cancelled the request/);
+    expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-0`]);
   });
 });
