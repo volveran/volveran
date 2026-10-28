@@ -180,7 +180,7 @@ const MIGRATIONS: string[] = [
   // v5 (#45): the Operator who approved the Apply; null when it needed no Approval.
   `ALTER TABLE audit_entries ADD COLUMN approver_id TEXT;
    ALTER TABLE audit_entries ADD COLUMN approver_name TEXT;`,
-  // v5 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
+  // v6 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
   `ALTER TABLE audit_entries ADD COLUMN filter TEXT;
    ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
 ];

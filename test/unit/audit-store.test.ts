@@ -157,8 +157,9 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 3 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
-             ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+    // Newest first: v6 (#44 export), v5 (#45 approver), v4 (#38 role).
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+             ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
              VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);
@@ -168,7 +169,14 @@ describe('AuditStore', () => {
 
     const id = store.record(entry({ role: 'operator' }));
     expect(store.get(id)?.role).toBe('operator');
-    expect(store.list()[1]).toMatchObject({ queue: 'orders.dlq', role: null, approverId: null, approverName: null });
+    expect(store.list()[1]).toMatchObject({
+      queue: 'orders.dlq',
+      role: null,
+      approverId: null,
+      approverName: null,
+      filter: null,
+      messageCount: null,
+    });
   });
 
   it('records who approved an Apply, and no one when it needed no Approval', () => {
@@ -184,11 +192,12 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 1 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
+    // Newest first: v6 (#44), v5 (#45), then v3 (#10), v2 (#8) and v4 (#38) as before.
     db.exec(`ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+             ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;
              ALTER TABLE audit_entries DROP COLUMN restore_of; ALTER TABLE audit_entries DROP COLUMN body_expired_at;
              DROP INDEX audit_entries_replay_id; ALTER TABLE audit_entries DROP COLUMN replay_id;
-             ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 1;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
              VALUES (0, 'sub-1', 'ana', 'volveran-admin', 'local', '/', 'orders.dlq', 'replay', 'done')`);
@@ -199,8 +208,16 @@ describe('AuditStore', () => {
     expect(store.list()).toEqual([expect.objectContaining({ queue: 'orders.dlq', action: 'replay', replayId: null })]);
     const id = store.record(entry({ action: 'move', reason: null, replayId: 'r-9' }));
     expect(store.list({ replayId: 'r-9' }).map((e) => e.id)).toEqual([id]);
-    // Versions 3 (#10) and 4 (#44) came along too.
-    expect(store.list()[1]).toMatchObject({ restoreOf: null, bodyExpiredAt: null, filter: null, messageCount: null });
+    // Versions 3 (#10), 4 (#38), 5 (#45) and 6 (#44) came along too.
+    expect(store.list()[1]).toMatchObject({
+      restoreOf: null,
+      bodyExpiredAt: null,
+      role: null,
+      approverId: null,
+      approverName: null,
+      filter: null,
+      messageCount: null,
+    });
   });
 
   it('records an export with its filter and Message count, and no Message copy', () => {
