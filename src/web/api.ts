@@ -13,6 +13,8 @@ export type { AuditAction, AuditOutcome } from '../shared/audit.js';
 export type {
   ApplyProgress,
   ApprovalSummary,
+  CanaryConfirmation,
+  CanaryView,
   CheckoutHolder,
   DeliveryBudget,
   DiedAgain,
@@ -35,6 +37,8 @@ export type {
   SetupWarningSeverity,
 } from '../shared/queues.js';
 export type Checkout = CheckoutView;
+/** The `canary` of an Apply request: the first Replay, or the Message with this handle. */
+export type CanaryChoice = true | { handle: number };
 export type Profile = ProfileSummary;
 export type Queue = QueueRow;
 export type AuditEntry = AuditEntryJson;
@@ -201,13 +205,18 @@ export const api = {
    * its `lastApply` the outcome per Message once it has ended the Checkout.
    * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
    * `rate` is the Replay Rate in Messages per second; left out, the profile's default applies.
+   * `canary` starts with a Canary: true for the first Replay, or `{ handle }`.
    */
-  apply: (id: string, confirmQueueName?: string, rate?: number) =>
+  apply: (id: string, confirmQueueName?: string, rate?: number, canary?: CanaryChoice) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
       ...(rate !== undefined && { rate }),
+      ...(canary !== undefined && { canary }),
     }).then((b) => b.checkout),
+  /** Lets the Apply waiting after its Canary carry out the rest; returns the Checkout. */
+  continueApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
   /** Stops the running Apply: the step in progress finishes, the rest goes back to the queue. Returns the Checkout. */
   stopApply: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),

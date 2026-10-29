@@ -38,6 +38,14 @@ _Avoid_: Commit, execute, submit
 The most Messages per second an Apply publishes: its Replay and Move steps start at least 1/rate apart, while Discards are not slowed down. A Broker Profile can set a default and a maximum; without a rate an Apply runs as fast as the broker confirms.
 _Avoid_: Throttle, speed, QPS
 
+**Canary**:
+The one Replay an Apply carries out alone before the rest, watched for the Watch Window. The Operator then continues with the rest or stops, and everything left falls back to Keep.
+_Avoid_: Test Message, probe, pilot
+
+**Watch Window**:
+How long Volverán watches the dead-letter queue for a Canary that dies again. Set per Broker Profile.
+_Avoid_: Timeout, grace period
+
 **Message**:
 A single RabbitMQ message, identified to the user by its `message_id`.
 _Avoid_: Event, item, record

@@ -14,12 +14,17 @@
 // steps take at the rate. Empty runs unthrottled, unless the profile sets a
 // maximum; the server checks the rate too.
 //
+// With any Replay (and no Approval needed), the Apply can start with a
+// Canary: the first Replay by default, or a Message picked from the
+// Replays. The confirmation shows the Watch Window and says beforehand when
+// that Canary cannot be watched.
+//
 // The confirmation is a Prompt (keyboard.tsx): opening it focuses the typed
 // queue name, or else Cancel, so no key press confirms it; Escape closes it
 // and gives the focus back to "Apply…". The Checkout view says whether it is
 // open, so its shortcuts pause meanwhile.
 import { useState } from 'react';
-import type { DecisionSummaryLine } from './api.js';
+import type { CanaryChoice, CanaryConfirmation, DecisionSummaryLine } from './api.js';
 import { decisionLabel } from '../shared/decisions.js';
 import type { CheckoutQueueType } from '../shared/checkout.js';
 import { MAX_REPLAY_RATE, MIN_REPLAY_RATE, pacedDurationMs } from '../shared/replay-rate.js';
@@ -38,9 +43,13 @@ interface ConfirmationProps {
   replayRate: { default: number | null; max: number | null };
   summary: DecisionSummaryLine[];
   summaryText: string;
+  /** The Messages that may be the Canary, and the Watch Window. */
+  canary: CanaryConfirmation;
+  /** The message id shown for a Message handle, for the Canary pick. */
+  messageLabel(handle: number): string;
   busy: boolean;
-  /** `rate`: the Replay Rate chosen; left out when the field is empty (unthrottled). */
-  onApply: (confirmQueueName?: string, rate?: number) => void;
+  /** `rate`: the Replay Rate chosen; left out when the field is empty (unthrottled). `canary`: left out for none. */
+  onApply: (confirmQueueName?: string, rate?: number, canary?: CanaryChoice) => void;
 }
 
 export function ApplyPanel({
@@ -69,11 +78,18 @@ function ApplyConfirmation({
   replayRate,
   summary,
   summaryText,
+  canary,
+  messageLabel,
   busy,
   onApply,
   onClose,
 }: ConfirmationProps & { onClose(): void }) {
   const [typed, setTyped] = useState('');
+  const [withCanary, setWithCanary] = useState(false);
+  const [canaryPick, setCanaryPick] = useState<number | null>(null);
+  // Approval with a Canary comes later; for now only an Apply without Approval offers one.
+  const offerCanary = !approvalRequired && canary.candidates.length > 0;
+  const pickedCandidate = canary.candidates.find((c) => c.handle === canaryPick) ?? canary.candidates[0];
   const [rateInput, setRateInput] = useState(replayRate.default === null ? '' : String(replayRate.default));
   const count = (kind: DecisionSummaryLine['kind']) =>
     summary.filter((l) => l.kind === kind).reduce((n, l) => n + l.count, 0);
@@ -146,6 +162,37 @@ function ApplyConfirmation({
             </small>
           </label>
         )}
+        {offerCanary && (
+          <div className="canary-choice">
+            <label>
+              <input type="checkbox" checked={withCanary} onChange={(e) => setWithCanary(e.target.checked)} /> Start with a
+              Canary: Replay one Message alone, watch for {formatCountdown(canary.watchWindowMs)} whether it is
+              dead-lettered here again, then continue or stop
+            </label>
+            {withCanary && (
+              <>
+                <label>
+                  <span>Canary</span>{' '}
+                  <select
+                    aria-label="Canary"
+                    value={pickedCandidate?.handle ?? ''}
+                    onChange={(e) => setCanaryPick(Number(e.target.value))}
+                  >
+                    {canary.candidates.map((c, i) => (
+                      <option key={c.handle} value={c.handle}>
+                        {messageLabel(c.handle)}
+                        {i === 0 ? ' (first Replay)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {pickedCandidate && !pickedCandidate.watch.watchable && (
+                  <small className="rate-problem">Unwatched: {pickedCandidate.watch.reason}</small>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {typeQueueName && (
           <label className="type-queue-name">
             <span>
@@ -168,7 +215,13 @@ function ApplyConfirmation({
             onClick={() => {
               const confirmQueueName = typeQueueName ? typed : undefined;
               onClose();
-              onApply(confirmQueueName, askRate && rate !== null ? rate : undefined);
+              const choice: CanaryChoice | undefined =
+                offerCanary && withCanary
+                  ? canaryPick === null || pickedCandidate?.handle === canary.candidates[0]?.handle
+                    ? true
+                    : { handle: canaryPick }
+                  : undefined;
+              onApply(confirmQueueName, askRate && rate !== null ? rate : undefined, choice);
             }}
           >
             {approvalRequired ? 'Request Approval' : 'Confirm Apply'}

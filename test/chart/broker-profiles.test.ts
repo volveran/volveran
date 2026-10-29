@@ -60,6 +60,14 @@ describe('Broker Profiles', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { min: 1 } }] } })).toMatch(/replayRate/);
   });
 
+  it('accepts canary with a watchWindow, writes it into profiles.yaml, and refuses one out of range or an unknown key', () => {
+    const canary = { watchWindow: 45 };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, canary }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, canary }] });
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { watchWindow: 2 } }] } })).toMatch(/watchWindow/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { window: 30 } }] } })).toMatch(/canary/);
+  });
+
   it("accepts credentials: operatorToken with tokenUsernameClaim and no username or passwordEnv, and writes them into profiles.yaml", () => {
     const { username: _u, passwordEnv: _p, ...rest } = prod;
     const tokenProfile = { ...rest, credentials: 'operatorToken', tokenUsernameClaim: 'preferred_username' };
