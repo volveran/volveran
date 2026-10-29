@@ -8,7 +8,9 @@
 // it runs the page polls the Checkout and shows its progress (with Stop,
 // after a confirmation), then what happened to each Message. The keyboard moves through the Messages (the
 // Message view follows), builds the Selection and assigns Decisions; the
-// keys are mapped to commands in keyboard-commands.ts.
+// keys are mapped to commands in keyboard-commands.ts. With exactly two
+// Messages selected, Compare (or `c`) shows them side by side in place of the
+// list, with Decision buttons for each.
 //
 // When the Apply needs Approval (Team Mode, a Protected Profile), the Apply
 // confirmation requests it instead; the Checkout then waits, its Decisions
@@ -33,6 +35,7 @@ import {
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
 import { ApplyProgressPanel } from './ApplyProgress.js';
+import { ComparisonView } from './ComparisonView.js';
 import { formatCountdown } from './countdown.js';
 import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { FilterBar } from './FilterBar.js';
@@ -68,6 +71,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   /** The Move destination picker's choices; a string says why they could not be loaded. */
   const [destinations, setDestinations] = useState<MoveDestinations | string>();
   const [prompt, setPrompt] = useState<OpenPrompt | null>(null);
+  /** The two Messages being compared, in Checkout order; null when the list shows. */
+  const [comparing, setComparing] = useState<readonly [number, number] | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const profile = checkout?.profile;
@@ -258,6 +263,12 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   /** The Messages the list shows: all of them, or those matching the filter. */
   const shown = checkout ? (matched ? checkout.messages.filter((m) => matched.has(m.handle)) : checkout.messages) : [];
 
+  /** Compares the two selected Messages. */
+  const compare = () => {
+    const pair = (checkout?.messages ?? []).filter((m) => selection.has(m.handle)).map((m) => m.handle);
+    if (pair.length === 2) setComparing([pair[0]!, pair[1]!]);
+  };
+
   const run = (command: KeyboardCommand) => {
     switch (command.kind) {
       case 'move': {
@@ -289,7 +300,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       case 'clear-selection':
         return setSelection(new Set());
       case 'close-prompt':
-        return setPrompt(null);
+        return prompt ? setPrompt(null) : setComparing(null);
+      case 'compare':
+        return compare();
       case 'show-shortcuts':
         return setPrompt({ kind: 'shortcuts' });
       case 'start-checkout':
@@ -300,7 +313,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     active && !hidden,
     {
       view: 'checkout',
-      prompt: prompt !== null,
+      // The comparison takes the keys like a prompt: Escape closes it.
+      prompt: prompt !== null || comparing !== null,
       selection: selection.size,
       // A Message the filter hides is not focused.
       focusedItem: shown.some((m) => m.handle === focused),
@@ -429,6 +443,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             onPrompt={(kind) => setPrompt({ kind, handles: [...selection] })}
             onDecide={(decision) => void decide(decision)}
             onClearSelection={() => setSelection(new Set())}
+            onCompare={compare}
           />
           {(prompt?.kind === 'discard' || prompt?.kind === 'move') && (
             <DecisionPrompt
@@ -487,7 +502,25 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
         </p>
       )}
 
-      {live && (
+      {live && comparing && (
+        <ComparisonView
+          source="checkout"
+          id={checkout.id}
+          handles={comparing}
+          rows={checkout.messages}
+          actions={
+            active
+              ? {
+                  busy,
+                  onPrompt: (kind, handle) => setPrompt({ kind, handles: [handle] }),
+                  onDecide: (decision, handle) => void decide(decision, [handle]),
+                }
+              : undefined
+          }
+          onClose={() => setComparing(null)}
+        />
+      )}
+      {live && !comparing && (
         <div className="checkout-body">
           <MessageList
             listRef={listRef}

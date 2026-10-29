@@ -29,7 +29,7 @@ function messageLabel(m: MessageRow): string {
  * The held Messages as a listbox: the list keeps the DOM focus and the
  * focused Message is its active descendant; a Message in the Selection is
  * aria-selected. The table inside only lays the rows out. Without
- * `onSelection` (an approver's read-only view) there is no Selection.
+ * `onSelection` there is no Selection (an approver ticks Messages only to compare them).
  */
 export function MessageList(props: {
   listRef?: Ref<HTMLDivElement>;
