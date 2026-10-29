@@ -2,11 +2,12 @@
 import { HttpError } from '../http-error.js';
 
 /** A missing typed queue name on a Protected Profile is a TypedConfirmationError (protected-profile.ts), shared with Restore. */
-export type ApplyErrorCode = 'confirmation_required' | 'rate_above_maximum';
+export type ApplyErrorCode = 'confirmation_required' | 'rate_above_maximum' | 'canary_needs_replay';
 
 const STATUS: Record<ApplyErrorCode, number> = {
   confirmation_required: 400,
   rate_above_maximum: 400,
+  canary_needs_replay: 400,
 };
 
 export class ApplyError extends HttpError<ApplyErrorCode> {
@@ -23,5 +24,13 @@ export function rateAboveMaximum(profile: string, max: number, requested: number
     'rate_above_maximum',
     `${asked} above the maximum Replay Rate of Broker Profile "${profile}": ${max} Messages per second. Choose a rate of at most ${max}.`,
     { max },
+  );
+}
+
+/** A Canary was asked for, but no Message of the Apply has the Decision Replay. */
+export function canaryNeedsReplay(): ApplyError {
+  return new ApplyError(
+    'canary_needs_replay',
+    'A Canary is one Replay carried out alone before the rest, but this Apply has no Message with the Decision Replay. Leave out "canary", or give a Message the Decision Replay.',
   );
 }

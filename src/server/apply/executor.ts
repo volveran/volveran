@@ -8,6 +8,10 @@
 // reason given. A step in progress always finishes. Each step's outcome is
 // reported as it settles (`onStep`), for the Apply's progress.
 //
+// With a Canary, its step is carried out first and alone: the executor waits
+// for the Canary's hooks (checkout/canary.ts) to let it go on, then asks
+// whether to go on as before every step, and carries out the rest in order.
+//
 // With a Replay Rate, Replay and Move steps start at least 1/rate apart
 // (pacing.ts); Discards are not paced. The wait comes between steps, before
 // asking whether to go on, and a stop (`stopSignal`) cuts it short.
@@ -48,6 +52,14 @@ export interface ApplyRun {
   onDone(handle: number): void;
   /** Test seam: awaited after a step's `pending` Audit Entry is written, before the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
+  /** The Canary (a Replay step of the plan), carried out first and alone; its Audit Entry is marked as the Canary. */
+  canary?: {
+    handle: number;
+    /** Awaited after the Canary's `pending` Audit Entry is written, before it is published with `replayId`. */
+    beforePublish(entryId: number, replayId: string | null): Promise<void>;
+    /** Awaited once the Canary's step was attempted and settled; the rest waits until it resolves. */
+    afterStep(outcome: MessageOutcome): Promise<void>;
+  };
 }
 
 /** Runs the plan; returns one outcome per Message of the plan, in Checkout order. */
@@ -69,7 +81,12 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
 
   for (const handle of plan.kept) outcome(handle, { kind: 'keep' }, 'kept');
 
-  for (const { handle, decision } of plan.steps) {
+  const canary = run.canary;
+  const steps = canary
+    ? [...plan.steps.filter((s) => s.handle === canary.handle), ...plan.steps.filter((s) => s.handle !== canary.handle)]
+    : plan.steps;
+  for (const { handle, decision } of steps) {
+    const isCanary = handle === canary?.handle;
     const message = messages.get(handle);
     const handler = handlerFor(decision);
     if (!handler) {
@@ -110,6 +127,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         rate,
         rule: target.rule?.name ?? null,
         rulePassId: target.rule?.passId ?? null,
+        canary: isCanary,
         message: {
           body: details.copy === 'full' ? message.content : null,
           properties: propertiesWithoutHeaders(message),
@@ -125,6 +143,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     // The broker may or may not have carried the step out; a Restore must not assume either.
     let uncertain = false;
     try {
+      if (isCanary) await canary.beforePublish(entryId, details.replayId);
       await run.beforeStep?.(entryId);
       result = await handler.execute(decision, message, ctx, details);
     } catch (err) {
@@ -138,6 +157,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       // The entry stays `pending`; the outcome below is still reported.
     }
     outcome(handle, decision, result.status, result.status === 'failed' ? result.reason : null);
+    if (isCanary) await canary.afterStep(outcomes.get(handle)!);
   }
 
   return [...messages.keys()].flatMap((handle) => {

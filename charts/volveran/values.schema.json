@@ -633,6 +633,18 @@
             }
           }
         },
+        "canary": {
+          "description": "Canary Replay: watchWindow, how long a Canary is watched for dying again, a duration from 5s to 10m (default 30s); Volverán checks the range at startup.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "watchWindow": {
+              "type": "string",
+              "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+              "minLength": 2
+            }
+          }
+        },
         "roles": {
           "description": "Team Mode: the OIDC groups holding each Role on this profile. Without it, every signed-in Operator is admin.",
           "type": "object",

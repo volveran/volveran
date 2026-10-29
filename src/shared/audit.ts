@@ -19,6 +19,9 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
  */
 export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
 
+/** How the watch of an Apply's Canary ended (CanaryStatus without `watching`). */
+export type AuditCanaryOutcome = 'died_again' | 'not_dead_lettered' | 'unwatched' | 'failed';
+
 /** Where a Replay, Move or Restore published the Message. */
 export interface AuditDestination {
   exchange: string;
@@ -68,6 +71,10 @@ export interface AuditEntryJson {
   rule: string | null;
   /** The Rule Pass that wrote the entry; null when no rule did. */
   rulePassId: string | null;
+  /** The Replay an Apply carried out alone as its Canary, before the rest. */
+  canary: boolean;
+  /** The Canary's watch outcome; null for other entries, and while it is watched. */
+  canaryOutcome: AuditCanaryOutcome | null;
   /** The Message acted on; null for an export, which keeps no copy. */
   message: {
     properties: Record<string, unknown>;

@@ -144,6 +144,7 @@ describe('Apply with Discard', () => {
         startedAt: expect.any(String),
         estimatedEndAt: expect.any(String),
         stoppedBy: null,
+        phase: 'running',
       });
       expect(Date.parse(during.applyProgress.estimatedEndAt)).toBeGreaterThanOrEqual(
         Date.parse(during.applyProgress.startedAt),

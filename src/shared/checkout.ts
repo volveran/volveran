@@ -217,6 +217,50 @@ export interface ApplyProgress {
   estimatedEndAt: string | null;
   /** The Operator who stopped the Apply (display name); null unless one did. */
   stoppedBy: string | null;
+  /**
+   * running: carrying out steps. canary_watch: the Canary is out and watched
+   * for the Watch Window. canary_done: the watch is over; the Apply waits for
+   * the Operator to continue or stop.
+   */
+  phase: ApplyPhase;
+}
+
+export type ApplyPhase = 'running' | 'canary_watch' | 'canary_done';
+
+/**
+ * watching: the Watch Window runs. died_again: a copy of the Canary was
+ * dead-lettered again. not_dead_lettered: none was while it was watched.
+ * unwatched: it could not be watched (`watchProblem` says why), so only the
+ * Replay's outcome is known. failed: the Canary's Replay failed.
+ */
+export type CanaryStatus = 'watching' | 'died_again' | 'not_dead_lettered' | 'unwatched' | 'failed';
+
+/** The Canary of a Checkout's Apply, from the moment its Replay starts. */
+export interface CanaryView {
+  handle: number;
+  messageId: string | null;
+  /** The Audit Entry of the Canary's Replay. */
+  auditEntryId: number;
+  status: CanaryStatus;
+  /** When the watch ends, or ended (earlier when the Operator continued or stopped first); null until it starts. */
+  watchEndsAt: string | null;
+  /** The new dead-letter reason of a Canary that died again (or the framework's exception); null otherwise. */
+  deadLetterReason: string | null;
+  /** The Failure Details of the copy that died again, when a framework wrote any. */
+  failureDetails: FailureDetails | null;
+  /** Why the Canary is unwatched, or why its Replay failed; null otherwise. */
+  watchProblem: string | null;
+}
+
+/** Whether a held Message could be watched as the Canary, and if not why. */
+export type CanaryWatchability = { watchable: true } | { watchable: false; reason: string };
+
+/** What the Apply confirmation shows for a Canary. */
+export interface CanaryConfirmation {
+  /** The Broker Profile's Watch Window. */
+  watchWindowMs: number;
+  /** The Messages that may be the Canary (Decision Replay), in Checkout order: the first is the default. */
+  candidates: Array<{ handle: number; watch: CanaryWatchability }>;
 }
 
 /** The confirmation an Apply needs beyond the single confirmation. */
@@ -237,6 +281,8 @@ export interface ApplyConfirmation {
    * profile's default; null when unthrottled.
    */
   estimatedDurationMs: number | null;
+  /** The Canary the Apply may start with (`canary` in the Apply body). */
+  canary: CanaryConfirmation;
 }
 
 /** A pending request for Approval of a Checkout's Apply. */
@@ -333,4 +379,6 @@ export interface CheckoutView {
   applyProgress: ApplyProgress | null;
   /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
   lastApply: AppliedResult | null;
+  /** The Canary of the Checkout's Apply, from the moment its Replay starts; null without one. */
+  canary: CanaryView | null;
 }

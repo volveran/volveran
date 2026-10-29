@@ -10,6 +10,14 @@ import { useEffect, useState } from 'react';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import { api, ApiError, type AuditAction, type AuditEntry, type AuditSearch, type AuditStoreUsage, type Profile } from './api.js';
 
+/** How a Canary's watch ended, as the Audit view says it. */
+const CANARY_OUTCOMES: Record<NonNullable<AuditEntry['canaryOutcome']>, string> = {
+  died_again: 'died again',
+  not_dead_lettered: 'not dead-lettered',
+  unwatched: 'unwatched',
+  failed: 'failed',
+};
+
 const ACTION_LABELS: Record<AuditAction, string> = {
   discard: 'Discard',
   replay: 'Replay',
@@ -252,6 +260,11 @@ function EntryRow({
         {entry.restoreOf !== null && <small className="muted"> of #{entry.restoreOf}</small>}
         {entry.reason && <small className="muted"> ({entry.reason})</small>}
         {entry.rate !== null && <small className="muted"> at {entry.rate} Messages/s</small>}
+        {entry.canary && (
+          <span className="badge canary-badge" title="Replayed alone before the rest of its Apply, and watched">
+            Canary{entry.canaryOutcome ? `: ${CANARY_OUTCOMES[entry.canaryOutcome]}` : ''}
+          </span>
+        )}
         {entry.messageCount !== null && (
           <small className="muted" title={entry.filter ? `Filter: ${JSON.stringify(entry.filter)}` : undefined}>
             {' '}

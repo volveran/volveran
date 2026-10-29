@@ -46,6 +46,8 @@ export interface ProfileFixture {
   replayRate?: { default?: unknown; max?: unknown };
   /** Replay Rules, as written in the profiles file. */
   replayRules?: Array<Record<string, unknown>>;
+  /** Canary Replay: the Watch Window, a duration such as `30s`. */
+  canary?: { watchWindow?: unknown };
 }
 
 /**

@@ -46,6 +46,14 @@ _Avoid_: Policy (reserved for RabbitMQ policies), automation, job, retry rule
 One run of a Replay Rule: a short Checkout taken as the rule, the Replays of the matching Messages that are due, at the rule's Replay Rate, and its end, which Keeps the rest.
 _Avoid_: Tick, cycle, run
 
+**Canary**:
+The one Replay an Apply carries out alone before the rest, watched for the Watch Window. The Operator then continues with the rest or stops, and everything left falls back to Keep.
+_Avoid_: Test Message, probe, pilot
+
+**Watch Window**:
+How long Volverán watches the dead-letter queue for a Canary that dies again. Set per Broker Profile.
+_Avoid_: Timeout, grace period
+
 **Message**:
 A single RabbitMQ message, identified to the user by its `message_id`.
 _Avoid_: Event, item, record
