@@ -108,6 +108,8 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         checkoutId: target.checkoutId,
         replayId: details.replayId,
         rate,
+        rule: target.rule?.name ?? null,
+        rulePassId: target.rule?.passId ?? null,
         message: {
           body: details.copy === 'full' ? message.content : null,
           properties: propertiesWithoutHeaders(message),

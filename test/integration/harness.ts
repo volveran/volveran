@@ -42,6 +42,8 @@ export interface ProfileFixture {
   roles?: Partial<Record<'viewer' | 'operator' | 'admin', unknown>>;
   /** The default and maximum Replay Rate, in Messages per second. */
   replayRate?: { default?: unknown; max?: unknown };
+  /** Replay Rules, as written in the profiles file. */
+  replayRules?: Array<Record<string, unknown>>;
 }
 
 /**

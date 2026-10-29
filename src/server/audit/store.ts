@@ -69,13 +69,26 @@ export interface NewAuditEntry {
   messageCount?: number | null;
   /** An Apply: its Replay Rate in Messages per second; null (or left out) when unthrottled, and for the other actions. */
   rate?: number | null;
+  /** A Rule Pass: the Replay Rule acting (its name; the Operator is the rule) and the pass; null (or left out) otherwise. */
+  rule?: string | null;
+  rulePassId?: string | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
 export interface AuditEntry
   extends Omit<
     NewAuditEntry,
-    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount' | 'rate'
+    | 'operator'
+    | 'role'
+    | 'approver'
+    | 'message'
+    | 'replayId'
+    | 'restoreOf'
+    | 'filter'
+    | 'messageCount'
+    | 'rate'
+    | 'rule'
+    | 'rulePassId'
   > {
   id: number;
   /** The Operator's Role when they acted; null on entries written before v0.3. */
@@ -89,6 +102,9 @@ export interface AuditEntry
   messageCount: number | null;
   /** The Replay Rate of the Apply that wrote the entry; null when unthrottled (and on entries before v0.4). */
   rate: number | null;
+  /** The Replay Rule whose pass wrote the entry (its name), and the pass's id; null for an Operator's actions (and before v0.4). */
+  rule: string | null;
+  rulePassId: string | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
   operatorId: string;
@@ -123,6 +139,8 @@ export interface AuditQuery {
   profiles?: ProfileScope;
   /** Restores of this Audit Entry. */
   restoreOf?: number;
+  /** The entries a Replay Rule of this name wrote (combine with `profile` for one profile's rule). */
+  rule?: string;
   /** Entries at or after this time. */
   from?: Date;
   /** Entries at or before this time. */
@@ -192,6 +210,10 @@ const MIGRATIONS: string[] = [
    ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
   // v7 (#56): every entry an Apply writes records its Replay Rate (Messages per second; null when unthrottled).
   `ALTER TABLE audit_entries ADD COLUMN rate REAL;`,
+  // v8 (#63): the Replay Rule (name) and Rule Pass that wrote the entry; null for an Operator's actions.
+  `ALTER TABLE audit_entries ADD COLUMN rule TEXT;
+   ALTER TABLE audit_entries ADD COLUMN rule_pass_id TEXT;
+   CREATE INDEX audit_entries_rule ON audit_entries (rule);`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -221,8 +243,8 @@ export class AuditStore {
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
              outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
              approver_id, approver_name,
-             filter, message_count, rate)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             filter, message_count, rate, rule, rule_pass_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -250,6 +272,8 @@ export class AuditStore {
           entry.filter ? JSON.stringify(entry.filter) : null,
           entry.messageCount ?? null,
           entry.rate ?? null,
+          entry.rule ?? null,
+          entry.rulePassId ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -289,6 +313,7 @@ export class AuditStore {
     }
     if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
     if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
+    if (query.rule !== undefined) match('rule = ?', query.rule);
     if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
     if (query.to !== undefined) match('created_at <= ?', query.to.getTime());
     let sql = 'SELECT * FROM audit_entries';
@@ -413,6 +438,8 @@ interface Row {
   filter: string | null;
   message_count: number | null;
   rate: number | null;
+  rule: string | null;
+  rule_pass_id: string | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -448,6 +475,8 @@ function toEntry(row: Row): AuditEntry {
     filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
     messageCount: row.message_count,
     rate: row.rate,
+    rule: row.rule,
+    rulePassId: row.rule_pass_id,
     message:
       row.message_properties === null
         ? null

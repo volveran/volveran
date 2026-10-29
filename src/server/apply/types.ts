@@ -25,6 +25,14 @@ export interface ApplyTarget extends QueueRef {
   brokerUser: string;
   /** The second Operator who approved this Apply (Protected Profile, Team Mode); null when it needed no Approval. */
   approver: Pick<Operator, 'id' | 'displayName'> | null;
+  /** A Rule Pass: the Replay Rule acting and the pass, recorded in each Audit Entry; null for an Operator's Apply. */
+  rule: RuleActing | null;
+}
+
+/** The Replay Rule a Rule Pass Applies for (its name), and the pass's id. */
+export interface RuleActing {
+  name: string;
+  passId: string;
 }
 
 /** The outcome of one publish: ok only when confirmed without a preceding basic.return. */
