@@ -174,7 +174,7 @@ function asTime(v: unknown): string | null {
 }
 
 /** The Message view, but for `diedAgain`, which needs the audit store (the Checkout manager adds it). */
-export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): Omit<MessageDetail, 'diedAgain'> {
+export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): Omit<MessageDetail, 'diedAgain' | 'rule'> {
   const { headers, ...props } = d.properties;
   const properties: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {

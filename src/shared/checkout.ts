@@ -3,6 +3,7 @@
 // and the web app.
 import type { AuditAction } from './audit.js';
 import type { Decision, DecisionSummaryLine } from './decisions.js';
+import type { RuleBadge } from './replay-rules.js';
 
 /** The queue types a Checkout can hold Messages from. */
 export type CheckoutQueueType = 'classic' | 'quorum';
@@ -125,6 +126,8 @@ export interface MessageDetail extends MessageSummary {
   body: RenderedBody;
   /** Null unless the Message is Died Again. */
   diedAgain: DiedAgain | null;
+  /** The running Replay Rule of the profile that covers the queue and matches the Message; null when none. */
+  rule: RuleBadge | null;
 }
 
 /** Whether a Message can be given Replay; when not, why (shown to the Operator). */
@@ -162,6 +165,8 @@ export interface MessageRow extends MessageSummary {
   replay: ReplayAvailability;
   /** Null unless the Message is Died Again. */
   diedAgain: DiedAgain | null;
+  /** The running Replay Rule of the profile that covers the queue and matches the Message; null when none. */
+  rule: RuleBadge | null;
 }
 
 /**

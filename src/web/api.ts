@@ -26,7 +26,7 @@ export type {
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
-export type { ReplayRule, ReplayRuleView, RulePass, RulePassSummary } from '../shared/replay-rules.js';
+export type { ReplayRule, ReplayRuleView, RuleBadge, RulePass, RulePassSummary, RuleState } from '../shared/replay-rules.js';
 export type {
   CheckoutAvailability,
   MoveDestinations,

@@ -5,7 +5,7 @@ import { Fragment, useEffect, type Ref } from 'react';
 import { decisionLabel } from '../shared/decisions.js';
 import { formatBytes } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
-import type { DiedAgain, FailureDetails, MessageDetail, MessageRow } from './api.js';
+import type { DiedAgain, FailureDetails, MessageDetail, MessageRow, RuleBadge } from './api.js';
 import { DecisionBadge } from './decisions.js';
 
 const optionId = (handle: number) => `message-${handle}`;
@@ -20,6 +20,7 @@ function messageLabel(m: MessageRow): string {
     !m.replay.available && 'no Replay',
     m.failureDetails?.reason === 'skip' && 'skipped',
     m.diedAgain && `Died Again ${timesText(m.diedAgain.count)}`,
+    m.rule && ruleText(m.rule),
   ]
     .filter(Boolean)
     .join(', ');
@@ -126,6 +127,7 @@ export function MessageList(props: {
                   )}
                   {m.diedAgain && <DiedAgainBadge diedAgain={m.diedAgain} />}
                   {m.failureDetails?.reason === 'skip' && <SkippedBadge />}
+                  {m.rule && <RuleBadgeView rule={m.rule} />}
                 </td>
                 <td className="name">{m.messageId ?? <em>none</em>}</td>
                 <td>{m.routingKey}</td>
@@ -147,6 +149,34 @@ export function MessageList(props: {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** "Replay rule transient-payments: attempt 1 of 3, next after 10/29/2026, 3:00 AM", or "…: attempts used up". */
+function ruleText(r: RuleBadge): string {
+  if (r.usedUp) return `Replay rule ${r.name}: attempts used up (${r.attempts} of ${r.maxAttempts})`;
+  const next = r.nextAttemptAt ? `, next after ${new Date(r.nextAttemptAt).toLocaleString()}` : '';
+  return `Replay rule ${r.name}: ${r.attempts} of ${r.maxAttempts} attempts used${next}`;
+}
+
+/** A running Replay Rule matches the Message: its attempts, or that it has given up on it. */
+function RuleBadgeView({ rule: r }: { rule: RuleBadge }) {
+  return (
+    <span className={`badge rule${r.usedUp ? ' used-up' : ''}`} title={ruleText(r)}>
+      {r.usedUp ? 'attempts used up' : `rule ${r.attempts}/${r.maxAttempts}`}
+    </span>
+  );
+}
+
+/** The Message view's account of the Replay Rule that matches the Message. */
+function RuleNote({ rule: r }: { rule: RuleBadge }) {
+  return (
+    <div className={r.usedUp ? 'warning rule-note' : 'notice rule-note'}>
+      <p>
+        <RuleBadgeView rule={r} /> {ruleText(r)}.
+        {r.usedUp && ' The rule has given up on this Message: it needs a person.'}
+      </p>
     </div>
   );
 }
@@ -265,6 +295,7 @@ export function MessageDetailView({ message: m }: { message: MessageDetail }) {
     <div className="message-detail">
       <h3>{m.messageId ?? 'Message without message_id'}</h3>
       {m.diedAgain && <DiedAgainNote diedAgain={m.diedAgain} />}
+      {m.rule && <RuleNote rule={m.rule} />}
       {m.deliveryBudget?.warning && (
         <div className="warning">
           <p>{m.deliveryBudget.warning}</p>

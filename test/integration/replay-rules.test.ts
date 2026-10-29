@@ -105,7 +105,7 @@ describe('Replay rules', () => {
     await app?.close();
   });
 
-  it('lists each rule with its declaration, and no pass before one has run', async () => {
+  it('lists each rule with its declaration, its state, no pass before one has run, and its next pass', async () => {
     const res = await app.get('/api/profiles/local/replay-rules');
     expect(res.status).toBe(200);
     expect(res.body.rules).toEqual([
@@ -124,7 +124,9 @@ describe('Replay rules', () => {
           stopWhen: { diedAgain: 5, withinMs: 900_000 },
           startPaused: false,
         },
-        lastPass: null,
+        state: { paused: false, pausedReason: null, pausedBy: null, pausedAt: null },
+        passes: [],
+        nextPassAt: expect.any(String),
       },
     ]);
     expect((await app.get('/api/profiles/nowhere/replay-rules')).status).toBe(404);
@@ -144,7 +146,8 @@ describe('Replay rules', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.pass).toMatchObject({
-      summary: { held: 5, replayed: 2, usedUp: 1, notDue: 1, noMatch: 1, failed: 0 },
+      status: 'ran',
+      summary: { held: 5, replayed: 2, moved: 0, usedUp: 1, notDue: 1, noMatch: 1, failed: 0 },
     });
     // Kept in order, and on the quorum queue x-delivery-count is unchanged.
     expect(await readyMessages(dlq)).toEqual(before.filter((m) => !m.id.startsWith('due-')));
@@ -155,7 +158,7 @@ describe('Replay rules', () => {
     await app.delete(`/api/checkouts/${after.body.checkout.id}`);
 
     const listed = (await app.get('/api/profiles/local/replay-rules')).body.rules[0];
-    expect(listed.lastPass).toEqual(res.body.pass);
+    expect(listed.passes[0]).toEqual(res.body.pass);
   });
 
   it('records each Replay as an Audit Entry naming the rule, which the rule filter finds', async () => {

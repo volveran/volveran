@@ -176,6 +176,16 @@ main {
   margin-left: 4px;
 }
 
+/* A running Replay Rule matches the Message; used up: it has given up on it. */
+.badge.rule {
+  margin-left: 4px;
+}
+.badge.rule.used-up {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
 /* A MassTransit Message no consumer handled (MT-Reason: skip), not a fault. */
 .badge.skipped {
   background: var(--warning-bg);
@@ -783,4 +793,18 @@ dialog.prompt .confirm {
 }
 .rule-declaration dd {
   margin: 0;
+}
+
+.pass-history {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.pass-history caption {
+  text-align: left;
+  color: var(--muted);
+}
+.pass-history th,
+.pass-history td {
+  padding: 0.15rem 0.6rem 0.15rem 0;
+  text-align: left;
 }
