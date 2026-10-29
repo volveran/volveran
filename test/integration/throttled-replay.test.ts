@@ -141,6 +141,21 @@ describe('Throttled Replay', () => {
     expect(allowed.body.checkout.applyProgress.rate).toBe(5);
   });
 
+  it('runs a Discard-only Apply with no rate when the profile has a maximum but no default: there is nothing to pace', async () => {
+    await seedMessages('/', route.dlq, 2);
+    const { id, handles } = await startCheckout('capped', route.dlq);
+    await decide(id, handles, DISCARD);
+
+    const applied = await applyAndWait(app, `/api/checkouts/${id}/apply`, { confirm: true });
+
+    expect(applied.status).toBe(202);
+    expect(applied.body.checkout.applyProgress.rate).toBeNull();
+    expect((await auditEntries(id)).map((e) => [e.action, e.outcome, e.rate])).toEqual([
+      ['discard', 'done', null],
+      ['discard', 'done', null],
+    ]);
+  });
+
   it('refuses a rate that is not a number from 0.1 to 1,000', async () => {
     await deadLettered(1);
     const { id, handles } = await startCheckout('local', route.dlq);

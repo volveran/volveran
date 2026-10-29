@@ -395,7 +395,7 @@ export class CheckoutManager {
    * Replay and Move steps at that rate would outlast the time left.
    */
   private replayRateFor(checkout: Checkout, requested: unknown): number | null {
-    const resolved = resolveReplayRate(requested, checkout.profile.replayRate);
+    const resolved = resolveReplayRate(requested, checkout.profile.replayRate, { pacedSteps: pacedSteps(checkout) });
     if (!resolved.ok && resolved.problem === 'invalid') {
       throw new InvalidRequestError(
         `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`,

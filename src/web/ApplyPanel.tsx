@@ -11,8 +11,9 @@
 //
 // With any Replay or Move, the confirmation has a Replay Rate field,
 // prefilled with the Broker Profile's default, and shows how long those
-// steps take at the rate. Empty runs unthrottled, unless the profile sets a
-// maximum; the server checks the rate too.
+// steps take at the rate. Empty runs with no Replay Rate, unless the profile
+// sets a maximum; the server checks the rate too. A Discard-only Apply has no
+// rate field: Discards are not paced.
 //
 // With any Replay, the Apply (or the request for Approval) can start with a
 // Canary: the first Replay by default, or a Message picked from the
@@ -96,8 +97,8 @@ function ApplyConfirmation({
     summary.filter((l) => l.kind === kind).reduce((n, l) => n + l.count, 0);
   const typedOk = !typeQueueName || typed === queue;
   const paced = count('replay') + count('move');
-  // A profile with a maximum needs a rate for any Apply (unthrottled is above it).
-  const askRate = paced > 0 || replayRate.max !== null;
+  // Only Replay and Move are paced: a Discard-only Apply needs no rate, even under a maximum.
+  const askRate = paced > 0;
   const rate = rateInput.trim() === '' ? null : Number(rateInput);
   const highest = replayRate.max ?? MAX_REPLAY_RATE;
   const rateProblem =

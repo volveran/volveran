@@ -4,26 +4,34 @@ import { describe, expect, it } from 'vitest';
 import { applyOutlastsCheckout, resolveReplayRate } from '../../src/server/triage/replay-rate.js';
 
 const NONE = { default: null, max: null };
+/** An Apply with Replay or Move steps. */
+const PACED = { pacedSteps: 3 };
 
 describe('resolveReplayRate', () => {
-  it("is the request's rate, or the profile's default when it gives none, or unthrottled", () => {
-    expect(resolveReplayRate(7, NONE)).toEqual({ ok: true, rate: 7 });
-    expect(resolveReplayRate(undefined, NONE)).toEqual({ ok: true, rate: null });
-    expect(resolveReplayRate(null, NONE)).toEqual({ ok: true, rate: null });
-    expect(resolveReplayRate(undefined, { default: 10, max: 20 })).toEqual({ ok: true, rate: 10 });
-    expect(resolveReplayRate(2.5, { default: 10, max: 20 })).toEqual({ ok: true, rate: 2.5 });
+  it("is the request's rate, or the profile's default when it gives none, or none", () => {
+    expect(resolveReplayRate(7, NONE, PACED)).toEqual({ ok: true, rate: 7 });
+    expect(resolveReplayRate(undefined, NONE, PACED)).toEqual({ ok: true, rate: null });
+    expect(resolveReplayRate(null, NONE, PACED)).toEqual({ ok: true, rate: null });
+    expect(resolveReplayRate(undefined, { default: 10, max: 20 }, PACED)).toEqual({ ok: true, rate: 10 });
+    expect(resolveReplayRate(2.5, { default: 10, max: 20 }, PACED)).toEqual({ ok: true, rate: 2.5 });
   });
 
   it('refuses a rate that is not a number from 0.1 to 1,000', () => {
     for (const rate of ['10', 0, 0.09, 1000.5, Number.NaN, true]) {
-      expect(resolveReplayRate(rate, NONE)).toEqual({ ok: false, problem: 'invalid' });
+      expect(resolveReplayRate(rate, NONE, PACED)).toEqual({ ok: false, problem: 'invalid' });
     }
   });
 
   it('refuses a rate above the maximum, and no rate when there is a maximum but no default', () => {
-    expect(resolveReplayRate(21, { default: 10, max: 20 })).toEqual({ ok: false, problem: 'above_maximum', max: 20 });
-    expect(resolveReplayRate(20, { default: 10, max: 20 })).toEqual({ ok: true, rate: 20 });
-    expect(resolveReplayRate(undefined, { default: null, max: 5 })).toEqual({ ok: false, problem: 'above_maximum', max: 5 });
+    expect(resolveReplayRate(21, { default: 10, max: 20 }, PACED)).toEqual({ ok: false, problem: 'above_maximum', max: 20 });
+    expect(resolveReplayRate(20, { default: 10, max: 20 }, PACED)).toEqual({ ok: true, rate: 20 });
+    expect(resolveReplayRate(undefined, { default: null, max: 5 }, PACED)).toEqual({ ok: false, problem: 'above_maximum', max: 5 });
+  });
+
+  it('lets an Apply with no Replay or Move go without a rate when there is a maximum but no default', () => {
+    expect(resolveReplayRate(undefined, { default: null, max: 5 }, { pacedSteps: 0 })).toEqual({ ok: true, rate: null });
+    expect(resolveReplayRate(undefined, { default: null, max: 5 }, { pacedSteps: 1 })).toEqual({ ok: false, problem: 'above_maximum', max: 5 });
+    expect(resolveReplayRate(6, { default: null, max: 5 }, { pacedSteps: 0 })).toEqual({ ok: false, problem: 'above_maximum', max: 5 });
   });
 });
 

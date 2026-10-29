@@ -6,10 +6,10 @@
 //
 // `rate` is the Replay Rate in Messages per second (0.1 to 1,000): Replay and
 // Move steps start at least 1/rate apart. Left out, the Broker Profile's
-// `replayRate.default` applies, else the Apply is unthrottled. 400
+// `replayRate.default` applies, else the Apply runs with no Replay Rate. 400
 // `invalid_request` for another value, 400 `rate_above_maximum` { max } above
 // the profile's `replayRate.max` (or with no rate when it has a maximum but
-// no default), 409 `apply_would_outlast_checkout` { neededMs, remainingMs }
+// no default and the Apply has a Replay or Move step), 409 `apply_would_outlast_checkout` { neededMs, remainingMs }
 // when at that rate it would outlast the Checkout's time left (less a margin).
 //
 // `canary` starts the Apply with a Canary: `true` for the first Message with

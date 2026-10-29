@@ -81,6 +81,7 @@ describe('Approval', () => {
           roles: { operator: ['oncall'] },
           replayRate: { default: 2, max: 10 },
         }),
+        testProfile({ name: 'capped', protected: true, roles: { operator: ['oncall'] }, replayRate: { max: 10 } }),
       ],
       port,
       env: teamModeEnv(baseUrl),
@@ -461,6 +462,25 @@ describe('Approval', () => {
     expect(entries.map((e: any) => [e.approverName, e.rate])).toEqual([
       ['alan@example.com', 4],
       ['alan@example.com', 4],
+    ]);
+  });
+
+  it('takes a request for a Discard-only Apply with no rate on a profile with a maximum but no default', async () => {
+    await seedMessages('/', QUEUE, 2);
+    const requester = await signedIn(rita);
+    const approver = await signedIn(alan);
+    const { id } = await checkoutWithDiscards(requester, 'capped', [`${QUEUE}-0`, `${QUEUE}-1`]);
+
+    const requested = await requestApproval(requester, id);
+    expect(requested.status).toBe(200);
+    expect(requested.body.checkout.approvalRequest).toMatchObject({ rate: null });
+
+    const approved = await approve(approver, id, requester);
+    expect(approved.status).toBe(202);
+    const entries = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
+    expect(entries.map((e: any) => [e.outcome, e.rate])).toEqual([
+      ['done', null],
+      ['done', null],
     ]);
   });
 
