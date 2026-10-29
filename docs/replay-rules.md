@@ -22,7 +22,7 @@ Every Replay and Move is an Audit Entry naming the rule and the pass; search the
 A Message's attempts are its **Died Again count**: how many times Volverán has sent it out (Replayed, Moved or Restored it, by any person or rule) and it came back to a dead-letter queue. The back-off before attempt n is `min(initial × multiplier^n, max)`, measured from:
 
 1. the time of its most recent `x-death` entry (when the broker last dead-lettered it), else
-2. the fault time in its Failure Details (Spring AMQP, MassTransit; see [Spring AMQP and MassTransit](spring-amqp-and-masstransit.md)), else
+2. the failure time in its Failure Details (Spring AMQP, MassTransit; see [Spring AMQP and MassTransit](spring-amqp-and-masstransit.md)), else
 3. the time a pass of the rule first saw it (kept in the audit store by message id, at most 10,000 per rule).
 
 **Attempts depend on the audit store.** Volverán recognises a Message that died again by its `x-volveran-replay-id` header, followed back through the Audit Entries. If the audit store is reset, or another Volverán instance with its own store sent the Message out, the attempts it cannot follow back count as one. Keep the audit store on a persistent volume when you use rules.

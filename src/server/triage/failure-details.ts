@@ -31,7 +31,7 @@ function empty(framework: FailureDetails['framework']): FailureDetails {
     stackTrace: null,
     consumerType: null,
     messageType: null,
-    faultAt: null,
+    failedAt: null,
     retryCount: null,
     redeliveryCount: null,
     host: null,
@@ -87,7 +87,7 @@ function massTransit(h: Record<string, unknown>): FailureDetails {
     stackTrace: field('StackTrace'),
     consumerType: field('ConsumerType'),
     messageType: field('MessageType'),
-    faultAt: asFaultTime(h[MT_FAULT_PREFIX + 'Timestamp']),
+    failedAt: asFailedTime(h[MT_FAULT_PREFIX + 'Timestamp']),
     retryCount: asCount(h[MT_FAULT_PREFIX + 'RetryCount']),
     redeliveryCount: asCount(h[MT_FAULT_PREFIX + 'RedeliveryCount']),
     host: Object.keys(host).length > 0 ? host : null,
@@ -130,7 +130,7 @@ function asCount(v: unknown): number | null {
 }
 
 /** ISO time from text or an AMQP timestamp (seconds); text that is not a time is kept as written. */
-function asFaultTime(v: unknown): string | null {
+function asFailedTime(v: unknown): string | null {
   if (isRecord(v) && v['!'] === 'timestamp') v = v.value;
   if (typeof v === 'number' || typeof v === 'bigint') return new Date(Number(v) * 1000).toISOString();
   const text = asText(v);

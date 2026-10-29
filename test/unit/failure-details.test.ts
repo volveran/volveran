@@ -19,7 +19,7 @@ describe('Spring AMQP headers', () => {
       stackTrace: 'org.springframework.amqp.AmqpRejectAndDontRequeueException: boom\n\tat com.acme.Orders.handle(Orders.java:42)',
       consumerType: null,
       messageType: null,
-      faultAt: null,
+      failedAt: null,
       retryCount: null,
       redeliveryCount: null,
       host: null,
@@ -86,7 +86,7 @@ describe('MassTransit headers', () => {
       stackTrace: '   at Acme.Orders.SubmitOrderConsumer.Consume(ConsumeContext`1 context)',
       consumerType: 'Acme.Orders.SubmitOrderConsumer',
       messageType: 'Acme.Contracts.SubmitOrder',
-      faultAt: '2026-10-28T17:46:00.123Z',
+      failedAt: '2026-10-28T17:46:00.123Z',
       retryCount: 3,
       redeliveryCount: 1,
       host: { MachineName: 'orders-7d9f', ProcessName: 'Acme.Orders', ProcessId: '17', MassTransitVersion: '8.3.0.0' },
@@ -143,13 +143,13 @@ describe('MassTransit headers', () => {
     expect(failureDetails({ 'MT-Reason': 'something-else' })?.reason).toBeNull();
   });
 
-  it('leaves missing fields null and an unreadable fault time as written', () => {
+  it('leaves missing fields null and an unreadable failure time as written', () => {
     expect(failureDetails({ 'MT-Fault-Message': 'boom', 'MT-Fault-Timestamp': 'yesterday', 'MT-Fault-RetryCount': 'many' })).toMatchObject({
       exceptionType: null,
       stackTrace: null,
       consumerType: null,
       messageType: null,
-      faultAt: 'yesterday',
+      failedAt: 'yesterday',
       retryCount: null,
       redeliveryCount: null,
       host: null,
@@ -158,8 +158,8 @@ describe('MassTransit headers', () => {
     });
   });
 
-  it('reads a fault time sent as an AMQP timestamp', () => {
-    expect(failureDetails({ 'MT-Fault-Message': 'boom', 'MT-Fault-Timestamp': { '!': 'timestamp', value: 1793295960 } })?.faultAt).toBe(
+  it('reads a failure time sent as an AMQP timestamp', () => {
+    expect(failureDetails({ 'MT-Fault-Message': 'boom', 'MT-Fault-Timestamp': { '!': 'timestamp', value: 1793295960 } })?.failedAt).toBe(
       new Date(1793295960 * 1000).toISOString(),
     );
   });

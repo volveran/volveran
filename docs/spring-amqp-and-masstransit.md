@@ -53,7 +53,7 @@ Read from the headers named in [`MessageHeaders`](https://github.com/MassTransit
 | `MT-Fault-StackTrace` | `stackTrace` |
 | `MT-Fault-ConsumerType` | `consumerType` |
 | `MT-Fault-MessageType` | `messageType` |
-| `MT-Fault-Timestamp` | `faultAt` (ISO time; kept as written when it does not read as a time) |
+| `MT-Fault-Timestamp` | `failedAt` (ISO time; kept as written when it does not read as a time) |
 | `MT-Fault-RetryCount` | `retryCount` |
 | `MT-Fault-RedeliveryCount` | `redeliveryCount` |
 | `MT-Fault-InputAddress` | `inputQueue`, and `extra` as written |

@@ -81,7 +81,7 @@ export interface FailureDetails {
   consumerType: string | null;
   messageType: string | null;
   /** When the consumer failed: ISO time, or the header as written when it does not read as a time. */
-  faultAt: string | null;
+  failedAt: string | null;
   retryCount: number | null;
   redeliveryCount: number | null;
   /** MassTransit's `MT-Host-*` headers, by the name after the prefix (e.g. `MachineName`). */
