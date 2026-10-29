@@ -25,7 +25,7 @@ Replay sends a Message back to the queue that failed it, and only there ([ADR 00
 - **Spring AMQP.** A Message is never Replayed: Spring AMQP records only the exchange and routing key the Message was first published with, and publishing there would copy it to every queue bound to that key. The Move prompt is prefilled with that exchange and routing key (or with the queue, when it was first sent through the default exchange), so you can send it there as an explicit choice.
 - **Headers.** Replay, Move and Restore remove `MT-Reason`, `MT-Fault-*`, `MT-Host-*`, `x-exception-*`, `x-original-exchange` and `x-original-routingKey`, so the consumer does not see a stale exception. The Audit Entry keeps the original headers, and Died Again still works through `x-volveran-replay-id`.
 - **Canary.** The Canary of a MassTransit Replay is watched on the `_error` exchange MassTransit publishes the input queue's faults to (`<input queue>_error`): a Canary that faults again is reported **died again** with the new exception. When that exchange is missing, the Canary is unwatched.
-- **Replay rules.** A rule Replays MassTransit Messages to their input queue like any other; it counts Spring AMQP Messages as failed and Keeps them.
+- **Replay rules.** A rule Replays MassTransit Messages to their input queue like any other; it Keeps Spring AMQP Messages and counts them as **Cannot Replay** in the pass, which never pauses the rule ([Replay rules](replay-rules.md#attempts-and-back-off)).
 
 ## Spring AMQP
 

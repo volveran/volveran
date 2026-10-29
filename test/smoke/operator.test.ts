@@ -90,6 +90,19 @@ describe('Volverán on kind', () => {
     });
   });
 
+  it('loads the paused Replay rule from the chart values', async () => {
+    const browser = await signIn();
+    const res = await browser.get('/api/profiles/smoke/replay-rules');
+    expect(res.status).toBe(200);
+    expect(res.body.rules).toHaveLength(1);
+    expect(res.body.rules[0]).toMatchObject({
+      rule: { name: 'orders-transient', vhost: '/', queue: 'orders.dlq' },
+      state: { paused: true },
+      passes: [],
+      nextPassAt: null,
+    });
+  });
+
   it('Applies a Discard from a Checkout on a dead-letter queue', async () => {
     await deadLetterOrder(messageId, payload);
     const browser = await signIn();
@@ -111,7 +124,14 @@ describe('Volverán on kind', () => {
     });
     expect(decided.status).toBe(200);
     const applied = await browser.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true });
-    expect(applied.status).toBe(200);
+    expect(applied.status).toBe(202);
+    // The Apply runs in the background; the Checkout view has its outcomes once it ends.
+    const ended = await eventually(async () => {
+      const view = (await browser.get(`/api/checkouts/${checkout.id}`)).body.checkout;
+      if (view.status === 'applying' || !view.lastApply) throw new Error(`Checkout ${checkout.id} is still applying`);
+      return view;
+    }, 30_000);
+    expect(ended.lastApply.outcomes).toMatchObject([{ handle, status: 'done' }]);
 
     const { entries } = (await browser.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body;
     expect(entries).toHaveLength(1);
@@ -140,7 +160,11 @@ describe('Volverán on kind', () => {
     expect(volveranPods().map((p) => p.uid)).toEqual([after.uid]);
     await forwardApp();
 
-    const { profiles } = (await (await signIn()).get('/api/profiles')).body;
+    const browser = await signIn();
+    const { profiles } = (await browser.get('/api/profiles')).body;
     expect(profiles.map((p: any) => [p.name, p.defaultQueueFilter])).toEqual([['smoke', 'orders.*']]);
+    // The rule is still paused: its state lives in the audit store.
+    const { rules } = (await browser.get('/api/profiles/smoke/replay-rules')).body;
+    expect(rules.map((r: any) => [r.rule.name, r.state.paused])).toEqual([['orders-transient', true]]);
   });
 });
