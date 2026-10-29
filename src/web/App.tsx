@@ -2,6 +2,8 @@
 // in localStorage) and see its queues, dead-letter queues first; start a
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
+// The Replay rules view (ReplayRulesView.tsx) shows the selected profile's
+// Replay Rules and runs a pass on demand.
 // In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
 // Applies waiting for an Approval this Operator may give; a requester's link
 // (#/approvals/<checkout id>, approval-link.ts) opens it on their Checkout.
@@ -32,6 +34,7 @@ import {
 import { ApprovalsView } from './ApprovalsView.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
+import { ReplayRulesView } from './ReplayRulesView.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
 import { SignInAgain } from './SignInAgain.js';
 import type { KeyboardCommand } from './keyboard-commands.js';
@@ -78,7 +81,7 @@ export function App() {
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
   /** The waiting Checkout a requester's link points at (the URL fragment), until it is left. */
   const [linkedApproval, setLinkedApproval] = useState(() => waitingCheckoutIn(window.location.hash));
-  const [view, setView] = useState<'queues' | 'audit' | 'approvals'>(linkedApproval ? 'approvals' : 'queues');
+  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules'>(linkedApproval ? 'approvals' : 'queues');
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
@@ -232,6 +235,9 @@ export function App() {
           <button type="button" aria-pressed={view === 'audit'} onClick={() => setView('audit')}>
             Audit
           </button>
+          <button type="button" aria-pressed={view === 'rules'} onClick={() => setView('rules')}>
+            Replay rules
+          </button>
           {session?.mode === 'team' && (
             <button type="button" aria-pressed={view === 'approvals'} onClick={() => setView('approvals')}>
               Approvals
@@ -318,6 +324,8 @@ export function App() {
         )}
         {view === 'audit' && !checkoutId ? (
           <AuditView profiles={profiles} roles={session?.roles ?? {}} />
+        ) : view === 'rules' && !checkoutId ? (
+          profileName && <ReplayRulesView profile={profileName} role={role} />
         ) : (
           // Hidden, not removed, under Approvals: the Operator's own Checkout keeps its heartbeat.
           <div hidden={view === 'approvals'}>

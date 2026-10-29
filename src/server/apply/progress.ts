@@ -17,7 +17,7 @@ export class ApplyProgressTracker {
   private lastAttemptAt: Date | null = null;
   /** The Operator who stopped the Apply (display name); null unless one did. */
   stoppedBy: string | null = null;
-  /** Running, or waiting after a Canary (canary/watch.ts sets it). */
+  /** Running, or waiting after a Canary (checkout/canary.ts sets it). */
   phase: ApplyPhase = 'running';
 
   constructor(

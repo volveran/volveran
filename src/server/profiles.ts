@@ -7,10 +7,11 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
-import { ConfigError } from './config-error.js';
+import { ProfilesConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
 import type { RunMode } from './run-mode.js';
 import { DEFAULT_WATCH_WINDOW_SECONDS, isWatchWindow, MAX_WATCH_WINDOW_SECONDS, MIN_WATCH_WINDOW_SECONDS } from '../shared/canary.js';
+import { parseReplayRules, type ReplayRule } from './replay-rules/config.js';
 import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../shared/replay-rate.js';
 import { ROLES, type Role } from '../shared/roles.js';
 
@@ -73,6 +74,8 @@ export interface BrokerProfile {
    * per second; null when not set.
    */
   replayRate: ReplayRateLimits;
+  /** The profile's Replay Rules (replay-rules/config.ts); empty when it declares none. */
+  replayRules: ReplayRule[];
   /** Canary Replay on this profile: how long a Canary is watched (the Watch Window). */
   canary: CanarySettings;
 }
@@ -106,12 +109,8 @@ export function queueRefOf({ profile, vhost, queue }: QueueRef): QueueRef {
   return { profile, vhost, queue };
 }
 
-export class ProfilesConfigError extends ConfigError {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ProfilesConfigError';
-  }
-}
+export { ProfilesConfigError };
+export { checkReplayRules } from './replay-rules/config.js';
 
 /** Loads and checks the profiles file; a relative `caFile` is relative to the file's directory. */
 export async function loadProfilesFile(file: string, env: Record<string, string | undefined>): Promise<BrokerProfile[]> {
@@ -166,19 +165,27 @@ export function parseProfiles(
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
     const isProtected = parseProtected(raw.protected, where);
+    const credentials = parseCredentials(raw, env, where, `${where} ("${name}")`);
+    const vhosts = parseVhosts(raw.vhosts, where);
+    const replayRate = parseReplayRate(raw.replayRate, `${where} ("${name}").replayRate`);
     return {
       name,
       managementUrl: requireUrl(raw, 'managementUrl', ['http:', 'https:'], where).replace(/\/+$/, ''),
       amqpUrl: requireUrl(raw, 'amqpUrl', ['amqp:', 'amqps:'], where),
       ca: undefined,
       caFile: optionalString(raw, 'caFile', where),
-      credentials: parseCredentials(raw, env, where, `${where} ("${name}")`),
-      vhosts: parseVhosts(raw.vhosts, where),
+      credentials,
+      vhosts,
       defaultQueueFilter: optionalString(raw, 'defaultQueueFilter', where),
       protected: isProtected,
       requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
-      replayRate: parseReplayRate(raw.replayRate, `${where} ("${name}").replayRate`),
+      replayRate,
+      replayRules: parseReplayRules(
+        raw.replayRules,
+        { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
+        `${where} ("${name}")`,
+      ),
       canary: parseCanary(raw.canary, `${where} ("${name}").canary`),
     };
   });

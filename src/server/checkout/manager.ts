@@ -60,6 +60,7 @@ import type { QueueAccess } from '../profile-access.js';
 import { queueRefOf, type QueueRef } from '../profiles.js';
 import { MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../../shared/replay-rate.js';
 import { canaryNeedsReplay, rateAboveMaximum } from '../apply/errors.js';
+import type { RuleActing } from '../apply/types.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
@@ -122,6 +123,8 @@ export interface CheckoutStartOptions extends StartOptions {
    * profile when left out.
    */
   auditScope?: ProfileScope;
+  /** Holds at most this many Messages, below the Checkout Message limit (a Rule Pass). */
+  maxMessages?: number;
 }
 
 export interface CheckoutManagerOptions {
@@ -204,7 +207,10 @@ export class CheckoutManager {
       lostReason: null,
       endReason: null,
       readyAtStart: 0,
-      limits: this.options.limits,
+      limits:
+        options.maxMessages === undefined
+          ? this.options.limits
+          : { ...this.options.limits, maxMessages: Math.min(options.maxMessages, this.options.limits.maxMessages) },
       limitedBy: null,
       connection: undefined,
       channel: undefined,
@@ -314,7 +320,7 @@ export class CheckoutManager {
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'only an approver can Apply it');
     if (view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
     const canaryHandle = this.canaryFor(checkout, canary);
-    return this.startApply(checkout, role, null, this.replayRateFor(checkout, rate), canaryHandle);
+    return this.startApply(checkout, role, null, this.replayRateFor(checkout, rate), { canary: canaryHandle });
   }
 
   /**
@@ -338,6 +344,22 @@ export class CheckoutManager {
       throw new InvalidRequestError(`The Canary must be a held Message with the Decision Replay; Message ${String(picked)} is not.`);
     }
     return picked as number;
+  }
+
+  /**
+   * A Rule Pass Applies its Checkout's Decisions (ADR 0011): as the rule,
+   * with the role `operator`, at the rule's Replay Rate, with no Approval and
+   * no confirmation (the review of the profiles file stands in for both).
+   * Resolves once the Apply has run and the Checkout has ended, with the
+   * Checkout as it ended. Throws `checkout_not_active` and
+   * `apply_in_progress` as apply() does.
+   */
+  async applyForRule(id: string, { rate, rule }: { rate: number; rule: RuleActing }): Promise<CheckoutView> {
+    const checkout = this.find(id);
+    this.assertCanApply(checkout);
+    this.startApply(checkout, 'operator', null, rate, { rule });
+    await checkout.applying?.settled;
+    return view(checkout);
   }
 
   /**
@@ -485,19 +507,25 @@ export class CheckoutManager {
     role: Role,
     approver: Operator | null,
     rate: number | null,
-    canary: number | null = null,
+    { canary = null, rule = null }: { canary?: number | null; rule?: RuleActing | null } = {},
   ): CheckoutView {
     clearTimeout(checkout.heartbeatTimer);
     const running: RunningApply = { settled: Promise.resolve(), stop: null, stopped: new AbortController(), resume: null };
     checkout.applying = running;
-    running.settled = this.carryOutApply(checkout, running, { role, approver, rate, canary });
+    running.settled = this.carryOutApply(checkout, running, { role, approver, rate, canary, rule });
     return view(checkout);
   }
 
   private async carryOutApply(
     checkout: Checkout,
     running: RunningApply,
-    { role, approver, rate, canary }: { role: Role; approver: Operator | null; rate: number | null; canary: number | null },
+    {
+      role,
+      approver,
+      rate,
+      canary,
+      rule,
+    }: { role: Role; approver: Operator | null; rate: number | null; canary: number | null; rule: RuleActing | null },
   ) {
     try {
       const { startedAt, outcomes } = await runApply(checkout, {
@@ -505,6 +533,7 @@ export class CheckoutManager {
         role,
         approver: approver && { id: approver.id, displayName: approver.displayName },
         rate,
+        rule,
         stopReason: () => running.stop?.reason ?? null,
         stopSignal: running.stopped.signal,
         beforeStep: this.hooks.beforeApplyStep,
