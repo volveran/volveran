@@ -14,10 +14,11 @@
 // steps take at the rate. Empty runs unthrottled, unless the profile sets a
 // maximum; the server checks the rate too.
 //
-// With any Replay (and no Approval needed), the Apply can start with a
+// With any Replay, the Apply (or the request for Approval) can start with a
 // Canary: the first Replay by default, or a Message picked from the
 // Replays. The confirmation shows the Watch Window and says beforehand when
-// that Canary cannot be watched.
+// that Canary cannot be watched. When the Broker Profile requires a Canary
+// for this many Replays (`canary.requiredAbove`), the toggle is on and locked.
 //
 // The confirmation is a Prompt (keyboard.tsx): opening it focuses the typed
 // queue name, or else Cancel, so no key press confirms it; Escape closes it
@@ -85,10 +86,10 @@ function ApplyConfirmation({
   onClose,
 }: ConfirmationProps & { onClose(): void }) {
   const [typed, setTyped] = useState('');
-  const [withCanary, setWithCanary] = useState(false);
+  const [chosenCanary, setWithCanary] = useState(false);
   const [canaryPick, setCanaryPick] = useState<number | null>(null);
-  // Approval with a Canary comes later; for now only an Apply without Approval offers one.
-  const offerCanary = !approvalRequired && canary.candidates.length > 0;
+  const offerCanary = canary.candidates.length > 0;
+  const withCanary = chosenCanary || canary.required;
   const pickedCandidate = canary.candidates.find((c) => c.handle === canaryPick) ?? canary.candidates[0];
   const [rateInput, setRateInput] = useState(replayRate.default === null ? '' : String(replayRate.default));
   const count = (kind: DecisionSummaryLine['kind']) =>
@@ -165,10 +166,23 @@ function ApplyConfirmation({
         {offerCanary && (
           <div className="canary-choice">
             <label>
-              <input type="checkbox" checked={withCanary} onChange={(e) => setWithCanary(e.target.checked)} /> Start with a
-              Canary: Replay one Message alone, watch for {formatCountdown(canary.watchWindowMs)} whether it is
-              dead-lettered here again, then continue or stop
+              <input
+                type="checkbox"
+                checked={withCanary}
+                disabled={canary.required}
+                onChange={(e) => setWithCanary(e.target.checked)}
+              />{' '}
+              Start with a Canary: Replay one Message alone, watch for {formatCountdown(canary.watchWindowMs)} whether it
+              is dead-lettered here again, then {approvalRequired ? 'you or the approver continue' : 'continue'} or stop
             </label>
+            {canary.required && (
+              <small className="muted">
+                {profile} requires a Canary for an Apply with more than {canary.requiredAbove} Replays.
+              </small>
+            )}
+            {approvalRequired && withCanary && (
+              <small className="muted">The approver sees the Canary; approving runs it, and continuing needs no second Approval.</small>
+            )}
             {withCanary && (
               <>
                 <label>
