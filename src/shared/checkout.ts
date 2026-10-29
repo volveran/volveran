@@ -237,11 +237,13 @@ export type ApplyPhase = 'running' | 'canary_watch' | 'canary_done';
 
 /**
  * watching: the Watch Window runs. died_again: a copy of the Canary was
- * dead-lettered again. not_dead_lettered: none was while it was watched.
+ * dead-lettered again. not_dead_lettered: none was for the whole Watch
+ * Window. watch_cut_short: none was before the watch was cut short (Continue,
+ * Stop, the Checkout ending), so the window did not run its course.
  * unwatched: it could not be watched (`watchProblem` says why), so only the
  * Replay's outcome is known. failed: the Canary's Replay failed.
  */
-export type CanaryStatus = 'watching' | 'died_again' | 'not_dead_lettered' | 'unwatched' | 'failed';
+export type CanaryStatus = 'watching' | 'died_again' | 'not_dead_lettered' | 'watch_cut_short' | 'unwatched' | 'failed';
 
 /** The Canary of a Checkout's Apply, from the moment its Replay starts. */
 export interface CanaryView {

@@ -1,6 +1,7 @@
 // The Canary of an Apply: while it is watched, the time left in the Watch
 // Window; then its outcome (died again with the new reason, not
-// dead-lettered here, unwatched or failed, with why). While the Apply waits
+// dead-lettered here, watch cut short by Continue or Stop, unwatched or
+// failed, with why). While the Apply waits
 // after it, Continue carries out the rest and Stop returns the rest to the
 // queue as Keep. Continuing before the Watch Window ends is allowed.
 // Once the Apply has moved on, the outcome stays as a record.
@@ -17,6 +18,7 @@ const OUTCOME: Record<CanaryView['status'], string> = {
   watching: 'Watching',
   died_again: 'Died again',
   not_dead_lettered: 'Not dead-lettered here',
+  watch_cut_short: 'Watch cut short',
   unwatched: 'Unwatched',
   failed: 'Replay failed',
 };
@@ -73,6 +75,13 @@ export function CanaryPanel({
           Not dead-lettered here within the Watch Window
           {endsAt !== null && ` (watched until ${new Date(endsAt).toLocaleTimeString()})`}. A consumer that parks failures
           elsewhere would not show here.
+        </p>
+      )}
+      {canary.status === 'watch_cut_short' && (
+        <p>
+          Not dead-lettered here before the watch was cut short
+          {endsAt !== null && ` at ${new Date(endsAt).toLocaleTimeString()}`}, before the Watch Window ended: it may still
+          be dead-lettered.
         </p>
       )}
       {(canary.status === 'unwatched' || canary.status === 'failed') && canary.watchProblem && <p>{canary.watchProblem}</p>}

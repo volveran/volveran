@@ -24,7 +24,7 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
 
 /** How the watch of an Apply's Canary ended (CanaryStatus without `watching`). */
-export type AuditCanaryOutcome = 'died_again' | 'not_dead_lettered' | 'unwatched' | 'failed';
+export type AuditCanaryOutcome = 'died_again' | 'not_dead_lettered' | 'watch_cut_short' | 'unwatched' | 'failed';
 
 /** Where a Replay, Move or Restore published the Message. */
 export interface AuditDestination {

@@ -13,7 +13,8 @@
 // Window (cut short by a copy that died again), then `canary_done` until the
 // Operator continues or the Apply is stopped (an Operator, the time limit,
 // the Checkout ending or being lost). Continuing or stopping during the watch
-// ends it at once.
+// ends it at once: the Canary is then `watch_cut_short`, not
+// `not_dead_lettered`, unless a copy died again first.
 import type * as amqp from 'amqplib';
 import type { AuditStore } from '../audit/store.js';
 import { permissionRefused } from '../broker-credentials.js';
@@ -129,9 +130,12 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
         const ended = await Promise.race([watch.copy, windowOver, goOn.then(() => 'cut' as const)]);
         clearTimeout(timer);
         await watch.close();
-        if (ended === 'window' || ended === 'cut') {
-          if (ended === 'cut') c.watchEndsAt = new Date();
+        if (ended === 'window') {
           settle('not_dead_lettered');
+        } else if (ended === 'cut') {
+          // A copy that died again before the cut has already won the race above.
+          c.watchEndsAt = new Date();
+          settle('watch_cut_short');
         } else {
           const summary = messageSummary(0, ended, queueInfo(checkout));
           c.deadLetterReason = summary.deadLetterReason;
