@@ -47,29 +47,69 @@ export interface RulePassSummary {
   held: number;
   /** Replays the broker confirmed. */
   replayed: number;
-  /** Matching Messages whose attempts are used up. */
+  /** Matching Messages whose attempts are used up (Kept, or Moved to the parking queue). */
   usedUp: number;
+  /** Of those, the ones Moved to the rule's parking queue (`whenAttemptsUsedUp.moveTo`). */
+  moved: number;
   /** Matching Messages still waiting for their back-off, and those past the pass's `maxPerPass`. */
   notDue: number;
   /** Messages the rule's filter does not select. */
   noMatch: number;
-  /** Replays that failed or were not attempted; their Messages went back to the queue. */
+  /** Replays and Moves that failed or were not attempted; their Messages went back to the queue. */
   failed: number;
 }
 
-/** A Rule Pass that ran: its id (recorded on its Audit Entries), when, and its counts. */
+/**
+ * How a Rule Pass went. ran: it held the queue and acted. skipped: someone
+ * held the queue, so it touched nothing. failed: its Checkout could not start
+ * (the queue is missing, the broker refused) or it broke off; `reason` says why.
+ */
+export type RulePassStatus = 'ran' | 'skipped' | 'failed';
+
+/** A Rule Pass: its id (recorded on its Audit Entries), when, how it went, and its counts. */
 export interface RulePass {
   id: string;
   /** ISO time it started. */
   at: string;
-  summary: RulePassSummary;
+  status: RulePassStatus;
+  /** The counts of a pass that ran; null when it was skipped or failed. */
+  summary: RulePassSummary | null;
+  /** Why it was skipped or failed; null when it ran. */
+  reason: string | null;
+}
+
+/** A rule's state, kept in the audit store across restarts. */
+export interface RuleState {
+  /** A paused rule runs no scheduled passes (Run now still runs one). */
+  paused: boolean;
+  /** Why, who (an Operator's name, or the rule itself) and when it paused; null while it runs. */
+  pausedReason: string | null;
+  pausedBy: string | null;
+  /** ISO time. */
+  pausedAt: string | null;
 }
 
 /** A rule as GET /api/profiles/:profile/replay-rules lists it. */
 export interface ReplayRuleView {
   rule: ReplayRule;
-  /** The last pass run on demand since Volverán started; null when none ran. */
-  lastPass: RulePass | null;
+  state: RuleState;
+  /** Its last passes, newest first (a bounded history). */
+  passes: RulePass[];
+  /** ISO time of its next scheduled pass; null while it is paused. */
+  nextPassAt: string | null;
+}
+
+/** A running rule's view of one Message it matches, on the Message's row and in the Message view. */
+export interface RuleBadge {
+  /** The rule's name. */
+  name: string;
+  /** Attempts used so far (the Message's Died Again count). */
+  attempts: number;
+  maxAttempts: number;
+  /** The rule has given up on it: a person needs to look at it. */
+  usedUp: boolean;
+  /** ISO time its back-off delay passes; null when its attempts are used up. */
+  nextAttemptAt: string | null;
 }
 
 /** A duration as the profiles file writes it, from the largest unit down, e.g. "1h30m". */

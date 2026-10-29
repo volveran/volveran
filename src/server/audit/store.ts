@@ -16,6 +16,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import { RuleStateStore } from './rule-state.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { Role } from '../../shared/roles.js';
@@ -224,12 +225,45 @@ const MIGRATIONS: string[] = [
   // v9 (#58): the Replay an Apply carried out alone as its Canary, and how its watch ended.
   `ALTER TABLE audit_entries ADD COLUMN canary INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE audit_entries ADD COLUMN canary_outcome TEXT;`,
+  // v10 (#64): Replay Rule state (audit/rule-state.ts), by rule key `<profile>/<rule>`: the paused
+  // flag, a bounded history of passes, and when a pass first saw each message id (bounded).
+  `CREATE TABLE replay_rule_state (
+     rule_key TEXT PRIMARY KEY,
+     paused INTEGER NOT NULL,
+     paused_reason TEXT,
+     paused_by TEXT,
+     paused_at INTEGER
+   );
+   CREATE TABLE replay_rule_passes (
+     id TEXT PRIMARY KEY,
+     rule_key TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     status TEXT NOT NULL,
+     reason TEXT,
+     held INTEGER,
+     replayed INTEGER,
+     moved INTEGER,
+     used_up INTEGER,
+     not_due INTEGER,
+     no_match INTEGER,
+     failed INTEGER
+   );
+   CREATE INDEX replay_rule_passes_rule ON replay_rule_passes (rule_key, at);
+   CREATE TABLE replay_rule_first_seen (
+     rule_key TEXT NOT NULL,
+     message_id TEXT NOT NULL,
+     first_seen_at INTEGER NOT NULL,
+     PRIMARY KEY (rule_key, message_id)
+   );
+   CREATE INDEX replay_rule_first_seen_at ON replay_rule_first_seen (rule_key, first_seen_at);`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
 
 export class AuditStore {
   private readonly db: DatabaseSync;
+  /** The state of the Replay Rules, in the same database. */
+  readonly ruleState: RuleStateStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -240,6 +274,7 @@ export class AuditStore {
     this.db = new DatabaseSync(dataDir ? path.join(dataDir, AUDIT_DB_FILE) : ':memory:');
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     this.migrate();
+    this.ruleState = new RuleStateStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */

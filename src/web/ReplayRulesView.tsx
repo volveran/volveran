@@ -1,12 +1,16 @@
 // Replay rules view: the Replay Rules the profiles file declares for one
-// Broker Profile (ADR 0011), each with its declaration and the last pass run
-// on demand, and Run now for an `admin`, which runs one Rule Pass and shows
-// its counts. While someone holds the queue, Run now is refused and says who.
+// Broker Profile (ADR 0011), each with its declaration, whether it runs or is
+// paused, its next scheduled pass and its last passes (scheduled or Run now:
+// when, held, Replayed, Moved, used up, not due; skipped or failed and why),
+// and Run now for an `admin`, which runs one Rule Pass and shows its counts.
+// While someone holds the queue, Run now is refused and says who.
 import { useEffect, useState } from 'react';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import { durationText } from '../shared/replay-rules.js';
 import { rateText } from '../shared/replay-rate.js';
 import { api, ApiError, type ReplayRuleView, type RulePass } from './api.js';
+
+const time = (iso: string) => <span title={iso}>{new Date(iso).toLocaleString()}</span>;
 
 export function ReplayRulesView({ profile, role }: { profile: string; role: Role | undefined }) {
   const [rules, setRules] = useState<ReplayRuleView[]>();
@@ -33,8 +37,9 @@ export function ReplayRulesView({ profile, role }: { profile: string; role: Role
     <div className="replay-rules">
       <p className="notice">
         Replay rules are declared in the profiles file of <strong>{profile}</strong>, so a change to one goes through the
-        same review as the rest of the configuration. A Rule Pass takes a short Checkout as the rule, Replays the matching
-        Messages that are due at the rule's rate, and Keeps the rest.
+        same review as the rest of the configuration. Each running rule passes on its own schedule: a Rule Pass takes a
+        short Checkout as the rule, Replays the matching Messages that are due at the rule's rate, and Keeps the rest. A
+        pass is skipped while someone holds the queue.
       </p>
       {error && (
         <div className="error" role="alert">
@@ -62,7 +67,7 @@ function RuleCard({
   mayRun: boolean;
   onRan: () => void;
 }) {
-  const { rule, lastPass } = view;
+  const { rule, state, passes, nextPassAt } = view;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError>();
 
@@ -88,7 +93,7 @@ function RuleCard({
           {rule.vhost === '/' ? '' : `${rule.vhost} / `}
           {rule.queue}
         </small>
-        {rule.startPaused && <span className="badge limit-warning">starts paused</span>}
+        {state.paused ? <span className="badge limit-warning">paused</span> : <span className="badge">running</span>}
       </h2>
       <dl className="rule-declaration">
         <dt>Messages</dt>
@@ -110,7 +115,18 @@ function RuleCard({
           when {rule.stopWhen.diedAgain} of its Replayed Messages die again within {durationText(rule.stopWhen.withinMs)}
         </dd>
       </dl>
-      <LastPass pass={lastPass} />
+      <p className="next-pass">
+        {state.paused ? (
+          <>
+            Paused{state.pausedAt && <> since {time(state.pausedAt)}</>}
+            {state.pausedBy && <> by {state.pausedBy}</>}
+            {state.pausedReason && <>: {state.pausedReason}</>}. No pass is scheduled.
+          </>
+        ) : (
+          nextPassAt && <>Next pass {time(nextPassAt)}.</>
+        )}
+      </p>
+      <PassHistory passes={passes} />
       {mayRun ? (
         <button onClick={run} disabled={busy}>
           {busy ? 'Running…' : 'Run now'}
@@ -131,14 +147,45 @@ function RuleCard({
   );
 }
 
-function LastPass({ pass }: { pass: RulePass | null }) {
-  if (!pass) return <p className="muted">No pass has run since Volverán started.</p>;
-  const { held, replayed, usedUp, notDue, noMatch, failed } = pass.summary;
+function PassHistory({ passes }: { passes: RulePass[] }) {
+  if (passes.length === 0) return <p className="muted">No pass has run yet.</p>;
   return (
-    <p className="last-pass">
-      Last pass <span title={pass.at}>{new Date(pass.at).toLocaleString()}</span>: held {held}, Replayed {replayed}, used up{' '}
-      {usedUp}, not due {notDue}, not matching {noMatch}
-      {failed > 0 && <span className="error-text">, failed {failed}</span>}.
-    </p>
+    <table className="pass-history">
+      <caption>Last passes</caption>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Held</th>
+          <th>Replayed</th>
+          <th>Moved</th>
+          <th>Used up</th>
+          <th>Not due</th>
+          <th>Not matching</th>
+          <th>Failed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {passes.map((p) => (
+          <tr key={p.id}>
+            <td>{time(p.at)}</td>
+            {p.summary ? (
+              <>
+                <td className="num">{p.summary.held}</td>
+                <td className="num">{p.summary.replayed}</td>
+                <td className="num">{p.summary.moved}</td>
+                <td className="num">{p.summary.usedUp}</td>
+                <td className="num">{p.summary.notDue}</td>
+                <td className="num">{p.summary.noMatch}</td>
+                <td className={p.summary.failed > 0 ? 'num error-text' : 'num'}>{p.summary.failed}</td>
+              </>
+            ) : (
+              <td colSpan={7} className={p.status === 'failed' ? 'error-text' : 'muted'}>
+                {p.status === 'skipped' ? 'Skipped' : 'Failed'}: {p.reason}
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

@@ -13,6 +13,8 @@ import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { BodyRetention } from '../../src/server/audit/body-retention.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
+import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/scheduler.js';
+import type { RulePass } from '../../src/shared/replay-rules.js';
 import { startServer } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
@@ -329,4 +331,44 @@ export async function applyAndWait(on: ApiClient, urlPath: string, body: unknown
   if (res.status !== 202) return res;
   const checkout = await appliedCheckout(owner, res.body.checkout.id);
   return { status: 202, body: { checkout, outcomes: checkout.lastApply?.outcomes } };
+}
+
+/**
+ * A test clock for the Replay rule scheduler, and its "run a pass now", as
+ * Checkout test hooks (`hooks`, for startApp's checkoutTestHooks). The clock
+ * starts at `start` and moves only when told: `advance` moves it and fires
+ * the timers due by then. `runPass` runs the scheduled pass of a rule at
+ * once, as its timer would, in the app started last with these hooks; it
+ * resolves with the pass, or null when the scheduler would not run it.
+ */
+export function ruleSchedulerHooks(start = new Date()) {
+  let now = start.getTime();
+  let timers: Array<{ at: number; run: () => void }> = [];
+  let control: RuleSchedulerControl | undefined;
+  const clock: RuleClock = {
+    now: () => new Date(now),
+    setTimer(run, ms) {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return { cancel: () => void (timers = timers.filter((t) => t !== timer)) };
+    },
+  };
+  const hooks: CheckoutTestHooks = { ruleScheduler: { clock, scheduler: (c) => (control = c) } };
+  return {
+    hooks,
+    now: () => new Date(now),
+    set(at: Date) {
+      now = at.getTime();
+    },
+    advance(ms: number) {
+      now += ms;
+      const due = timers.filter((t) => t.at <= now);
+      timers = timers.filter((t) => t.at > now);
+      for (const t of due) t.run();
+    },
+    runPass(profile: string, rule: string): Promise<RulePass | null> {
+      if (!control) throw new Error('No app has started with these hooks');
+      return control.runScheduledPass(profile, rule);
+    },
+  };
 }
