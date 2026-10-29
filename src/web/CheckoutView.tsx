@@ -5,8 +5,8 @@
 // While the page shows the Checkout it sends heartbeats (without them the
 // server ends it), and it counts down to the Checkout's time limit. Apply
 // carries out the Decisions in the background and ends the Checkout: while
-// it runs the page polls the Checkout and shows its progress, then what
-// happened to each Message. The keyboard moves through the Messages (the
+// it runs the page polls the Checkout and shows its progress (with Stop,
+// after a confirmation), then what happened to each Message. The keyboard moves through the Messages (the
 // Message view follows), builds the Selection and assigns Decisions; the
 // keys are mapped to commands in keyboard-commands.ts. With exactly two
 // Messages selected, Compare (or `c`) shows them side by side in place of the
@@ -218,6 +218,17 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     }
   };
 
+  /** Stops the running Apply, after its confirmation. */
+  const stopApply = async () => {
+    try {
+      setCheckout(await api.stopApply(id));
+      setReceivedAt(Date.now());
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
+
   /** Asks another Operator to approve the Apply, after the same confirmation as an Apply. */
   const requestApproval = async (confirmQueueName?: string, rate?: number) => {
     setBusy(true);
@@ -374,7 +385,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       )}
       {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}
       {error && <ErrorBox error={error} />}
-      {applying && checkout.applyProgress && <ApplyProgressPanel progress={checkout.applyProgress} now={now} />}
+      {applying && checkout.applyProgress && (
+        <ApplyProgressPanel progress={checkout.applyProgress} now={now} onStop={stopApply} />
+      )}
       {checkout.lastApply && <ApplyOutcomes outcomes={checkout.lastApply.outcomes} approvedBy={checkout.lastApply.approvedBy} />}
 
       {awaiting && checkout.approvalRequest && (

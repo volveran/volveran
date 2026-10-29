@@ -34,7 +34,8 @@ export interface ApprovalRequest {
  */
 export type ApprovalClosed =
   | { how: 'withdrawn' }
-  | { how: 'approved' | 'rejected'; by: string }
+  | { how: 'approved'; by: string; approverId: string }
+  | { how: 'rejected'; by: string }
   | { how: 'cancelled' };
 
 /** The last rejection of a request for Approval, kept until the next request. */
