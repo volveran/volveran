@@ -142,7 +142,7 @@ export type ReplayAvailability =
 /** The Audit Entry of the Replay, Move or Restore that last sent a Died Again Message out. */
 export interface DiedAgainSource {
   auditEntryId: number;
-  action: Exclude<AuditAction, 'discard' | 'export'>;
+  action: Extract<AuditAction, 'replay' | 'move' | 'restore'>;
   /** ISO time of the Audit Entry. */
   at: string;
   /** The Operator who acted, as shown (display name). */
@@ -192,6 +192,8 @@ export interface MessageOutcome {
   status: OutcomeStatus;
   /** Why it failed or was not attempted; null otherwise. */
   reason: string | null;
+  /** Set when it failed because the broker refused the broker user permission (e.g. write on the exchange). */
+  refused?: true;
 }
 
 /** The result of a Checkout's Apply. */

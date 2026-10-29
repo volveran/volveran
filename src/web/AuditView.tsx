@@ -24,6 +24,8 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   move: 'Move',
   restore: 'Restore',
   export: 'Export',
+  rule_pause: 'Rule paused',
+  rule_resume: 'Rule resumed',
 };
 
 const EMPTY_SEARCH: AuditSearch = {

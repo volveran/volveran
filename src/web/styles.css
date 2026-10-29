@@ -818,6 +818,15 @@ dialog.prompt .confirm {
 .rule-declaration dd {
   margin: 0;
 }
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.replay-rule form.confirm {
+  margin-top: 0.5rem;
+}
 
 .pass-history {
   border-collapse: collapse;

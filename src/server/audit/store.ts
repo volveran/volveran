@@ -256,6 +256,15 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (rule_key, message_id)
    );
    CREATE INDEX replay_rule_first_seen_at ON replay_rule_first_seen (rule_key, first_seen_at);`,
+  // v11 (#65): the Died Again Messages a pass saw whose last Audit Entry is the rule's (its automatic stop), by
+  // entry; and a pass's count of due Messages it could not Replay (no Replay origin).
+  `CREATE TABLE replay_rule_died_again (
+     rule_key TEXT NOT NULL,
+     audit_entry_id INTEGER NOT NULL,
+     seen_at INTEGER NOT NULL,
+     PRIMARY KEY (rule_key, audit_entry_id)
+   );
+   ALTER TABLE replay_rule_passes ADD COLUMN cannot_replay INTEGER;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';

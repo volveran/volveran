@@ -19,7 +19,9 @@
 //    Keeps every other Message in order (no Delivery Budget used on a quorum
 //    queue). With nothing to do it just ends the Checkout.
 //
-// The result is the pass's counts; the caller keeps them (rules.ts).
+// The result is the pass's counts, and what the automatic stop looks at: the
+// Audit Entries its Died Again Messages last came from, and how its publishes
+// failed. The caller keeps the counts and decides on the stop (rules.ts).
 import { randomUUID } from 'node:crypto';
 import { brokerCredentials } from '../broker-credentials.js';
 import type { CheckoutManager } from '../checkout/manager.js';
@@ -46,13 +48,21 @@ export interface RulePassOptions {
   firstSeen?(messageIds: string[], now: Date): Map<string, Date>;
 }
 
+/** What a pass saw that its automatic stop needs (not kept with the pass). */
+export interface RulePassFindings {
+  /** The Audit Entry each held Died Again Message last came from (any Operator's; the caller picks the rule's). */
+  diedAgainEntryIds: number[];
+  /** How its Replays and Moves failed: none, the broker refused a publish its permissions, or a publish failed otherwise. */
+  publishFailure: null | 'refused' | 'failed';
+}
+
 /** Runs one pass of `rule` of `profile`; throws when its Checkout cannot start (the queue is held, missing, refused). */
 export async function runRulePass(
   checkouts: CheckoutManager,
   profile: BrokerProfile,
   rule: ReplayRule,
   options: RulePassOptions = {},
-): Promise<RulePass & { summary: RulePassSummary }> {
+): Promise<{ pass: RulePass & { summary: RulePassSummary }; findings: RulePassFindings }> {
   const now = options.now ?? new Date();
   const pass = { id: randomUUID(), at: now.toISOString() };
   const operator = ruleOperator(profile.name, rule.name);
@@ -67,7 +77,11 @@ export async function runRulePass(
   };
   const started = await checkouts.start(target, operator, { maxMessages: rule.maxPerPass * KEPT_FACTOR });
   const checkout = checkouts.checkout(started.id);
-  const summary: RulePassSummary = { held: checkout.held.size, replayed: 0, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, failed: 0 };
+  const summary: RulePassSummary = { held: checkout.held.size, replayed: 0, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, cannotReplay: 0, failed: 0 };
+  const findings: RulePassFindings = {
+    diedAgainEntryIds: [...checkout.diedAgain.values()].flatMap((d) => (d.last ? [d.last.auditEntryId] : [])),
+    publishFailure: null,
+  };
   try {
     const messageIds = [...checkout.held.values()].flatMap((d) => (typeof d.properties.messageId === 'string' ? [d.properties.messageId] : []));
     const firstSeen = options.firstSeen?.(messageIds, now) ?? new Map<string, Date>();
@@ -90,8 +104,8 @@ export async function runRulePass(
       else due.push(handle);
     }
     summary.usedUp = usedUp.length;
-    // A Message Replay cannot reach (no origin, e.g. Spring AMQP) is Kept and counted as failed.
-    summary.failed += due.length === 0 ? 0 : stageDecisions(checkout, due, { kind: 'replay' }).length;
+    // A Message with nowhere to Replay to (no origin, e.g. Spring AMQP) is Kept and counted apart: nothing failed on the broker.
+    summary.cannotReplay = due.length === 0 ? 0 : stageDecisions(checkout, due, { kind: 'replay' }).length;
     const parking = rule.whenAttemptsUsedUp === 'keep' ? null : rule.whenAttemptsUsedUp.moveTo.queue;
     if (parking !== null && usedUp.length > 0) {
       summary.failed += stageDecisions(checkout, usedUp, { kind: 'move', destination: { queue: parking } }).length;
@@ -102,6 +116,7 @@ export async function runRulePass(
       const ended = await checkouts.applyForRule(checkout.id, { rate: rule.rate, rule: { name: rule.name, passId: pass.id } });
       for (const o of ended.lastApply?.outcomes ?? []) {
         if (o.decision.kind !== 'replay' && o.decision.kind !== 'move') continue;
+        if (o.status === 'failed') findings.publishFailure = o.refused || findings.publishFailure === 'refused' ? 'refused' : 'failed';
         if (o.status !== 'done') summary.failed++;
         else if (o.decision.kind === 'replay') summary.replayed++;
         else summary.moved++;
@@ -111,5 +126,5 @@ export async function runRulePass(
     // Whatever went wrong, the held Messages go back to the queue.
     if (checkouts.isRunning(checkout.id)) await checkouts.end(checkout.id, 'applied').catch(() => {});
   }
-  return { ...pass, status: 'ran', summary, reason: null };
+  return { pass: { ...pass, status: 'ran', summary, reason: null }, findings };
 }
