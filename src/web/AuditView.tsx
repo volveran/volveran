@@ -1,6 +1,6 @@
 // Audit view: browse and search Audit Entries ("what happened to message
-// X?") by Broker Profile, queue, message_id, action, Operator, replay id and
-// date, and Restore a Discarded Message to its source queue or another
+// X?") by Broker Profile, queue, message_id, action, Operator, replay id,
+// Replay Rule and date, and Restore a Discarded Message to its source queue or another
 // existing one.
 // A Discard whose body retention evicted shows "body expired" and offers no
 // Restore. Warns when the store of Discarded bodies is near its size limit.
@@ -18,7 +18,17 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   export: 'Export',
 };
 
-const EMPTY_SEARCH: AuditSearch = { profile: '', queue: '', messageId: '', action: '', operator: '', replayId: '', from: '', to: '' };
+const EMPTY_SEARCH: AuditSearch = {
+  profile: '',
+  queue: '',
+  messageId: '',
+  action: '',
+  operator: '',
+  replayId: '',
+  rule: '',
+  from: '',
+  to: '',
+};
 
 function formatBytes(bytes: number): string {
   const units = ['bytes', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -110,6 +120,7 @@ export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Rec
           aria-label="Replay id"
           {...field('replayId')}
         />
+        <input type="search" placeholder="Replay rule" aria-label="Replay rule" {...field('rule')} />
         <label>
           From <input type="date" {...field('from')} />
         </label>
@@ -147,6 +158,7 @@ export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Rec
               <th>Queue</th>
               <th>Destination</th>
               <th>Operator</th>
+              <th>Rule</th>
               <th>Outcome</th>
               <th />
             </tr>
@@ -266,6 +278,9 @@ function EntryRow({
         {entry.operatorName}
         {entry.role && <small className="muted"> ({entry.role})</small>}
         <small className="muted"> as {entry.brokerUser}</small>
+      </td>
+      <td className="name" title={entry.rulePassId ? `Rule Pass ${entry.rulePassId}` : undefined}>
+        {entry.rule ?? ''}
       </td>
       <td title={entry.outcomeReason ?? undefined}>
         <span className={`badge outcome-${entry.outcome}`}>{entry.outcome}</span>

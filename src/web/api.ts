@@ -7,6 +7,7 @@ import type { FilterClause } from '../shared/filters.js';
 import type { MessageComparison } from '../shared/message-diff.js';
 import { product } from '../shared/product.js';
 import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
+import type { ReplayRuleView, RulePass } from '../shared/replay-rules.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
@@ -25,6 +26,7 @@ export type {
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
+export type { ReplayRule, ReplayRuleView, RulePass, RulePassSummary } from '../shared/replay-rules.js';
 export type {
   CheckoutAvailability,
   MoveDestinations,
@@ -54,6 +56,8 @@ export interface AuditSearch {
   operator?: string;
   /** The `x-volveran-replay-id` header of a Message that came back. */
   replayId?: string;
+  /** The name of the Replay Rule whose passes wrote the entries. */
+  rule?: string;
   from?: string;
   to?: string;
 }
@@ -165,6 +169,14 @@ export const api = {
     return getJson<{ entries: AuditEntry[] }>(`/api/audit-entries${qs}`).then((b) => b.entries);
   },
   auditStore: () => getJson<AuditStoreUsage>('/api/audit-store'),
+  /** The Replay Rules of a Broker Profile, with the last pass of each. */
+  replayRules: (profile: string) =>
+    getJson<{ rules: ReplayRuleView[] }>(`/api/profiles/${segment(profile)}/replay-rules`).then((b) => b.rules),
+  /** Runs one pass of a rule now (`admin`) and returns it once it has ended. */
+  runReplayRule: (profile: string, name: string) =>
+    getJson<{ pass: RulePass }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/run`, 'POST', {}).then(
+      (b) => b.pass,
+    ),
   /** Republishes the Discarded Message of Audit Entry `id`; returns the Restore's own Audit Entry. */
   restore: (id: number, options: RestoreOptions) =>
     getJson<{ entry: AuditEntry }>(`/api/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(

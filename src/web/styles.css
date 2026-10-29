@@ -757,3 +757,30 @@ dialog.prompt .confirm {
 .diff-onlyRight th {
   color: var(--warning);
 }
+
+/* Replay rules view */
+.replay-rule {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+.replay-rule h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.rule-declaration {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+.rule-declaration dt {
+  color: var(--muted);
+}
+.rule-declaration dd {
+  margin: 0;
+}

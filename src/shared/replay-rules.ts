@@ -72,6 +72,25 @@ export interface ReplayRuleView {
   lastPass: RulePass | null;
 }
 
+/** A duration as the profiles file writes it, from the largest unit down, e.g. "1h30m". */
+export function durationText(ms: number): string {
+  const units: Array<[string, number]> = [
+    ['d', 86_400_000],
+    ['h', 3_600_000],
+    ['m', 60_000],
+    ['s', 1000],
+  ];
+  let left = Math.round(ms / 1000) * 1000;
+  let text = '';
+  for (const [unit, size] of units) {
+    if (left >= size) {
+      text += `${Math.floor(left / size)}${unit}`;
+      left %= size;
+    }
+  }
+  return text || '0s';
+}
+
 /** The Operator name a rule acts as, in Audit Entries, the queue list and "held by". */
 export function ruleDisplayName(name: string): string {
   return `Replay rule ${name}`;
