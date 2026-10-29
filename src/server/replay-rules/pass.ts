@@ -30,15 +30,26 @@ import { ManagementClient } from '../management.js';
 import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
 import type { BrokerProfile } from '../profiles.js';
+import { messageIdOf } from '../triage/message-view.js';
 import { ruleDisplayName, type ReplayRule, type RulePass, type RulePassSummary } from '../../shared/replay-rules.js';
 import { evaluateRule } from './evaluate.js';
 
 /** How many Messages a pass holds per Message it may Replay, so that the Kept ones do not crowd out the due ones. */
 export const KEPT_FACTOR = 3;
 
+/** A rule's key in the rule state (audit/rule-state.ts): `<profile>/<rule>`. */
+export function ruleKey(profile: string, rule: string): string {
+  return `${profile}/${rule}`;
+}
+
+/** The id of the Operator a rule acts as: `rule:<profile>/<rule>`. */
+export function ruleOperatorId(profile: string, rule: string): string {
+  return `rule:${ruleKey(profile, rule)}`;
+}
+
 /** The Operator a rule acts as: recorded in its Audit Entries, and named as the holder of the queue during a pass. */
 export function ruleOperator(profile: string, rule: string): Operator {
-  return { id: `rule:${profile}/${rule}`, displayName: ruleDisplayName(rule) };
+  return { id: ruleOperatorId(profile, rule), displayName: ruleDisplayName(rule) };
 }
 
 export interface RulePassOptions {
@@ -83,12 +94,12 @@ export async function runRulePass(
     publishFailure: null,
   };
   try {
-    const messageIds = [...checkout.held.values()].flatMap((d) => (typeof d.properties.messageId === 'string' ? [d.properties.messageId] : []));
+    const messageIds = [...checkout.held.values()].flatMap((d) => messageIdOf(d) ?? []);
     const firstSeen = options.firstSeen?.(messageIds, now) ?? new Map<string, Date>();
     const due: number[] = [];
     const usedUp: number[] = [];
     for (const [handle, delivery] of checkout.held) {
-      const messageId = typeof delivery.properties.messageId === 'string' ? delivery.properties.messageId : null;
+      const messageId = messageIdOf(delivery);
       const { verdict } = evaluateRule(
         rule,
         {

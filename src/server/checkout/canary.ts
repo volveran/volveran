@@ -25,7 +25,7 @@ import type { CanaryHooks } from '../apply/types.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
 import type { CanaryWatchBindings } from '../triage/canary-watch.js';
-import { messageSummary } from '../triage/message-view.js';
+import { messageIdOf, messageSummary } from '../triage/message-view.js';
 import type { CanaryStatus, CanaryView } from '../../shared/checkout.js';
 import type { Checkout } from './state.js';
 import { queueInfo } from './view.js';
@@ -121,11 +121,9 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
 
     async beforePublish(entryId, replayId) {
       entry = entryId;
-      const message = checkout.held.get(options.handle);
-      const id = message?.properties.messageId;
       checkout.canary = {
         handle: options.handle,
-        messageId: typeof id === 'string' ? id : id == null ? null : String(id),
+        messageId: messageIdOf(checkout.held.get(options.handle)),
         auditEntryId: entryId,
         status: 'watching',
         watchEndsAt: null,

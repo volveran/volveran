@@ -13,7 +13,7 @@ import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { BodyRetention } from '../../src/server/audit/body-retention.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
-import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/scheduler.js';
+import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
 import { startServer } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';

@@ -65,7 +65,7 @@ import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { applyOutlastsCheckout, replayRateFor } from '../triage/replay-rate.js';
 import { messageDetail, type Delivery, type MessageDetail } from '../triage/message-view.js';
-import type { RuleSchedulerTestHooks } from '../replay-rules/scheduler.js';
+import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, ProfileScope } from '../audit/store.js';
@@ -114,7 +114,7 @@ export interface CheckoutTestHooks {
   beforeApplyStep?(entryId: number): Promise<void>;
   /** An export is about to make the line of the Message at `position` (1 is the head of the queue). */
   beforeExportLine?(position: number): Promise<void>;
-  /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/scheduler.ts); the server hands them to it. */
+  /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/rule-clock.ts); the server hands them to it. */
   ruleScheduler?: RuleSchedulerTestHooks;
 }
 

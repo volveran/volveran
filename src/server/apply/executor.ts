@@ -21,6 +21,7 @@
 // touched, then updated with the outcome. A crash in between leaves the
 // Message in the queue *and* in the store: a duplicate, never a loss.
 import type { AuditStore } from '../audit/store.js';
+import { messageIdOf } from '../triage/message-view.js';
 import type { ActionDecision, ApplyPlan, Decision } from '../triage/decisions.js';
 import { handlerFor } from './handlers.js';
 import { pacer } from './pacing.js';
@@ -71,12 +72,8 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
   const rate = run.rate ?? null;
   const pace = pacer(rate);
   const outcomes = new Map<number, MessageOutcome>();
-  const messageIdOf = (handle: number) => {
-    const id = messages.get(handle)?.properties.messageId;
-    return typeof id === 'string' ? id : id == null ? null : String(id);
-  };
   const outcome = (handle: number, decision: Decision, status: MessageOutcome['status'], reason: string | null = null, refused = false) => {
-    const o: MessageOutcome = { handle, messageId: messageIdOf(handle), decision, status, reason, ...(refused && { refused: true }) };
+    const o: MessageOutcome = { handle, messageId: messageIdOf(messages.get(handle)), decision, status, reason, ...(refused && { refused: true }) };
     outcomes.set(handle, o);
     if (status !== 'kept') run.onStep?.(o);
   };
@@ -120,7 +117,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         profile: target.profile.name,
         vhost: target.vhost,
         queue: target.queue,
-        messageId: messageIdOf(handle),
+        messageId: messageIdOf(message),
         action: details.action,
         reason: details.reason,
         destination: details.destination,

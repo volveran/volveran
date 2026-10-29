@@ -155,6 +155,12 @@ export function parseXDeath(headers: Record<string, unknown> | undefined): XDeat
   }));
 }
 
+/** A delivery's message id as Volverán shows and records it; null when it has none. */
+export function messageIdOf(delivery: Pick<Delivery, 'properties'> | undefined): string | null {
+  const id: unknown = delivery?.properties.messageId;
+  return typeof id === 'string' ? id : id == null ? null : String(id);
+}
+
 function asString(v: unknown): string | null {
   if (typeof v === 'string') return v;
   if (Buffer.isBuffer(v)) return v.toString('utf8');
