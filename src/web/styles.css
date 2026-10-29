@@ -1,34 +1,140 @@
-/* Volverán web app styles: plain CSS, light and dark through custom properties. */
+/* Volverán web app styles: plain CSS, light and dark through custom properties.
+   Sections: fonts and tokens, base and controls, the severity scale, the top bar
+   and Protected Profiles, the queue list, the Checkout (head, Decisions, filter,
+   Message list, Message view), prompts, Apply, Canary, ComparisonView, Audit view,
+   Replay rules view, Approvals and the no-role page. */
+
+/* Fonts: Atkinson Hyperlegible Next for labels and prose, Atkinson Hyperlegible
+   Mono for data (queue names, message_ids, headers, bodies). Bundled from
+   @fontsource-variable (OFL-1.1): no request leaves the host. */
+@import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
+@import '@fontsource-variable/atkinson-hyperlegible-mono/wght.css';
+
+/* Tokens. Colour pairs (fg on bg) meet WCAG AA in both themes; the *-line
+   colours are bars and borders, at least 3:1 against what they sit on. */
 :root {
-  --bg: #f7f7f8;
+  color-scheme: light;
+
+  --font-sans: 'Atkinson Hyperlegible Next Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Atkinson Hyperlegible Mono Variable', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* Type scale: labels in sans, data one step smaller in mono. */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-data: 13px;
+  --lh: 1.45;
+  --lh-data: 1.55;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+
+  /* Radius by role: tags, controls, panels. */
+  --r-sm: 3px;
+  --r-md: 5px;
+  --r-lg: 8px;
+
+  /* Neutrals: cool blue-grey; accent: swallow blue. */
+  --bg: #f3f5f8;
   --surface: #ffffff;
-  --text: #1d1d20;
-  --muted: #6b6b75;
-  --border: #e2e2e6;
-  --accent: #ff6600;
-  --danger: #b42318;
-  --danger-bg: #fdecea;
-  --warning: #93370d;
-  --warning-bg: #fef6e7;
-  --match-bg: #fff6ee;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --surface-2: #f6f8fa;
+  --code-bg: #f5f7fa;
+  --text: #14202e;
+  --muted: #556273;
+  --border: #d5dbe3;
+  --border-strong: #7d8a9b;
+  --hover: #eaeff5;
+  --accent: #1f4fa3;
+  --accent-bg: #e8effb;
+  --on-accent: #ffffff;
+  --focus: #1f4fa3;
+  --row-current: #e9f0fb;
+  --row-dlq: #f8fafd;
+
+  /* Severity scale: info < warning < danger. */
+  --info-fg: #1f4fa3;
+  --info-bg: #e8effb;
+  --info-line: #3c68b8;
+  --warning-fg: #7a4a00;
+  --warning-bg: #fff1d0;
+  --warning-line: #a86d00;
+  --danger-fg: #a3191b;
+  --danger-bg: #fde8e7;
+  --danger-line: #b3261e;
+  --danger-solid: #b3261e;
+  --on-danger: #ffffff;
+
+  /* Differences in ComparisonView: a hue of their own, never a severity. */
+  --diff-fg: #5b2ba8;
+  --diff-bg: #f1eafe;
+  --diff-line: #7c4dcc;
+
+  /* Decision rail: one colour per Decision; Keep has none. */
+  --rail-discard: var(--danger-line);
+  --rail-replay: var(--accent);
+  --rail-move: #0b7a75;
+  --move-fg: #0a6763;
+
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh);
   color: var(--text);
   background: var(--bg);
+  scrollbar-color: var(--border-strong) transparent;
+  -webkit-text-size-adjust: 100%;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #17171a;
-    --surface: #212126;
-    --text: #ececf1;
-    --muted: #9a9aa5;
-    --border: #34343c;
-    --danger: #ff8a80;
-    --danger-bg: #3a1d1b;
-    --warning: #fdb022;
-    --warning-bg: #33260f;
-    --match-bg: #2b2219;
+    color-scheme: dark;
+
+    --bg: #121821;
+    --surface: #1a222d;
+    --surface-2: #161d27;
+    --code-bg: #141b24;
+    --text: #e6ebf2;
+    --muted: #9aa7b8;
+    --border: #2c3746;
+    --border-strong: #6b788a;
+    --hover: #222c39;
+    --accent: #8db0f0;
+    --accent-bg: #1b2b47;
+    --on-accent: #0e1726;
+    --focus: #8db0f0;
+    --row-current: #1e2a3d;
+    --row-dlq: #1c2430;
+
+    --info-fg: #9dbbf5;
+    --info-bg: #172540;
+    --info-line: #6f95e0;
+    --warning-fg: #f4c46a;
+    --warning-bg: #33270e;
+    --warning-line: #c9952e;
+    --danger-fg: #ff9c94;
+    --danger-bg: #3d1717;
+    --danger-line: #e5534b;
+    --danger-solid: #c62828;
+    --on-danger: #ffffff;
+
+    --diff-fg: #c9b3ff;
+    --diff-bg: #2a2140;
+    --diff-line: #9c7be8;
+
+    --rail-move: #4fbdb7;
+    --move-fg: #6fd3cd;
   }
+}
+
+/* Base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
@@ -36,219 +142,428 @@ body {
   background: var(--bg);
 }
 
-.app {
-  min-height: 100vh;
-  border-top: 4px solid var(--accent);
+h1,
+h2,
+h3,
+h4,
+h5 {
+  line-height: 1.25;
+  font-weight: 650;
 }
 
-.app.protected {
-  border-top: 6px solid var(--danger);
+h2 {
+  font-size: var(--fs-lg);
+  letter-spacing: -0.005em;
 }
 
-.topbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+h3 {
+  font-size: var(--fs-md);
 }
 
-.topbar h1 {
-  font-size: 18px;
-  margin: 0 8px 0 0;
+h4 {
+  font-size: var(--fs-sm);
+  margin: var(--sp-4) 0 var(--sp-2);
 }
 
-.topbar label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
+h5 {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin: var(--sp-3) 0 var(--sp-1);
+}
+
+h4 small,
+h3 small {
+  font-weight: 400;
   color: var(--muted);
 }
 
+a {
+  color: var(--accent);
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+}
+
+code {
+  font-size: 0.93em;
+}
+
+pre {
+  font-size: var(--fs-data);
+  line-height: var(--lh-data);
+  tab-size: 2;
+}
+
+strong {
+  font-weight: 650;
+}
+
+.muted,
+.empty {
+  color: var(--muted);
+}
+
+/* Controls */
 select,
 input[type='search'],
+input[type='text'],
+input[type='number'],
+input[type='date'],
+input:not([type]),
+textarea,
 button {
   font: inherit;
-  font-size: 14px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--text);
 }
 
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  opacity: 1;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
 button {
   cursor: pointer;
+  font-weight: 550;
+  white-space: nowrap;
 }
 
-.who {
-  font-size: 13px;
-  color: var(--muted);
+button:hover:not(:disabled) {
+  background: var(--hover);
 }
 
-main {
-  padding: 16px;
-  max-width: 1100px;
+button:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+/* Destructive and irreversible: Discard, Stop, Reject, Restore, Confirm. */
+button.danger {
+  border-color: var(--danger-line);
+  color: var(--danger-fg);
+  font-weight: 650;
 }
 
-.controls input[type='search'] {
-  flex: 1 1 240px;
+button.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding-inline: 2px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  text-decoration-thickness: 2px;
 }
 
 .checkbox {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: var(--fs-sm);
 }
 
+kbd {
+  display: inline-block;
+  min-width: 1.7em;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  text-align: center;
+  padding: 0 0.35em;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* Keyboard focus: always visible. The Message list keeps the DOM focus and
+   marks its focused Message (the active descendant) instead. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Tags */
 .badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  line-height: 18px;
+  white-space: nowrap;
+  vertical-align: 1px;
   border: 1px solid var(--border);
-}
-
-.protected-badge {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
-  font-weight: 600;
-}
-
-.error {
-  border: 1px solid var(--danger);
-  background: var(--danger-bg);
-  color: var(--danger);
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 16px;
-}
-
-.error p {
-  margin: 4px 0;
+  background: var(--surface-2);
   color: var(--text);
 }
 
-.warning {
-  border: 1px solid var(--warning);
+/* The severity scale. Every notice, panel and tag takes one of three levels:
+   info (something is under way), warning (look before going on) and danger
+   (Messages can be lost, or an action cannot be taken back). A panel is a tinted
+   block with a 4px bar on its leading edge; a tag is the same tint with its line. */
+.error,
+.warning,
+.rejection,
+.awaiting-approval,
+.apply-progress,
+.canary-panel,
+.protected-banner,
+.rule-note {
+  --level-fg: var(--info-fg);
+  --level-bg: var(--info-bg);
+  --level-line: var(--info-line);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--level-line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 10px 14px;
+  margin: 0 0 var(--sp-3);
+}
+
+.error > strong:first-child,
+.warning > strong:first-child,
+.rejection > strong:first-child,
+.awaiting-approval > strong:first-child,
+.apply-progress > strong:first-child,
+.canary-panel > strong:first-child {
+  color: var(--level-fg);
+  font-size: var(--fs-base);
+}
+
+.error p,
+.warning p,
+.rejection p,
+.awaiting-approval p,
+.apply-progress p,
+.canary-panel p,
+.rule-note p {
+  margin: var(--sp-1) 0;
+  color: var(--text);
+}
+
+/* Warning and danger panels are tinted, so they stand out of a dense page. */
+.warning,
+.awaiting-approval,
+.canary-watching,
+.canary-unwatched {
+  --level-fg: var(--warning-fg);
+  --level-bg: var(--warning-bg);
+  --level-line: var(--warning-line);
   background: var(--warning-bg);
-  color: var(--warning);
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 16px;
+  border-color: var(--warning-line);
+  border-left-width: 4px;
 }
 
-.warning p {
-  margin: 4px 0;
-  color: var(--text);
+.error,
+.rejection,
+.protected-banner,
+.died-again-note,
+.last-delivery,
+.canary-died_again,
+.canary-failed {
+  --level-fg: var(--danger-fg);
+  --level-bg: var(--danger-bg);
+  --level-line: var(--danger-line);
+  background: var(--danger-bg);
+  border-color: var(--danger-line);
+  border-left-width: 4px;
+}
+
+.error code {
+  color: var(--danger-fg);
 }
 
 .warning .actions {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
 }
 
-.badge.limit-warning {
+.error-text,
+.rate-problem {
+  color: var(--danger-fg);
+}
+
+.badge.dlq,
+.badge.rule,
+.badge.canary-badge {
+  background: var(--info-bg);
+  color: var(--info-fg);
+  border-color: var(--info-line);
+}
+
+.badge.limit-warning,
+.badge.rule.used-up,
+.badge.skipped,
+.badge.severity-may_lose_messages {
   background: var(--warning-bg);
-  color: var(--warning);
-  border: 1px solid var(--warning);
+  color: var(--warning-fg);
+  border-color: var(--warning-line);
 }
 
-/* A Message that came back after a Replay, Move or Restore. */
-.badge.died-again {
+/* A Message that came back after a Replay, Move or Restore; a set-up that loses
+   Messages; an Apply step that failed or may have. */
+.badge.died-again,
+.badge.severity-loses_messages,
+.badge.outcome-failed,
+.badge.outcome-uncertain,
+.badge.outcome-pending {
   background: var(--danger-bg);
-  color: var(--danger);
-  border-color: var(--danger);
-  margin-left: 4px;
+  color: var(--danger-fg);
+  border-color: var(--danger-line);
 }
 
-/* A running Replay Rule matches the Message; used up: it has given up on it. */
-.badge.rule {
-  margin-left: 4px;
-}
-.badge.rule.used-up {
-  background: var(--warning-bg);
-  color: var(--warning);
-  border-color: var(--warning);
+.badge.died-again,
+.badge.severity-loses_messages {
+  font-weight: 700;
 }
 
-/* A MassTransit Message no consumer handled (MT-Reason: skip), not a fault. */
+.badge.rule,
+.badge.died-again,
 .badge.skipped {
-  background: var(--warning-bg);
-  color: var(--warning);
-  border-color: var(--warning);
-  margin-left: 4px;
+  margin-left: var(--sp-1);
 }
 
-.message-detail .failure-details dd {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.notice {
+  color: var(--muted);
 }
 
-.held {
-  color: var(--warning);
-  font-size: 0.9em;
+/* Top bar: the wordmark, the views, the Broker Profile and vhost, who is acting. */
+.app {
+  min-height: 100vh;
 }
 
-.countdown {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-table.queues {
-  width: 100%;
-  border-collapse: collapse;
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
+  min-height: 52px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.queues th,
-.queues td {
-  text-align: left;
-  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  font-size: 14px;
-  vertical-align: top;
 }
 
-.queues th {
-  font-size: 12px;
+/* The wordmark, with a swallow: dead letters, like Bécquer's dark swallows, come back. */
+.topbar h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  margin: 0 var(--sp-2) 0 0;
+}
+
+.topbar h1::before,
+.checkout-body > .empty::before {
+  content: '';
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: var(--accent);
+  -webkit-mask: var(--swallow) center / contain no-repeat;
+  mask: var(--swallow) center / contain no-repeat;
+}
+
+:root {
+  --swallow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath transform='rotate(-24 16 16)' d='M16 6.5C17 6.5 17.8 7.4 17.9 8.8C20.6 10.6 25 12 31 11.6C27.2 14.6 22.6 16 18.4 16L17.7 19.4L22.2 28L16.9 22.6L16 24L15.1 22.6L9.8 28L14.3 19.4L13.6 16C9.4 16 4.8 14.6 1 11.6C7 12 11.4 10.6 14.1 8.8C14.2 7.4 15 6.5 16 6.5Z'/%3E%3C/svg%3E");
+}
+
+.topbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
   color: var(--muted);
-  font-weight: 600;
 }
 
-.queues tr.match td {
-  background: var(--match-bg);
+.topbar select {
+  min-width: 9rem;
 }
 
-.queues .num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.queues .name {
-  font-family: ui-monospace, monospace;
-  word-break: break-all;
-}
-
-.muted,
-.empty {
+.who {
+  font-size: var(--fs-xs);
   color: var(--muted);
+}
+
+.who strong {
+  color: var(--text);
+}
+
+/* The views, as one segmented control. */
+.view-switch {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.view-switch button {
+  border: none;
+  border-radius: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.view-switch button:first-child {
+  border-left: none;
+}
+
+.view-switch button[aria-pressed='true'] {
+  background: var(--accent-bg);
+  color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.view-switch button:focus-visible {
+  outline-offset: -2px;
+}
+
+main {
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  max-width: 1680px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.controls input[type='search'] {
+  flex: 1 1 240px;
 }
 
 .unavailable {
@@ -259,39 +574,150 @@ table.queues {
 
 .unavailable small {
   color: var(--muted);
+  font-size: var(--fs-xs);
   max-width: 360px;
 }
 
+/* Protected Profiles: unmistakable on every screen. The whole viewport gets a
+   danger frame (over open prompts too), the top bar turns danger, and the profile
+   picker, the badge, the banner above the queue list and the Checkout header, the
+   Apply confirmation and "PROTECTED" in the tab title all say so. */
+.app.protected::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  border: 3px solid var(--danger-line);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.app.protected dialog.prompt::backdrop {
+  box-shadow: inset 0 0 0 3px var(--danger-line, #b3261e);
+}
+
+.app.protected .topbar {
+  background: var(--danger-bg);
+  border-bottom: 1px solid var(--danger-line);
+  box-shadow: inset 0 3px 0 var(--danger-line);
+}
+
+.protected-select {
+  border: 2px solid var(--danger-line);
+  color: var(--danger-fg);
+  font-weight: 700;
+}
+
+.badge.protected-badge {
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
+  color: var(--on-danger);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.protected-banner {
+  color: var(--danger-fg);
+  font-weight: 550;
+}
+
+.protected-banner strong {
+  color: var(--danger-fg);
+}
+
+/* Queue list: dead-letter queues first, each with its dead-letter set-up warnings. */
+table.queues {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  font-size: var(--fs-sm);
+}
+
+.queues th,
+.queues td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.queues tbody tr:last-child > td {
+  border-bottom: none;
+}
+
+.queues thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  vertical-align: bottom;
+}
+
+.queues thead tr:first-child th:first-child {
+  border-top-left-radius: var(--r-lg);
+}
+
+.queues thead tr:first-child th:last-child {
+  border-top-right-radius: var(--r-lg);
+}
+
+.queues th small {
+  display: block;
+  font-weight: 400;
+}
+
+.queues tr.match > td {
+  background: var(--row-dlq);
+}
+
+.queues .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Data cells: the queue name or message_id itself is mono; prose nested in the
+   same cell (where it is dead-lettered from, set-up warnings) stays sans. */
+.queues .name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+  overflow-wrap: anywhere;
+}
+
+.queues .name > *:not(code) {
+  font-family: var(--font-sans);
+}
 
 .queues .dlq-source {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .queues .setup-warning {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  margin-top: 4px;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--warning-line);
+  overflow-wrap: normal;
+}
+
+.queues .setup-warning:has(.severity-loses_messages) {
+  border-left-color: var(--danger-line);
 }
 
 .queues .setup-warning small {
-  color: var(--warning);
-  max-width: 480px;
-}
-
-.badge.severity-loses_messages {
-  background: var(--danger-bg);
-  color: var(--danger);
-  border: 1px solid var(--danger);
-}
-
-.badge.severity-may_lose_messages {
-  background: var(--warning-bg);
-  color: var(--warning);
-  border: 1px solid var(--warning);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  max-width: 68ch;
 }
 
 .setup-warning-counts {
@@ -299,143 +725,123 @@ table.queues {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 0 0 8px;
+  margin: 0 0 var(--sp-2);
   color: var(--muted);
+  font-size: var(--fs-sm);
 }
 
-.queues th small {
-  font-weight: normal;
+.queues tr.focused:focus > td {
+  box-shadow: inset 0 2px 0 var(--focus), inset 0 -2px 0 var(--focus);
 }
 
-.badge.dlq {
-  border-color: var(--accent);
-  color: var(--accent);
+.queues tr.focused:focus > td:first-child {
+  box-shadow: inset 2px 0 0 var(--focus), inset 0 2px 0 var(--focus), inset 0 -2px 0 var(--focus);
 }
 
-/* Checkout */
+.queues tr.focused:focus > td:last-child {
+  box-shadow: inset -2px 0 0 var(--focus), inset 0 2px 0 var(--focus), inset 0 -2px 0 var(--focus);
+}
+
+.queues tr:focus {
+  outline: none;
+}
+
+.shortcut-hint {
+  margin-top: var(--sp-4);
+  font-size: var(--fs-sm);
+}
+
+/* Checkout: its head (what is held, for how long), Decisions, filter, the
+   Message list and the Message view side by side. */
 .checkout-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
-}
-.checkout-head h2 {
-  margin: 0 0 0.25rem;
-}
-.checkout-body {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 1rem;
-  align-items: start;
-}
-.messages tr {
-  cursor: pointer;
-}
-.messages tr.focused td {
-  outline: 1px solid var(--accent);
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-3);
 }
 
-/* Keyboard focus: always visible. The Message list keeps the DOM focus and
-   marks its focused Message (the active descendant) instead. */
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.listbox:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.listbox:focus tr.focused td {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.queues tr.focused:focus td {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.queues tr:focus {
-  outline: none;
-}
-.message-list .checkbox {
-  display: inline-flex;
-  margin-bottom: 0.25rem;
-}
-kbd {
-  font-family: ui-monospace, monospace;
-  font-size: 0.85em;
-  padding: 0 0.3em;
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  background: var(--surface);
-}
-.shortcut-hint {
-  margin-top: 1rem;
-  font-size: 0.9em;
-}
-dialog.prompt {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 16px;
-  max-width: min(40rem, calc(100vw - 2rem));
-}
-dialog.prompt::backdrop {
-  background: rgb(0 0 0 / 0.35);
-}
-.decision-prompt {
+.checkout-head > div {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--sp-4);
+  min-width: 0;
 }
-.decision-prompt h3 {
+
+.checkout-head > div > * {
   margin: 0;
 }
-.decision-prompt label {
+
+.checkout-head > div > h2,
+.checkout-head > div > .protected-banner {
+  flex-basis: 100%;
+}
+
+.checkout-head h2 {
+  font-family: var(--font-sans);
+  margin-bottom: 2px;
+}
+
+.checkout-head .who {
+  font-size: var(--fs-sm);
+}
+
+.checkout-head > div > .protected-banner {
+  margin-bottom: var(--sp-2);
+}
+
+.checkout.protected .checkout-head {
+  border-left: 4px solid var(--danger-line);
+  padding-left: var(--sp-3);
+}
+
+.held {
+  color: var(--info-fg);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.countdown {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.died-again-count {
+  font-size: var(--fs-sm);
+}
+
+.decision-summary {
+  margin: var(--sp-2) 0;
+}
+
+.checkout-body {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(0, 5fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+/* The empty Checkout: the swallows have not come back yet. */
+.checkout-body > .empty {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  width: 100%;
+  align-items: center;
+  gap: var(--sp-2);
+  grid-column: 1 / -1;
+  padding: var(--sp-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-lg);
 }
-.shortcuts > div {
-  display: grid;
-  grid-template-columns: 12rem 1fr;
-  gap: 1rem;
-  padding: 0.2rem 0;
+
+.checkout-body > .empty::before {
+  background: var(--muted);
 }
-.shortcuts dd {
-  margin: 0;
-}
-.message-detail {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-  overflow: auto;
-}
-.message-detail dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1rem;
-}
-.message-detail dt {
-  color: var(--muted);
-}
-.message-detail dd {
-  margin: 0;
-}
-.message-detail pre {
-  background: var(--bg);
-  padding: 0.5rem;
-  border-radius: 4px;
-  overflow: auto;
-  max-height: 24rem;
-}
-.message-detail pre.wrap {
-  white-space: pre-wrap;
-  word-break: break-all;
+
+.export {
+  margin: var(--sp-2) 0;
 }
 
 /* Selection, filters and Decisions */
@@ -447,242 +853,814 @@ dialog.prompt::backdrop {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--sp-2);
 }
+
 .decision-bar {
-  margin: 0.5rem 0;
+  margin: var(--sp-2) 0;
 }
+
+.decision-bar > strong:first-child,
+.decision-bar > span:first-child {
+  font-variant-numeric: tabular-nums;
+  min-width: 6.5em;
+}
+
 .filter-bar {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin: 0.5rem 0;
-  padding: 0.5rem;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-lg);
 }
-.filter-clause input[type='search'] {
+
+.filter-clause input[type='search'],
+.filter-clause input[type='text'],
+.filter-clause input:not([type]) {
   flex: 1 1 180px;
   min-width: 0;
+  font-family: var(--font-mono);
 }
+
 .filter-result {
-  margin: 0.5rem 0;
+  margin: var(--sp-2) 0;
+  font-size: var(--fs-sm);
 }
-button.link {
-  border: none;
-  background: none;
-  text-decoration: underline;
-}
-button.danger {
-  border-color: var(--danger);
-  color: var(--danger);
-  font-weight: 600;
-}
-th.select,
-td.select {
-  width: 2rem;
-  text-align: center;
-}
+
+/* The Decision of each Message. */
 .decision {
-  font-size: 0.85em;
+  font-size: var(--fs-xs);
+  font-weight: 650;
   white-space: nowrap;
 }
+
 .decision-keep {
   color: var(--muted);
+  font-weight: 500;
 }
+
 .decision-discard {
-  color: var(--danger);
-  font-weight: 600;
+  color: var(--danger-fg);
+  font-weight: 750;
 }
-.notice {
+
+.decision-replay {
+  color: var(--accent);
+}
+
+.decision-move {
+  color: var(--move-fg);
+}
+
+/* Message list: compact rows, data in mono, and the Decision rail, a bar on
+   each row's leading edge in its Decision's colour, so a Checkout scans as one
+   column of colour. The same rail marks the Apply result. */
+.message-list .checkbox {
+  display: inline-flex;
+  margin-bottom: var(--sp-1);
+}
+
+.messages tr {
+  cursor: pointer;
+}
+
+.messages th,
+.messages td {
+  padding: 5px 8px;
+}
+
+.messages tbody td:first-child {
+  border-left: 4px solid transparent;
+}
+
+.messages tbody tr:has(.decision-discard) > td:first-child {
+  border-left-color: var(--rail-discard);
+}
+
+.messages tbody tr:has(.decision-replay) > td:first-child {
+  border-left-color: var(--rail-replay);
+}
+
+.messages tbody tr:has(.decision-move) > td:first-child {
+  border-left-color: var(--rail-move);
+}
+
+.messages tbody tr:last-child > td:first-child {
+  border-bottom-left-radius: var(--r-lg);
+}
+
+/* message_id, routing key and original queue are whole values: they never
+   break; the list scrolls sideways before it would. */
+.message-list .listbox {
+  overflow-x: auto;
+}
+
+.message-list .messages .name,
+.message-list .messages .name + td,
+.message-list .messages .name + td + td + td + td {
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.message-list .messages .name + td + td {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The last attempt of a Delivery Budget is danger: losing the Checkout drops
+   or dead-letters the Message. */
+.messages .badge.limit-warning {
+  margin-left: var(--sp-1);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  border-color: var(--danger-line);
+}
+
+/* The focused Message: tinted always, ringed while the list has the focus. */
+.messages tr.focused > td {
+  background: var(--row-current);
+}
+
+.listbox:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-lg);
+}
+
+.listbox:focus tr.focused > td {
+  box-shadow: inset 0 2px 0 var(--focus), inset 0 -2px 0 var(--focus);
+}
+
+.listbox:focus tr.focused > td:last-child {
+  box-shadow: inset -2px 0 0 var(--focus), inset 0 2px 0 var(--focus), inset 0 -2px 0 var(--focus);
+}
+
+th.select,
+td.select {
+  width: 2.25rem;
+  text-align: center;
+}
+
+/* Message view: reads like a code viewer, and stays in view while the list scrolls. */
+.message-detail {
+  position: sticky;
+  top: var(--sp-3);
+  max-height: calc(100vh - 2 * var(--sp-3));
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+
+.message-detail > h3 {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  font-weight: 650;
+  margin: 0 0 var(--sp-3);
+  overflow-wrap: anywhere;
+}
+
+.message-detail dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px var(--sp-4);
+  margin: var(--sp-2) 0;
+  font-size: var(--fs-sm);
+}
+
+.message-detail dt {
   color: var(--muted);
 }
-.apply-panel {
-  margin: 0.5rem 0;
+
+.message-detail dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+  overflow-wrap: anywhere;
 }
+
+.message-detail .failure-details dd {
+  white-space: pre-wrap;
+}
+
+.message-detail h4 {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.message-detail pre,
+.comparison pre {
+  margin: 0;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  overflow: auto;
+  max-height: 24rem;
+}
+
+.message-detail pre.wrap,
+.comparison pre.wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.message-detail details summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  margin: var(--sp-2) 0;
+}
+
+.message-detail table.queues {
+  font-size: var(--fs-xs);
+}
+
+.message-detail table.queues td {
+  font-family: var(--font-mono);
+}
+
+.message-detail .warning,
+.message-detail .error,
+.message-detail .rule-note {
+  font-size: var(--fs-sm);
+}
+
+/* Prompts (keyboard.tsx): Decision prompts, confirmations, the shortcut list. */
+dialog.prompt {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4) var(--sp-5);
+  max-width: min(42rem, calc(100vw - 2rem));
+  box-shadow: 0 12px 40px rgb(8 14 24 / 0.28);
+}
+
+dialog.prompt::backdrop {
+  background: rgb(10 16 26 / 0.45);
+}
+
+dialog.prompt h2 {
+  margin-top: 0;
+}
+
+dialog.prompt h3 {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  margin: var(--sp-4) 0 var(--sp-1);
+}
+
+/* A confirmation on a Protected Profile carries the danger edge too. */
+dialog.prompt:has(.confirm-profile.protected) {
+  border-top: 5px solid var(--danger-line);
+}
+
+.decision-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+
+.decision-prompt h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+.decision-prompt label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  width: 100%;
+}
+
+.shortcuts {
+  margin: 0;
+}
+
+.shortcuts > div {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: var(--sp-4);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+
+.shortcuts dd {
+  margin: 0;
+}
+
+/* Apply: the single confirmation, its progress and what happened to each Message. */
+.apply-panel {
+  margin: var(--sp-2) 0;
+}
+
+.apply-panel > button:first-child {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 650;
+  padding-inline: 14px;
+}
+
+.apply-panel > button:first-child:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.12);
+}
+
 dialog.prompt .confirm {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: var(--sp-3);
 }
-.outcomes {
-  margin: 1rem 0;
-}
-.apply-progress {
-  margin: 0.75rem 0;
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  border-radius: 8px;
-  padding: 12px 16px;
-}
-.apply-progress p {
-  margin: 0.4rem 0;
-}
-.progress-bar {
+
+dialog.prompt .confirm > span:last-child {
   display: flex;
-  height: 10px;
-  margin: 0.5rem 0;
-  border-radius: 5px;
-  background: var(--border);
-  overflow: hidden;
-}
-.progress-done {
-  background: var(--accent);
-}
-.progress-failed {
-  background: var(--danger);
-}
-.awaiting-approval {
-  margin: 0.75rem 0;
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--warning-bg);
-  border-radius: 8px;
-  padding: 12px 16px;
-}
-.awaiting-approval p {
-  margin: 0.4rem 0;
-}
-.approval-note {
-  color: var(--muted);
-}
-.copyable-link {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-.copyable-link label {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 24rem;
-  min-width: 0;
-}
-.copyable-link input {
-  font-family: ui-monospace, monospace;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  margin-top: var(--sp-1);
+  border-top: 1px solid var(--border);
   width: 100%;
 }
-.rejection {
-  margin: 0.75rem 0;
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--danger);
-  border-radius: 8px;
-  padding: 12px 16px;
+
+/* The final, irreversible button of a confirmation is solid. */
+dialog.prompt .confirm button.danger {
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
+  color: var(--on-danger);
+  padding-inline: 14px;
 }
-.rejection p {
-  margin: 0.4rem 0;
+
+dialog.prompt .confirm button.danger:hover:not(:disabled) {
+  background: var(--danger-solid);
+  filter: brightness(1.1);
 }
-.rejection-reason {
-  white-space: pre-wrap;
+
+dialog.prompt .confirm button.danger:disabled {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--muted);
+  opacity: 1;
 }
-.reject-reason {
-  display: flex;
-  flex-direction: column;
+
+.confirm-profile {
+  font-size: var(--fs-md);
+  font-weight: 700;
 }
+
+.confirm-profile.protected {
+  color: var(--danger-fg);
+}
+
+.confirm-counts,
 .decision-counts {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.outcome-failed td,
-.outcome-not-attempted td {
-  color: var(--danger);
-}
-
-/* Protected Profiles (#9): visible in the profile picker, above the queue list,
-   in the Checkout header and in the Apply confirmation. */
-.protected-select {
-  border: 2px solid var(--danger);
-  color: var(--danger);
-  font-weight: 600;
-}
-
-.protected-banner {
-  border: 1px solid var(--danger);
-  background: var(--danger-bg);
-  color: var(--danger);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 0 0 12px;
-}
-
-.checkout.protected .checkout-head {
-  border-left: 4px solid var(--danger);
-  padding-left: 12px;
-}
-
-.confirm-profile {
-  font-size: 16px;
-}
-
-.confirm-profile.protected {
-  color: var(--danger);
-}
 
 .confirm-counts {
-  margin: 4px 0;
-  padding-left: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  font-size: var(--fs-md);
 }
 
+.confirm-counts strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.approval-note {
+  color: var(--muted);
+}
+
+/* Typing the queue name: a danger-level confirmation wherever it appears. */
 .type-queue-name {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-weight: 600;
+  gap: var(--sp-1);
+  font-weight: 650;
+  color: var(--danger-fg);
+  width: 100%;
+}
+
+.type-queue-name code {
+  color: var(--text);
+  background: var(--danger-bg);
+  padding: 0 4px;
+  border-radius: var(--r-sm);
 }
 
 .type-queue-name input {
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
   max-width: 100%;
+  border: 2px solid var(--danger-line);
 }
 
 .replay-rate {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-weight: 600;
+  gap: var(--sp-1);
+  font-weight: 650;
 }
 
 .replay-rate input {
   max-width: 10em;
+  font-family: var(--font-mono);
 }
 
 .replay-rate small {
   font-weight: normal;
 }
 
-.replay-rate .rate-problem {
-  color: var(--danger);
+.canary-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
 }
 
-/* Audit view (AuditView.tsx) */
-.view-switch {
+.canary-choice label {
   display: flex;
-  gap: 4px;
+  align-items: baseline;
+  gap: 6px;
 }
-.view-switch button[aria-pressed='true'] {
-  border-color: var(--accent);
-  color: var(--accent);
+
+.canary-choice label input[type='checkbox'] {
+  position: relative;
+  top: 2px;
 }
+
+.canary-choice select {
+  font-family: var(--font-mono);
+}
+
+.apply-progress .progress-bar {
+  display: flex;
+  height: 8px;
+  margin: var(--sp-2) 0;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-done {
+  background: var(--info-line);
+}
+
+.progress-failed {
+  background: var(--danger-line);
+}
+
+.apply-progress small {
+  font-variant-numeric: tabular-nums;
+}
+
+.outcomes {
+  margin: var(--sp-4) 0;
+}
+
+.outcomes h3 {
+  margin: 0 0 var(--sp-2);
+}
+
+.outcome-failed td,
+.outcome-not-attempted td {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+}
+
+/* Waiting for Approval, and a rejected request. */
+.copyable-link {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.copyable-link label {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 24rem;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.copyable-link input {
+  font-family: var(--font-mono);
+  width: 100%;
+}
+
+.rejection-reason {
+  white-space: pre-wrap;
+}
+
+.reject-reason {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* Canary: watched (warning), died again or failed (danger), the rest (info). */
+.canary-panel .badge {
+  background: var(--level-bg);
+  color: var(--level-fg);
+  border-color: var(--level-line);
+}
+
+.canary-panel strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.canary-panel p:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* Two Messages side by side (ComparisonView). What differs carries the diff hue
+   and a bar on the side that has it. */
+.comparison {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+
+.comparison-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.comparison-head h3 {
+  margin: 0 auto 0 0;
+}
+
+.comparison-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+}
+
+.comparison-side,
+.comparison-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.comparison-side > strong:first-child {
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+}
+
+.comparison h4 {
+  margin-top: var(--sp-5);
+}
+
+.comparison-fields {
+  table-layout: fixed;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.comparison-fields th {
+  width: 24%;
+  color: var(--muted);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.comparison-fields td {
+  width: 38%;
+  overflow-wrap: anywhere;
+}
+
+.comparison-fields td + td {
+  border-left: 1px solid var(--border);
+}
+
+.comparison-fields .muted {
+  font-family: var(--font-sans);
+  font-style: italic;
+}
+
+.comparison-text {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.comparison-text td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.comparison-text td + td {
+  border-left: 1px solid var(--border);
+}
+
+.comparison-text pre {
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  padding: 0 var(--sp-3);
+  background: transparent;
+  white-space: pre-wrap;
+}
+
+/* Differing values: changed on both sides, or set on one side only. */
+.diff-changed > td,
+.diff-onlyLeft > td:nth-of-type(1),
+.diff-onlyRight > td:nth-of-type(2) {
+  background: var(--diff-bg);
+  box-shadow: inset 3px 0 0 var(--diff-line);
+}
+
+.diff-changed > th,
+.diff-onlyLeft > th,
+.diff-onlyRight > th {
+  color: var(--diff-fg);
+  font-weight: 650;
+}
+
+/* Audit view (AuditView.tsx): search Audit Entries and Restore Discarded Messages. */
+.audit form.controls input,
+.audit form.controls select {
+  flex: 1 1 10rem;
+}
+
+.audit form.controls input[type='date'] {
+  flex: 0 0 auto;
+}
+
+.audit-entries td {
+  font-size: var(--fs-sm);
+}
+
+.audit-entries td:first-child {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.audit-entries small {
+  font-size: var(--fs-xs);
+}
+
+/* message_id, queue and Rule are whole values; only a replay id may wrap. */
+.audit-entries .name {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.audit-entries .name small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Restore: a typed, danger-level confirmation inline in the entry. */
 .audit .confirm {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  margin-top: var(--sp-1);
+  padding: var(--sp-2);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
 }
-.error-text {
-  color: var(--danger);
+
+/* Replay rules view */
+.replay-rule {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
 }
-.badge.outcome-failed,
-.badge.outcome-uncertain,
-.badge.outcome-pending {
-  color: var(--danger);
-  border: 1px solid var(--danger);
+
+.replay-rule h2 {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  margin: 0 0 var(--sp-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: baseline;
+}
+
+.replay-rule h2 small,
+.replay-rule h2 .badge {
+  font-family: var(--font-sans);
+}
+
+.replay-rule:has(h2 .limit-warning) {
+  border-left: 4px solid var(--warning-line);
+}
+
+.rule-declaration {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px var(--sp-4);
+  font-size: var(--fs-sm);
+}
+
+.rule-declaration dt {
+  color: var(--muted);
+}
+
+.rule-declaration dd {
+  margin: 0;
+}
+
+/* The filter is data; the rest of the declaration is prose. */
+.rule-declaration dd:first-of-type {
+  font-family: var(--font-mono);
+  font-size: var(--fs-data);
+}
+
+.next-pass {
+  font-size: var(--fs-sm);
+}
+
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: baseline;
+}
+
+.replay-rule form.confirm {
+  margin-top: var(--sp-2);
+}
+
+.pass-history {
+  border-collapse: collapse;
+  margin: var(--sp-2) 0;
+  font-size: var(--fs-xs);
+}
+
+.pass-history caption {
+  text-align: left;
+  color: var(--muted);
+  padding-bottom: var(--sp-1);
+}
+
+.pass-history th,
+.pass-history td {
+  padding: 3px 14px 3px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.pass-history th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pass-history thead th:not(:first-child) {
+  text-align: right;
+}
+
+.pass-history .num {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+/* Approvals (Team Mode) */
+.approvals .decision-counts li {
+  white-space: nowrap;
+}
+
+/* No role on any Broker Profile (Team Mode) */
+.no-role {
+  max-width: 72ch;
 }
 
 .no-role .groups {
-  margin: 8px 0 16px;
+  margin: var(--sp-2) 0 var(--sp-4);
   padding-left: 20px;
   user-select: all;
 }
@@ -691,153 +1669,33 @@ dialog.prompt .confirm {
   margin: 2px 0;
 }
 
-/* Two Messages side by side (ComparisonView) */
-.comparison {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-}
-.comparison-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem;
-}
-.comparison-head h3 {
-  margin-right: auto;
-}
-.comparison-sides {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1rem;
-}
-.comparison-side,
-.comparison-decisions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-.comparison pre {
-  background: var(--bg);
-  padding: 0.5rem;
-  border-radius: 4px;
-  overflow: auto;
-  max-height: 24rem;
-  margin: 0;
-}
-.comparison-fields {
-  table-layout: fixed;
-}
-.comparison-fields th {
-  width: 25%;
-  word-break: break-all;
-}
-.comparison-fields td {
-  width: 37.5%;
-  word-break: break-all;
-}
-.comparison-text {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-}
-.comparison-text td {
-  padding: 0;
-  vertical-align: top;
-}
-.comparison-text pre {
-  max-height: none;
-  border-radius: 0;
-  padding: 0 0.5rem;
-  white-space: pre-wrap;
-}
-/* Differing values: changed on both sides, or set on one side only. */
-.diff-changed td,
-.diff-changed td pre {
-  background: var(--warning-bg);
-}
-.diff-onlyLeft td:nth-of-type(1),
-.diff-onlyRight td:nth-of-type(2) {
-  background: var(--warning-bg);
-}
-.diff-changed th,
-.diff-onlyLeft th,
-.diff-onlyRight th {
-  color: var(--warning);
-}
+/* Narrow screens: one column. */
+@media (max-width: 900px) {
+  main {
+    padding: var(--sp-3) var(--sp-4);
+  }
 
-.canary-panel {
-  margin: 0.75rem 0;
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  border-radius: 8px;
-  padding: 12px 16px;
-}
-.canary-panel p {
-  margin: 0.4rem 0;
-}
-.canary-panel.canary-died_again,
-.canary-panel.canary-failed {
-  border-left-color: var(--danger);
-}
+  .checkout-body,
+  .comparison-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.canary-choice {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.canary-choice .rate-problem {
-  color: var(--danger);
-}
+  .message-detail {
+    position: static;
+    max-height: none;
+  }
 
-/* Replay rules view */
-.replay-rule {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}
-.replay-rule h2 {
-  font-size: 1.1rem;
-  margin: 0 0 0.5rem;
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-}
-.rule-declaration {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1rem;
-}
-.rule-declaration dt {
-  color: var(--muted);
-}
-.rule-declaration dd {
-  margin: 0;
-}
-.rule-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: baseline;
-}
-.replay-rule form.confirm {
-  margin-top: 0.5rem;
-}
+  .checkout-head {
+    flex-wrap: wrap;
+  }
 
-.pass-history {
-  border-collapse: collapse;
-  margin: 0.5rem 0;
-}
-.pass-history caption {
-  text-align: left;
-  color: var(--muted);
-}
-.pass-history th,
-.pass-history td {
-  padding: 0.15rem 0.6rem 0.15rem 0;
-  text-align: left;
+  table.queues {
+    display: block;
+    overflow-x: auto;
+  }
+
+  .shortcuts > div {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
 }
