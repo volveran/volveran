@@ -131,10 +131,10 @@ export interface RunningApply {
   settled: Promise<void>;
   /** Set to make the executor attempt no further step; null while it goes on. */
   stop: ApplyStop | null;
-  /** Aborted together with setting `stop`, so a wait for the next paced step ends at once. */
-  stopped: AbortController;
+  /** Aborted together with setting `stop` (and when the Checkout is lost), so a wait for the next paced step, or after the Canary, ends at once. */
+  stopController: AbortController;
   /** Set while the Apply waits after its Canary (canary_watch, canary_done): lets it go on with the rest (Continue). */
-  resume: (() => void) | null;
+  continueAfterCanary: (() => void) | null;
 }
 
 /** Why an Apply attempts no further step, and how the Checkout ends afterwards. */

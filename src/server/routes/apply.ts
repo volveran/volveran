@@ -96,11 +96,11 @@ export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDep
 
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.stopApplyBy(req.params.id, operatorOf(req)) };
+    return { checkout: checkouts.stopApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/continue', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.continueApplyBy(req.params.id, operatorOf(req)) };
+    return { checkout: checkouts.continueApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 }

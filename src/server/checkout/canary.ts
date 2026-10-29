@@ -1,5 +1,7 @@
 // Canary Replay on a Checkout (docs/rabbitmq-behaviour.md, "Canary watch" and
-// "Watch queue lifetime"). Before the Canary is published, a watch queue
+// "Watch queue lifetime"). Which Message is the Canary comes from the
+// request (canaryFor), checked against the Decisions and the profile's
+// `canary.requiredAbove`. Before the Canary is published, a watch queue
 // `volveran.canary.<checkout id>` (exclusive, auto-delete) is declared on a
 // channel of the Checkout's own connection and bound to the dead-letter
 // exchange the Canary's source queue uses (for a MassTransit Replay, the
@@ -18,7 +20,10 @@
 import type * as amqp from 'amqplib';
 import type { AuditStore } from '../audit/store.js';
 import { permissionRefused } from '../broker-credentials.js';
-import type { MessageOutcome } from '../apply/types.js';
+import { canaryNeedsReplay, canaryRequired } from '../apply/errors.js';
+import type { CanaryHooks } from '../apply/types.js';
+import { InvalidRequestError } from '../http-error.js';
+import { isRecord } from '../is-record.js';
 import type { CanaryWatchBindings } from '../triage/canary-watch.js';
 import { messageSummary } from '../triage/message-view.js';
 import type { CanaryStatus, CanaryView } from '../../shared/checkout.js';
@@ -41,23 +46,46 @@ export function canaryView(c: CanaryState): CanaryView {
   return { ...c, watchEndsAt: c.watchEndsAt?.toISOString() ?? null };
 }
 
+/**
+ * The handle of the Apply's Canary from the request's `canary`: left out
+ * or false for none, true for the first Message with the Decision Replay
+ * in Checkout order, `{ handle }` for that Message, which must have the
+ * Decision Replay. Throws 400 `canary_needs_replay` when a Canary is asked
+ * for and no Message has the Decision Replay, 400 `canary_required` when
+ * none is and the profile requires one for this many Replays, 400
+ * `invalid_request` for anything else.
+ */
+export function canaryFor(checkout: Checkout, requested: unknown): number | null {
+  const replays = [...checkout.held.keys()].filter((h) => checkout.decisions.get(h)?.kind === 'replay');
+  if (requested === undefined || requested === null || requested === false) {
+    const { requiredAbove } = checkout.profile.canary;
+    if (requiredAbove !== null && replays.length > requiredAbove) {
+      throw canaryRequired(checkout.profile.name, requiredAbove, replays.length);
+    }
+    return null;
+  }
+  const picked = isRecord(requested) ? requested.handle : undefined;
+  if (requested !== true && !(typeof picked === 'number' && Number.isInteger(picked))) {
+    throw new InvalidRequestError('"canary" must be true (the first Replay is the Canary), { "handle": <Message handle> }, or left out.');
+  }
+  if (replays.length === 0) throw canaryNeedsReplay();
+  if (requested === true) return replays[0]!;
+  if (!replays.includes(picked as number)) {
+    throw new InvalidRequestError(`The Canary must be a held Message with the Decision Replay; Message ${String(picked)} is not.`);
+  }
+  return picked as number;
+}
+
 export interface CanaryOptions {
   handle: number;
   watchWindowMs: number;
   audit: AuditStore;
   /** Aborted when the Apply is stopped (an Operator, the time limit, the Checkout ending or lost): the wait ends. */
   stopSignal: AbortSignal;
-  /** The Apply waits after the Canary: `resume` lets it go on (Continue). */
-  waiting(resume: () => void): void;
+  /** The Apply waits after the Canary: `continueAfterCanary` lets it go on with the rest (Continue). */
+  waitStarted(continueAfterCanary: () => void): void;
   /** The wait is over: the Apply goes on with the rest, or stops. */
-  resumed(): void;
-}
-
-/** The executor's hooks for the Canary step (apply/executor.ts `canary`). */
-export interface CanaryHooks {
-  handle: number;
-  beforePublish(entryId: number, replayId: string | null): Promise<void>;
-  afterStep(outcome: MessageOutcome): Promise<void>;
+  waitEnded(): void;
 }
 
 /** Hooks that watch and wait for the Canary of the Checkout's Apply, keeping `checkout.canary` up to date. */
@@ -65,13 +93,13 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
   let watch: Watch | null = null;
   let entry: number | null = null;
   // Resolved by Continue; the stop signal ends the same wait.
-  let resume!: () => void;
-  const resumed = new Promise<void>((resolve) => (resume = resolve));
+  let continueAfterCanary!: () => void;
+  const continued = new Promise<void>((resolve) => (continueAfterCanary = resolve));
   const stopped = new Promise<void>((resolve) => {
     if (options.stopSignal.aborted) resolve();
     options.stopSignal.addEventListener('abort', () => resolve(), { once: true });
   });
-  const goOn = Promise.race([resumed, stopped]);
+  const goOn = Promise.race([continued, stopped]);
   // Registered first, so it is set before anything else awaiting goOn runs.
   let over = false;
   void goOn.then(() => (over = true));
@@ -124,7 +152,7 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
       } else {
         c.watchEndsAt = new Date(Date.now() + options.watchWindowMs);
         if (progress) progress.phase = 'canary_watch';
-        if (!over) options.waiting(resume);
+        if (!over) options.waitStarted(continueAfterCanary);
         let timer: NodeJS.Timeout | undefined;
         const windowOver = new Promise<'window'>((resolve) => (timer = setTimeout(() => resolve('window'), options.watchWindowMs)));
         const ended = await Promise.race([watch.copy, windowOver, goOn.then(() => 'cut' as const)]);
@@ -145,11 +173,11 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
       }
       if (!over) {
         if (progress) progress.phase = 'canary_done';
-        options.waiting(resume);
+        options.waitStarted(continueAfterCanary);
         await goOn;
       }
       if (progress) progress.phase = 'running';
-      options.resumed();
+      options.waitEnded();
     },
   };
 }

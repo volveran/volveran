@@ -103,13 +103,13 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
   app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/stop', async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
-    return { checkout: checkouts.stopApplyBy(req.params.checkoutId, approver, true) };
+    return { checkout: checkouts.stopApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
   });
 
   app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/continue', async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
-    return { checkout: checkouts.continueApplyBy(req.params.checkoutId, approver, true) };
+    return { checkout: checkouts.continueApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
   });
 
   app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(

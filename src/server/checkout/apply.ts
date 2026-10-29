@@ -11,37 +11,30 @@
 // so a publish error never closes the channel holding the Messages. The
 // manager ends the Checkout afterwards.
 import type * as amqp from 'amqplib';
-import { executeApply, NOT_ACTIVE_REASON } from '../apply/executor.js';
+import { executeApply } from '../apply/executor.js';
 import { ApplyProgressTracker } from '../apply/progress.js';
 import { ConfirmPublisher } from '../apply/publisher.js';
+import { STOP_REASONS } from '../apply/stop-reasons.js';
 import { permissionRefused } from '../broker-credentials.js';
-import { AckUncertainError, type ApplyContext, type MessageOutcome, type RuleActing } from '../apply/types.js';
+import { AckUncertainError, type ApplyContext, type ApplyOptions, type MessageOutcome } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
 import { queueRefOf } from '../profiles.js';
 import { buildApplyPlan } from '../triage/decisions.js';
 import { canaryHooks, type CanaryOptions } from './canary.js';
 import type { Checkout } from './state.js';
-import type { Operator } from '../operator.js';
-import type { Role } from '../../shared/roles.js';
 
 export interface RunApplyOptions {
+  /** How the Apply runs: who, at which Replay Rate, with which Canary, for which rule. */
+  apply: ApplyOptions;
   audit: AuditStore;
-  /** The Role of the Operator Applying (the requester, for an approved Apply), for the Audit Entries. */
-  role: Role;
-  /** The Operator who approved the Apply, for the Audit Entries; null when it needed no Approval. */
-  approver: Pick<Operator, 'id' | 'displayName'> | null;
-  /** A Rule Pass: the rule and pass, for the Audit Entries; null or left out for an Operator's Apply. */
-  rule?: RuleActing | null;
   /** Asked before every step: null to go on, or why no further step is attempted (the time limit, an Operator's stop). */
   stopReason(): string | null;
-  /** Aborted when the Apply is told to stop: a wait for the next paced step ends at once. */
-  stopSignal?: AbortSignal;
-  /** The Replay Rate in Messages per second; null when there is none. */
-  rate: number | null;
+  /** Aborted when the Apply is told to stop: a wait for the next paced step, or after the Canary, ends at once. */
+  stopSignal: AbortSignal;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
-  /** The Canary to carry out first and alone (a held Message with the Decision Replay), and how to wait after it. */
-  canary?: Pick<CanaryOptions, 'handle' | 'watchWindowMs' | 'waiting' | 'resumed'>;
+  /** With a Canary: told when the Apply starts and stops waiting after it (the Watch Window, then until Continue or a stop). */
+  canaryWait: Pick<CanaryOptions, 'waitStarted' | 'waitEnded'>;
 }
 
 /**
@@ -61,10 +54,10 @@ export async function runApply(
       ...queueRefOf(checkout),
       checkoutId: checkout.id,
       operator: checkout.operator,
-      role: options.role,
+      role: options.apply.role,
       brokerUser: checkout.brokerUser,
-      approver: options.approver,
-      rule: options.rule ?? null,
+      approver: options.apply.approver,
+      rule: options.apply.rule,
     },
     startedAt: new Date(),
     ack: (message) => ack(checkout, message),
@@ -85,7 +78,8 @@ export async function runApply(
     },
   };
   const plan = buildApplyPlan([...checkout.held.keys()], checkout.decisions);
-  const progress = new ApplyProgressTracker(plan.steps.length, ctx.startedAt, options.rate);
+  const { rate, canary } = options.apply;
+  const progress = new ApplyProgressTracker(plan.steps.length, ctx.startedAt, rate);
   checkout.applyProgress = progress;
   const outcomes = await executeApply({
     plan,
@@ -93,16 +87,23 @@ export async function runApply(
     ctx,
     audit: options.audit,
     // A stop asked for first wins over the Checkout being lost afterwards.
-    stopReason: () => options.stopReason() ?? (checkout.status === 'active' ? null : NOT_ACTIVE_REASON),
-    rate: options.rate,
+    stopReason: () => options.stopReason() ?? (checkout.status === 'active' ? null : STOP_REASONS.checkoutNotActive),
+    rate,
     stopSignal: options.stopSignal,
     onStep: (o) => {
       if (o.status !== 'kept') progress.record(o.status);
     },
     beforeStep: options.beforeStep,
     canary:
-      options.canary &&
-      canaryHooks(checkout, { ...options.canary, audit: options.audit, stopSignal: options.stopSignal ?? new AbortController().signal }),
+      canary === null
+        ? undefined
+        : canaryHooks(checkout, {
+            handle: canary,
+            watchWindowMs: checkout.profile.canary.watchWindowMs,
+            audit: options.audit,
+            stopSignal: options.stopSignal,
+            ...options.canaryWait,
+          }),
     onDone: (handle) => {
       checkout.held.delete(handle);
       checkout.decisions.delete(handle);
