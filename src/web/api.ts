@@ -202,6 +202,9 @@ export const api = {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
     }).then((b) => b.checkout),
+  /** Stops the running Apply: the step in progress finishes, the rest goes back to the queue. Returns the Checkout. */
+  stopApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
   /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions. */
   requestApproval: (id: string, confirmQueueName?: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
@@ -212,7 +215,7 @@ export const api = {
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
   /** Other Operators' Checkouts waiting for an Approval this Operator may give. */
   approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals').then((b) => b.approvals),
-  /** A waiting Checkout, read-only. */
+  /** A waiting Checkout, read-only; also the Checkout of an Apply this Operator approved. */
   approvalCheckout: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
   approvalMessage: (id: string, handle: number) =>
@@ -229,4 +232,7 @@ export const api = {
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
       confirmQueueName,
     }).then((b) => b.checkout),
+  /** The approver stops the Apply they approved; returns the Checkout. */
+  stopApprovedApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
 };

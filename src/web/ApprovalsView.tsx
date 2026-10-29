@@ -3,24 +3,28 @@
 // read-only view of one of them: its Decisions, Messages and Message view,
 // as the requester sees them. Approve asks for the queue name typed, then
 // starts the Apply on the requester's Checkout (the requester sees its
-// progress and outcome there); Reject
+// progress and outcome there; so does the approver, who may stop it); Reject
 // asks for a reason, which the requester sees. No key approves or rejects
 // (keyboard-commands.ts): both always need their confirmation, a Prompt
 // (keyboard.tsx) that focuses its typed field, closes on Escape and gives
 // the focus back to "Approve…" or "Reject…". A requester's
 // link (approval-link.ts) opens here on their waiting Checkout.
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { heldLine } from '../shared/held-line.js';
 import { decisionLabel } from '../shared/decisions.js';
 import { formatCountdown } from './countdown.js';
 import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail } from './api.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
+import { ApplyOutcomes } from './ApplyOutcomes.js';
+import { ApplyProgressPanel } from './ApplyProgress.js';
 import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
 import { Prompt } from './keyboard.js';
 
 /** How often the list and an open waiting Checkout are read again. */
 const REFRESH_MS = 5_000;
+/** How often the Checkout of an Apply this Operator approved is read while it runs. */
+const APPLY_POLL_MS = 1_000;
 
 /** `initialOpen`: the waiting Checkout a requester's link points at, opened first. `onClosed` runs when it is left. */
 export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: string | null; onClosed?(): void }) {
@@ -115,6 +119,53 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
   );
 }
 
+/** The Apply this Operator approved: its progress, with Stop, until it ends, then the outcome for each Message. */
+function ApprovedApply({ approved, back }: { approved: Checkout; back: ReactNode }) {
+  const [checkout, setCheckout] = useState(approved);
+  const [error, setError] = useState<ApiError>();
+  const now = useNow();
+  const applying = checkout.status === 'applying' || (checkout.applyProgress !== null && checkout.lastApply === null);
+  usePolling(
+    {
+      load: () => api.approvalCheckout(approved.id),
+      received: (c) => {
+        setCheckout(c);
+        setError(undefined);
+      },
+      failed: setError,
+      everyMs: APPLY_POLL_MS,
+      enabled: applying,
+    },
+    [approved.id, applying],
+  );
+  const stop = async () => {
+    try {
+      setCheckout(await api.stopApprovedApply(approved.id));
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
+
+  return (
+    <section className="checkout">
+      <div className="checkout-head">
+        <h2>Approved: Apply of {checkout.queue}</h2>
+        {back}
+      </div>
+      <p>
+        The Apply runs on {checkout.operator}'s Checkout ({approved.decisionSummaryText}); {checkout.operator} sees it
+        there too. Its Audit Entries name you as the approver.
+      </p>
+      {error && <ErrorBox error={error} />}
+      {applying && checkout.applyProgress && (
+        <ApplyProgressPanel progress={checkout.applyProgress} now={now} onStop={stop} />
+      )}
+      {checkout.lastApply && <ApplyOutcomes outcomes={checkout.lastApply.outcomes} approvedBy={checkout.lastApply.approvedBy} />}
+    </section>
+  );
+}
+
 /** One waiting Checkout, read-only, with Approve and Reject. */
 function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
@@ -197,20 +248,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   };
 
   const back = <button onClick={onClose}>Back to Approvals</button>;
-  if (result) {
-    return (
-      <section className="checkout">
-        <div className="checkout-head">
-          <h2>Approved: Apply of {result.queue}</h2>
-          {back}
-        </div>
-        <p>
-          The Apply is running on {result.operator}'s Checkout ({result.decisionSummaryText}). {result.operator} sees
-          its progress and the outcome for each Message there; its Audit Entries name you as the approver.
-        </p>
-      </section>
-    );
-  }
+  if (result) return <ApprovedApply approved={result} back={back} />;
   if (rejected) {
     return (
       <section className="checkout">

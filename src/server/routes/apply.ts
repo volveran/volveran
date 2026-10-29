@@ -1,6 +1,7 @@
 // The Apply route: carries out a Checkout's Decisions (ADR 0001).
 //
 //   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName? }  → 202 { checkout }
+//   POST /api/checkouts/:id/apply/stop                                → { checkout }
 //
 // The Apply runs in the background (ADR 0009): the answer comes at once,
 // with the Checkout `applying`. Its view shows the Apply's progress
@@ -17,11 +18,18 @@
 // `requireApproval`, any Decision other than Keep) it answers 409
 // `approval_required`, and `awaiting_approval` once requested: the owner
 // requests Approval instead (routes/approvals.ts).
+// Stop asks the running Apply to attempt no further step: the step in
+// progress finishes, the rest is reported `not-attempted` ("stopped by
+// <name>") and goes back to the queue in order when the Checkout ends.
+// `applyProgress.stoppedBy` names who stopped it. 409 `apply_not_running`
+// when there is nothing to stop. The approver of an approved Apply stops it
+// under /api/approvals/ (routes/approvals.ts).
 // A dropped connection mid-Apply is not an error: the outcomes list what was
 // done and what went back to the queue, and the Checkout is `lost`.
 import type { FastifyInstance } from 'fastify';
 import { ApplyError } from '../apply/errors.js';
 import type { CheckoutView } from '../checkout/view.js';
+import { operatorOf } from '../operator.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 
@@ -58,5 +66,10 @@ export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDep
     // awaits between this check and apply() reading the Decisions.
     checkApplyConfirmation(checkouts.get(req.params.id), req.body);
     return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role) });
+  });
+
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', async (req) => {
+    checkoutAccess(deps, req, 'checkout');
+    return { checkout: checkouts.stopApplyBy(req.params.id, operatorOf(req)) };
   });
 }

@@ -16,6 +16,7 @@ export type CheckoutErrorCode =
   | 'not_checkout_owner'
   | 'checkout_not_active'
   | 'apply_in_progress'
+  | 'apply_not_running'
   | 'message_not_found'
   | 'decision_not_allowed'
   | 'checkout_failed'
@@ -36,6 +37,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   not_checkout_owner: 403,
   checkout_not_active: 409,
   apply_in_progress: 409,
+  apply_not_running: 409,
   message_not_found: 404,
   decision_not_allowed: 422,
   checkout_failed: 502,
@@ -124,6 +126,23 @@ export function checkoutNotActive(
 
 export function applyInProgress({ id }: { id: string }): CheckoutError {
   return new CheckoutError('apply_in_progress', `Checkout ${id} is being Applied. Wait for that Apply to finish.`);
+}
+
+/**
+ * No Apply is running on the Checkout that a stop could still affect: none
+ * started, it has attempted its last step, or it is already stopping
+ * (`why`, e.g. "the time limit stopped it").
+ */
+export function applyNotRunning({ id }: { id: string }, why: string): CheckoutError {
+  return new CheckoutError('apply_not_running', `No Apply of Checkout ${id} can be stopped: ${why}.`);
+}
+
+/** Someone other than the approver of an approved Apply asks to stop it. */
+export function notApplyApprover(id: string): CheckoutError {
+  return new CheckoutError(
+    'not_checkout_owner',
+    `The Apply of Checkout ${id} was not approved by you. Only the Checkout's owner and the approver of its Apply can stop it.`,
+  );
 }
 
 /** Team Mode, a Protected Profile requiring Approval: the requester asks for it instead of Applying. */
