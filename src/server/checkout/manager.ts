@@ -67,7 +67,9 @@ import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { applyOutlastsCheckout, resolveReplayRate } from '../triage/replay-rate.js';
-import { messageDetail, type MessageDetail } from '../triage/message-view.js';
+import { messageDetail, type Delivery, type MessageDetail } from '../triage/message-view.js';
+import type { RuleSchedulerTestHooks } from '../replay-rules/scheduler.js';
+import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, ProfileScope } from '../audit/store.js';
 import { diedAgain } from '../triage/died-again.js';
@@ -93,7 +95,7 @@ import {
 import { startExport, type CheckoutExport } from './export.js';
 import { openCheckout, type StartOptions } from './open.js';
 import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
-import { approvalSummary, pacedSteps, queueInfo, view, type ApprovalSummary, type CheckoutView } from './view.js';
+import { approvalSummary, pacedSteps, queueInfo, view as checkoutView, type ApprovalSummary, type CheckoutView } from './view.js';
 
 export { checkoutConnectionName, type StartOptions } from './open.js';
 
@@ -114,7 +116,12 @@ export interface CheckoutTestHooks {
   beforeApplyStep?(entryId: number): Promise<void>;
   /** An export is about to make the line of the Message at `position` (1 is the head of the queue). */
   beforeExportLine?(position: number): Promise<void>;
+  /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/scheduler.ts); the server hands them to it. */
+  ruleScheduler?: RuleSchedulerTestHooks;
 }
+
+/** A running Replay Rule's badge for one held Message (replay-rules/rules.ts); null when no running rule matches it. */
+export type RuleBadgeOf = (checkout: Checkout, delivery: Delivery, diedAgainCount: number) => RuleBadge | null;
 
 export interface CheckoutStartOptions extends StartOptions {
   /**
@@ -141,6 +148,8 @@ export interface CheckoutManagerOptions {
   /** How long an ended or lost Checkout stays readable before it is forgotten. */
   endedRetentionMs?: number;
   testHooks?: CheckoutTestHooks;
+  /** The rule badge on Message rows and in the Message view; none when left out. */
+  ruleBadge?: RuleBadgeOf;
   /** An Apply running in the background failed unexpectedly (its steps report their own failures); the Checkout still ends. */
   onApplyError?(checkoutId: string, err: unknown): void;
 }
@@ -242,7 +251,7 @@ export class CheckoutManager {
     this.findDiedAgain(checkout, options.auditScope);
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /** The browser still shows the Checkout: it stays until the next heartbeat window passes. */
@@ -250,7 +259,7 @@ export class CheckoutManager {
     const checkout = this.find(id);
     // While an Apply runs the heartbeat window is suspended, except while it waits after a Canary.
     if (checkout.status === 'active' && (!checkout.applying || checkout.applying.resume)) checkout.heartbeatTimer?.refresh();
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /**
@@ -264,7 +273,7 @@ export class CheckoutManager {
   }
 
   get(id: string): CheckoutView {
-    return view(this.find(id));
+    return this.view(this.find(id));
   }
 
   /** Whether Checkout `id` is active or still Applying in this process, so its pending Audit Entries may yet finish. */
@@ -281,14 +290,23 @@ export class CheckoutManager {
   /** The active Checkout of the Operator with this id, if any. */
   activeFor(operatorId: string): CheckoutView | null {
     const c = this.byOperator.get(operatorId);
-    return c && this.checkouts.has(c.id) ? view(c) : null;
+    return c && this.checkouts.has(c.id) ? this.view(c) : null;
   }
 
   message(id: string, handle: number): MessageDetail {
     const checkout = this.find(id);
     const m = checkout.held.get(handle);
     if (!m) throw new CheckoutError('message_not_found', `Checkout ${id} holds no Message with handle ${handle}.`);
-    return { ...messageDetail(handle, m, queueInfo(checkout)), diedAgain: checkout.diedAgain.get(handle) ?? null };
+    const diedAgain = checkout.diedAgain.get(handle) ?? null;
+    return {
+      ...messageDetail(handle, m, queueInfo(checkout)),
+      diedAgain,
+      rule: this.options.ruleBadge?.(checkout, m, diedAgain?.count ?? 0) ?? null,
+    };
+  }
+
+  private view(checkout: Checkout): CheckoutView {
+    return checkoutView(checkout, this.options.ruleBadge);
   }
 
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
@@ -318,7 +336,7 @@ export class CheckoutManager {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'only an approver can Apply it');
-    if (view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
+    if (this.view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
     const canaryHandle = this.canaryFor(checkout, canary);
     return this.startApply(checkout, role, null, this.replayRateFor(checkout, rate), { canary: canaryHandle });
   }
@@ -359,7 +377,7 @@ export class CheckoutManager {
     this.assertCanApply(checkout);
     this.startApply(checkout, 'operator', null, rate, { rule });
     await checkout.applying?.settled;
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /**
@@ -403,19 +421,19 @@ export class CheckoutManager {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'Approval is already requested');
-    if (!view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
+    if (!this.view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
     const frozenRate = this.replayRateFor(checkout, rate);
     checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate };
     checkout.approvalClosed = null;
     checkout.rejection = null;
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /** The owner withdraws the request: the Decisions can change again. Throws `not_awaiting_approval`. */
   withdrawApproval(id: string): CheckoutView {
     const checkout = this.find(id);
     this.takeApprovalRequest(checkout, { how: 'withdrawn' });
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /** The Checkouts waiting for Approval, oldest request first, except `approver`'s own. */
@@ -473,7 +491,7 @@ export class CheckoutManager {
     const checkout = this.awaitingCheckout(id, approver);
     this.takeApprovalRequest(checkout, { how: 'rejected', by: approver.displayName });
     checkout.rejection = { reason, rejectedBy: approver.displayName, at: new Date() };
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /** Removes the request for Approval, which must exist; no await before the caller acts on it. */
@@ -513,7 +531,7 @@ export class CheckoutManager {
     const running: RunningApply = { settled: Promise.resolve(), stop: null, stopped: new AbortController(), resume: null };
     checkout.applying = running;
     running.settled = this.carryOutApply(checkout, running, { role, approver, rate, canary, rule });
-    return view(checkout);
+    return this.view(checkout);
   }
 
   private async carryOutApply(
@@ -586,7 +604,7 @@ export class CheckoutManager {
     if (checkout.applyProgress?.view().remaining === 0) throw applyNotRunning(checkout, 'it has attempted every step');
     const name = operator.displayName;
     this.stopApply(checkout, { reason: stoppedByReason(name), endReason: 'applied', stoppedBy: name });
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /**
@@ -608,7 +626,7 @@ export class CheckoutManager {
     running.resume();
     running.resume = null;
     clearTimeout(checkout.heartbeatTimer);
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /**
@@ -648,7 +666,7 @@ export class CheckoutManager {
   }
 
   private async finish(checkout: Checkout, reason: EndReason): Promise<CheckoutView> {
-    if (checkout.status !== 'active') return view(checkout);
+    if (checkout.status !== 'active') return this.view(checkout);
     checkout.status = 'ended';
     checkout.endReason = reason;
     this.cancelApprovalRequest(checkout);
@@ -670,7 +688,7 @@ export class CheckoutManager {
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);
-    return view(checkout);
+    return this.view(checkout);
   }
 
   /** Ends every active Checkout (on shutdown). */

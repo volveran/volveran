@@ -78,6 +78,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
+    // Replay Rules are created below, before any Checkout can start.
+    ruleBadge: (c, delivery, diedAgainCount) => replayRules.badge(c.profile, c.vhost, c.queue, delivery, diedAgainCount),
     // Called only once the app below is listening.
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
   });
@@ -90,7 +92,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }),
       };
   const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
-  const replayRules = new ReplayRules(checkouts);
+  const replayRules = new ReplayRules({
+    checkouts,
+    state: audit.ruleState,
+    profiles,
+    testHooks: options.checkoutTestHooks?.ruleScheduler,
+    // Called only once the app below is listening.
+    onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
+  });
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
@@ -151,13 +160,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retentionTimer = setInterval(evict, retention.intervalMs);
   retentionTimer.unref();
 
-  // Every held Message goes back to its queue (an Apply in progress finishes
-  // first) before the audit store closes and the process exits.
+  // No new Rule Pass starts and the ones in progress end (and are recorded);
+  // then every held Message goes back to its queue (an Apply in progress
+  // finishes first) before the audit store closes and the process exits.
   app.addHook('onClose', async () => {
     clearInterval(retentionTimer);
+    await replayRules.stop();
     await checkouts.endAll();
     audit.close();
   });
+  // Replay Rules: give each its state and schedule the running ones.
+  replayRules.start();
+
   // Listening comes last, so /readyz is only reachable once startup has finished.
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
