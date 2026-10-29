@@ -42,7 +42,7 @@ export interface ApplyRun {
    * which becomes the reason of each step left.
    */
   stopReason(): string | null;
-  /** The Replay Rate in Messages per second, recorded on every Audit Entry; null or left out when unthrottled. */
+  /** The Replay Rate in Messages per second, recorded on every Audit Entry; null or left out when there is none. */
   rate?: number | null;
   /** Aborted when the Apply is told to stop, so a wait for the next paced step ends at once. */
   stopSignal?: AbortSignal;

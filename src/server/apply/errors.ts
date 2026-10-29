@@ -18,9 +18,9 @@ export class ApplyError extends HttpError<ApplyErrorCode> {
   }
 }
 
-/** The Replay Rate asked for (or none, unthrottled) is above the Broker Profile's `replayRate.max`. */
+/** The Replay Rate asked for (or none: as fast as the broker confirms) is above the Broker Profile's `replayRate.max`. */
 export function rateAboveMaximum(profile: string, max: number, requested: number | null): ApplyError {
-  const asked = requested === null ? 'Without a rate the Apply would run unthrottled, which is' : `${requested} Messages per second is`;
+  const asked = requested === null ? 'With no Replay Rate the Apply would run as fast as the broker confirms, which is' : `${requested} Messages per second is`;
   return new ApplyError(
     'rate_above_maximum',
     `${asked} above the maximum Replay Rate of Broker Profile "${profile}": ${max} Messages per second. Choose a rate of at most ${max}.`,

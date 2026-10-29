@@ -60,7 +60,7 @@ export interface ApplyRequestBody {
   confirm?: unknown;
   /** #9: on a Protected Profile, the queue name as the Operator typed it. */
   confirmQueueName?: unknown;
-  /** The Replay Rate in Messages per second; left out, the Broker Profile's default, else unthrottled. */
+  /** The Replay Rate in Messages per second; left out, the Broker Profile's default, else no Replay Rate. */
   rate?: unknown;
   /** Start with a Canary: true (the first Replay) or { handle }. */
   canary?: unknown;

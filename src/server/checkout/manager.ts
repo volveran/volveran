@@ -30,7 +30,7 @@
 // a Lost Checkout and the Apply's last step wins.
 //
 // An Apply runs at a Replay Rate (the request's, else the Broker Profile's
-// default, capped by its maximum; triage/replay-rate.ts) or unthrottled. It
+// default, capped by its maximum; triage/replay-rate.ts) or with none. It
 // is refused before it starts when at that rate it would outlast the
 // Checkout's time left. A stop wakes a wait for the next paced step at once.
 //

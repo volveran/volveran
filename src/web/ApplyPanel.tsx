@@ -50,7 +50,7 @@ interface ConfirmationProps {
   /** The message id shown for a Message handle, for the Canary pick. */
   messageLabel(handle: number): string;
   busy: boolean;
-  /** `rate`: the Replay Rate chosen; left out when the field is empty (unthrottled). `canary`: left out for none. */
+  /** `rate`: the Replay Rate chosen; left out when the field is empty (no Replay Rate). `canary`: left out for none. */
   onApply: (confirmQueueName?: string, rate?: number, canary?: CanaryChoice) => void;
 }
 
@@ -159,7 +159,7 @@ function ApplyConfirmation({
             <small className={rateProblem ? 'rate-problem' : 'muted'}>
               {rateProblem ??
                 (estimate === null
-                  ? `${paced} Replay and Move steps, unthrottled.`
+                  ? `${paced} Replay and Move steps, with no Replay Rate.`
                   : `${paced} Replay and Move steps take about ${formatCountdown(estimate)} at ${rate} Messages/s; Discards are not slowed down.`)}
             </small>
           </label>

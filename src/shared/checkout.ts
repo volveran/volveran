@@ -292,7 +292,7 @@ export interface ApplyConfirmation {
   /**
    * How long the Replay and Move steps of the current Decisions take at the
    * Replay Rate: the rate frozen with a request for Approval, else the
-   * profile's default; null when unthrottled.
+   * profile's default; null when there is none.
    */
   estimatedDurationMs: number | null;
   /** The Canary the Apply may start with (`canary` in the Apply body). */
@@ -303,7 +303,7 @@ export interface ApplyConfirmation {
 export interface ApprovalRequestView {
   /** When the requester asked for Approval (ISO 8601). */
   requestedAt: string;
-  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when there is none. */
   rate: number | null;
   /** The Canary the approved Apply starts with, frozen with the Decisions; null for none. */
   canary: RequestedCanary | null;
@@ -345,7 +345,7 @@ export interface ApprovalSummary {
   /** Messages per Decision. */
   decisionSummary: DecisionSummaryLine[];
   decisionSummaryText: string;
-  /** The Replay Rate the approved Apply runs at, in Messages per second; null when unthrottled. */
+  /** The Replay Rate the approved Apply runs at, in Messages per second; null when there is none. */
   rate: number | null;
   /** The Canary the approved Apply starts with; null for none. */
   canary: RequestedCanary | null;

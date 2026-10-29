@@ -69,7 +69,7 @@ export interface AuditEntryJson {
   filter: Filter | null;
   /** An export: how many Messages it holds; null for the other actions. */
   messageCount: number | null;
-  /** The Replay Rate of the Apply that wrote the entry, in Messages per second; null when unthrottled, for other actions and before v0.4. */
+  /** The Replay Rate of the Apply that wrote the entry, in Messages per second; null when there is none, for other actions and before v0.4. */
   rate: number | null;
   /** The Replay Rule whose Rule Pass wrote the entry (its name; the Operator is then the rule); null for an Operator's actions and before v0.4. */
   rule: string | null;

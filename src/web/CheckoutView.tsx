@@ -419,7 +419,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
           <p>
             Requested at {new Date(checkout.approvalRequest.requestedAt).toLocaleTimeString()}: another Operator with the
             role <code>operator</code> or <code>admin</code> on {checkout.profile} must approve this Apply (
-            {checkout.decisionSummaryText}, at {rateText(checkout.approvalRequest.rate)}
+            {checkout.decisionSummaryText}, {rateText(checkout.approvalRequest.rate)}
             {checkout.approvalRequest.canary && `; ${requestedCanaryText(checkout.approvalRequest.canary)}`}). They find it
             under Approvals. Your Decisions, the rate and the Canary cannot change until then.
           </p>

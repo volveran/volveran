@@ -24,7 +24,7 @@ export class ApplyProgressTracker {
     /** The Apply's steps: every Decision other than Keep. */
     readonly total: number,
     readonly startedAt: Date,
-    /** The Replay Rate, in Messages per second; null when unthrottled. */
+    /** The Replay Rate, in Messages per second; null when there is none. */
     readonly rate: number | null = null,
   ) {}
 

@@ -15,7 +15,7 @@ export function pacedDurationMs(steps: number, rate: number | null): number | nu
   return rate === null ? null : Math.ceil((steps * 1000) / rate);
 }
 
-/** A rate as the pages show it, e.g. "10 Messages/s". */
+/** How an Apply runs as the pages say it: "at 10 Messages/s", or "with no Replay Rate". */
 export function rateText(rate: number | null): string {
-  return rate === null ? 'unthrottled' : `${rate} Messages/s`;
+  return rate === null ? 'with no Replay Rate' : `at ${rate} Messages/s`;
 }

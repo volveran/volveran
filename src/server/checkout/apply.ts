@@ -36,7 +36,7 @@ export interface RunApplyOptions {
   stopReason(): string | null;
   /** Aborted when the Apply is told to stop: a wait for the next paced step ends at once. */
   stopSignal?: AbortSignal;
-  /** The Replay Rate in Messages per second; null when unthrottled. */
+  /** The Replay Rate in Messages per second; null when there is none. */
   rate: number | null;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;

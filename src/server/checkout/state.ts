@@ -25,7 +25,7 @@ export interface ApprovalRequest {
   requestedAt: Date;
   /** The requester's Role on the profile when they asked: the approved Apply records it. */
   role: Role;
-  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when there is none. */
   rate: number | null;
   /** The handle of the Canary the approved Apply starts with, frozen with the Decisions; null for none. */
   canary: number | null;

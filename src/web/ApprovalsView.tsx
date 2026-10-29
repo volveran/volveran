@@ -316,7 +316,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
           <p className="replay-rate-line">
             {checkout.approvalRequest && (
               <>
-                Runs at <strong>{rateText(checkout.approvalRequest.rate)}</strong>
+                Runs <strong>{rateText(checkout.approvalRequest.rate)}</strong>
                 {checkout.applyConfirmation.estimatedDurationMs !== null &&
                   `: its Replay and Move steps take about ${formatCountdown(checkout.applyConfirmation.estimatedDurationMs)}`}
                 {checkout.approvalRequest.canary && (

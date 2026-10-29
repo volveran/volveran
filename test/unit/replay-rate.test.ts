@@ -36,7 +36,7 @@ describe('resolveReplayRate', () => {
 });
 
 describe('applyOutlastsCheckout', () => {
-  it('is null when unthrottled, or when the paced steps fit in the time left minus the margin', () => {
+  it('is null with no Replay Rate, or when the paced steps fit in the time left minus the margin', () => {
     expect(applyOutlastsCheckout({ pacedSteps: 1000, rate: null, remainingMs: 1_000 })).toBeNull();
     expect(applyOutlastsCheckout({ pacedSteps: 20, rate: 10, remainingMs: 12_000 })).toBeNull();
   });

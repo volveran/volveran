@@ -38,7 +38,7 @@ export function ApplyProgressPanel({
   return (
     <div className="apply-progress" role="status">
       <strong>{progress.stoppedBy === null ? 'Applying' : 'Stopping'}</strong>{' '}
-      <small className="muted">at {rateText(progress.rate)}</small>
+      <small className="muted">{rateText(progress.rate)}</small>
       <div
         className="progress-bar"
         role="progressbar"

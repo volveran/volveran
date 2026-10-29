@@ -68,7 +68,7 @@ export interface NewAuditEntry {
   filter?: Filter | null;
   /** An export: how many Messages it holds. */
   messageCount?: number | null;
-  /** An Apply: its Replay Rate in Messages per second; null (or left out) when unthrottled, and for the other actions. */
+  /** An Apply: its Replay Rate in Messages per second; null (or left out) when there is none, and for the other actions. */
   rate?: number | null;
   /** A Rule Pass: the Replay Rule acting (its name; the Operator is the rule) and the pass; null (or left out) otherwise. */
   rule?: string | null;
@@ -104,7 +104,7 @@ export interface AuditEntry
   restoreOf: number | null;
   filter: Filter | null;
   messageCount: number | null;
-  /** The Replay Rate of the Apply that wrote the entry; null when unthrottled (and on entries before v0.4). */
+  /** The Replay Rate of the Apply that wrote the entry; null when there is none (and on entries before v0.4). */
   rate: number | null;
   /** The Replay Rule whose pass wrote the entry (its name), and the pass's id; null for an Operator's actions (and before v0.4). */
   rule: string | null;
@@ -216,7 +216,7 @@ const MIGRATIONS: string[] = [
   // v6 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
   `ALTER TABLE audit_entries ADD COLUMN filter TEXT;
    ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
-  // v7 (#56): every entry an Apply writes records its Replay Rate (Messages per second; null when unthrottled).
+  // v7 (#56): every entry an Apply writes records its Replay Rate (Messages per second; null when there is none).
   `ALTER TABLE audit_entries ADD COLUMN rate REAL;`,
   // v8 (#63): the Replay Rule (name) and Rule Pass that wrote the entry; null for an Operator's actions.
   `ALTER TABLE audit_entries ADD COLUMN rule TEXT;

@@ -17,7 +17,7 @@ const profileWith = (extra: string[]) =>
 const parse = (extra: string[]) => parseProfiles(profileWith(extra), {}, 'profiles.yaml')[0]!;
 
 describe('Broker Profile replayRate', () => {
-  it('is unthrottled without one', () => {
+  it('sets no Replay Rate without one', () => {
     expect(parse([]).replayRate).toEqual({ default: null, max: null });
   });
 
