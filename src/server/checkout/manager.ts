@@ -59,7 +59,7 @@ import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
 import { queueRefOf, type QueueRef } from '../profiles.js';
 import { MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../../shared/replay-rate.js';
-import { canaryNeedsReplay, rateAboveMaximum } from '../apply/errors.js';
+import { canaryNeedsReplay, canaryRequired, rateAboveMaximum } from '../apply/errors.js';
 import type { RuleActing } from '../apply/types.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
@@ -346,12 +346,19 @@ export class CheckoutManager {
    * or false for none, true for the first Message with the Decision Replay
    * in Checkout order, `{ handle }` for that Message, which must have the
    * Decision Replay. Throws 400 `canary_needs_replay` when a Canary is asked
-   * for and no Message has the Decision Replay, 400 `invalid_request` for
-   * anything else.
+   * for and no Message has the Decision Replay, 400 `canary_required` when
+   * none is and the profile requires one for this many Replays, 400
+   * `invalid_request` for anything else.
    */
   private canaryFor(checkout: Checkout, requested: unknown): number | null {
-    if (requested === undefined || requested === null || requested === false) return null;
     const replays = [...checkout.held.keys()].filter((h) => checkout.decisions.get(h)?.kind === 'replay');
+    if (requested === undefined || requested === null || requested === false) {
+      const { requiredAbove } = checkout.profile.canary;
+      if (requiredAbove !== null && replays.length > requiredAbove) {
+        throw canaryRequired(checkout.profile.name, requiredAbove, replays.length);
+      }
+      return null;
+    }
     const picked = isRecord(requested) ? requested.handle : undefined;
     if (requested !== true && !(typeof picked === 'number' && Number.isInteger(picked))) {
       throw new InvalidRequestError('"canary" must be true (the first Replay is the Canary), { "handle": <Message handle> }, or left out.');
@@ -415,15 +422,18 @@ export class CheckoutManager {
    * sent). `role` is the owner's Role on the profile, recorded when the
    * Apply runs. Throws `approval_not_required` when the Apply needs no
    * Approval, `awaiting_approval` when it is already requested, and the
-   * Replay Rate's refusals (replayRateFor).
+   * Replay Rate's refusals (replayRateFor). `canary` is the request's
+   * Canary as sent, frozen too: the approved Apply starts with it (same
+   * refusals as for an Apply, canaryFor).
    */
-  requestApproval(id: string, role: Role, rate?: unknown): CheckoutView {
+  requestApproval(id: string, role: Role, rate?: unknown, canary?: unknown): CheckoutView {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'Approval is already requested');
     if (!this.view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
+    const frozenCanary = this.canaryFor(checkout, canary);
     const frozenRate = this.replayRateFor(checkout, rate);
-    checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate };
+    checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate, canary: frozenCanary };
     checkout.approvalClosed = null;
     checkout.rejection = null;
     return this.view(checkout);
@@ -471,7 +481,9 @@ export class CheckoutManager {
    * A second Operator approves the requested Apply: it starts in the
    * background on the owner's Checkout, recorded as the owner's (with the
    * Role they held when they asked) and with `approver` alongside, at the
-   * Replay Rate frozen with the request. Returns the Checkout `applying`.
+   * Replay Rate and the Canary frozen with the request. Returns the
+   * Checkout `applying`. After a Canary, the owner or this approver
+   * continues it (continueApplyBy) with no second Approval.
    * Same checks as awaitingCheckout, and `apply_would_outlast_checkout` when
    * too little time is left by now (the request stays).
    */
@@ -479,7 +491,7 @@ export class CheckoutManager {
     const checkout = this.awaitingCheckout(id, approver);
     this.assertFitsTimeLeft(checkout, checkout.approvalRequest!.rate);
     const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName, approverId: approver.id });
-    return this.startApply(checkout, request.role, approver, request.rate);
+    return this.startApply(checkout, request.role, approver, request.rate, { canary: request.canary });
   }
 
   /**

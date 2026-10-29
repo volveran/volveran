@@ -161,6 +161,28 @@ describe('Replay rules', () => {
     expect(listed.passes[0]).toEqual(res.body.pass);
   });
 
+  it('Replays a MassTransit Message to its input queue, and Keeps a Spring AMQP one, not due on the pass that first sees it', async () => {
+    await withChannel('/', async (ch) => {
+      const send = (id: string, headers: Record<string, unknown>) =>
+        ch.sendToQueue(dlq, Buffer.from(`payment ${id}`), { messageId: id, persistent: true, headers: { transient: 'yes', ...headers } });
+      send('masstransit', {
+        'MT-Reason': 'fault',
+        'MT-Fault-ExceptionType': 'System.TimeoutException',
+        'MT-Fault-Timestamp': new Date(Date.now() - HOUR).toISOString(),
+        'MT-Fault-InputAddress': `rabbitmq://localhost/${workQueue}`,
+      });
+      send('spring', { 'x-exception-message': 'Listener threw', 'x-original-exchange': 'payments', 'x-original-routingKey': 'payments.captured' });
+      await ch.waitForConfirms();
+    });
+
+    const res = await app.post(runPath);
+
+    // The Spring AMQP Message carries no time, so its back-off runs from this pass; once due, it cannot be Replayed (failed).
+    expect(res.body.pass.summary).toMatchObject({ held: 2, replayed: 1, notDue: 1, failed: 0 });
+    expect(ids(await readyMessages(workQueue))).toEqual(['masstransit']);
+    expect(ids(await readyMessages(dlq))).toEqual(['spring']);
+  });
+
   it('records each Replay as an Audit Entry naming the rule, which the rule filter finds', async () => {
     await deadLettered([
       { id: 'audited-1', ageMs: HOUR, transient: true },

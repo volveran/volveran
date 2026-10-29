@@ -5,8 +5,13 @@
 // queue as Keep. Continuing before the Watch Window ends is allowed.
 // Once the Apply has moved on, the outcome stays as a record.
 import { useState } from 'react';
-import type { ApplyProgress, CanaryView } from './api.js';
+import type { ApplyProgress, CanaryView, RequestedCanary } from './api.js';
 import { formatCountdown } from './countdown.js';
+
+/** How a request for Approval names its Canary. */
+export function requestedCanaryText(canary: RequestedCanary): string {
+  return `starts with a Canary: ${canary.messageId ?? `Message ${canary.handle}`}`;
+}
 
 const OUTCOME: Record<CanaryView['status'], string> = {
   watching: 'Watching',

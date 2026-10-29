@@ -4,7 +4,7 @@
 // as the requester sees them, and two ticked Messages side by side. Approve
 // asks for the queue name typed, then starts the Apply on the requester's
 // Checkout (the requester sees its progress and outcome there; so does the
-// approver, who may stop it); Reject
+// approver, who may stop it, and continue or stop it after its Canary); Reject
 // asks for a reason, which the requester sees. No key approves or rejects
 // (keyboard-commands.ts): both always need their confirmation, a Prompt
 // (keyboard.tsx) that focuses its typed field, closes on Escape and gives
@@ -20,6 +20,7 @@ import { ComparisonView } from './ComparisonView.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyProgressPanel } from './ApplyProgress.js';
+import { CanaryPanel, requestedCanaryText } from './CanaryPanel.js';
 import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
 import { Prompt } from './keyboard.js';
@@ -111,7 +112,10 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
                     ))}
                   </ul>
                 </td>
-                <td>{rateText(a.rate)}</td>
+                <td>
+                  {rateText(a.rate)}
+                  {a.canary && <div className="muted">{requestedCanaryText(a.canary)}</div>}
+                </td>
                 <td>
                   <button onClick={() => setOpen(a.checkoutId)}>Open</button>
                 </td>
@@ -143,14 +147,15 @@ function ApprovedApply({ approved, back }: { approved: Checkout; back: ReactNode
     },
     [approved.id, applying],
   );
-  const stop = async () => {
+  const act = (action: (id: string) => Promise<Checkout>) => async () => {
     try {
-      setCheckout(await api.stopApprovedApply(approved.id));
+      setCheckout(await action(approved.id));
       setError(undefined);
     } catch (err) {
       setError(err as ApiError);
     }
   };
+  const stop = act(api.stopApprovedApply);
 
   return (
     <section className="checkout">
@@ -163,6 +168,15 @@ function ApprovedApply({ approved, back }: { approved: Checkout; back: ReactNode
         there too. Its Audit Entries name you as the approver.
       </p>
       {error && <ErrorBox error={error} />}
+      {checkout.canary && (
+        <CanaryPanel
+          canary={checkout.canary}
+          progress={applying ? checkout.applyProgress : null}
+          now={now}
+          onContinue={act(api.continueApprovedApply)}
+          onStop={stop}
+        />
+      )}
       {applying && checkout.applyProgress && (
         <ApplyProgressPanel progress={checkout.applyProgress} now={now} onStop={stop} />
       )}
@@ -257,6 +271,10 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
 
   const back = <button onClick={onClose}>Back to Approvals</button>;
   if (result) return <ApprovedApply approved={result} back={back} />;
+  // Reopened after approving (e.g. to continue after the Canary): the server shows this approver its Apply.
+  if (checkout && checkout.approvalRequest === null && checkout.applyProgress !== null) {
+    return <ApprovedApply approved={checkout} back={back} />;
+  }
   if (rejected) {
     return (
       <section className="checkout">
@@ -301,6 +319,14 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
                 Runs at <strong>{rateText(checkout.approvalRequest.rate)}</strong>
                 {checkout.applyConfirmation.estimatedDurationMs !== null &&
                   `: its Replay and Move steps take about ${formatCountdown(checkout.applyConfirmation.estimatedDurationMs)}`}
+                {checkout.approvalRequest.canary && (
+                  <>
+                    {' '}
+                    · <strong>{requestedCanaryText(checkout.approvalRequest.canary)}</strong>, watched for{' '}
+                    {formatCountdown(checkout.applyConfirmation.canary.watchWindowMs)}; then you or {checkout.operator}{' '}
+                    continue or stop
+                  </>
+                )}
               </>
             )}
           </p>
@@ -361,6 +387,8 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
               <span>
                 Approving runs the Apply now, on {checkout.operator}'s Checkout; its Audit Entries name you as the
                 approver.
+                {checkout.approvalRequest?.canary &&
+                  ` It ${requestedCanaryText(checkout.approvalRequest.canary)}, Replayed alone and watched; then you or ${checkout.operator} continue with the rest or stop, with no second Approval.`}
               </span>
               <label className="type-queue-name">
                 <span>

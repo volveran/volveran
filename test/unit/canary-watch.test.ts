@@ -73,3 +73,45 @@ describe('canaryWatchBindings', () => {
     expect(reason(null)).toContain('not known');
   });
 });
+
+describe('canaryWatchBindings for a MassTransit Replay', () => {
+  const vhost = (exchanges: Array<[string, string]>, bindings: Array<[string, string, string]>): VhostTopology => ({
+    exchanges: new Map(exchanges.map(([name, type]) => [name, { type }])),
+    bindings: bindings.map(([source, destination, routingKey]) => ({ source, destination, destinationType: 'queue', routingKey })),
+  });
+  const input = { name: 'submit-order', arguments: {}, effectivePolicy: {} };
+
+  it('binds to the _error exchange MassTransit publishes faults to, whatever the input queue dead-letters to', () => {
+    const topology = vhost(
+      [
+        ['submit-order', 'fanout'],
+        ['submit-order_error', 'fanout'],
+      ],
+      [
+        ['submit-order', 'submit-order', ''],
+        ['submit-order_error', 'submit-order_error', ''],
+      ],
+    );
+    for (const source of [input, null]) {
+      expect(
+        canaryWatchBindings({ source, massTransitInputQueue: 'submit-order', deadLetterQueue: 'submit-order_error', topology }),
+      ).toEqual({ watchable: true, exchange: 'submit-order_error', routingKeys: [''] });
+    }
+  });
+
+  it('is unwatched when the _error exchange is missing or does not route to the Checkout queue', () => {
+    const reason = (topology: VhostTopology) => {
+      const result = canaryWatchBindings({
+        source: input,
+        massTransitInputQueue: 'submit-order',
+        deadLetterQueue: 'submit-order_error',
+        topology,
+      });
+      return result.watchable ? null : result.reason;
+    };
+    expect(reason(vhost([['submit-order', 'fanout']], []))).toContain('error exchange "submit-order_error", which does not exist');
+    expect(reason(vhost([['submit-order_error', 'fanout']], [['submit-order_error', 'elsewhere', '']]))).toContain(
+      'no binding to "submit-order_error"',
+    );
+  });
+});

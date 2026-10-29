@@ -25,6 +25,7 @@ export type {
   MessageRow,
   MessageSummary,
   RenderedBody,
+  RequestedCanary,
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
@@ -242,12 +243,13 @@ export const api = {
   /** Stops the running Apply: the step in progress finishes, the rest goes back to the queue. Returns the Checkout. */
   stopApply: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
-  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions and the Replay Rate. */
-  requestApproval: (id: string, confirmQueueName?: string, rate?: number) =>
+  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions, the Replay Rate and the Canary. */
+  requestApproval: (id: string, confirmQueueName?: string, rate?: number, canary?: CanaryChoice) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
       ...(rate !== undefined && { rate }),
+      ...(canary !== undefined && { canary }),
     }).then((b) => b.checkout),
   withdrawApproval: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
@@ -275,4 +277,7 @@ export const api = {
   /** The approver stops the Apply they approved; returns the Checkout. */
   stopApprovedApply: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
+  /** The approver lets the Apply they approved carry out the rest after its Canary; returns the Checkout. */
+  continueApprovedApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
 };

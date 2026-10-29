@@ -1,6 +1,6 @@
 # Spring AMQP and MassTransit
 
-Spring AMQP and MassTransit do not dead-letter through the broker. When a consumer gives up on a Message, the framework republishes it to an error queue itself, with headers describing the failure. These Messages carry no `x-death`, so without reading the framework's headers Volverán would show no dead-letter reason and no original queue. This page says what Volverán reads from each framework and where it shows it.
+Spring AMQP and MassTransit do not dead-letter through the broker. When a consumer gives up on a Message, the framework republishes it to an error queue itself, with headers describing the failure. These Messages carry no `x-death`, so without reading the framework's headers Volverán would show no dead-letter reason and no original queue. This page says what Volverán reads from each framework, where it shows it, and what Replay and Move do with these Messages.
 
 Volverán calls what the framework wrote the **Failure Details** of a Message ([Glossary](../GLOSSARY.md)).
 
@@ -13,7 +13,19 @@ Volverán calls what the framework wrote the **Failure Details** of a Message ([
 - **Export.** Each NDJSON line carries `failureDetails` (README, [Exporting Messages](../README.md#exporting-messages)).
 - **API.** Message summaries and the Message view carry `failureDetails`, or `null` when no framework wrote any.
 
-Replay is unchanged for now: Volverán Replays only to the queue named in a Message's `x-death` ([ADR 0005](adr/0005-replay-targets-the-dead-lettering-queue.md)). Move these Messages to the queue or exchange you choose.
+## Replay and Move
+
+Replay sends a Message back to the queue that failed it, and only there ([ADR 0005](adr/0005-replay-targets-the-dead-lettering-queue.md), amended by [ADR 0010](adr/0010-replay-origin-from-framework-headers.md)). Volverán takes that queue from, in order:
+
+1. the most recent `x-death` entry, when the Message has one (the broker's record wins over the framework's);
+2. otherwise, MassTransit's input queue (`MT-Fault-InputAddress`), unless MassTransit skipped the Message;
+3. otherwise, nowhere: Replay is unavailable, with the reason on the Message's **no Replay** badge.
+
+- **MassTransit.** A faulted Message in a `_error` queue is Replayed to its input queue through the default exchange, so only the receive endpoint whose consumer failed sees it again. A skipped Message (`MT-Reason: skip`) cannot be Replayed: no consumer handled its Message type. Neither can one whose input address is missing or names no queue.
+- **Spring AMQP.** A Message is never Replayed: Spring AMQP records only the exchange and routing key the Message was first published with, and publishing there would copy it to every queue bound to that key. The Move prompt is prefilled with that exchange and routing key (or with the queue, when it was first sent through the default exchange), so you can send it there as an explicit choice.
+- **Headers.** Replay, Move and Restore remove `MT-Reason`, `MT-Fault-*`, `MT-Host-*`, `x-exception-*`, `x-original-exchange` and `x-original-routingKey`, so the consumer does not see a stale exception. The Audit Entry keeps the original headers, and Died Again still works through `x-volveran-replay-id`.
+- **Canary.** The Canary of a MassTransit Replay is watched on the `_error` exchange MassTransit publishes the input queue's faults to (`<input queue>_error`): a Canary that faults again is reported **died again** with the new exception. When that exchange is missing, the Canary is unwatched.
+- **Replay rules.** A rule Replays MassTransit Messages to their input queue like any other; it counts Spring AMQP Messages as failed and Keeps them.
 
 ## Spring AMQP
 
