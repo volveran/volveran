@@ -15,7 +15,9 @@
 // `canary` starts the Apply with a Canary: `true` for the first Message with
 // the Decision Replay in Checkout order, `{ handle }` for that Message (it
 // must have the Decision Replay; 400 `invalid_request` otherwise). 400
-// `canary_needs_replay` when no Message has the Decision Replay. The Canary is
+// `canary_needs_replay` when no Message has the Decision Replay. 400
+// `canary_required` { requiredAbove } when the Apply has more Replays than the
+// Broker Profile's `canary.requiredAbove` and no Canary. The Canary is
 // Replayed alone and watched for the Broker Profile's Watch Window
 // (`applyProgress.phase` canary_watch, then canary_done; its outcome is the
 // Checkout's `canary`), then the Apply waits. Continue carries out the rest

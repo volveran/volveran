@@ -254,6 +254,10 @@ export type CanaryWatchability = { watchable: true } | { watchable: false; reaso
 export interface CanaryConfirmation {
   /** The Broker Profile's Watch Window. */
   watchWindowMs: number;
+  /** The profile's `canary.requiredAbove`: an Apply with more Replays must start with a Canary; null when never required. */
+  requiredAbove: number | null;
+  /** Whether the current Decisions have more Replays than `requiredAbove`: the Apply (or request) needs a Canary. */
+  required: boolean;
   /** The Messages that may be the Canary (Decision Replay), in Checkout order: the first is the default. */
   candidates: Array<{ handle: number; watch: CanaryWatchability }>;
 }
@@ -286,6 +290,14 @@ export interface ApprovalRequestView {
   requestedAt: string;
   /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
   rate: number | null;
+  /** The Canary the approved Apply starts with, frozen with the Decisions; null for none. */
+  canary: RequestedCanary | null;
+}
+
+/** The Canary frozen with a request for Approval: "starts with a Canary: <message id>". */
+export interface RequestedCanary {
+  handle: number;
+  messageId: string | null;
 }
 
 /** The last rejection of the Checkout's request for Approval, shown to the requester until they request again. */
@@ -320,6 +332,8 @@ export interface ApprovalSummary {
   decisionSummaryText: string;
   /** The Replay Rate the approved Apply runs at, in Messages per second; null when unthrottled. */
   rate: number | null;
+  /** The Canary the approved Apply starts with; null for none. */
+  canary: RequestedCanary | null;
 }
 
 export interface CheckoutView {

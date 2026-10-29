@@ -9,7 +9,7 @@ import { remainingMs } from '../triage/checkout-timing.js';
 import { pacedDurationMs } from '../../shared/replay-rate.js';
 import type { Checkout } from './state.js';
 import { canaryView } from './canary.js';
-import type { CanaryConfirmation } from '../../shared/checkout.js';
+import type { CanaryConfirmation, RequestedCanary } from '../../shared/checkout.js';
 import type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability } from '../../shared/checkout.js';
 
 export type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability };
@@ -66,12 +66,23 @@ export function view(c: Checkout): CheckoutView {
       estimatedDurationMs: pacedDurationMs(pacedSteps(c), c.approvalRequest ? c.approvalRequest.rate : c.profile.replayRate.default),
       canary: canaryConfirmation(c),
     },
-    approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString(), rate: c.approvalRequest.rate },
+    approvalRequest: c.approvalRequest && {
+      requestedAt: c.approvalRequest.requestedAt.toISOString(),
+      rate: c.approvalRequest.rate,
+      canary: requestedCanary(c, c.approvalRequest.canary),
+    },
     rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
     applyProgress: c.applyProgress?.view() ?? null,
     lastApply: c.lastApply,
     canary: c.canary && canaryView(c.canary),
   };
+}
+
+/** The Canary frozen with a request for Approval, by handle and message id; null for none. */
+function requestedCanary(c: Checkout, handle: number | null): RequestedCanary | null {
+  if (handle === null) return null;
+  const id: unknown = c.held.get(handle)?.properties.messageId;
+  return { handle, messageId: typeof id === 'string' ? id : id == null ? null : String(id) };
 }
 
 /** The Messages that may be the Canary (Decision Replay, in Checkout order), each with whether it can be watched. */
@@ -87,7 +98,8 @@ function canaryConfirmation(c: Checkout): CanaryConfirmation {
         : { watchable: false, reason: bindings?.reason ?? 'Where this Message dead-letters is not known.' },
     });
   }
-  return { watchWindowMs: c.profile.canary.watchWindowMs, candidates };
+  const { watchWindowMs, requiredAbove } = c.profile.canary;
+  return { watchWindowMs, requiredAbove, required: requiredAbove !== null && candidates.length > requiredAbove, candidates };
 }
 
 /** How many held Messages have a Decision that publishes (Replay, Move): the steps paced at a Replay Rate. */
@@ -125,5 +137,6 @@ export function approvalSummary(c: Checkout & { approvalRequest: NonNullable<Che
     decisionSummary,
     decisionSummaryText: summaryText(decisionSummary),
     rate: c.approvalRequest.rate,
+    canary: requestedCanary(c, c.approvalRequest.canary),
   };
 }
