@@ -42,6 +42,8 @@ export interface ProfileFixture {
   roles?: Partial<Record<'viewer' | 'operator' | 'admin', unknown>>;
   /** The default and maximum Replay Rate, in Messages per second. */
   replayRate?: { default?: unknown; max?: unknown };
+  /** Canary Replay: the Watch Window in seconds. */
+  canary?: { watchWindow?: unknown };
 }
 
 /**

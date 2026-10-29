@@ -157,8 +157,9 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 3 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    // Newest first: v7 (#56 rate), v6 (#44 export), v5 (#45 approver), v4 (#38 role).
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN rate;
+    // Newest first: v9 (#58 canary), v7 (#56 rate), v6 (#44 export), v5 (#45 approver), v4 (#38 role).
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN canary_outcome; ALTER TABLE audit_entries DROP COLUMN canary;
+             ALTER TABLE audit_entries DROP COLUMN rate;
              ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
              ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
@@ -178,7 +179,19 @@ describe('AuditStore', () => {
       filter: null,
       messageCount: null,
       rate: null,
+      canary: false,
+      canaryOutcome: null,
     });
+  });
+
+  it('marks an Apply\'s Canary and records how its watch ended', () => {
+    store = new AuditStore();
+    const canary = store.record(entry({ canary: true }));
+    const other = store.record(entry());
+    expect(store.get(canary)).toMatchObject({ canary: true, canaryOutcome: null });
+    store.setCanaryOutcome(canary, 'died_again');
+    expect(store.get(canary)).toMatchObject({ canary: true, canaryOutcome: 'died_again' });
+    expect(store.get(other)).toMatchObject({ canary: false, canaryOutcome: null });
   });
 
   it('records who approved an Apply, and no one when it needed no Approval', () => {
@@ -195,7 +208,8 @@ describe('AuditStore', () => {
     // Turn it back into a version 1 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
     // Newest first: v7 (#56), v6 (#44), v5 (#45), then v3 (#10), v2 (#8) and v4 (#38) as before.
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN rate;
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN canary_outcome; ALTER TABLE audit_entries DROP COLUMN canary;
+             ALTER TABLE audit_entries DROP COLUMN rate;
              ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
              ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;

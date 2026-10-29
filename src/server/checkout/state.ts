@@ -6,6 +6,8 @@ import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js
 import type { CheckoutTiming } from '../triage/checkout-timing.js';
 import type { ApplyProgressTracker } from '../apply/progress.js';
 import type { ActionDecision } from '../triage/decisions.js';
+import type { CanaryWatchBindings } from '../triage/canary-watch.js';
+import type { CanaryState } from './canary.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 import type { Role } from '../../shared/roles.js';
 import type { AppliedResult, CheckoutStatus, DiedAgain, EndReason } from '../../shared/checkout.js';
@@ -111,6 +113,14 @@ export interface Checkout extends QueueRef {
   applyProgress: ApplyProgressTracker | null;
   /** The Apply's result, once it has run. */
   lastApply: AppliedResult | null;
+  /**
+   * How each held Message with a replay origin would be watched as the
+   * Canary, by handle: looked up when the Checkout starts, from the
+   * management API's topology. A Message missing here is unwatched.
+   */
+  canaryWatch: Map<number, CanaryWatchBindings>;
+  /** The Canary of the Apply, from the moment its Replay starts; null without one. */
+  canary: CanaryState | null;
 }
 
 /** An Apply running in the background on a Checkout (manager.ts). */
@@ -121,6 +131,8 @@ export interface RunningApply {
   stop: ApplyStop | null;
   /** Aborted together with setting `stop`, so a wait for the next paced step ends at once. */
   stopped: AbortController;
+  /** Set while the Apply waits after its Canary (canary_watch, canary_done): lets it go on with the rest (Continue). */
+  resume: (() => void) | null;
 }
 
 /** Why an Apply attempts no further step, and how the Checkout ends afterwards. */

@@ -16,11 +16,11 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
-import type { AuditAction, AuditDestination, AuditOutcome } from '../../shared/audit.js';
+import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { Role } from '../../shared/roles.js';
 
-export type { AuditAction, AuditDestination, AuditOutcome };
+export type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome };
 
 /**
  * A copy of a Message as amqplib decoded it. Discard keeps the body (so it can
@@ -69,13 +69,15 @@ export interface NewAuditEntry {
   messageCount?: number | null;
   /** An Apply: its Replay Rate in Messages per second; null (or left out) when unthrottled, and for the other actions. */
   rate?: number | null;
+  /** The Replay an Apply carried out alone as its Canary (its watch outcome is set later, setCanaryOutcome). */
+  canary?: boolean;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
 export interface AuditEntry
   extends Omit<
     NewAuditEntry,
-    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount' | 'rate'
+    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount' | 'rate' | 'canary'
   > {
   id: number;
   /** The Operator's Role when they acted; null on entries written before v0.3. */
@@ -89,6 +91,10 @@ export interface AuditEntry
   messageCount: number | null;
   /** The Replay Rate of the Apply that wrote the entry; null when unthrottled (and on entries before v0.4). */
   rate: number | null;
+  /** Whether the entry is an Apply's Canary (false before v0.4). */
+  canary: boolean;
+  /** The Canary's watch outcome; null for other entries, and while it is watched. */
+  canaryOutcome: AuditCanaryOutcome | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
   operatorId: string;
@@ -192,6 +198,9 @@ const MIGRATIONS: string[] = [
    ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
   // v7 (#56): every entry an Apply writes records its Replay Rate (Messages per second; null when unthrottled).
   `ALTER TABLE audit_entries ADD COLUMN rate REAL;`,
+  // v8 (#58): the Replay an Apply carried out alone as its Canary, and how its watch ended.
+  `ALTER TABLE audit_entries ADD COLUMN canary INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE audit_entries ADD COLUMN canary_outcome TEXT;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -221,8 +230,8 @@ export class AuditStore {
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
              outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
              approver_id, approver_name,
-             filter, message_count, rate)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             filter, message_count, rate, canary)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -250,6 +259,7 @@ export class AuditStore {
           entry.filter ? JSON.stringify(entry.filter) : null,
           entry.messageCount ?? null,
           entry.rate ?? null,
+          entry.canary ? 1 : 0,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -265,6 +275,11 @@ export class AuditStore {
 
   setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): void {
     this.db.prepare('UPDATE audit_entries SET outcome = ?, outcome_reason = ? WHERE id = ?').run(outcome, reason, id);
+  }
+
+  /** Records how the watch of a Canary's entry ended. */
+  setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): void {
+    this.db.prepare('UPDATE audit_entries SET canary_outcome = ? WHERE id = ?').run(outcome, id);
   }
 
   /** The entries matching `query` (every entry by default), newest first. */
@@ -413,6 +428,8 @@ interface Row {
   filter: string | null;
   message_count: number | null;
   rate: number | null;
+  canary: number;
+  canary_outcome: AuditCanaryOutcome | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -448,6 +465,8 @@ function toEntry(row: Row): AuditEntry {
     filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
     messageCount: row.message_count,
     rate: row.rate,
+    canary: row.canary === 1,
+    canaryOutcome: row.canary_outcome,
     message:
       row.message_properties === null
         ? null

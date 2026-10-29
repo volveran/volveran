@@ -2,7 +2,8 @@
 // Message at a time (apply/executor.ts), asking before every step whether
 // the Checkout is still active and whether the manager asked it to stop
 // (the time limit, an Operator), and counting each step in the Checkout's Apply progress.
-// Replay and Move steps are paced at the Apply's Replay Rate, if any.
+// Replay and Move steps are paced at the Apply's Replay Rate, if any. With a
+// Canary, its Replay goes first and alone, watched and waited for (canary.ts).
 // An approved Apply runs here too, on the
 // requester's Checkout and connection, recorded as the requester's with the
 // approver alongside. Replay and Move publish on a confirm channel
@@ -18,6 +19,7 @@ import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../ap
 import type { AuditStore } from '../audit/store.js';
 import { queueRefOf } from '../profiles.js';
 import { buildApplyPlan } from '../triage/decisions.js';
+import { canaryHooks, type CanaryOptions } from './canary.js';
 import type { Checkout } from './state.js';
 import type { Operator } from '../operator.js';
 import type { Role } from '../../shared/roles.js';
@@ -36,6 +38,8 @@ export interface RunApplyOptions {
   rate: number | null;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
+  /** The Canary to carry out first and alone (a held Message with the Decision Replay), and how to wait after it. */
+  canary?: Pick<CanaryOptions, 'handle' | 'watchWindowMs' | 'waiting' | 'resumed'>;
 }
 
 /**
@@ -93,6 +97,9 @@ export async function runApply(
       if (o.status !== 'kept') progress.record(o.status);
     },
     beforeStep: options.beforeStep,
+    canary:
+      options.canary &&
+      canaryHooks(checkout, { ...options.canary, audit: options.audit, stopSignal: options.stopSignal ?? new AbortController().signal }),
     onDone: (handle) => {
       checkout.held.delete(handle);
       checkout.decisions.delete(handle);
