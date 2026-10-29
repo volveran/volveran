@@ -2,7 +2,7 @@
 // with any Decision other than Keep needs the queue name typed, enforced by
 // the server; a refused Apply leaves the broker untouched.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { purgeQueues, readyMessageIds, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
+import { applyAndWait, purgeQueues, readyMessageIds, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
 
 const checkoutPath = (profile: string, queue: string) =>
   `/api/profiles/${profile}/vhosts/%2F/queues/${encodeURIComponent(queue)}/checkouts`;
@@ -32,7 +32,8 @@ describe('Protected Profiles', () => {
     return { id: started.id, checkout: decided.body.checkout };
   }
 
-  const apply = (id: string, body: unknown) => app.post(`/api/checkouts/${id}/apply`, body);
+  /** Applies and, once it has started, waits for it to end; answers with the Checkout and its outcomes. */
+  const apply = (id: string, body: unknown) => applyAndWait(app, `/api/checkouts/${id}/apply`, body);
 
   beforeAll(async () => {
     app = await startApp({
@@ -52,7 +53,7 @@ describe('Protected Profiles', () => {
     const { id, checkout } = await checkoutWithDiscard('prod');
     expect(checkout.protectedProfile).toBe(true);
     // Solo Mode: no Approval, whatever requireApproval says.
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: true, approvalRequired: false });
+    expect(checkout.applyConfirmation).toMatchObject({ typeQueueName: true, approvalRequired: false });
 
     for (const confirmQueueName of [undefined, 'orders.dl', 'ORDERS.DLQ', ` ${QUEUE}`]) {
       const refused = await apply(id, { confirm: true, confirmQueueName });
@@ -66,7 +67,7 @@ describe('Protected Profiles', () => {
     expect(await readyMessageIds('/', QUEUE)).toEqual([]);
 
     const ok = await apply(id, { confirm: true, confirmQueueName: QUEUE });
-    expect(ok.status).toBe(200);
+    expect(ok.status).toBe(202);
     expect(ok.body.outcomes).toEqual(
       expect.arrayContaining([expect.objectContaining({ messageId: `${QUEUE}-0`, status: 'done' })]),
     );
@@ -83,10 +84,10 @@ describe('Protected Profiles', () => {
   it('needs no typed queue name for an Apply with only Keep Decisions', async () => {
     await seedMessages('/', QUEUE, 2);
     const { id, checkout } = await startCheckout('prod');
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
+    expect(checkout.applyConfirmation).toMatchObject({ typeQueueName: false, approvalRequired: false });
 
     const ok = await apply(id, { confirm: true });
-    expect(ok.status).toBe(200);
+    expect(ok.status).toBe(202);
     expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-0`, `${QUEUE}-1`]);
   });
 
@@ -94,10 +95,10 @@ describe('Protected Profiles', () => {
     await seedMessages('/', QUEUE, 2);
     const { id, checkout } = await checkoutWithDiscard('dev');
     expect(checkout.protectedProfile).toBe(false);
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
+    expect(checkout.applyConfirmation).toMatchObject({ typeQueueName: false, approvalRequired: false });
 
     const ok = await apply(id, { confirm: true });
-    expect(ok.status).toBe(200);
+    expect(ok.status).toBe(202);
     expect(await readyMessageIds('/', QUEUE)).toEqual([`${QUEUE}-1`]);
   });
 });

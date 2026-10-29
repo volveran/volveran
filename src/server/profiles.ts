@@ -7,9 +7,12 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'yaml';
-import { ConfigError } from './config-error.js';
+import { ProfilesConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
 import type { RunMode } from './run-mode.js';
+import { durationWithin } from './duration.js';
+import { parseReplayRules, type ReplayRule } from './replay-rules/config.js';
+import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../shared/replay-rate.js';
 import { ROLES, type Role } from '../shared/roles.js';
 
 /**
@@ -65,6 +68,30 @@ export interface BrokerProfile {
    * Solo Mode ignores it.
    */
   roles: RoleMapping | undefined;
+  /**
+   * The Replay Rate an Apply runs at when the Operator gives none
+   * (`default`), and the most an Operator may choose (`max`), in Messages
+   * per second; null when not set.
+   */
+  replayRate: ReplayRateLimits;
+  /** The profile's Replay Rules (replay-rules/config.ts); empty when it declares none. */
+  replayRules: ReplayRule[];
+  /** Canary Replay on this profile: how long a Canary is watched (the Watch Window), and when one is required. */
+  canary: CanarySettings;
+}
+
+/** A Broker Profile's `canary`. */
+export interface CanarySettings {
+  /** The Watch Window in milliseconds (the file gives a duration from 5s to 10m; default 30s). */
+  watchWindowMs: number;
+  /** An Apply with more Replays than this must start with a Canary; null: never required. */
+  requiredAbove: number | null;
+}
+
+/** A Broker Profile's `replayRate`; `default` is never above `max`. */
+export interface ReplayRateLimits {
+  default: number | null;
+  max: number | null;
 }
 
 /** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
@@ -84,12 +111,8 @@ export function queueRefOf({ profile, vhost, queue }: QueueRef): QueueRef {
   return { profile, vhost, queue };
 }
 
-export class ProfilesConfigError extends ConfigError {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ProfilesConfigError';
-  }
-}
+export { ProfilesConfigError };
+export { checkReplayRules } from './replay-rules/config.js';
 
 /** Loads and checks the profiles file; a relative `caFile` is relative to the file's directory. */
 export async function loadProfilesFile(file: string, env: Record<string, string | undefined>): Promise<BrokerProfile[]> {
@@ -144,18 +167,28 @@ export function parseProfiles(
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
     const isProtected = parseProtected(raw.protected, where);
+    const credentials = parseCredentials(raw, env, where, `${where} ("${name}")`);
+    const vhosts = parseVhosts(raw.vhosts, where);
+    const replayRate = parseReplayRate(raw.replayRate, `${where} ("${name}").replayRate`);
     return {
       name,
       managementUrl: requireUrl(raw, 'managementUrl', ['http:', 'https:'], where).replace(/\/+$/, ''),
       amqpUrl: requireUrl(raw, 'amqpUrl', ['amqp:', 'amqps:'], where),
       ca: undefined,
       caFile: optionalString(raw, 'caFile', where),
-      credentials: parseCredentials(raw, env, where, `${where} ("${name}")`),
-      vhosts: parseVhosts(raw.vhosts, where),
+      credentials,
+      vhosts,
       defaultQueueFilter: optionalString(raw, 'defaultQueueFilter', where),
       protected: isProtected,
       requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
+      replayRate,
+      replayRules: parseReplayRules(
+        raw.replayRules,
+        { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
+        `${where} ("${name}")`,
+      ),
+      canary: parseCanary(raw.canary, `${where} ("${name}").canary`),
     };
   });
 }
@@ -226,6 +259,57 @@ function parseRoles(value: unknown, where: string): RoleMapping | undefined {
     roles[key as Role] = groups as string[];
   }
   return roles;
+}
+
+function parseReplayRate(value: unknown, where: string): ReplayRateLimits {
+  if (value === undefined || value === null) return { default: null, max: null };
+  if (!isRecord(value)) throw new ProfilesConfigError(`${where} must be a mapping with default and/or max`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'default' && key !== 'max') {
+      throw new ProfilesConfigError(`${where}.${key} is not a key of replayRate; it takes default and max`);
+    }
+  }
+  const rate = (key: 'default' | 'max'): number | null => {
+    const v = value[key];
+    if (v === undefined || v === null) return null;
+    if (!isReplayRate(v)) {
+      throw new ProfilesConfigError(
+        `${where}.${key} must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}`,
+      );
+    }
+    return v;
+  };
+  const limits = { default: rate('default'), max: rate('max') };
+  if (limits.default !== null && limits.max !== null && limits.default > limits.max) {
+    throw new ProfilesConfigError(`${where}.default (${limits.default}) is above replayRate.max (${limits.max})`);
+  }
+  return limits;
+}
+
+/** A Canary's Watch Window when the profile sets none, and its bounds. */
+const DEFAULT_WATCH_WINDOW_MS = 30_000;
+const MIN_WATCH_WINDOW_MS = 5_000;
+const MAX_WATCH_WINDOW_MS = 10 * 60_000;
+
+function parseCanary(value: unknown, where: string): CanarySettings {
+  if (value === undefined || value === null) return { watchWindowMs: DEFAULT_WATCH_WINDOW_MS, requiredAbove: null };
+  if (!isRecord(value)) throw new ProfilesConfigError(`${where} must be a mapping with watchWindow and/or requiredAbove`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'watchWindow' && key !== 'requiredAbove') {
+      throw new ProfilesConfigError(`${where}.${key} is not a key of canary; it takes watchWindow and requiredAbove`);
+    }
+  }
+  let watchWindowMs = DEFAULT_WATCH_WINDOW_MS;
+  if (value.watchWindow !== undefined && value.watchWindow !== null) {
+    const parsed = durationWithin(value.watchWindow, MIN_WATCH_WINDOW_MS, MAX_WATCH_WINDOW_MS);
+    if (parsed === null) throw new ProfilesConfigError(`${where}.watchWindow must be a duration from 5s to 10m`);
+    watchWindowMs = parsed;
+  }
+  const requiredAbove = value.requiredAbove ?? null;
+  if (requiredAbove !== null && !(typeof requiredAbove === 'number' && Number.isInteger(requiredAbove) && requiredAbove >= 0)) {
+    throw new ProfilesConfigError(`${where}.requiredAbove must be a whole number of Replays, 0 or more`);
+  }
+  return { watchWindowMs, requiredAbove };
 }
 
 function parseProtected(value: unknown, where: string): boolean {

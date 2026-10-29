@@ -13,10 +13,12 @@ import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { BodyRetention } from '../../src/server/audit/body-retention.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
+import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
+import type { RulePass } from '../../src/shared/replay-rules.js';
 import { startServer } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
-import { brokerUsers, management, testBroker } from '../broker/client.js';
+import { brokerUsers, eventually, management, testBroker } from '../broker/client.js';
 
 export * from '../broker/client.js';
 
@@ -40,6 +42,12 @@ export interface ProfileFixture {
   tokenUsernameClaim?: string;
   /** Team Mode: the groups holding each Role on the profile. */
   roles?: Partial<Record<'viewer' | 'operator' | 'admin', unknown>>;
+  /** The default and maximum Replay Rate, in Messages per second. */
+  replayRate?: { default?: unknown; max?: unknown };
+  /** Replay Rules, as written in the profiles file. */
+  replayRules?: Array<Record<string, unknown>>;
+  /** Canary Replay: the Watch Window, a duration such as `30s`. */
+  canary?: { watchWindow?: unknown; requiredAbove?: unknown };
 }
 
 /**
@@ -288,4 +296,79 @@ export async function checkoutConnectionNames(queue: string, vhost = '/'): Promi
   const res = await management('/connections?columns=name,user_provided_name');
   const list = res.body as Array<{ name: string; user_provided_name?: string }>;
   return list.filter((c) => c.user_provided_name === `volveran checkout ${vhost} ${queue}`).map((c) => c.name);
+}
+
+/**
+ * Polls Checkout `id` as its owner (through `owner`) until its Apply has
+ * ended, and returns the Checkout view: Apply runs in the background, and
+ * its outcomes land on the Checkout (`lastApply`).
+ */
+/** What appliedCheckout and applyAndWait need of a client: a TestApp, or a signed-in TestBrowser. */
+export interface ApiClient {
+  get(urlPath: string): Promise<TestResponse>;
+  post(urlPath: string, body?: unknown): Promise<TestResponse>;
+}
+
+export async function appliedCheckout(owner: ApiClient, id: string, timeoutMs = 15_000): Promise<any> {
+  return eventually(async () => {
+    const { checkout } = (await owner.get(`/api/checkouts/${id}`)).body;
+    // A Checkout lost mid-Apply is no longer `applying`, but its step in progress may not have settled yet.
+    if (checkout.status === 'applying' || (checkout.applyProgress && !checkout.lastApply)) {
+      throw new Error(`Checkout ${id} is still applying`);
+    }
+    return checkout;
+  }, timeoutMs, 50);
+}
+
+/**
+ * POSTs `body` to `urlPath` (an Apply or an approve) through `on`. On 202 it
+ * waits for the Apply to end and answers 202 with the Checkout view as its
+ * owner sees it then (through `owner`, default `on`) and its outcomes,
+ * where v0.3's Apply response had them; any other answer is returned as is.
+ */
+export async function applyAndWait(on: ApiClient, urlPath: string, body: unknown, owner: ApiClient = on): Promise<TestResponse> {
+  const res = await on.post(urlPath, body);
+  if (res.status !== 202) return res;
+  const checkout = await appliedCheckout(owner, res.body.checkout.id);
+  return { status: 202, body: { checkout, outcomes: checkout.lastApply?.outcomes } };
+}
+
+/**
+ * A test clock for the Replay rule scheduler, and its "run a pass now", as
+ * Checkout test hooks (`hooks`, for startApp's checkoutTestHooks). The clock
+ * starts at `start` and moves only when told: `advance` moves it and fires
+ * the timers due by then. `runPass` runs the scheduled pass of a rule at
+ * once, as its timer would, in the app started last with these hooks; it
+ * resolves with the pass, or null when the scheduler would not run it.
+ */
+export function ruleSchedulerHooks(start = new Date()) {
+  let now = start.getTime();
+  let timers: Array<{ at: number; run: () => void }> = [];
+  let control: RuleSchedulerControl | undefined;
+  const clock: RuleClock = {
+    now: () => new Date(now),
+    setTimer(run, ms) {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return { cancel: () => void (timers = timers.filter((t) => t !== timer)) };
+    },
+  };
+  const hooks: CheckoutTestHooks = { ruleScheduler: { clock, scheduler: (c) => (control = c) } };
+  return {
+    hooks,
+    now: () => new Date(now),
+    set(at: Date) {
+      now = at.getTime();
+    },
+    advance(ms: number) {
+      now += ms;
+      const due = timers.filter((t) => t.at <= now);
+      timers = timers.filter((t) => t.at > now);
+      for (const t of due) t.run();
+    },
+    runPass(profile: string, rule: string): Promise<RulePass | null> {
+      if (!control) throw new Error('No app has started with these hooks');
+      return control.runScheduledPass(profile, rule);
+    },
+  };
 }

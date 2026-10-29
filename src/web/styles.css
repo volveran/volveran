@@ -176,6 +176,29 @@ main {
   margin-left: 4px;
 }
 
+/* A running Replay Rule matches the Message; used up: it has given up on it. */
+.badge.rule {
+  margin-left: 4px;
+}
+.badge.rule.used-up {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+/* A MassTransit Message no consumer handled (MT-Reason: skip), not a fault. */
+.badge.skipped {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: var(--warning);
+  margin-left: 4px;
+}
+
+.message-detail .failure-details dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .held {
   color: var(--warning);
   font-size: 0.9em;
@@ -486,6 +509,30 @@ dialog.prompt .confirm {
 .outcomes {
   margin: 1rem 0;
 }
+.apply-progress {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.apply-progress p {
+  margin: 0.4rem 0;
+}
+.progress-bar {
+  display: flex;
+  height: 10px;
+  margin: 0.5rem 0;
+  border-radius: 5px;
+  background: var(--border);
+  overflow: hidden;
+}
+.progress-done {
+  background: var(--accent);
+}
+.progress-failed {
+  background: var(--danger);
+}
 .awaiting-approval {
   margin: 0.75rem 0;
   border: 1px solid var(--border);
@@ -590,6 +637,25 @@ dialog.prompt .confirm {
   max-width: 100%;
 }
 
+.replay-rate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.replay-rate input {
+  max-width: 10em;
+}
+
+.replay-rate small {
+  font-weight: normal;
+}
+
+.replay-rate .rate-problem {
+  color: var(--danger);
+}
+
 /* Audit view (AuditView.tsx) */
 .view-switch {
   display: flex;
@@ -623,4 +689,155 @@ dialog.prompt .confirm {
 
 .no-role .groups li {
   margin: 2px 0;
+}
+
+/* Two Messages side by side (ComparisonView) */
+.comparison {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+.comparison-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+.comparison-head h3 {
+  margin-right: auto;
+}
+.comparison-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+.comparison-side,
+.comparison-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.comparison pre {
+  background: var(--bg);
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 24rem;
+  margin: 0;
+}
+.comparison-fields {
+  table-layout: fixed;
+}
+.comparison-fields th {
+  width: 25%;
+  word-break: break-all;
+}
+.comparison-fields td {
+  width: 37.5%;
+  word-break: break-all;
+}
+.comparison-text {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.comparison-text td {
+  padding: 0;
+  vertical-align: top;
+}
+.comparison-text pre {
+  max-height: none;
+  border-radius: 0;
+  padding: 0 0.5rem;
+  white-space: pre-wrap;
+}
+/* Differing values: changed on both sides, or set on one side only. */
+.diff-changed td,
+.diff-changed td pre {
+  background: var(--warning-bg);
+}
+.diff-onlyLeft td:nth-of-type(1),
+.diff-onlyRight td:nth-of-type(2) {
+  background: var(--warning-bg);
+}
+.diff-changed th,
+.diff-onlyLeft th,
+.diff-onlyRight th {
+  color: var(--warning);
+}
+
+.canary-panel {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.canary-panel p {
+  margin: 0.4rem 0;
+}
+.canary-panel.canary-died_again,
+.canary-panel.canary-failed {
+  border-left-color: var(--danger);
+}
+
+.canary-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.canary-choice .rate-problem {
+  color: var(--danger);
+}
+
+/* Replay rules view */
+.replay-rule {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+.replay-rule h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.rule-declaration {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+.rule-declaration dt {
+  color: var(--muted);
+}
+.rule-declaration dd {
+  margin: 0;
+}
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.replay-rule form.confirm {
+  margin-top: 0.5rem;
+}
+
+.pass-history {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.pass-history caption {
+  text-align: left;
+  color: var(--muted);
+}
+.pass-history th,
+.pass-history td {
+  padding: 0.15rem 0.6rem 0.15rem 0;
+  text-align: left;
 }

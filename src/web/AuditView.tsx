@@ -1,6 +1,6 @@
 // Audit view: browse and search Audit Entries ("what happened to message
-// X?") by Broker Profile, queue, message_id, action, Operator, replay id and
-// date, and Restore a Discarded Message to its source queue or another
+// X?") by Broker Profile, queue, message_id, action, Operator, replay id,
+// Replay Rule and date, and Restore a Discarded Message to its source queue or another
 // existing one.
 // A Discard whose body retention evicted shows "body expired" and offers no
 // Restore. Warns when the store of Discarded bodies is near its size limit.
@@ -10,15 +10,36 @@ import { useEffect, useState } from 'react';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import { api, ApiError, type AuditAction, type AuditEntry, type AuditSearch, type AuditStoreUsage, type Profile } from './api.js';
 
+/** How a Canary's watch ended, as the Audit view says it. */
+const CANARY_OUTCOMES: Record<NonNullable<AuditEntry['canaryOutcome']>, string> = {
+  died_again: 'died again',
+  not_dead_lettered: 'not dead-lettered',
+  watch_cut_short: 'watch cut short',
+  unwatched: 'unwatched',
+  failed: 'failed',
+};
+
 const ACTION_LABELS: Record<AuditAction, string> = {
   discard: 'Discard',
   replay: 'Replay',
   move: 'Move',
   restore: 'Restore',
   export: 'Export',
+  rule_pause: 'Rule paused',
+  rule_resume: 'Rule resumed',
 };
 
-const EMPTY_SEARCH: AuditSearch = { profile: '', queue: '', messageId: '', action: '', operator: '', replayId: '', from: '', to: '' };
+const EMPTY_SEARCH: AuditSearch = {
+  profile: '',
+  queue: '',
+  messageId: '',
+  action: '',
+  operator: '',
+  replayId: '',
+  rule: '',
+  from: '',
+  to: '',
+};
 
 function formatBytes(bytes: number): string {
   const units = ['bytes', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -110,6 +131,7 @@ export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Rec
           aria-label="Replay id"
           {...field('replayId')}
         />
+        <input type="search" placeholder="Replay rule" aria-label="Replay rule" {...field('rule')} />
         <label>
           From <input type="date" {...field('from')} />
         </label>
@@ -147,6 +169,7 @@ export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Rec
               <th>Queue</th>
               <th>Destination</th>
               <th>Operator</th>
+              <th>Rule</th>
               <th>Outcome</th>
               <th />
             </tr>
@@ -239,6 +262,12 @@ function EntryRow({
         {ACTION_LABELS[entry.action]}
         {entry.restoreOf !== null && <small className="muted"> of #{entry.restoreOf}</small>}
         {entry.reason && <small className="muted"> ({entry.reason})</small>}
+        {entry.rate !== null && <small className="muted"> at {entry.rate} Messages/s</small>}
+        {entry.canary && (
+          <span className="badge canary-badge" title="Replayed alone before the rest of its Apply, and watched">
+            Canary{entry.canaryOutcome ? `: ${CANARY_OUTCOMES[entry.canaryOutcome]}` : ''}
+          </span>
+        )}
         {entry.messageCount !== null && (
           <small className="muted" title={entry.filter ? `Filter: ${JSON.stringify(entry.filter)}` : undefined}>
             {' '}
@@ -265,6 +294,9 @@ function EntryRow({
         {entry.operatorName}
         {entry.role && <small className="muted"> ({entry.role})</small>}
         <small className="muted"> as {entry.brokerUser}</small>
+      </td>
+      <td className="name" title={entry.rulePassId ? `Rule Pass ${entry.rulePassId}` : undefined}>
+        {entry.rule ?? ''}
       </td>
       <td title={entry.outcomeReason ?? undefined}>
         <span className={`badge outcome-${entry.outcome}`}>{entry.outcome}</span>

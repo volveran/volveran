@@ -1,5 +1,5 @@
 // The Apply executor with an in-memory audit store and a fake broker (the ack).
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as amqp from 'amqplib';
 import { AuditStore } from '../../src/server/audit/store.js';
 import { executeApply, type ApplyRun } from '../../src/server/apply/executor.js';
@@ -43,13 +43,14 @@ describe('Apply executor', () => {
           role: 'operator',
           brokerUser: 'volveran-admin',
           approver: null,
+          rule: null,
         },
         startedAt: new Date(),
         ack,
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),
       },
       audit,
-      usable: () => true,
+      stopReason: () => null,
       onDone: (handle) => done.push(handle),
       ...overrides,
     });
@@ -88,25 +89,96 @@ describe('Apply executor', () => {
     ]);
   });
 
-  it('checks the Checkout before every step and does not attempt the rest once it is no longer active', async () => {
-    let active = true;
+  it('asks before every step whether to go on, and reports the rest not attempted with the reason once told to stop', async () => {
+    let stop: string | null = null;
     const acked: number[] = [];
+    const steps: unknown[] = [];
     const { outcomes } = run(
       { kept: [], steps: [1, 2, 3].map((handle) => ({ handle, decision: DISCARD })) },
       async (m) => {
         acked.push(m.fields.deliveryTag);
-        active = false; // e.g. the connection dropped right after this ack
+        stop = 'The Checkout reached its time limit.'; // e.g. the time limit, right after this ack
       },
-      { usable: () => active },
+      { stopReason: () => stop, onStep: (o) => steps.push([o.handle, o.status]) },
     );
 
-    expect((await outcomes).map((o) => [o.handle, o.status])).toEqual([
+    expect((await outcomes).map((o) => [o.handle, o.status, o.reason])).toEqual([
+      [1, 'done', null],
+      [2, 'not-attempted', 'The Checkout reached its time limit.'],
+      [3, 'not-attempted', 'The Checkout reached its time limit.'],
+    ]);
+    expect(steps).toEqual([
       [1, 'done'],
       [2, 'not-attempted'],
       [3, 'not-attempted'],
     ]);
     expect(acked).toEqual([1]);
     expect(audit.list().map((e) => e.messageId)).toEqual(['m-1']);
+  });
+
+  it('starts Replay and Move steps at least 1/rate apart, without pacing Discards, and records the rate on every Audit Entry', async () => {
+    vi.useFakeTimers();
+    try {
+      const REPLAY = { kind: 'replay' } as const;
+      const MOVE = { kind: 'move', destination: { exchange: '', routingKey: 'orders.parked', queue: 'orders.parked' } } as const;
+      const settledAt: Array<[number, number]> = [];
+      const start = Date.now();
+      const { outcomes } = run(
+        {
+          kept: [],
+          steps: [
+            { handle: 1, decision: REPLAY },
+            { handle: 2, decision: DISCARD },
+            { handle: 3, decision: MOVE },
+            { handle: 4, decision: DISCARD },
+            { handle: 5, decision: REPLAY },
+          ],
+        },
+        async () => {},
+        { rate: 10, onStep: (o) => settledAt.push([o.handle, Date.now() - start]) },
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      await outcomes;
+      expect(settledAt).toEqual([
+        [1, 0],
+        [2, 0],
+        [3, 100],
+        [4, 100],
+        [5, 200],
+      ]);
+      expect(audit.list().map((e) => e.rate)).toEqual([10, 10, 10, 10, 10]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops waiting for the next paced step as soon as it is told to stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = new AbortController();
+      let reason: string | null = null;
+      const { outcomes } = run(
+        { kept: [], steps: [1, 2].map((handle) => ({ handle, decision: { kind: 'replay' } as const })) },
+        async () => {},
+        { rate: 0.1, stopReason: () => reason, stopSignal: stop.signal },
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      reason = 'An Operator stopped the Apply.';
+      stop.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await outcomes).map((o) => [o.handle, o.status])).toEqual([
+        [1, 'failed'],
+        [2, 'not-attempted'],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records no rate on the Audit Entries of an Apply with no Replay Rate', async () => {
+    const { outcomes } = run({ kept: [], steps: [{ handle: 1, decision: DISCARD }] }, async () => {});
+    await outcomes;
+    expect(audit.list().map((e) => e.rate)).toEqual([null]);
   });
 
   it('leaves the Message alone when its Audit Entry cannot be written', async () => {

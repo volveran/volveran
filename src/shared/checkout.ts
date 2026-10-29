@@ -2,7 +2,8 @@
 // Messages and the outcome of its Apply. Types only, shared by the server
 // and the web app.
 import type { AuditAction } from './audit.js';
-import type { Decision, DecisionSummaryLine } from './decisions.js';
+import type { Decision, DecisionSummaryLine, MoveDestination } from './decisions.js';
+import type { RuleBadge } from './replay-rules.js';
 
 /** The queue types a Checkout can hold Messages from. */
 export type CheckoutQueueType = 'classic' | 'quorum';
@@ -10,9 +11,11 @@ export type CheckoutQueueType = 'classic' | 'quorum';
 /**
  * `awaiting_approval`: active, with its Decisions frozen until a second
  * Operator approves the Apply (or the requester withdraws the request).
+ * `applying`: active, with its Apply running in the background
+ * (`applyProgress`); it ends once the Apply has run.
  * `lost`: the Checkout ended without Volverán ending it (a Lost Checkout).
  */
-export type CheckoutStatus = 'active' | 'awaiting_approval' | 'ended' | 'lost';
+export type CheckoutStatus = 'active' | 'awaiting_approval' | 'applying' | 'ended' | 'lost';
 
 /**
  * Why an ended Checkout ended: the Operator ended it, it was Applied, the app
@@ -60,6 +63,38 @@ export interface MessageSummary {
   size: number;
   /** Quorum queues with a delivery limit only; null otherwise. */
   deliveryBudget: DeliveryBudget | null;
+  /** What Spring AMQP or MassTransit wrote about the failure; null when neither did. */
+  failureDetails: FailureDetails | null;
+}
+
+/**
+ * The exception and context a client framework wrote into a Message's
+ * headers when it gave up on it (src/server/triage/failure-details.ts).
+ * Fields the framework did not write are null.
+ */
+export interface FailureDetails {
+  /** Spring AMQP's RepublishMessageRecoverer, or MassTransit. */
+  framework: 'spring' | 'masstransit';
+  exceptionType: string | null;
+  message: string | null;
+  stackTrace: string | null;
+  consumerType: string | null;
+  messageType: string | null;
+  /** When the consumer failed: ISO time, or the header as written when it does not read as a time. */
+  failedAt: string | null;
+  retryCount: number | null;
+  redeliveryCount: number | null;
+  /** MassTransit's `MT-Host-*` headers, by the name after the prefix (e.g. `MachineName`). */
+  host: Record<string, string> | null;
+  /** MassTransit's `MT-Reason`: a fault, or a Message no consumer handled (skip). */
+  reason: 'fault' | 'skip' | null;
+  /** Spring AMQP: where the Message was first published. */
+  originalExchange: string | null;
+  originalRoutingKey: string | null;
+  /** MassTransit: the queue named in `MT-Fault-InputAddress`, the one whose consumer failed. */
+  inputQueue: string | null;
+  /** Other framework headers, as text: Spring's other `x-exception-*`, MassTransit's addresses. */
+  extra: Record<string, string>;
 }
 
 export interface XDeathEntry {
@@ -91,15 +126,23 @@ export interface MessageDetail extends MessageSummary {
   body: RenderedBody;
   /** Null unless the Message is Died Again. */
   diedAgain: DiedAgain | null;
+  /** The running Replay Rule of the profile that covers the queue and matches the Message; null when none. */
+  rule: RuleBadge | null;
 }
 
-/** Whether a Message can be given Replay; when not, why (shown to the Operator). */
-export type ReplayAvailability = { available: true } | { available: false; reason: string };
+/**
+ * Whether a Message can be given Replay; when not, why (shown to the
+ * Operator). A Spring AMQP Message suggests a Move to where it was first
+ * published (ADR 0010), which prefills the Move prompt.
+ */
+export type ReplayAvailability =
+  | { available: true }
+  | { available: false; reason: string; suggestedMove?: MoveDestination };
 
 /** The Audit Entry of the Replay, Move or Restore that last sent a Died Again Message out. */
 export interface DiedAgainSource {
   auditEntryId: number;
-  action: Exclude<AuditAction, 'discard' | 'export'>;
+  action: Extract<AuditAction, 'replay' | 'move' | 'restore'>;
   /** ISO time of the Audit Entry. */
   at: string;
   /** The Operator who acted, as shown (display name). */
@@ -128,13 +171,16 @@ export interface MessageRow extends MessageSummary {
   replay: ReplayAvailability;
   /** Null unless the Message is Died Again. */
   diedAgain: DiedAgain | null;
+  /** The running Replay Rule of the profile that covers the queue and matches the Message; null when none. */
+  rule: RuleBadge | null;
 }
 
 /**
  * What happened to one Message in an Apply. done: its Decision was carried
  * out. failed: it was not (the reason says why); it goes back to the queue.
- * not-attempted: Apply stopped before it (the Checkout stopped being active,
- * or this version cannot carry out its Decision); it goes back to the queue.
+ * not-attempted: Apply stopped before it (the Checkout stopped being active
+ * or reached its time limit, or this version cannot carry out its Decision);
+ * it goes back to the queue.
  * kept: its Decision was Keep.
  */
 export type OutcomeStatus = 'done' | 'failed' | 'not-attempted' | 'kept';
@@ -146,6 +192,8 @@ export interface MessageOutcome {
   status: OutcomeStatus;
   /** Why it failed or was not attempted; null otherwise. */
   reason: string | null;
+  /** Set when it failed because the broker refused the broker user permission (e.g. write on the exchange). */
+  refused?: true;
 }
 
 /** The result of a Checkout's Apply. */
@@ -158,6 +206,77 @@ export interface AppliedResult {
   approvedBy: string | null;
 }
 
+/**
+ * How far a Checkout's Apply has got. Counts are of the Apply's steps (every
+ * Decision other than Keep); `remaining` is the steps neither done, failed
+ * nor not attempted yet.
+ */
+export interface ApplyProgress {
+  total: number;
+  done: number;
+  failed: number;
+  notAttempted: number;
+  remaining: number;
+  /** The Replay Rate the Apply runs at, in Messages per second; null when it runs as fast as the broker confirms. */
+  rate: number | null;
+  /** ISO 8601. */
+  startedAt: string;
+  /** When the Apply should end at its pace so far (ISO 8601); null until a step has run. */
+  estimatedEndAt: string | null;
+  /** The Operator who stopped the Apply (display name); null unless one did. */
+  stoppedBy: string | null;
+  /**
+   * running: carrying out steps. canary_watch: the Canary is out and watched
+   * for the Watch Window. canary_done: the watch is over; the Apply waits for
+   * the Operator to continue or stop.
+   */
+  phase: ApplyPhase;
+}
+
+export type ApplyPhase = 'running' | 'canary_watch' | 'canary_done';
+
+/**
+ * watching: the Watch Window runs. died_again: a copy of the Canary was
+ * dead-lettered again. not_dead_lettered: none was for the whole Watch
+ * Window. watch_cut_short: none was before the watch was cut short (Continue,
+ * Stop, the Checkout ending), so the window did not run its course.
+ * unwatched: it could not be watched (`watchProblem` says why), so only the
+ * Replay's outcome is known. failed: the Canary's Replay failed.
+ */
+export type CanaryStatus = 'watching' | 'died_again' | 'not_dead_lettered' | 'watch_cut_short' | 'unwatched' | 'failed';
+
+/** The Canary of a Checkout's Apply, from the moment its Replay starts. */
+export interface CanaryView {
+  handle: number;
+  messageId: string | null;
+  /** The Audit Entry of the Canary's Replay. */
+  auditEntryId: number;
+  status: CanaryStatus;
+  /** When the watch ends, or ended (earlier when the Operator continued or stopped first); null until it starts. */
+  watchEndsAt: string | null;
+  /** The new dead-letter reason of a Canary that died again (or the framework's exception); null otherwise. */
+  deadLetterReason: string | null;
+  /** The Failure Details of the copy that died again, when a framework wrote any. */
+  failureDetails: FailureDetails | null;
+  /** Why the Canary is unwatched, or why its Replay failed; null otherwise. */
+  watchProblem: string | null;
+}
+
+/** Whether a held Message could be watched as the Canary, and if not why. */
+export type CanaryWatchability = { watchable: true } | { watchable: false; reason: string };
+
+/** What the Apply confirmation shows for a Canary. */
+export interface CanaryConfirmation {
+  /** The Broker Profile's Watch Window. */
+  watchWindowMs: number;
+  /** The profile's `canary.requiredAbove`: an Apply with more Replays must start with a Canary; null when never required. */
+  requiredAbove: number | null;
+  /** Whether the current Decisions have more Replays than `requiredAbove`: the Apply (or request) needs a Canary. */
+  required: boolean;
+  /** The Messages that may be the Canary (Decision Replay), in Checkout order: the first is the default. */
+  candidates: Array<{ handle: number; watch: CanaryWatchability }>;
+}
+
 /** The confirmation an Apply needs beyond the single confirmation. */
 export interface ApplyConfirmation {
   /** The operator must type the queue name (`confirmQueueName`) to Apply. */
@@ -168,12 +287,32 @@ export interface ApplyConfirmation {
    * requests it (POST /api/checkouts/:id/approval-request) instead of Applying.
    */
   approvalRequired: boolean;
+  /** The Broker Profile's Replay Rate: the default the rate field starts from, and the most it may be; null when not set. */
+  replayRate: { default: number | null; max: number | null };
+  /**
+   * How long the Replay and Move steps of the current Decisions take at the
+   * Replay Rate: the rate frozen with a request for Approval, else the
+   * profile's default; null when there is none.
+   */
+  estimatedDurationMs: number | null;
+  /** The Canary the Apply may start with (`canary` in the Apply body). */
+  canary: CanaryConfirmation;
 }
 
 /** A pending request for Approval of a Checkout's Apply. */
 export interface ApprovalRequestView {
   /** When the requester asked for Approval (ISO 8601). */
   requestedAt: string;
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when there is none. */
+  rate: number | null;
+  /** The Canary the approved Apply starts with, frozen with the Decisions; null for none. */
+  canary: RequestedCanary | null;
+}
+
+/** The Canary frozen with a request for Approval: "starts with a Canary: <message id>". */
+export interface RequestedCanary {
+  handle: number;
+  messageId: string | null;
 }
 
 /** The last rejection of the Checkout's request for Approval, shown to the requester until they request again. */
@@ -206,6 +345,10 @@ export interface ApprovalSummary {
   /** Messages per Decision. */
   decisionSummary: DecisionSummaryLine[];
   decisionSummaryText: string;
+  /** The Replay Rate the approved Apply runs at, in Messages per second; null when there is none. */
+  rate: number | null;
+  /** The Canary the approved Apply starts with; null for none. */
+  canary: RequestedCanary | null;
 }
 
 export interface CheckoutView {
@@ -256,6 +399,10 @@ export interface CheckoutView {
   approvalRequest: ApprovalRequestView | null;
   /** The last request's rejection, until the next request; null otherwise. The Checkout is back in staging. */
   rejection: ApprovalRejection | null;
+  /** The progress of the Checkout's Apply, from the moment it starts (kept once it has run); null before. */
+  applyProgress: ApplyProgress | null;
   /** The result of the Checkout's Apply (outcome per Message), once it has run; null before. */
   lastApply: AppliedResult | null;
+  /** The Canary of the Checkout's Apply, from the moment its Replay starts; null without one. */
+  canary: CanaryView | null;
 }

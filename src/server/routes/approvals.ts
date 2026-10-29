@@ -4,15 +4,27 @@
 //
 // The owner (under /api/checkouts/:id, so the owner check of
 // routes/checkouts.ts applies):
-//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName }  → { checkout }
+//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName, rate?, canary? }  → { checkout }
+//          `rate` and `canary` as for an Apply (routes/apply.ts, incl. 400 `canary_required`), frozen with
+//          the Decisions: the approved Apply runs at that rate and starts with that Canary
 //   DELETE /api/checkouts/:id/approval-request  withdraws it                        → { checkout }
 //
 // Approvers (`operator` or `admin` on the Checkout's profile, never its owner):
 //   GET  /api/approvals                              → { approvals: ApprovalSummary[] }
 //   GET  /api/approvals/:checkoutId                  → { checkout }  read-only, the owner's shape
 //   GET  /api/approvals/:checkoutId/messages/:handle → { message }
-//   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → { checkout, outcomes }
+//   GET  /api/approvals/:checkoutId/compare?a=<handle>&b=<handle> → { left, right, diff }
+//   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → 202 { checkout }  the Apply started, as for the owner's Apply
+//        (409 `apply_would_outlast_checkout` when at the frozen rate too little time is left by now)
 //   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
+//   POST /api/approvals/:checkoutId/apply/stop                     → { checkout }  stops the Apply this approver approved
+//   POST /api/approvals/:checkoutId/apply/continue                 → { checkout }  continues it after its Canary
+//
+// Once they have approved it, `GET /api/approvals/:checkoutId` keeps showing
+// the approver the Checkout (its Apply's progress, its Canary, then its
+// outcomes), and they may stop or continue that Apply as its owner can
+// (routes/apply.ts); the Approval covered the whole plan, Canary included, so
+// continuing needs no second one. Anyone else gets 403 `not_checkout_owner`.
 //
 // Errors: 409 `approval_not_required` (the Apply needs none), 409
 // `awaiting_approval` (already requested), 409 `not_awaiting_approval`
@@ -22,13 +34,12 @@
 // for a missing or wrong typed queue name on request or approve, 400
 // `invalid_request` for a rejection without a reason.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { CheckoutError } from '../checkout/errors.js';
 import { InvalidRequestError } from '../http-error.js';
 import { view } from '../checkout/view.js';
 import { operatorOf } from '../operator.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import { checkApplyConfirmation, type ApplyRequestBody } from './apply.js';
-import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
+import { checkoutAccess, compareMessages, parseHandle, type CheckoutRouteDeps } from './checkouts.js';
 
 export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts, access } = deps;
@@ -38,7 +49,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     async (req) => {
       const { role } = checkoutAccess(deps, req, 'checkout');
       checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-      return { checkout: checkouts.requestApproval(req.params.id, role) };
+      return { checkout: checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary) };
     },
   );
 
@@ -61,30 +72,45 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
   };
 
   app.get<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId', async (req) => {
-    return { checkout: view(awaiting(req)) };
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return { checkout: view(checkouts.approvedBy(req.params.checkoutId, approver) ?? awaiting(req)) };
   });
 
   app.get<{ Params: { checkoutId: string; handle: string } }>(
     '/api/approvals/:checkoutId/messages/:handle',
     async (req) => {
       const checkout = awaiting(req);
-      const handle = Number(req.params.handle);
-      if (!Number.isSafeInteger(handle)) {
-        throw new CheckoutError('message_not_found', `"${req.params.handle}" is not a Message handle.`);
-      }
-      return { message: checkouts.message(checkout.id, handle) };
+      return { message: checkouts.message(checkout.id, parseHandle(req.params.handle)) };
     },
   );
 
+  app.get<{ Params: { checkoutId: string }; Querystring: unknown }>('/api/approvals/:checkoutId/compare', async (req) => {
+    const checkout = awaiting(req);
+    return compareMessages(checkouts, checkout.id, req.query);
+  });
+
   app.post<{ Params: { checkoutId: string }; Body: { confirmQueueName?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/approve',
-    async (req) => {
+    async (req, reply) => {
       const checkout = awaiting(req);
       requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
       // Nothing awaits between these checks and approve() taking the request.
-      return checkouts.approve(checkout.id, operatorOf(req));
+      return reply.code(202).send({ checkout: checkouts.approve(checkout.id, operatorOf(req)) });
     },
   );
+
+  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/stop', async (req) => {
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return { checkout: checkouts.stopApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
+  });
+
+  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/continue', async (req) => {
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return { checkout: checkouts.continueApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
+  });
 
   app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/reject',

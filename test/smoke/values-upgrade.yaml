@@ -1,5 +1,7 @@
 # The changed Broker Profile of the smoke test's `helm upgrade`: only the
 # default queue filter differs from values.yaml, which must still roll the pod.
+# Helm replaces lists whole, so the profile repeats everything else, the
+# paused Replay rule included.
 brokerProfiles:
   profiles:
     - name: smoke
@@ -12,3 +14,14 @@ brokerProfiles:
       roles:
         viewer: [smoke-support]
         operator: [smoke-triage]
+      # One Replay rule, paused, so the chart passes it through and startup
+      # validates it; it never runs a pass during the smoke test.
+      replayRules:
+        - name: orders-transient
+          vhost: /
+          queue: orders.dlq
+          every: 5m
+          backoff: { initial: 1m, multiplier: 2, max: 1h }
+          maxAttempts: 3
+          stopWhen: { diedAgain: 5, within: 15m }
+          startPaused: true

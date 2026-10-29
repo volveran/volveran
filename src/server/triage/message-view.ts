@@ -2,6 +2,7 @@
 // held delivery, with its readable x-death history, its body rendered by
 // content type, and its Delivery Budget on quorum queues.
 import { deliveryBudget } from './delivery-budget.js';
+import { failureDetails } from './failure-details.js';
 import type { CheckoutQueueType } from './queue-list.js';
 import { isRecord } from '../is-record.js';
 import type { MessageDetail, MessageSummary, RenderedBody, XDeathEntry } from '../../shared/checkout.js';
@@ -34,19 +35,24 @@ export interface Delivery {
 export function messageSummary(handle: number, d: Delivery, queue: QueueInfo): MessageSummary {
   const { headers } = d.properties;
   const latest = parseXDeath(headers)[0];
+  const failure = failureDetails(headers);
+  // Without x-death (Spring AMQP and MassTransit don't dead-letter through the
+  // broker), the reason and original queue come from the Failure Details.
+  const fallbackReason = failure ? [failure.exceptionType, failure.message].filter((t) => t).join(': ') || null : null;
   return {
     handle,
     messageId: asString(d.properties.messageId),
     routingKey: d.fields.routingKey,
     timestamp: asTime(d.properties.timestamp),
-    deadLetterReason: latest?.reason ?? asString(headers?.['x-last-death-reason']),
-    originalQueue: latest?.queue ?? null,
+    deadLetterReason: latest?.reason ?? asString(headers?.['x-last-death-reason']) ?? (latest ? null : fallbackReason),
+    originalQueue: latest ? latest.queue : (failure?.inputQueue ?? null),
     size: d.content.length,
     deliveryBudget: deliveryBudget({
       deliveryCount: deliveryCount(headers, queue.type),
       deliveryLimit: queue.deliveryLimit,
       deadLetterExchange: queue.deadLetterExchange,
     }),
+    failureDetails: failure,
   };
 }
 
@@ -149,6 +155,12 @@ export function parseXDeath(headers: Record<string, unknown> | undefined): XDeat
   }));
 }
 
+/** A delivery's message id as Volverán shows and records it; null when it has none. */
+export function messageIdOf(delivery: Pick<Delivery, 'properties'> | undefined): string | null {
+  const id: unknown = delivery?.properties.messageId;
+  return typeof id === 'string' ? id : id == null ? null : String(id);
+}
+
 function asString(v: unknown): string | null {
   if (typeof v === 'string') return v;
   if (Buffer.isBuffer(v)) return v.toString('utf8');
@@ -168,7 +180,7 @@ function asTime(v: unknown): string | null {
 }
 
 /** The Message view, but for `diedAgain`, which needs the audit store (the Checkout manager adds it). */
-export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): Omit<MessageDetail, 'diedAgain'> {
+export function messageDetail(handle: number, d: Delivery, queue: QueueInfo): Omit<MessageDetail, 'diedAgain' | 'rule'> {
   const { headers, ...props } = d.properties;
   const properties: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {

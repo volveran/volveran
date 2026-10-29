@@ -3,10 +3,14 @@
 import type { Role } from './roles.js';
 import type { Filter } from './filters.js';
 
-/** Every triage action an Audit Entry can record. */
-export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore', 'export'] as const;
+/**
+ * Every action an Audit Entry can record: the triage actions, and the pause
+ * and resume of a Replay Rule (no Message; the Operator is the person, or the
+ * rule itself for an automatic pause, and `reason` says why).
+ */
+export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore', 'export', 'rule_pause', 'rule_resume'] as const;
 
-/** The triage action an Audit Entry records. */
+/** The action an Audit Entry records. */
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /**
@@ -18,6 +22,9 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
  * is, failed when the download stopped part way.
  */
 export type AuditOutcome = 'pending' | 'done' | 'failed' | 'uncertain';
+
+/** How the watch of an Apply's Canary ended (CanaryStatus without `watching`). */
+export type AuditCanaryOutcome = 'died_again' | 'not_dead_lettered' | 'watch_cut_short' | 'unwatched' | 'failed';
 
 /** Where a Replay, Move or Restore published the Message. */
 export interface AuditDestination {
@@ -62,6 +69,16 @@ export interface AuditEntryJson {
   filter: Filter | null;
   /** An export: how many Messages it holds; null for the other actions. */
   messageCount: number | null;
+  /** The Replay Rate of the Apply that wrote the entry, in Messages per second; null when there is none, for other actions and before v0.4. */
+  rate: number | null;
+  /** The Replay Rule whose Rule Pass wrote the entry (its name; the Operator is then the rule); null for an Operator's actions and before v0.4. */
+  rule: string | null;
+  /** The Rule Pass that wrote the entry; null when no rule did. */
+  rulePassId: string | null;
+  /** The Replay an Apply carried out alone as its Canary, before the rest. */
+  canary: boolean;
+  /** The Canary's watch outcome; null for other entries, and while it is watched. */
+  canaryOutcome: AuditCanaryOutcome | null;
   /** The Message acted on; null for an export, which keeps no copy. */
   message: {
     properties: Record<string, unknown>;

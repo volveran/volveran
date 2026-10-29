@@ -1,27 +1,35 @@
 // Thin typed client over Volverán's HTTP JSON API. The response shapes are
 // the server's own, from src/shared/.
 import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
-import type { ApprovalSummary, CheckoutView, MessageDetail, MessageOutcome } from '../shared/checkout.js';
+import type { ApprovalSummary, CheckoutView, MessageDetail } from '../shared/checkout.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
+import type { MessageComparison } from '../shared/message-diff.js';
 import { product } from '../shared/product.js';
 import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
+import type { ReplayRuleView, RulePass, RuleState } from '../shared/replay-rules.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
 export type {
+  ApplyProgress,
   ApprovalSummary,
+  CanaryConfirmation,
+  CanaryView,
   CheckoutHolder,
   DeliveryBudget,
   DiedAgain,
+  FailureDetails,
   MessageDetail,
   MessageOutcome,
   MessageRow,
   MessageSummary,
   RenderedBody,
+  RequestedCanary,
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
+export type { ReplayRule, ReplayRuleView, RuleBadge, RulePass, RulePassSummary, RuleState } from '../shared/replay-rules.js';
 export type {
   CheckoutAvailability,
   MoveDestinations,
@@ -32,6 +40,8 @@ export type {
   SetupWarningSeverity,
 } from '../shared/queues.js';
 export type Checkout = CheckoutView;
+/** The `canary` of an Apply request: the first Replay, or the Message with this handle. */
+export type CanaryChoice = true | { handle: number };
 export type Profile = ProfileSummary;
 export type Queue = QueueRow;
 export type AuditEntry = AuditEntryJson;
@@ -51,6 +61,8 @@ export interface AuditSearch {
   operator?: string;
   /** The `x-volveran-replay-id` header of a Message that came back. */
   replayId?: string;
+  /** The name of the Replay Rule whose passes wrote the entries. */
+  rule?: string;
   from?: string;
   to?: string;
 }
@@ -140,6 +152,9 @@ export const api = {
   checkout: (id: string) => getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`).then((b) => b.checkout),
   message: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  /** Two held Messages side by side, with their diff. */
+  compare: (id: string, a: number, b: number) =>
+    getJson<MessageComparison>(`/api/checkouts/${segment(id)}/compare?a=${a}&b=${b}`),
   endCheckout: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`, 'DELETE').then((b) => b.checkout),
   /** The handles of the held Messages matching `filter`. */
@@ -151,10 +166,7 @@ export const api = {
       handles,
       decision,
     }),
-  /**
-   * Carries out every Decision, then ends the Checkout; one outcome per Message.
-   * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
-   */
+
   auditEntries: (search: AuditSearch) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(search)) if (value?.trim()) params.set(key, value.trim());
@@ -162,6 +174,24 @@ export const api = {
     return getJson<{ entries: AuditEntry[] }>(`/api/audit-entries${qs}`).then((b) => b.entries);
   },
   auditStore: () => getJson<AuditStoreUsage>('/api/audit-store'),
+  /** The Replay Rules of a Broker Profile, with the last pass of each. */
+  replayRules: (profile: string) =>
+    getJson<{ rules: ReplayRuleView[] }>(`/api/profiles/${segment(profile)}/replay-rules`).then((b) => b.rules),
+  /** Runs one pass of a rule now (`admin`) and returns it once it has ended. */
+  runReplayRule: (profile: string, name: string) =>
+    getJson<{ pass: RulePass }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/run`, 'POST', {}).then(
+      (b) => b.pass,
+    ),
+  /** Pauses a rule (`operator`+) with a reason; returns its new state. */
+  pauseReplayRule: (profile: string, name: string, reason: string) =>
+    getJson<{ state: RuleState }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/pause`, 'POST', { reason }).then(
+      (b) => b.state,
+    ),
+  /** Resumes a paused rule (`admin`); returns its new state. */
+  resumeReplayRule: (profile: string, name: string) =>
+    getJson<{ state: RuleState }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/resume`, 'POST', {}).then(
+      (b) => b.state,
+    ),
   /** Republishes the Discarded Message of Audit Entry `id`; returns the Restore's own Audit Entry. */
   restore: (id: number, options: RestoreOptions) =>
     getJson<{ entry: AuditEntry }>(`/api/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(
@@ -192,32 +222,62 @@ export const api = {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   },
-  apply: (id: string, confirmQueueName?: string) =>
-    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
+  /**
+   * Starts carrying out every Decision in the background; returns the
+   * Checkout `applying`. Its `applyProgress` shows how far it has got, and
+   * its `lastApply` the outcome per Message once it has ended the Checkout.
+   * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
+   * `rate` is the Replay Rate in Messages per second; left out, the profile's default applies.
+   * `canary` starts with a Canary: true for the first Replay, or `{ handle }`.
+   */
+  apply: (id: string, confirmQueueName?: string, rate?: number, canary?: CanaryChoice) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
-    }),
-  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions. */
-  requestApproval: (id: string, confirmQueueName?: string) =>
+      ...(rate !== undefined && { rate }),
+      ...(canary !== undefined && { canary }),
+    }).then((b) => b.checkout),
+  /** Lets the Apply waiting after its Canary carry out the rest; returns the Checkout. */
+  continueApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
+  /** Stops the running Apply: the step in progress finishes, the rest goes back to the queue. Returns the Checkout. */
+  stopApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
+  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions, the Replay Rate and the Canary. */
+  requestApproval: (id: string, confirmQueueName?: string, rate?: number, canary?: CanaryChoice) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
+      ...(rate !== undefined && { rate }),
+      ...(canary !== undefined && { canary }),
     }).then((b) => b.checkout),
   withdrawApproval: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
   /** Other Operators' Checkouts waiting for an Approval this Operator may give. */
   approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals').then((b) => b.approvals),
-  /** A waiting Checkout, read-only. */
+  /** A waiting Checkout, read-only; also the Checkout of an Apply this Operator approved. */
   approvalCheckout: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
   approvalMessage: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
+  approvalCompare: (id: string, a: number, b: number) =>
+    getJson<MessageComparison>(`/api/approvals/${segment(id)}/compare?a=${a}&b=${b}`),
   /** Rejects the Apply of a waiting Checkout: it goes back to its requester's staging with `reason`. */
   reject: (id: string, reason: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
-  /** Approves the Apply of a waiting Checkout, which runs it; `confirmQueueName` is the queue name as typed. */
+  /**
+   * Approves the Apply of a waiting Checkout, which starts it in the
+   * background on the requester's Checkout; returns that Checkout
+   * `applying`. `confirmQueueName` is the queue name as typed.
+   */
   approve: (id: string, confirmQueueName: string) =>
-    getJson<{ checkout: Checkout; outcomes: MessageOutcome[] }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
       confirmQueueName,
-    }),
+    }).then((b) => b.checkout),
+  /** The approver stops the Apply they approved; returns the Checkout. */
+  stopApprovedApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
+  /** The approver lets the Apply they approved carry out the rest after its Canary; returns the Checkout. */
+  continueApprovedApply: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
 };

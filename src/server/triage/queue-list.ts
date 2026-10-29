@@ -94,7 +94,7 @@ export interface ArrangeOptions {
 }
 
 export type Arranged<Q> = Q & {
-  /** Matches the profile's queue-name filter, or other queues dead-letter into it. */
+  /** Matches the profile's queue-name filter, other queues dead-letter into it, or it is a MassTransit `_error` queue. */
   deadLetterQueue: boolean;
   matchesDefaultFilter: boolean;
   /** Queues that dead-letter into this one, by name. */
@@ -109,11 +109,21 @@ export function arrangeQueues<Q extends { name: string }>(queues: Q[], options: 
     .map((q) => {
       const matchesDefaultFilter = filter ? matchesQueueFilter(q.name, filter) : false;
       const deadLetteredFrom = options.deadLetterSources.get(q.name) ?? [];
-      return { ...q, deadLetterQueue: matchesDefaultFilter || deadLetteredFrom.length > 0, matchesDefaultFilter, deadLetteredFrom };
+      const deadLetterQueue = matchesDefaultFilter || deadLetteredFrom.length > 0 || isMassTransitErrorQueue(q.name);
+      return { ...q, deadLetterQueue, matchesDefaultFilter, deadLetteredFrom };
     })
     .filter((q) => !options.onlyDeadLetterQueues || q.deadLetterQueue)
     .filter((q) => !search || q.name.toLowerCase().includes(search))
     .sort((a, b) => (a.deadLetterQueue !== b.deadLetterQueue ? (a.deadLetterQueue ? -1 : 1) : compareNames(a.name, b.name)));
+}
+
+/**
+ * MassTransit moves Messages a consumer gave up on to `<queue>_error` itself,
+ * without broker dead-lettering. (Its `_skipped` queues hold Messages no
+ * consumer handles; they are not dead-letter queues.)
+ */
+function isMassTransitErrorQueue(name: string): boolean {
+  return name.endsWith('_error');
 }
 
 /** Orders names by code unit (as the broker lists them), not by locale. */

@@ -23,6 +23,17 @@ brokerProfiles:
       roles:
         viewer: [smoke-support]
         operator: [smoke-triage]
+      # One Replay rule, paused, so the chart passes it through and startup
+      # validates it; it never runs a pass during the smoke test.
+      replayRules:
+        - name: orders-transient
+          vhost: /
+          queue: orders.dlq
+          every: 5m
+          backoff: { initial: 1m, multiplier: 2, max: 1h }
+          maxAttempts: 3
+          stopWhen: { diedAgain: 5, within: 15m }
+          startPaused: true
 
 persistence:
   size: 100Mi

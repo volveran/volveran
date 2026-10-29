@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.3.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.3.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v0.4.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.4.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -66,13 +66,15 @@ Everything planned for v0.3 shipped, including the Operator token option. Upgrad
 - More dead-letter set-up checks, beyond the delivery-limit check that shipped in v0.1: a missing or unroutable dead-letter exchange, a dead-letter queue that drops Messages (TTL, length limit, expiry), and a quorum queue that dead-letters at-most-once. A queue shows every warning that applies, and the broker behaviour behind each check is in [RabbitMQ behaviour](docs/rabbitmq-behaviour.md#dead-letter-set-up).
 - Keyboard navigation of the queue list and the Checkout, with a `?` shortcut list. No key Applies, approves, rejects or Restores.
 
-## v0.4: Replay at scale
+## v0.4: Replay at scale (released in 0.4.0)
 
-- Throttled Replay (messages per second).
-- Canary Replay: Replay one Message first, then confirm the rest.
-- Side-by-side comparison of two Messages.
-- Recognise Spring AMQP and MassTransit dead-letter headers.
-- Replay rules: automatic, scheduled Replay with back-off, attempt limits and an automatic stop.
+Everything planned for v0.4 shipped. Upgrading from 0.3: Apply runs in the background, so `POST /api/checkouts/:id/apply` and the approve endpoint answer `202` and the outcomes are read from the Checkout view's `lastApply.outcomes` (see the [changelog](CHANGELOG.md) and [ADR 0009](docs/adr/0009-apply-runs-in-the-background-paced-between-steps.md)). Three things differ from the plan: comparing two Messages from a waiting Approval is open only to those who may approve it (`operator` and `admin`), like the rest of the Approval view, so a `viewer` cannot compare Messages there; the Apply outcomes kept their v0.3 place, `lastApply.outcomes`; and the profiles file's durations (the Watch Window, a Replay Rule's `every`, `backoff` and `stopWhen.within`) use a new format, such as `30s`, `5m`, `1h30m` or `7d`, because the profiles file had no duration format to reuse.
+
+- Throttled Replay: a Replay Rate in Messages per second for an Apply's Replay and Move steps, with a default and a maximum per Broker Profile, the estimated duration in the Apply confirmation, and the rate in every Audit Entry. Apply runs in the background with its progress on the Checkout, and the owner or the approver can stop it part way, after which the rest falls back to Keep.
+- Canary Replay: an Apply can start with one Replay carried out alone, watched for the Watch Window through a watch queue bound to the dead-letter exchange, then continued or stopped by the Operator. A Broker Profile can require one above a number of Replays, and on a Protected Profile the Canary is part of the Approval. The broker facts it relies on (the watch, and how soon a Message is dead-lettered again) are checked in [RabbitMQ behaviour](docs/rabbitmq-behaviour.md).
+- Side-by-side comparison of two Messages, from a Checkout (Compare or the `c` key) and from a waiting Approval: properties and headers by name, `x-death` by position, Failure Details by field, and bodies by kind (JSON by path, text by line, binary by size and first differing byte).
+- Spring AMQP and MassTransit: their Failure Details in the Message list, the Message view, a filter and the export; `_error` queues listed as dead-letter queues; MassTransit Messages Replayed to their input queue and Spring AMQP Messages offered a prefilled Move ([ADR 0010](docs/adr/0010-replay-origin-from-framework-headers.md), [guide](docs/spring-amqp-and-masstransit.md)).
+- Replay rules declared in the profiles file ([ADR 0011](docs/adr/0011-replay-rules-declared-in-the-profiles-file.md)): scheduled Rule Passes over ordinary Checkouts, back-off and attempt limits counted from Died Again, Keep or Move for used-up Messages, a required automatic stop, pause by an `operator` and resume by an `admin`, state kept in the audit store, and a Replay rules view ([guide](docs/replay-rules.md)).
 
 ## v0.5: Observability
 

@@ -52,6 +52,49 @@ describe('Broker Profiles', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, requireApproval: 'sometimes' }] } })).toMatch(/requireApproval/);
   });
 
+  it('accepts replayRate, writes it into profiles.yaml, and refuses a rate that is not a number', () => {
+    const replayRate = { default: 5, max: 50 };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, replayRate }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, replayRate }] });
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { max: 'fast' } }] } })).toMatch(/replayRate/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { min: 1 } }] } })).toMatch(/replayRate/);
+  });
+
+  it('accepts canary with a watchWindow and requiredAbove, writes it into profiles.yaml, and refuses one that is not a duration or an unknown key', () => {
+    const canary = { watchWindow: '45s', requiredAbove: 20 };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, canary }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, canary }] });
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { watchWindow: 30 } }] } })).toMatch(/watchWindow/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { window: '30s' } }] } })).toMatch(/canary/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { requiredAbove: -1 } }] } })).toMatch(/requiredAbove/);
+  });
+
+  it('accepts replayRules, writes them into profiles.yaml, and refuses a rule without stopWhen or with an unknown whenAttemptsUsedUp', () => {
+    const rule = {
+      name: 'db-timeouts',
+      vhost: '/',
+      queue: 'orders.dlq',
+      filter: { kind: 'x-death-reason', value: 'rejected' },
+      every: '5m',
+      maxPerPass: 50,
+      rate: 5,
+      backoff: { initial: '1m', multiplier: 2, max: '1h' },
+      maxAttempts: 5,
+      whenAttemptsUsedUp: { moveTo: { queue: 'orders.parked' } },
+      stopWhen: { diedAgain: 10, within: '15m' },
+      startPaused: true,
+    };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, replayRules: [rule] }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, replayRules: [rule] }] });
+    const keep = { ...rule, whenAttemptsUsedUp: 'keep' };
+    expect(() => render({ brokerProfiles: { profiles: [{ ...prod, replayRules: [keep] }] } })).not.toThrow();
+
+    const { stopWhen: _s, ...noStop } = rule;
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRules: [noStop] }] } })).toMatch(/stopWhen/);
+    const discard = { ...rule, whenAttemptsUsedUp: 'discard' };
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRules: [discard] }] } })).toMatch(/whenAttemptsUsedUp/);
+  });
+
   it("accepts credentials: operatorToken with tokenUsernameClaim and no username or passwordEnv, and writes them into profiles.yaml", () => {
     const { username: _u, passwordEnv: _p, ...rest } = prod;
     const tokenProfile = { ...rest, credentials: 'operatorToken', tokenUsernameClaim: 'preferred_username' };

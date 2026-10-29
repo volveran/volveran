@@ -45,6 +45,12 @@ export const CAPABILITIES = [
   'approve',
   /** Restore a Discarded Message. */
   'restore',
+  /** Run a pass of one of the profile's Replay Rules now. */
+  'run_replay_rule',
+  /** Pause one of the profile's Replay Rules. */
+  'pause_replay_rule',
+  /** Resume one of the profile's paused Replay Rules. */
+  'resume_replay_rule',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -57,6 +63,9 @@ export const REQUIRED_ROLE: Record<Capability, Role> = {
   checkout: 'operator',
   approve: 'operator',
   restore: 'admin',
+  run_replay_rule: 'admin',
+  pause_replay_rule: 'operator',
+  resume_replay_rule: 'admin',
 };
 
 /**

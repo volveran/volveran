@@ -22,7 +22,7 @@ const MB = 1024 * 1024;
 export const DEFAULT_CHECKOUT_LIMITS: CheckoutLimits = { maxMessages: 1000, maxBytes: 100 * MB };
 
 /** AMQP's prefetch count is 16 bits, and a Checkout's window can be all of N. */
-const MAX_PREFETCH = 65_535;
+export const MAX_PREFETCH = 65_535;
 
 /**
  * The Checkout limits from `VOLVERAN_CHECKOUT_MAX_MESSAGES` and

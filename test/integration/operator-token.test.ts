@@ -7,7 +7,7 @@
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { connectWithToken, oauthBroker, signIn } from '../broker/oauth.js';
-import { closedPort, sleep, startApp, type ProfileFixture, type TestApp } from './harness.js';
+import { applyAndWait, closedPort, sleep, startApp, type ProfileFixture, type TestApp } from './harness.js';
 import { teamModeEnv, testOidc, TestBrowser, type TestIdentity } from './oidc-provider.js';
 
 const QUEUE = 'operator-token.dlq';
@@ -135,8 +135,8 @@ describe('Broker Profile with the Operator\'s own token', () => {
     expect(list.body.queues.map((q: any) => q.name)).toContain(QUEUE);
 
     const id = await checkoutWithDiscard(browser, 'tokens');
-    const applied = await browser.post(`/api/checkouts/${id}/apply`, { confirm: true });
-    expect(applied.status, JSON.stringify(applied.body)).toBe(200);
+    const applied = await applyAndWait(browser, `/api/checkouts/${id}/apply`, { confirm: true });
+    expect(applied.status, JSON.stringify(applied.body)).toBe(202);
     expect(applied.body.outcomes.map((o: any) => o.status)).toEqual(['done', 'kept']);
     expect(await readyIds()).toEqual([`${QUEUE}-1`]);
 
@@ -148,7 +148,7 @@ describe('Broker Profile with the Operator\'s own token', () => {
     await seed(1);
     const browser = await signedIn(rita);
     const id = await checkoutWithDiscard(browser, 'tokens-named');
-    expect((await browser.post(`/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(200);
+    expect((await applyAndWait(browser, `/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(202);
     const entries = (await browser.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
     expect(entries).toEqual([expect.objectContaining({ brokerUser: 'rita.r' })]);
   });
@@ -180,8 +180,8 @@ describe('Broker Profile with the Operator\'s own token', () => {
     open.push([browser, id]);
     const move = { kind: 'move', destination: { queue: OTHER } };
     expect((await browser.post(`/api/checkouts/${id}/decisions`, { handles: [messages[0].handle], decision: move })).status).toBe(200);
-    const applied = await browser.post(`/api/checkouts/${id}/apply`, { confirm: true });
-    expect(applied.status, JSON.stringify(applied.body)).toBe(200);
+    const applied = await applyAndWait(browser, `/api/checkouts/${id}/apply`, { confirm: true });
+    expect(applied.status, JSON.stringify(applied.body)).toBe(202);
     const [moved] = applied.body.outcomes;
     expect(moved.status).toBe('failed');
     expect(moved.reason).toContain('The broker refused broker user "token-wanda" of Broker Profile "tokens" write permission on the default exchange in vhost "/"');
@@ -192,7 +192,7 @@ describe('Broker Profile with the Operator\'s own token', () => {
     await seed(1);
     const discarder = await signedIn(rita);
     const id = await checkoutWithDiscard(discarder, 'tokens');
-    expect((await discarder.post(`/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(200);
+    expect((await applyAndWait(discarder, `/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(202);
     open.splice(open.findIndex(([, o]) => o === id), 1);
     const [discard] = (await discarder.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
 
@@ -223,8 +223,8 @@ describe('Broker Profile with the Operator\'s own token', () => {
     const requested = await requester.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName: QUEUE });
     expect(requested.status, JSON.stringify(requested.body)).toBe(200);
 
-    const approved = await approver.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE });
-    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    const approved = await applyAndWait(approver, `/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }, requester);
+    expect(approved.status, JSON.stringify(approved.body)).toBe(202);
     expect(approved.body.outcomes.map((o: any) => o.status)).toEqual(['done', 'kept']);
     expect(await readyIds()).toEqual([`${QUEUE}-1`]);
 

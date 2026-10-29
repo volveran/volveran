@@ -157,8 +157,12 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 3 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    // Newest first: v6 (#44 export), v5 (#45 approver), v4 (#38 role).
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+    // Newest first: v11 (#65 automatic stop), v10 (#64 rule state), v9 (#58 canary), v8 (#63 rule), v7 (#56 rate), v6 (#44 export), v5 (#45 approver), v4 (#38 role).
+    db.exec(`DROP TABLE replay_rule_died_again; DROP TABLE replay_rule_state; DROP TABLE replay_rule_passes; DROP TABLE replay_rule_first_seen;
+             ALTER TABLE audit_entries DROP COLUMN canary_outcome; ALTER TABLE audit_entries DROP COLUMN canary;
+             DROP INDEX audit_entries_rule; ALTER TABLE audit_entries DROP COLUMN rule; ALTER TABLE audit_entries DROP COLUMN rule_pass_id;
+             ALTER TABLE audit_entries DROP COLUMN rate;
+             ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
              ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
@@ -176,7 +180,31 @@ describe('AuditStore', () => {
       approverName: null,
       filter: null,
       messageCount: null,
+      rate: null,
+      rule: null,
+      rulePassId: null,
+      canary: false,
+      canaryOutcome: null,
     });
+  });
+
+  it('marks an Apply\'s Canary and records how its watch ended', () => {
+    store = new AuditStore();
+    const canary = store.record(entry({ canary: true }));
+    const other = store.record(entry());
+    expect(store.get(canary)).toMatchObject({ canary: true, canaryOutcome: null });
+    store.setCanaryOutcome(canary, 'died_again');
+    expect(store.get(canary)).toMatchObject({ canary: true, canaryOutcome: 'died_again' });
+    expect(store.get(other)).toMatchObject({ canary: false, canaryOutcome: null });
+  });
+
+  it('records the Replay Rule and Rule Pass that wrote an entry, and finds them by rule', () => {
+    store = new AuditStore();
+    const byRule = store.record(entry({ rule: 'db-timeouts', rulePassId: 'pass-1' }));
+    const byPerson = store.record(entry());
+    expect(store.get(byRule)).toMatchObject({ rule: 'db-timeouts', rulePassId: 'pass-1' });
+    expect(store.get(byPerson)).toMatchObject({ rule: null, rulePassId: null });
+    expect(store.list({ rule: 'db-timeouts' }).map((e) => e.id)).toEqual([byRule]);
   });
 
   it('records who approved an Apply, and no one when it needed no Approval', () => {
@@ -192,8 +220,12 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 1 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    // Newest first: v6 (#44), v5 (#45), then v3 (#10), v2 (#8) and v4 (#38) as before.
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+    // Newest first: v10 (#64), v9 (#58), v8 (#63), v7 (#56), v6 (#44), v5 (#45), then v3 (#10), v2 (#8) and v4 (#38) as before.
+    db.exec(`DROP TABLE replay_rule_died_again; DROP TABLE replay_rule_state; DROP TABLE replay_rule_passes; DROP TABLE replay_rule_first_seen;
+             ALTER TABLE audit_entries DROP COLUMN canary_outcome; ALTER TABLE audit_entries DROP COLUMN canary;
+             DROP INDEX audit_entries_rule; ALTER TABLE audit_entries DROP COLUMN rule; ALTER TABLE audit_entries DROP COLUMN rule_pass_id;
+             ALTER TABLE audit_entries DROP COLUMN rate;
+             ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
              ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;
              ALTER TABLE audit_entries DROP COLUMN restore_of; ALTER TABLE audit_entries DROP COLUMN body_expired_at;

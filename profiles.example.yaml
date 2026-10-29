@@ -11,6 +11,19 @@ profiles:
     vhosts: all                  # "all" or a list, e.g. ["/", "orders"]
     defaultQueueFilter: "*.dlq"  # optional; matching queues count as dead-letter queues
     protected: false
+    replayRules:                 # optional; Messages Volverán Replays automatically (ADR 0011).
+      - name: db-timeouts        #   unique in this profile: letters, digits, - and _
+        vhost: /
+        queue: orders.dlq
+        filter: { kind: failure, value: SQLTimeoutException }  # optional; one filter clause, or a list
+        every: 5m                #   how often a pass runs (30s to 24h); durations: 30s, 5m, 1h30m, 7d
+        maxPerPass: 100          #   the most Messages one pass Replays (default 100)
+        rate: 10                 #   Messages per second (default 10, at most replayRate.max)
+        backoff: { initial: 1m, multiplier: 2, max: 1h }  # delay before attempt n: initial x multiplier^n, at most max
+        maxAttempts: 5           #   attempts per Message (1 to 100), counted from its Died Again count
+        whenAttemptsUsedUp: keep #   or { moveTo: { queue: orders.parked } }
+        stopWhen: { diedAgain: 10, within: 15m }  # required: pause once 10 Replayed Messages die again within 15m
+        startPaused: true        #   deploy paused, resume from the Replay rules view
 
   - name: prod
     managementUrl: https://rabbit.prod.example.com:15671
@@ -21,6 +34,12 @@ profiles:
     vhosts: ["/"]
     defaultQueueFilter: "*.dlq"
     protected: true              # Apply and Restore need the queue name typed
+    replayRate:                  # optional; Messages per second (0.1 to 1000) for Replay and Move in an Apply
+      default: 10                #   the rate an Apply runs at unless the Operator picks another
+      max: 50                    #   the most an Operator may pick; without a default, every Apply needs a rate
+    canary:                      # optional; Canary Replay
+      watchWindow: 30s           #   how long (5s to 10m) to watch a Canary for dying again; default 30s
+      requiredAbove: 20          #   an Apply with more Replays than this must start with a Canary; default: never
     requireApproval: true        # Team Mode (the default when protected): an Apply waits for a second
                                  #   Operator's Approval; false keeps typed confirmation only.
     roles:                       # Team Mode: OIDC groups per role (VOLVERAN_OIDC_GROUPS_CLAIM);

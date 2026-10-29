@@ -7,3 +7,11 @@ export class ConfigError extends Error {
     this.name = 'ConfigError';
   }
 }
+
+/** A problem in the Broker Profiles file. */
+export class ProfilesConfigError extends ConfigError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProfilesConfigError';
+  }
+}

@@ -3,7 +3,9 @@
 // and Move open a prompt (DecisionPrompt) for the reason or the destination,
 // the same prompt their keys open (Shift+D, Shift+M). The Move destination is
 // picked from what exists in the Checkout's vhost: another queue, or an
-// exchange plus a routing key.
+// exchange plus a routing key; Spring AMQP Messages prefill the exchange and
+// routing key they were first published with. With exactly two Messages selected, Compare
+// shows them side by side (ComparisonView).
 import { useState } from 'react';
 import type { Decision, MoveDestination, MoveDestinations } from './api.js';
 import { Prompt } from './keyboard.js';
@@ -15,15 +17,18 @@ export function DecisionBar({
   onPrompt,
   onDecide,
   onClearSelection,
+  onCompare,
 }: {
   selected: number;
-  /** Selected Messages that can't be given Replay (no x-death history). */
+  /** Selected Messages that can't be given Replay (no Replay origin). */
   replayUnavailable: number;
   busy: boolean;
   /** Opens the Discard or Move prompt for the Selection. */
   onPrompt: (kind: 'discard' | 'move') => void;
   onDecide: (decision: Decision) => void;
   onClearSelection: () => void;
+  /** Shows the two selected Messages side by side. */
+  onCompare: () => void;
 }) {
   const disabled = busy || selected === 0;
   return (
@@ -44,8 +49,8 @@ export function DecisionBar({
         aria-keyshortcuts="Shift+R"
         title={
           replayUnavailable > 0
-            ? `${replayUnavailable} selected Message(s) have no x-death history, so there is no queue to Replay them to; they keep their Decision.`
-            : 'Send back to the queue that dead-lettered each Message (its most recent x-death entry) (Shift+R)'
+            ? `${replayUnavailable} selected Message(s) have no queue to Replay them to (see each one's "no Replay" badge); they keep their Decision.`
+            : 'Send back to the queue that dead-lettered each Message (its most recent x-death entry, or its MassTransit input queue) (Shift+R)'
         }
       >
         Replay{replayUnavailable > 0 && replayUnavailable < selected ? ` (${selected - replayUnavailable})` : ''}
@@ -66,6 +71,14 @@ export function DecisionBar({
       >
         Keep
       </button>
+      <button
+        disabled={selected !== 2}
+        onClick={onCompare}
+        aria-keyshortcuts="c"
+        title="Show the two selected Messages side by side, with what differs highlighted (c)"
+      >
+        Compare
+      </button>
       <button disabled={selected === 0} onClick={onClearSelection} className="link" aria-keyshortcuts="Escape">
         Clear selection
       </button>
@@ -79,6 +92,7 @@ export function DecisionPrompt({
   count,
   sourceQueue,
   destinations,
+  suggestedMove,
   busy,
   onDecide,
   onClose,
@@ -87,6 +101,8 @@ export function DecisionPrompt({
   count: number;
   /** The queue being triaged: not a Move destination. */
   sourceQueue: string;
+  /** Where every one of these Messages was first published (Spring AMQP), prefilled. */
+  suggestedMove?: MoveDestination | null;
   /** The picker's choices; undefined while loading, a string when they could not be loaded. */
   destinations: MoveDestinations | string | undefined;
   busy: boolean;
@@ -94,10 +110,11 @@ export function DecisionPrompt({
   onClose: () => void;
 }) {
   const [reason, setReason] = useState('');
-  const [moveTo, setMoveTo] = useState<'queue' | 'exchange'>('queue');
-  const [queue, setQueue] = useState('');
-  const [exchange, setExchange] = useState('');
-  const [routingKey, setRoutingKey] = useState('');
+  const suggested = suggestedMove && 'exchange' in suggestedMove ? suggestedMove : null;
+  const [moveTo, setMoveTo] = useState<'queue' | 'exchange'>(suggested ? 'exchange' : 'queue');
+  const [queue, setQueue] = useState(suggestedMove && 'queue' in suggestedMove ? suggestedMove.queue : '');
+  const [exchange, setExchange] = useState(suggested?.exchange ?? '');
+  const [routingKey, setRoutingKey] = useState(suggested?.routingKey ?? '');
 
   const loaded = typeof destinations === 'object' ? destinations : null;
   const queues = loaded?.queues.filter((q) => q !== sourceQueue) ?? [];

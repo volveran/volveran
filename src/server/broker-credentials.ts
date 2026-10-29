@@ -85,6 +85,15 @@ export function brokerCredentials(profile: BrokerProfile, operator: Operator): B
   };
 }
 
+/**
+ * The broker user of the profile's shared account, as Audit Entries record
+ * it; null with `operatorToken`, where each Operator's token decides it
+ * (brokerCredentials).
+ */
+export function sharedBrokerUser(profile: BrokerProfile): string | null {
+  return profile.credentials.kind === 'shared' ? profile.credentials.username : null;
+}
+
 /** How a Broker Profile connects, as GET /api/profiles shows it (never the password). */
 export function credentialsSummary(
   profile: BrokerProfile,

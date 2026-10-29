@@ -66,7 +66,7 @@ The chart version always equals the Volverán version, and the chart runs the im
 4. Install:
 
    ```sh
-   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.3.0 \
+   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.4.0 \
      --namespace volveran -f values.yaml
    kubectl -n volveran rollout status deployment/volveran
    ```
@@ -99,7 +99,7 @@ The same command with `ghcr.io/volveran/volveran:<version>` verifies the image.
 
 ## Install with Flux CD
 
-[`examples/flux/`](../examples/flux/) is a complete layout to copy into a fleet repository: a namespace enforcing `restricted` pod security, an `OCIRepository` that follows `0.3.x` and only accepts a chart signed by Volverán's release workflow, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, a Secret template encrypted with SOPS and your own age key, and the Flux `Kustomization` that decrypts it. Its [README](../examples/flux/README.md) walks through it.
+[`examples/flux/`](../examples/flux/) is a complete layout to copy into a fleet repository: a namespace enforcing `restricted` pod security, an `OCIRepository` that follows `0.4.x` and only accepts a chart signed by Volverán's release workflow, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, a Secret template encrypted with SOPS and your own age key, and the Flux `Kustomization` that decrypts it. Its [README](../examples/flux/README.md) walks through it.
 
 The OIDC identity the `OCIRepository` matches is the one above:
 
@@ -111,7 +111,7 @@ verify:
       subject: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
 ```
 
-The `ref.semver` range `0.3.x` picks up patch releases on its own and skips pre-releases (`0.3.1-rc.1`); a range such as `>=0.3.0-0` asks for them.
+The `ref.semver` range `0.4.x` picks up patch releases on its own and skips pre-releases (`0.4.1-rc.1`); a range such as `>=0.4.0-0` asks for them.
 
 ## Values
 

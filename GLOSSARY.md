@@ -31,8 +31,28 @@ The action the user has assigned to one Message in a Checkout: Discard, Replay, 
 _Avoid_: Action, mark, plan item, Undecided
 
 **Apply**:
-Carrying out all the Decisions of a Checkout against the broker in one step.
+Carrying out all the Decisions of a Checkout against the broker, confirmed once. It runs in the background, one Message at a time, and ends the Checkout. It can be stopped part way, and can start with a Canary; either way, every Message not yet attempted falls back to Keep.
 _Avoid_: Commit, execute, submit
+
+**Replay Rate**:
+The most Messages per second an Apply (or a Rule Pass) publishes: its Replay and Move steps start at least 1/rate apart, while Discards are not slowed down. A Broker Profile can set a default and a maximum, and each Replay Rule has its own; without a rate an Apply runs as fast as the broker confirms.
+_Avoid_: Throttle, speed, QPS
+
+**Replay Rule**:
+A declaration, in the profiles file, of which Messages in one dead-letter queue Volverán Replays automatically, how often and how many times: a filter, a back-off between attempts, an attempt limit counted from Died Again, and a required automatic stop. A rule that stops itself, or that an Operator pauses, stays paused until an `admin` resumes it. In prose, "Replay rules" (lower-case r) names the feature and the view.
+_Avoid_: Policy (reserved for RabbitMQ policies), automation, job, retry rule
+
+**Rule Pass**:
+One run of a Replay Rule: a short Checkout taken as the rule, the Replays of the matching Messages that are due, at the rule's Replay Rate, and its end, which Keeps the rest (or Moves the Messages whose attempts are used up, when the rule says so). A pass is skipped while someone else holds the queue.
+_Avoid_: Tick, cycle, run
+
+**Canary**:
+The one Replay an Apply carries out alone before the rest, watched for the Watch Window. The Operator then continues with the rest or stops, and everything left falls back to Keep.
+_Avoid_: Test Message, probe, pilot
+
+**Watch Window**:
+How long Volverán watches for a Canary that dies again, through a queue of its own bound to the dead-letter exchange (it never reads the dead-letter queue). Set per Broker Profile.
+_Avoid_: Timeout, grace period
 
 **Message**:
 A single RabbitMQ message, identified to the user by its `message_id`.
@@ -47,7 +67,7 @@ Removing a Message from its queue for good, keeping a full copy in its Audit Ent
 _Avoid_: Selective Purge, purge, delete, drop
 
 **Replay**:
-Sending a Message back to the queue it was dead-lettered from, so that only the consumer that failed sees it again.
+Sending a Message back to the queue it was dead-lettered from (its most recent `x-death` entry, else the MassTransit input queue), so that only the consumer that failed sees it again.
 _Avoid_: Retry, requeue, resend, re-route
 
 **Move**:
@@ -62,10 +82,14 @@ _Avoid_: Skip, requeue, ignore
 Said of a Message that Volverán Replayed, Moved or Restored and that has been dead-lettered again, recognised by the replay id (`x-volveran-replay-id`) it carries. How many times it has died again comes from following the replay ids back through the Audit Entries.
 _Avoid_: Repeat offender, recurring, boomerang
 
+**Failure Details**:
+The exception and context a client framework (Spring AMQP, MassTransit) writes into a Message's headers when it gives up on it: the exception type and message, the stack trace, the consumer, the time and the original queue or exchange.
+_Avoid_: Error info, fault (except in MassTransit's own header names)
+
 ## Accountability
 
 **Operator**:
-The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account, or the Operator themself on a profile that connects with their own token (`credentials: operatorToken`).
+The person using the tool: the signed-in identity in Team Mode, or the name they configured in Solo Mode. Recorded alongside the Broker Profile's broker user, which is often a shared service account, or the Operator themself on a profile that connects with their own token (`credentials: operatorToken`). For the actions a Rule Pass takes, the Operator is the Replay Rule (`Replay rule <name>`); its Audit Entries name the rule.
 _Avoid_: User, who, actor
 
 **Role**:

@@ -1,26 +1,34 @@
 // Approvals (Team Mode): other Operators' Checkouts waiting for an Approval
 // this Operator may give (role `operator` or `admin` on the profile), and a
 // read-only view of one of them: its Decisions, Messages and Message view,
-// as the requester sees them. Approve asks for the queue name typed, then
-// runs the Apply on the requester's Checkout and shows its outcome; Reject
+// as the requester sees them, and two ticked Messages side by side. Approve
+// asks for the queue name typed, then starts the Apply on the requester's
+// Checkout (the requester sees its progress and outcome there; so does the
+// approver, who may stop it, and continue or stop it after its Canary); Reject
 // asks for a reason, which the requester sees. No key approves or rejects
 // (keyboard-commands.ts): both always need their confirmation, a Prompt
 // (keyboard.tsx) that focuses its typed field, closes on Escape and gives
 // the focus back to "Approve…" or "Reject…". A requester's
 // link (approval-link.ts) opens here on their waiting Checkout.
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { heldLine } from '../shared/held-line.js';
 import { decisionLabel } from '../shared/decisions.js';
+import { rateText } from '../shared/replay-rate.js';
 import { formatCountdown } from './countdown.js';
-import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail, type MessageOutcome } from './api.js';
-import { ApplyOutcomes } from './ApplyOutcomes.js';
+import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail } from './api.js';
+import { ComparisonView } from './ComparisonView.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
+import { ApplyOutcomes } from './ApplyOutcomes.js';
+import { ApplyProgressPanel } from './ApplyProgress.js';
+import { CanaryPanel, requestedCanaryText } from './CanaryPanel.js';
 import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
 import { Prompt } from './keyboard.js';
 
 /** How often the list and an open waiting Checkout are read again. */
 const REFRESH_MS = 5_000;
+/** How often the Checkout of an Apply this Operator approved is read while it runs. */
+const APPLY_POLL_MS = 1_000;
 
 /** `initialOpen`: the waiting Checkout a requester's link points at, opened first. `onClosed` runs when it is left. */
 export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: string | null; onClosed?(): void }) {
@@ -78,6 +86,7 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
               <th>Waiting</th>
               <th>Time left</th>
               <th>Decisions</th>
+              <th>Replay Rate</th>
               <th />
             </tr>
           </thead>
@@ -104,6 +113,10 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
                   </ul>
                 </td>
                 <td>
+                  {rateText(a.rate)}
+                  {a.canary && <div className="muted">{requestedCanaryText(a.canary)}</div>}
+                </td>
+                <td>
                   <button onClick={() => setOpen(a.checkoutId)}>Open</button>
                 </td>
               </tr>
@@ -115,19 +128,79 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
   );
 }
 
+/** The Apply this Operator approved: its progress, with Stop, until it ends, then the outcome for each Message. */
+function ApprovedApply({ approved, back }: { approved: Checkout; back: ReactNode }) {
+  const [checkout, setCheckout] = useState(approved);
+  const [error, setError] = useState<ApiError>();
+  const now = useNow();
+  const applying = checkout.status === 'applying' || (checkout.applyProgress !== null && checkout.lastApply === null);
+  usePolling(
+    {
+      load: () => api.approvalCheckout(approved.id),
+      received: (c) => {
+        setCheckout(c);
+        setError(undefined);
+      },
+      failed: setError,
+      everyMs: APPLY_POLL_MS,
+      enabled: applying,
+    },
+    [approved.id, applying],
+  );
+  const act = (action: (id: string) => Promise<Checkout>) => async () => {
+    try {
+      setCheckout(await action(approved.id));
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
+  const stop = act(api.stopApprovedApply);
+
+  return (
+    <section className="checkout">
+      <div className="checkout-head">
+        <h2>Approved: Apply of {checkout.queue}</h2>
+        {back}
+      </div>
+      <p>
+        The Apply runs on {checkout.operator}'s Checkout ({approved.decisionSummaryText}); {checkout.operator} sees it
+        there too. Its Audit Entries name you as the approver.
+      </p>
+      {error && <ErrorBox error={error} />}
+      {checkout.canary && (
+        <CanaryPanel
+          canary={checkout.canary}
+          progress={applying ? checkout.applyProgress : null}
+          now={now}
+          onContinue={act(api.continueApprovedApply)}
+          onStop={stop}
+        />
+      )}
+      {applying && checkout.applyProgress && (
+        <ApplyProgressPanel progress={checkout.applyProgress} now={now} onStop={stop} />
+      )}
+      {checkout.lastApply && <ApplyOutcomes outcomes={checkout.lastApply.outcomes} approvedBy={checkout.lastApply.approvedBy} />}
+    </section>
+  );
+}
+
 /** One waiting Checkout, read-only, with Approve and Reject. */
 function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [checkout, setCheckout] = useState<Checkout>();
   const [error, setError] = useState<ApiError>();
   const [focused, setFocused] = useState<number>();
   const [detail, setDetail] = useState<MessageDetail>();
+  /** Ticked Messages: two of them can be compared. */
+  const [ticked, setTicked] = useState<ReadonlySet<number>>(new Set());
+  const [comparing, setComparing] = useState<readonly [number, number] | null>(null);
   /** The open confirmation: Approve (queue name typed) or Reject (a reason). */
   const [confirming, setConfirming] = useState<'approve' | 'reject' | null>(null);
   const [typed, setTyped] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  /** The Apply this Operator approved, once it has run. */
-  const [result, setResult] = useState<{ checkout: Checkout; outcomes: MessageOutcome[] }>();
+  /** The Checkout whose Apply this Operator approved, as the Apply started. */
+  const [result, setResult] = useState<Checkout>();
   /** The request this Operator rejected: the Checkout is back with its requester. */
   const [rejected, setRejected] = useState<Checkout>();
   const done = result !== undefined || rejected !== undefined;
@@ -197,16 +270,10 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   };
 
   const back = <button onClick={onClose}>Back to Approvals</button>;
-  if (result) {
-    return (
-      <section className="checkout">
-        <div className="checkout-head">
-          <h2>Approved: Apply of {result.checkout.queue}</h2>
-          {back}
-        </div>
-        <ApplyOutcomes outcomes={result.outcomes} approvedBy={result.checkout.lastApply?.approvedBy ?? null} />
-      </section>
-    );
+  if (result) return <ApprovedApply approved={result} back={back} />;
+  // Reopened after approving (e.g. to continue after the Canary): the server shows this approver its Apply.
+  if (checkout && checkout.approvalRequest === null && checkout.applyProgress !== null) {
+    return <ApprovedApply approved={checkout} back={back} />;
   }
   if (rejected) {
     return (
@@ -245,6 +312,23 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
             {checkout.profile} · vhost {checkout.vhost} · started by {checkout.operator}
             {checkout.approvalRequest &&
               ` · Approval requested at ${new Date(checkout.approvalRequest.requestedAt).toLocaleTimeString()}`}
+          </p>
+          <p className="replay-rate-line">
+            {checkout.approvalRequest && (
+              <>
+                Runs <strong>{rateText(checkout.approvalRequest.rate)}</strong>
+                {checkout.applyConfirmation.estimatedDurationMs !== null &&
+                  `: its Replay and Move steps take about ${formatCountdown(checkout.applyConfirmation.estimatedDurationMs)}`}
+                {checkout.approvalRequest.canary && (
+                  <>
+                    {' '}
+                    · <strong>{requestedCanaryText(checkout.approvalRequest.canary)}</strong>, watched for{' '}
+                    {formatCountdown(checkout.applyConfirmation.canary.watchWindowMs)}; then you or {checkout.operator}{' '}
+                    continue or stop
+                  </>
+                )}
+              </>
+            )}
           </p>
           <p className="held">{heldLine(checkout)}</p>
         </div>
@@ -303,6 +387,8 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
               <span>
                 Approving runs the Apply now, on {checkout.operator}'s Checkout; its Audit Entries name you as the
                 approver.
+                {checkout.approvalRequest?.canary &&
+                  ` It ${requestedCanaryText(checkout.approvalRequest.canary)}, Replayed alone and watched; then you or ${checkout.operator} continue with the rest or stop, with no second Approval.`}
               </span>
               <label className="type-queue-name">
                 <span>
@@ -330,16 +416,43 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
         )}
       </div>
 
-      <div className="checkout-body">
-        <MessageList
-          messages={checkout.messages}
-          empty="The Checkout holds no Messages."
-          quorum={checkout.queueType === 'quorum' && checkout.deliveryLimit !== null}
-          focused={focused}
-          onFocus={setFocused}
+      {comparing ? (
+        <ComparisonView
+          source="approval"
+          id={checkout.id}
+          handles={comparing}
+          rows={checkout.messages}
+          onClose={() => setComparing(null)}
         />
-        {detail && <MessageDetailView message={detail} />}
-      </div>
+      ) : (
+        <>
+          <p className="decision-bar">
+            <strong>{ticked.size} ticked</strong>
+            <button
+              disabled={ticked.size !== 2}
+              onClick={() => {
+                const [a, b] = checkout.messages.filter((m) => ticked.has(m.handle)).map((m) => m.handle);
+                if (a !== undefined && b !== undefined) setComparing([a, b]);
+              }}
+              title="Tick two Messages to see them side by side, with what differs highlighted"
+            >
+              Compare
+            </button>
+          </p>
+          <div className="checkout-body">
+            <MessageList
+              messages={checkout.messages}
+              empty="The Checkout holds no Messages."
+              quorum={checkout.queueType === 'quorum' && checkout.deliveryLimit !== null}
+              focused={focused}
+              onFocus={setFocused}
+              selection={ticked}
+              onSelection={setTicked}
+            />
+            {detail && <MessageDetailView message={detail} />}
+          </div>
+        </>
+      )}
     </section>
   );
 }

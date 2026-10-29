@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: v0.3.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.3: team safety (Roles per Broker Profile, four-eyes Approval on Protected Profiles, and connecting with the Operator's own OAuth 2.0 token), Died Again detection, NDJSON export, more dead-letter set-up checks and keyboard navigation. Upgrading from 0.2: Protected Profiles in Team Mode now require Approval by default (see the [changelog](CHANGELOG.md)). Replay at scale is next; see the [roadmap](ROADMAP.md).
+> **Status: v0.4.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, Roles and four-eyes Approval, Died Again detection, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.4: Replay at scale (Throttled Replay, Canary Replay, stopping an Apply part way, and Replay rules that Replay on their own with back-off and an automatic stop), comparing two Messages side by side, and the Failure Details of Spring AMQP and MassTransit. Upgrading from 0.3: Apply now runs in the background, and the Apply API answers `202` without the outcomes (see the [changelog](CHANGELOG.md)). Observability is next; see the [roadmap](ROADMAP.md).
 
 ## Why
 
@@ -15,9 +15,13 @@ Peeking is not free either. Every peek requeues the Message, and on quorum queue
 ## How it works
 
 1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue. The held Messages can be exported as lossless NDJSON ([Exporting Messages](#exporting-messages)).
-2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. A Message that Volverán sent out before and that was dead-lettered again is flagged **Died Again**, with how many times and a link to the Audit Entry of its last trip, so you don't Replay the same poison Message over and over. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
-3. **Apply.** Every Decision is carried out in one step. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message. On a Protected Profile in Team Mode, an Apply that changes where Messages end up first waits for a second Operator's **Approval**.
+2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. Pick two Messages to compare them side by side, with their differences highlighted. A Message that Volverán sent out before and that was dead-lettered again is flagged **Died Again**, with how many times and a link to the Audit Entry of its last trip, so you don't Replay the same poison Message over and over. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
+3. **Apply.** Every Decision is carried out in one step, in the background: the Checkout shows the progress, and you can stop part way, after which the rest goes back to the queue. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message. A **Replay Rate** spares a consumer that has just recovered a burst, and a **Canary** Replays one Message first and waits while you see whether it is dead-lettered again ([Replaying many Messages](#replaying-many-messages)). On a Protected Profile in Team Mode, an Apply that changes where Messages end up first waits for a second Operator's **Approval**.
 4. **Audit and Restore.** Every action is recorded with who did it (and who approved it). Discarded Messages are kept so they can be Restored.
+
+**Replay rules** take the routine cases off your hands: declared per Broker Profile in the profiles file, a rule Replays the matching Messages of one dead-letter queue on a schedule, with a back-off between attempts and an attempt limit, and pauses itself when its Replays keep dying again ([Replay rules guide](docs/replay-rules.md)).
+
+Messages that Spring AMQP or MassTransit gave up on carry no `x-death`; Volverán reads the **Failure Details** these frameworks write into the headers instead (the exception, the stack trace, the original queue), shows and filters on them, and Replays MassTransit Messages to their input queue ([Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md)).
 
 The queue list also checks each queue's dead-letter set-up and warns about the ways the broker silently loses Messages: a dead-letter exchange that is missing or routes nowhere, a dead-letter queue whose TTL, length limit or expiry drops Messages, a quorum queue past its delivery limit with nowhere to dead-letter, and a quorum queue that dead-letters at-most-once.
 
@@ -29,7 +33,7 @@ There are two modes. **Solo Mode** runs on your laptop with no sign-in and liste
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.3.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.4.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
 
 ### Solo Mode
 
@@ -45,7 +49,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.3.0
+  ghcr.io/volveran/volveran:0.4.0
 ```
 
 4. Open <http://127.0.0.1:8080>.
@@ -75,7 +79,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.3.0
+  ghcr.io/volveran/volveran:0.4.0
 ```
 
 | Variable | Default | Meaning |
@@ -103,7 +107,7 @@ kubectl -n volveran create secret generic volveran-oidc \
   --from-literal=session-secret="$(openssl rand -base64 48)"
 kubectl -n volveran create secret generic volveran-broker-passwords \
   --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.3.0 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.4.0 \
   --namespace volveran -f values.yaml
 ```
 
@@ -132,7 +136,17 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_MAX_BYTES` | `1GiB` | most bytes of Discarded bodies kept in total, in bytes or with `KiB`, `MiB`, `GiB`, `TiB`; beyond it the oldest bodies are evicted first. The Audit view warns at 90 % |
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 
-A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)).
+A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
+
+### Replaying many Messages
+
+After an incident a dead-letter queue can hold hundreds of Messages, and the consumer they go back to has often only just recovered. Volverán has three ways to send them back without knocking it over again, each configured per Broker Profile (see `profiles.example.yaml`). Durations in the profiles file are a whole number and a unit: `30s`, `5m`, `1h30m`, `7d`.
+
+**Throttled Replay.** A Broker Profile may set a **Replay Rate** (`replayRate: { default, max }`, in Messages per second): an Apply then starts its Replay and Move steps at least 1/rate apart, so the consumer gets a steady trickle instead of a burst. Discards are not slowed down. The Operator can pick another rate in the Apply confirmation, up to `max`, and sees how long the Apply will take; an Apply that would outlast the Checkout's time left is refused before it starts. While it runs, the Checkout shows the Messages done, failed and still to go, and the owner (or the approver of an approved Apply) can stop it: the step in progress finishes, and every Message not yet attempted goes back to the queue in its original order.
+
+**Canary Replay.** An Apply can start with a **Canary**: one Replay carried out alone (the first Replay, or a Message the Operator picks), while every other Message stays held. Volverán then watches for the **Watch Window** (`canary: { watchWindow }`, from `5s` to `10m`, default `30s`) whether that Message is dead-lettered again, shows the outcome (died again with the new reason, not dead-lettered here within the Watch Window, or watch cut short when the Operator continues or stops before the window ends), and waits for the Operator to continue with the rest or stop, which returns the rest to the queue. The Checkout's time limit and heartbeat keep running while it waits. The watch reads nothing from the dead-letter queue: it binds a queue of its own to the dead-letter exchange, so it only sees a Message dead-lettered back through that exchange (direct, fanout or topic), or, for a MassTransit Message, through the `_error` exchange MassTransit publishes faults to ([Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md#replay-and-move)). With a headers exchange, no dead-letter exchange, or a refused permission, the Canary is unwatched, and the Apply confirmation says so beforehand. A Broker Profile can require a Canary for every Apply with more than a set number of Replays (`canary: { requiredAbove: N }`). On a Protected Profile in Team Mode, the Canary is part of the request for Approval: the approver sees it, approving runs it, and then either the requester or the approver continues or stops, with no second Approval.
+
+**Replay rules.** A Broker Profile may declare **Replay rules** (`replayRules`, [ADR 0011](docs/adr/0011-replay-rules-declared-in-the-profiles-file.md)): for one dead-letter queue, which Messages to Replay (any filter kind), how often to look, a back-off between attempts, an attempt limit counted from Died Again, what happens to the Messages that use it up (Keep, or Move to a parking queue), and a required automatic stop (`stopWhen`). Because rules live in the profiles file, a change to one goes through the same review as any other configuration change. Startup refuses an invalid rule with a message naming the profile, the rule and the key, and any rule on a profile with `credentials: operatorToken`. Each **Rule Pass** takes an ordinary Checkout as `Replay rule <name>` (skipped while someone holds the queue), Replays the matching Messages that are due at the rule's rate, Keeps the rest in order and ends; its Replays are Audit Entries naming the rule (search them with `rule=`). A rule pauses itself when too many of its Replays die again, when its queue is gone, or when the broker refuses its permissions or publishes. An `operator` can pause it with a reason (`POST /api/profiles/:profile/replay-rules/:name/pause`); only an `admin` resumes it (`…/resume`) or runs a pass now (`…/run`). Every pause and resume is an Audit Entry (`rule_pause`, `rule_resume`), and a pause survives restarts. The Replay rules view lists each profile's rules with their state, next pass and last passes. The [Replay rules guide](docs/replay-rules.md) has worked examples.
 
 ### Exporting Messages
 
@@ -154,6 +168,7 @@ Each line is one JSON object per Message, in queue order:
 | `deliveryBudget` | `{ remaining, warning }` on a quorum queue with a delivery limit, otherwise `null`. |
 | `decision` | The Message's Decision when exported: `{ "kind": "keep" }`, `{ "kind": "discard", "reason": ... }`, `{ "kind": "replay" }` or `{ "kind": "move", "destination": { "queue": ... } \| { "exchange": ..., "routingKey": ... } }`. |
 | `diedAgain` | `{ "replayId": ... }` when the Message carries a Volverán replay id (`x-volveran-replay-id`), otherwise `null`. |
+| `failureDetails` | The Failure Details Spring AMQP or MassTransit wrote into the headers, decoded, otherwise `null` ([Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md)). Added in 0.4 with `v` still `1`. |
 
 `properties` and `headers` use the same lossless AMQP JSON as Audit Entries, so they hold the Message byte for byte: a byte array is `{ "$bytes": "<base64>" }`, a 64-bit integer `{ "$bigint": "<decimal>" }`, and a table with a key starting with `$` is wrapped as `{ "$table": { ... } }`. Typed values such as decimals stay as amqplib decodes them (`{ "!": "decimal", "value": { "places": 2, "digits": 1234 } }`). For example, `jq -r 'select(.bodyKind == "json") | .body | @base64d' export.ndjson` prints the JSON bodies.
 
@@ -162,6 +177,8 @@ Each line is one JSON object per Message, in queue order:
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
 - [Architecture decisions](docs/adr/).
 - [Roadmap](ROADMAP.md).
+- [Replay rules](docs/replay-rules.md): how a rule decides what to Replay and stops itself, with worked examples.
+- [Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md): what Volverán reads from the failure headers these frameworks write, and how their Messages are Replayed.
 - [How Volverán compares](docs/comparison.md) with Warren, RabbitGUI and RabbitScout.
 
 ## Development
@@ -218,7 +235,7 @@ The test helpers find the running broker of the checkout on their own. Environme
 | `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
 | `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against (both brokers) |
 
-**kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard, with the chart's NetworkPolicy on (kindnet enforces it, so the pod becoming ready shows the probes get through). `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).
+**kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard, with the chart's NetworkPolicy on (kindnet enforces it, so the pod becoming ready shows the probes get through). `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), checks that the paused Replay rule in the values loaded, Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod and keeps the rule paused. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).
 
 ## License
 

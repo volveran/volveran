@@ -16,6 +16,8 @@ export type CheckoutErrorCode =
   | 'not_checkout_owner'
   | 'checkout_not_active'
   | 'apply_in_progress'
+  | 'apply_not_running'
+  | 'apply_not_waiting'
   | 'message_not_found'
   | 'decision_not_allowed'
   | 'checkout_failed'
@@ -23,7 +25,8 @@ export type CheckoutErrorCode =
   | 'approval_not_required'
   | 'awaiting_approval'
   | 'not_awaiting_approval'
-  | 'cannot_approve_own_apply';
+  | 'cannot_approve_own_apply'
+  | 'apply_would_outlast_checkout';
 
 const STATUS: Record<CheckoutErrorCode, number> = {
   queue_not_found: 404,
@@ -36,6 +39,8 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   not_checkout_owner: 403,
   checkout_not_active: 409,
   apply_in_progress: 409,
+  apply_not_running: 409,
+  apply_not_waiting: 409,
   message_not_found: 404,
   decision_not_allowed: 422,
   checkout_failed: 502,
@@ -44,6 +49,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   awaiting_approval: 409,
   not_awaiting_approval: 409,
   cannot_approve_own_apply: 403,
+  apply_would_outlast_checkout: 409,
 };
 
 export class CheckoutError extends HttpError<CheckoutErrorCode> {
@@ -126,6 +132,28 @@ export function applyInProgress({ id }: { id: string }): CheckoutError {
   return new CheckoutError('apply_in_progress', `Checkout ${id} is being Applied. Wait for that Apply to finish.`);
 }
 
+/**
+ * No Apply is running on the Checkout that a stop could still affect: none
+ * started, it has attempted its last step, or it is already stopping
+ * (`why`, e.g. "the time limit stopped it").
+ */
+export function applyNotRunning({ id }: { id: string }, why: string): CheckoutError {
+  return new CheckoutError('apply_not_running', `No Apply of Checkout ${id} can be stopped: ${why}.`);
+}
+
+/** Continue, but the Apply is not waiting after a Canary. */
+export function applyNotWaiting({ id }: { id: string }, why: string): CheckoutError {
+  return new CheckoutError('apply_not_waiting', `The Apply of Checkout ${id} cannot continue: ${why}.`);
+}
+
+/** Someone other than the approver of an approved Apply asks to stop it. */
+export function notApplyApprover(id: string): CheckoutError {
+  return new CheckoutError(
+    'not_checkout_owner',
+    `The Apply of Checkout ${id} was not approved by you. Only the Checkout's owner and the approver of its Apply can stop it.`,
+  );
+}
+
 /** Team Mode, a Protected Profile requiring Approval: the requester asks for it instead of Applying. */
 export function approvalRequired({ id, profile, queue }: Queue & { id: string; profile: { name: string } }): CheckoutError {
   return new CheckoutError(
@@ -203,6 +231,20 @@ function endedBecause(reason: EndReason | null, requester: string): string {
     case null:
       return 'the Checkout is over';
   }
+}
+
+/** At its Replay Rate the Apply would need more than the Checkout's time left (less a margin). */
+export function applyWouldOutlastCheckout(
+  { vhost, queue }: Queue,
+  { neededMs, remainingMs }: { neededMs: number; remainingMs: number },
+): CheckoutError {
+  const seconds = (ms: number) => `${Math.ceil(ms / 1000)} s`;
+  return new CheckoutError(
+    'apply_would_outlast_checkout',
+    `At its Replay Rate this Apply needs about ${seconds(neededMs)}, but the Checkout of "${queue}" in vhost "${vhost}" has ${seconds(remainingMs)} left, ` +
+      'so it would stop part way. Choose a higher rate, or Replay fewer Messages in this Checkout.',
+    { neededMs, remainingMs },
+  );
 }
 
 export function cannotApproveOwnApply({ id }: { id: string }): CheckoutError {

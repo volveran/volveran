@@ -187,7 +187,38 @@ describe('messageSummary', () => {
       originalQueue: 'orders.work',
       size: 11,
       deliveryBudget: null,
+      failureDetails: null,
     });
+  });
+
+  it('falls back to the Failure Details for the reason and original queue when there is no x-death', () => {
+    const mt = {
+      'MT-Fault-ExceptionType': 'System.TimeoutException',
+      'MT-Fault-Message': 'The operation timed out',
+      'MT-Fault-InputAddress': 'rabbitmq://localhost/prod/submit-order',
+    };
+    const summary = messageSummary(1, delivery({ properties: { headers: mt } }), classic);
+    expect(summary).toMatchObject({ deadLetterReason: 'System.TimeoutException: The operation timed out', originalQueue: 'submit-order' });
+    expect(summary.failureDetails).toMatchObject({ framework: 'masstransit', inputQueue: 'submit-order' });
+
+    const spring = { 'x-exception-message': 'Listener threw exception', 'x-original-exchange': 'orders' };
+    expect(messageSummary(1, delivery({ properties: { headers: spring } }), classic)).toMatchObject({
+      deadLetterReason: 'Listener threw exception',
+      originalQueue: null,
+    });
+    const typeOnly = { 'MT-Fault-ExceptionType': 'System.TimeoutException' };
+    expect(messageSummary(1, delivery({ properties: { headers: typeOnly } }), classic).deadLetterReason).toBe('System.TimeoutException');
+  });
+
+  it('prefers x-death over the Failure Details when both are present', () => {
+    const both = {
+      ...rejectedHeaders,
+      'MT-Fault-Message': 'boom',
+      'MT-Fault-InputAddress': 'rabbitmq://localhost/submit-order',
+    };
+    const summary = messageSummary(1, delivery({ properties: { headers: both } }), classic);
+    expect(summary).toMatchObject({ deadLetterReason: 'rejected', originalQueue: 'orders.work' });
+    expect(summary.failureDetails?.message).toBe('boom');
   });
 
   it('takes the original queue from the most recent x-death entry', () => {

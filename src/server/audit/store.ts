@@ -16,11 +16,12 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
-import type { AuditAction, AuditDestination, AuditOutcome } from '../../shared/audit.js';
+import { RuleStateStore } from './rule-state.js';
+import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { Role } from '../../shared/roles.js';
 
-export type { AuditAction, AuditDestination, AuditOutcome };
+export type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome };
 
 /**
  * A copy of a Message as amqplib decoded it. Discard keeps the body (so it can
@@ -67,13 +68,31 @@ export interface NewAuditEntry {
   filter?: Filter | null;
   /** An export: how many Messages it holds. */
   messageCount?: number | null;
+  /** An Apply: its Replay Rate in Messages per second; null (or left out) when there is none, and for the other actions. */
+  rate?: number | null;
+  /** A Rule Pass: the Replay Rule acting (its name; the Operator is the rule) and the pass; null (or left out) otherwise. */
+  rule?: string | null;
+  rulePassId?: string | null;
+  /** The Replay an Apply carried out alone as its Canary (its watch outcome is set later, setCanaryOutcome). */
+  canary?: boolean;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
 export interface AuditEntry
   extends Omit<
     NewAuditEntry,
-    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount'
+    | 'operator'
+    | 'role'
+    | 'approver'
+    | 'message'
+    | 'replayId'
+    | 'restoreOf'
+    | 'filter'
+    | 'messageCount'
+    | 'rate'
+    | 'rule'
+    | 'rulePassId'
+    | 'canary'
   > {
   id: number;
   /** The Operator's Role when they acted; null on entries written before v0.3. */
@@ -85,6 +104,15 @@ export interface AuditEntry
   restoreOf: number | null;
   filter: Filter | null;
   messageCount: number | null;
+  /** The Replay Rate of the Apply that wrote the entry; null when there is none (and on entries before v0.4). */
+  rate: number | null;
+  /** The Replay Rule whose pass wrote the entry (its name), and the pass's id; null for an Operator's actions (and before v0.4). */
+  rule: string | null;
+  rulePassId: string | null;
+  /** Whether the entry is an Apply's Canary (false before v0.4). */
+  canary: boolean;
+  /** The Canary's watch outcome; null for other entries, and while it is watched. */
+  canaryOutcome: AuditCanaryOutcome | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
   operatorId: string;
@@ -119,6 +147,8 @@ export interface AuditQuery {
   profiles?: ProfileScope;
   /** Restores of this Audit Entry. */
   restoreOf?: number;
+  /** The entries a Replay Rule of this name wrote (combine with `profile` for one profile's rule). */
+  rule?: string;
   /** Entries at or after this time. */
   from?: Date;
   /** Entries at or before this time. */
@@ -186,12 +216,63 @@ const MIGRATIONS: string[] = [
   // v6 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
   `ALTER TABLE audit_entries ADD COLUMN filter TEXT;
    ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
+  // v7 (#56): every entry an Apply writes records its Replay Rate (Messages per second; null when there is none).
+  `ALTER TABLE audit_entries ADD COLUMN rate REAL;`,
+  // v8 (#63): the Replay Rule (name) and Rule Pass that wrote the entry; null for an Operator's actions.
+  `ALTER TABLE audit_entries ADD COLUMN rule TEXT;
+   ALTER TABLE audit_entries ADD COLUMN rule_pass_id TEXT;
+   CREATE INDEX audit_entries_rule ON audit_entries (rule);`,
+  // v9 (#58): the Replay an Apply carried out alone as its Canary, and how its watch ended.
+  `ALTER TABLE audit_entries ADD COLUMN canary INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE audit_entries ADD COLUMN canary_outcome TEXT;`,
+  // v10 (#64): Replay Rule state (audit/rule-state.ts), by rule key `<profile>/<rule>`: the paused
+  // flag, a bounded history of passes, and when a pass first saw each message id (bounded).
+  `CREATE TABLE replay_rule_state (
+     rule_key TEXT PRIMARY KEY,
+     paused INTEGER NOT NULL,
+     paused_reason TEXT,
+     paused_by TEXT,
+     paused_at INTEGER
+   );
+   CREATE TABLE replay_rule_passes (
+     id TEXT PRIMARY KEY,
+     rule_key TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     status TEXT NOT NULL,
+     reason TEXT,
+     held INTEGER,
+     replayed INTEGER,
+     moved INTEGER,
+     used_up INTEGER,
+     not_due INTEGER,
+     no_match INTEGER,
+     failed INTEGER
+   );
+   CREATE INDEX replay_rule_passes_rule ON replay_rule_passes (rule_key, at);
+   CREATE TABLE replay_rule_first_seen (
+     rule_key TEXT NOT NULL,
+     message_id TEXT NOT NULL,
+     first_seen_at INTEGER NOT NULL,
+     PRIMARY KEY (rule_key, message_id)
+   );
+   CREATE INDEX replay_rule_first_seen_at ON replay_rule_first_seen (rule_key, first_seen_at);`,
+  // v11 (#65): the Died Again Messages a pass saw whose last Audit Entry is the rule's (its automatic stop), by
+  // entry; and a pass's count of due Messages it could not Replay (no Replay origin).
+  `CREATE TABLE replay_rule_died_again (
+     rule_key TEXT NOT NULL,
+     audit_entry_id INTEGER NOT NULL,
+     seen_at INTEGER NOT NULL,
+     PRIMARY KEY (rule_key, audit_entry_id)
+   );
+   ALTER TABLE replay_rule_passes ADD COLUMN cannot_replay INTEGER;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
 
 export class AuditStore {
   private readonly db: DatabaseSync;
+  /** The state of the Replay Rules, in the same database. */
+  readonly ruleState: RuleStateStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -202,6 +283,7 @@ export class AuditStore {
     this.db = new DatabaseSync(dataDir ? path.join(dataDir, AUDIT_DB_FILE) : ':memory:');
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     this.migrate();
+    this.ruleState = new RuleStateStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
@@ -215,8 +297,8 @@ export class AuditStore {
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
              outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
              approver_id, approver_name,
-             filter, message_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             filter, message_count, rate, rule, rule_pass_id, canary)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -243,6 +325,10 @@ export class AuditStore {
           entry.approver?.displayName ?? null,
           entry.filter ? JSON.stringify(entry.filter) : null,
           entry.messageCount ?? null,
+          entry.rate ?? null,
+          entry.rule ?? null,
+          entry.rulePassId ?? null,
+          entry.canary ? 1 : 0,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -258,6 +344,11 @@ export class AuditStore {
 
   setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): void {
     this.db.prepare('UPDATE audit_entries SET outcome = ?, outcome_reason = ? WHERE id = ?').run(outcome, reason, id);
+  }
+
+  /** Records how the watch of a Canary's entry ended. */
+  setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): void {
+    this.db.prepare('UPDATE audit_entries SET canary_outcome = ? WHERE id = ?').run(outcome, id);
   }
 
   /** The entries matching `query` (every entry by default), newest first. */
@@ -282,6 +373,7 @@ export class AuditStore {
     }
     if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
     if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
+    if (query.rule !== undefined) match('rule = ?', query.rule);
     if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
     if (query.to !== undefined) match('created_at <= ?', query.to.getTime());
     let sql = 'SELECT * FROM audit_entries';
@@ -405,6 +497,11 @@ interface Row {
   approver_name: string | null;
   filter: string | null;
   message_count: number | null;
+  rate: number | null;
+  rule: string | null;
+  rule_pass_id: string | null;
+  canary: number;
+  canary_outcome: AuditCanaryOutcome | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -439,6 +536,11 @@ function toEntry(row: Row): AuditEntry {
     bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
     filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
     messageCount: row.message_count,
+    rate: row.rate,
+    rule: row.rule,
+    rulePassId: row.rule_pass_id,
+    canary: row.canary === 1,
+    canaryOutcome: row.canary_outcome,
     message:
       row.message_properties === null
         ? null

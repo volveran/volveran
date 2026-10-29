@@ -1,6 +1,34 @@
 // The Apply route: carries out a Checkout's Decisions (ADR 0001).
 //
-//   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName? }  → { checkout, outcomes: MessageOutcome[] }
+//   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName?, rate?, canary? }  → 202 { checkout }
+//   POST /api/checkouts/:id/apply/stop                                                   → { checkout }
+//   POST /api/checkouts/:id/apply/continue                                               → { checkout }
+//
+// `rate` is the Replay Rate in Messages per second (0.1 to 1,000): Replay and
+// Move steps start at least 1/rate apart. Left out, the Broker Profile's
+// `replayRate.default` applies, else the Apply runs with no Replay Rate. 400
+// `invalid_request` for another value, 400 `rate_above_maximum` { max } above
+// the profile's `replayRate.max` (or with no rate when it has a maximum but
+// no default and the Apply has a Replay or Move step), 409 `apply_would_outlast_checkout` { neededMs, remainingMs }
+// when at that rate it would outlast the Checkout's time left (less a margin).
+//
+// `canary` starts the Apply with a Canary: `true` for the first Message with
+// the Decision Replay in Checkout order, `{ handle }` for that Message (it
+// must have the Decision Replay; 400 `invalid_request` otherwise). 400
+// `canary_needs_replay` when no Message has the Decision Replay. 400
+// `canary_required` { requiredAbove } when the Apply has more Replays than the
+// Broker Profile's `canary.requiredAbove` and no Canary. The Canary is
+// Replayed alone and watched for the Broker Profile's Watch Window
+// (`applyProgress.phase` canary_watch, then canary_done; its outcome is the
+// Checkout's `canary`), then the Apply waits. Continue carries out the rest
+// at the Apply's rate, also before the window ends; Stop returns the rest to
+// the queue. Continue answers 409 `apply_not_waiting` unless the Apply waits
+// after a Canary.
+//
+// The Apply runs in the background (ADR 0009): the answer comes at once,
+// with the Checkout `applying`. Its view shows the Apply's progress
+// (`applyProgress`), then the outcome for each Message (`lastApply`) once
+// the Checkout has ended. Every refusal below answers before anything starts.
 //
 // On a Protected Profile, an Apply with any Decision other than Keep also needs
 // `confirmQueueName` (400 `queue_name_confirmation_required`, protected-profile.ts).
@@ -12,11 +40,18 @@
 // `requireApproval`, any Decision other than Keep) it answers 409
 // `approval_required`, and `awaiting_approval` once requested: the owner
 // requests Approval instead (routes/approvals.ts).
-// A dropped connection mid-Apply is not an error: the response lists what was
+// Stop asks the running Apply to attempt no further step: the step in
+// progress finishes, the rest is reported `not-attempted` ("stopped by
+// <name>") and goes back to the queue in order when the Checkout ends.
+// `applyProgress.stoppedBy` names who stopped it. 409 `apply_not_running`
+// when there is nothing to stop. The approver of an approved Apply stops it
+// under /api/approvals/ (routes/approvals.ts).
+// A dropped connection mid-Apply is not an error: the outcomes list what was
 // done and what went back to the queue, and the Checkout is `lost`.
 import type { FastifyInstance } from 'fastify';
 import { ApplyError } from '../apply/errors.js';
 import type { CheckoutView } from '../checkout/view.js';
+import { operatorOf } from '../operator.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 
@@ -25,6 +60,10 @@ export interface ApplyRequestBody {
   confirm?: unknown;
   /** #9: on a Protected Profile, the queue name as the Operator typed it. */
   confirmQueueName?: unknown;
+  /** The Replay Rate in Messages per second; left out, the Broker Profile's default, else no Replay Rate. */
+  rate?: unknown;
+  /** Start with a Canary: true (the first Replay) or { handle }. */
+  canary?: unknown;
 }
 
 /**
@@ -47,11 +86,21 @@ export function checkApplyConfirmation(checkout: CheckoutView, body: ApplyReques
 
 export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts } = deps;
-  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', async (req) => {
+  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', async (req, reply) => {
     const { role } = checkoutAccess(deps, req, 'checkout');
     // 404 for an unknown Checkout before asking for confirmation. Nothing
     // awaits between this check and apply() reading the Decisions.
     checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-    return checkouts.apply(req.params.id, role);
+    return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role, req.body?.rate, req.body?.canary) });
+  });
+
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', async (req) => {
+    checkoutAccess(deps, req, 'checkout');
+    return { checkout: checkouts.stopApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/continue', async (req) => {
+    checkoutAccess(deps, req, 'checkout');
+    return { checkout: checkouts.continueApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 }

@@ -4,10 +4,13 @@
 // leaving the page ends it too (a beacon), so nothing stays held by accident.
 // While the page shows the Checkout it sends heartbeats (without them the
 // server ends it), and it counts down to the Checkout's time limit. Apply
-// carries out the Decisions and ends the Checkout; the page then shows what
-// happened to each Message. The keyboard moves through the Messages (the
+// carries out the Decisions in the background and ends the Checkout: while
+// it runs the page polls the Checkout and shows its progress (with Stop,
+// after a confirmation), then what happened to each Message. The keyboard moves through the Messages (the
 // Message view follows), builds the Selection and assigns Decisions; the
-// keys are mapped to commands in keyboard-commands.ts.
+// keys are mapped to commands in keyboard-commands.ts. With exactly two
+// Messages selected, Compare (or `c`) shows them side by side in place of the
+// list, with Decision buttons for each.
 //
 // When the Apply needs Approval (Team Mode, a Protected Profile), the Apply
 // confirmation requests it instead; the Checkout then waits, its Decisions
@@ -19,6 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 import { approvalLink } from '../shared/approval-link.js';
 import { heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
+import { rateText } from '../shared/replay-rate.js';
 import { returnOrder } from '../shared/return-order.js';
 import {
   api,
@@ -27,10 +31,15 @@ import {
   type Decision,
   type FilterClause,
   type MessageDetail,
+  type MoveDestination,
   type MoveDestinations,
+  type CanaryChoice,
 } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
+import { ApplyProgressPanel } from './ApplyProgress.js';
+import { CanaryPanel, requestedCanaryText } from './CanaryPanel.js';
+import { ComparisonView } from './ComparisonView.js';
 import { formatCountdown } from './countdown.js';
 import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
 import { FilterBar } from './FilterBar.js';
@@ -66,6 +75,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   /** The Move destination picker's choices; a string says why they could not be loaded. */
   const [destinations, setDestinations] = useState<MoveDestinations | string>();
   const [prompt, setPrompt] = useState<OpenPrompt | null>(null);
+  /** The two Messages being compared, in Checkout order; null when the list shows. */
+  const [comparing, setComparing] = useState<readonly [number, number] | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const profile = checkout?.profile;
@@ -95,6 +106,22 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       everyMs: (c) => Math.max(1_000, Math.min(5_000, c.heartbeatWindowMs / 4)),
     },
     [id],
+  );
+
+  // While the Apply runs (a Lost Checkout's included, until its outcomes arrive), follow its progress.
+  const applying = checkout?.status === 'applying' || (checkout?.applyProgress != null && checkout.lastApply === null);
+  usePolling(
+    {
+      load: () => api.checkout(id),
+      received: (c: Checkout) => {
+        setCheckout(c);
+        setReceivedAt(Date.now());
+      },
+      failed: setError,
+      everyMs: APPLY_POLL_MS,
+      enabled: applying,
+    },
+    [id, applying],
   );
 
   useEffect(() => {
@@ -179,12 +206,11 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     }
   };
 
-  const apply = async (confirmQueueName?: string) => {
+  const apply = async (confirmQueueName?: string, rate?: number, canary?: CanaryChoice) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      const res = await api.apply(id, confirmQueueName);
-      setCheckout(res.checkout);
+      setCheckout(await api.apply(id, confirmQueueName, rate, canary));
       setReceivedAt(Date.now());
       setSelection(new Set());
       setError(undefined);
@@ -195,12 +221,34 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     }
   };
 
+  /** Stops the running Apply, after its confirmation. */
+  const stopApply = async () => {
+    try {
+      setCheckout(await api.stopApply(id));
+      setReceivedAt(Date.now());
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
+
+  /** Lets the Apply waiting after its Canary carry out the rest. */
+  const continueApply = async () => {
+    try {
+      setCheckout(await api.continueApply(id));
+      setReceivedAt(Date.now());
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
+
   /** Asks another Operator to approve the Apply, after the same confirmation as an Apply. */
-  const requestApproval = async (confirmQueueName?: string) => {
+  const requestApproval = async (confirmQueueName?: string, rate?: number, canary?: CanaryChoice) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      setCheckout(await api.requestApproval(id, confirmQueueName));
+      setCheckout(await api.requestApproval(id, confirmQueueName, rate, canary));
       setReceivedAt(Date.now());
       setError(undefined);
     } catch (err) {
@@ -225,10 +273,16 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
 
   const active = checkout?.status === 'active';
   const awaiting = checkout?.status === 'awaiting_approval';
-  /** Still holding its Messages: active, or waiting for Approval. */
-  const live = active || awaiting;
+  /** Still holding its Messages: active, waiting for Approval, or Applying. */
+  const live = active || awaiting || checkout?.status === 'applying';
   /** The Messages the list shows: all of them, or those matching the filter. */
   const shown = checkout ? (matched ? checkout.messages.filter((m) => matched.has(m.handle)) : checkout.messages) : [];
+
+  /** Compares the two selected Messages. */
+  const compare = () => {
+    const pair = (checkout?.messages ?? []).filter((m) => selection.has(m.handle)).map((m) => m.handle);
+    if (pair.length === 2) setComparing([pair[0]!, pair[1]!]);
+  };
 
   const run = (command: KeyboardCommand) => {
     switch (command.kind) {
@@ -261,7 +315,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       case 'clear-selection':
         return setSelection(new Set());
       case 'close-prompt':
-        return setPrompt(null);
+        return prompt ? setPrompt(null) : setComparing(null);
+      case 'compare':
+        return compare();
       case 'show-shortcuts':
         return setPrompt({ kind: 'shortcuts' });
       case 'start-checkout':
@@ -272,7 +328,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     active && !hidden,
     {
       view: 'checkout',
-      prompt: prompt !== null,
+      // The comparison takes the keys like a prompt: Escape closes it.
+      prompt: prompt !== null || comparing !== null,
       selection: selection.size,
       // A Message the filter hides is not focused.
       focusedItem: shown.some((m) => m.handle === focused),
@@ -313,7 +370,15 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
           )}
         </div>
         {live ? (
-          <button onClick={end} disabled={ending} title={`Every held Message goes back to the queue ${returnOrder(checkout.queueType)}`}>
+          <button
+            onClick={end}
+            disabled={ending || applying}
+            title={
+              applying
+                ? 'The Apply ends the Checkout once it has run'
+                : `Every held Message goes back to the queue ${returnOrder(checkout.queueType)}`
+            }
+          >
             End Checkout
           </button>
         ) : (
@@ -334,6 +399,18 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       )}
       {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}
       {error && <ErrorBox error={error} />}
+      {checkout.canary && (
+        <CanaryPanel
+          canary={checkout.canary}
+          progress={applying ? checkout.applyProgress : null}
+          now={now}
+          onContinue={continueApply}
+          onStop={stopApply}
+        />
+      )}
+      {applying && checkout.applyProgress && (
+        <ApplyProgressPanel progress={checkout.applyProgress} now={now} onStop={stopApply} />
+      )}
       {checkout.lastApply && <ApplyOutcomes outcomes={checkout.lastApply.outcomes} approvedBy={checkout.lastApply.approvedBy} />}
 
       {awaiting && checkout.approvalRequest && (
@@ -342,7 +419,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
           <p>
             Requested at {new Date(checkout.approvalRequest.requestedAt).toLocaleTimeString()}: another Operator with the
             role <code>operator</code> or <code>admin</code> on {checkout.profile} must approve this Apply (
-            {checkout.decisionSummaryText}). They find it under Approvals. Your Decisions cannot change until then.
+            {checkout.decisionSummaryText}, {rateText(checkout.approvalRequest.rate)}
+            {checkout.approvalRequest.canary && `; ${requestedCanaryText(checkout.approvalRequest.canary)}`}). They find it
+            under Approvals. Your Decisions, the rate and the Canary cannot change until then.
           </p>
           <p>
             <strong>{formatCountdown(checkout.remainingMs - (now - receivedAt))} left</strong> before the Checkout reaches
@@ -376,6 +455,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             queueType={checkout.queueType}
             typeQueueName={checkout.applyConfirmation.typeQueueName}
             approvalRequired={checkout.applyConfirmation.approvalRequired}
+            replayRate={checkout.applyConfirmation.replayRate}
+            canary={checkout.applyConfirmation.canary}
+            messageLabel={(handle) => checkout.messages.find((m) => m.handle === handle)?.messageId ?? `Message ${handle}`}
             summary={checkout.decisionSummary}
             summaryText={checkout.decisionSummaryText}
             busy={busy}
@@ -390,6 +472,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             onPrompt={(kind) => setPrompt({ kind, handles: [...selection] })}
             onDecide={(decision) => void decide(decision)}
             onClearSelection={() => setSelection(new Set())}
+            onCompare={compare}
           />
           {(prompt?.kind === 'discard' || prompt?.kind === 'move') && (
             <DecisionPrompt
@@ -397,6 +480,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
               count={prompt.handles.length}
               sourceQueue={checkout.queue}
               destinations={destinations}
+              suggestedMove={sharedSuggestedMove(checkout.messages, prompt.handles)}
               busy={busy}
               onDecide={(decision) => void decide(decision, prompt.handles)}
               onClose={() => setPrompt(null)}
@@ -448,7 +532,25 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
         </p>
       )}
 
-      {live && (
+      {live && comparing && (
+        <ComparisonView
+          source="checkout"
+          id={checkout.id}
+          handles={comparing}
+          rows={checkout.messages}
+          actions={
+            active
+              ? {
+                  busy,
+                  onPrompt: (kind, handle) => setPrompt({ kind, handles: [handle] }),
+                  onDecide: (decision, handle) => void decide(decision, [handle]),
+                }
+              : undefined
+          }
+          onClose={() => setComparing(null)}
+        />
+      )}
+      {live && !comparing && (
         <div className="checkout-body">
           <MessageList
             listRef={listRef}
@@ -495,10 +597,16 @@ function CopyableLink({ label, url }: { label: string; url: string }) {
   );
 }
 
+/** How often the page reads the Checkout while its Apply runs. */
+const APPLY_POLL_MS = 1_000;
+
 function endedLine(c: Checkout): string {
   const back = `its Messages are back in the queue ${returnOrder(c.queueType)}.`;
   switch (c.endReason) {
     case 'time-limit':
+      if (c.lastApply) {
+        return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes during the Apply, which stopped before its next step; the Messages not done are back in the queue ${returnOrder(c.queueType)}.`;
+      }
       return `This Checkout reached its time limit of ${Math.round(c.timeLimitMs / 60_000)} minutes and ended; ${back}`;
     case 'no-heartbeat':
       return `This Checkout ended because this page stopped sending heartbeats; ${back}`;
@@ -513,4 +621,17 @@ function endedLine(c: Checkout): string {
 
 function replayWarning(diedAgain: number): string {
   return `${diedAgain} of these Messages already died again after being sent back: their consumer failed on them before. Replay them only once the cause is fixed.`;
+}
+
+/** The Move every one of `handles` suggests (where Spring AMQP first published it), when they all suggest the same one. */
+function sharedSuggestedMove(messages: Checkout['messages'], handles: number[]): MoveDestination | null {
+  let shared: MoveDestination | null = null;
+  for (const handle of handles) {
+    const replay = messages.find((m) => m.handle === handle)?.replay;
+    const suggested = replay && !replay.available ? replay.suggestedMove : undefined;
+    if (!suggested) return null;
+    if (shared && JSON.stringify(shared) !== JSON.stringify(suggested)) return null;
+    shared = suggested;
+  }
+  return shared;
 }

@@ -615,6 +615,40 @@
           "description": "Only with protected: true (Volverán refuses it otherwise). Default true: an Apply waits for a second Operator's Approval.",
           "type": "boolean"
         },
+        "replayRate": {
+          "description": "The Replay Rate in Messages per second (0.1 to 1000): default, the rate an Apply runs at when the Operator gives none; max, the most an Operator may choose. Volverán refuses default above max.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "default": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 1000
+            },
+            "max": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 1000
+            }
+          }
+        },
+        "canary": {
+          "description": "Canary Replay: watchWindow, how long a Canary is watched for dying again, a duration from 5s to 10m (default 30s); Volverán checks the range at startup. requiredAbove: an Apply with more Replays than this must start with a Canary (default: never required).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "watchWindow": {
+              "type": "string",
+              "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+              "minLength": 2
+            },
+            "requiredAbove": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
         "roles": {
           "description": "Team Mode: the OIDC groups holding each Role on this profile. Without it, every signed-in Operator is admin.",
           "type": "object",
@@ -643,6 +677,148 @@
               "items": {
                 "type": "string",
                 "minLength": 1
+              }
+            }
+          }
+        },
+        "replayRules": {
+          "description": "Replay rules: which Messages of one dead-letter queue Volverán Replays automatically, how often and how many times. Not allowed with credentials: operatorToken. Durations are a whole number and a unit (d, h, m, s), e.g. 30s, 5m, 1h30m. Volverán checks the ranges at startup.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "vhost",
+              "queue",
+              "every",
+              "backoff",
+              "maxAttempts",
+              "stopWhen"
+            ],
+            "properties": {
+              "name": {
+                "description": "Unique within the profile.",
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "vhost": {
+                "type": "string",
+                "minLength": 1
+              },
+              "queue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "filter": {
+                "description": "One filter clause, or a list of them, as in the API (e.g. { kind: x-death-reason, value: rejected }). Left out, every Message.",
+                "type": [
+                  "object",
+                  "array"
+                ]
+              },
+              "every": {
+                "description": "How often a pass runs: 30s to 24h.",
+                "type": "string",
+                "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+                "minLength": 2
+              },
+              "maxPerPass": {
+                "description": "The most Messages one pass Replays (default 100, at most the Checkout Message limit).",
+                "type": "integer",
+                "minimum": 1
+              },
+              "rate": {
+                "description": "The rule's Replay Rate in Messages per second (default 10, at most the profile's replayRate.max).",
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 1000
+              },
+              "backoff": {
+                "description": "The delay before attempt n: initial × multiplier^n, at most max.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "initial",
+                  "max"
+                ],
+                "properties": {
+                  "initial": {
+                    "type": "string",
+                    "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+                    "minLength": 2
+                  },
+                  "multiplier": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "max": {
+                    "type": "string",
+                    "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+                    "minLength": 2
+                  }
+                }
+              },
+              "maxAttempts": {
+                "description": "The most attempts per Message, counted from its Died Again count.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "whenAttemptsUsedUp": {
+                "description": "keep (default), or { moveTo: { queue } } to a parking queue other than the rule's queue.",
+                "oneOf": [
+                  {
+                    "const": "keep"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "moveTo"
+                    ],
+                    "properties": {
+                      "moveTo": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "queue"
+                        ],
+                        "properties": {
+                          "queue": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "stopWhen": {
+                "description": "Required: the rule pauses itself once diedAgain of the Messages it Replayed die again within the window.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "diedAgain",
+                  "within"
+                ],
+                "properties": {
+                  "diedAgain": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "within": {
+                    "type": "string",
+                    "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+                    "minLength": 2
+                  }
+                }
+              },
+              "startPaused": {
+                "description": "Starts paused until an admin resumes it.",
+                "type": "boolean"
               }
             }
           }

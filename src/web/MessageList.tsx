@@ -1,11 +1,11 @@
 // The held Messages of a Checkout as a list (with the Selection, for the
 // owner) and the Message view of one of them. Shared by the owner's Checkout
 // view and the approver's read-only view of a waiting Checkout.
-import { useEffect, type Ref } from 'react';
+import { Fragment, useEffect, type Ref } from 'react';
 import { decisionLabel } from '../shared/decisions.js';
 import { formatBytes } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
-import type { DiedAgain, MessageDetail, MessageRow } from './api.js';
+import type { DiedAgain, FailureDetails, MessageDetail, MessageRow, RuleBadge } from './api.js';
 import { DecisionBadge } from './decisions.js';
 
 const optionId = (handle: number) => `message-${handle}`;
@@ -18,7 +18,9 @@ function messageLabel(m: MessageRow): string {
     `routing key ${m.routingKey}`,
     m.deadLetterReason && `dead-lettered: ${m.deadLetterReason}`,
     !m.replay.available && 'no Replay',
+    m.failureDetails?.reason === 'skip' && 'skipped',
     m.diedAgain && `Died Again ${timesText(m.diedAgain.count)}`,
+    m.rule && ruleText(m.rule),
   ]
     .filter(Boolean)
     .join(', ');
@@ -28,7 +30,7 @@ function messageLabel(m: MessageRow): string {
  * The held Messages as a listbox: the list keeps the DOM focus and the
  * focused Message is its active descendant; a Message in the Selection is
  * aria-selected. The table inside only lays the rows out. Without
- * `onSelection` (an approver's read-only view) there is no Selection.
+ * `onSelection` there is no Selection (an approver ticks Messages only to compare them).
  */
 export function MessageList(props: {
   listRef?: Ref<HTMLDivElement>;
@@ -124,6 +126,8 @@ export function MessageList(props: {
                     </span>
                   )}
                   {m.diedAgain && <DiedAgainBadge diedAgain={m.diedAgain} />}
+                  {m.failureDetails?.reason === 'skip' && <SkippedBadge />}
+                  {m.rule && <RuleBadgeView rule={m.rule} />}
                 </td>
                 <td className="name">{m.messageId ?? <em>none</em>}</td>
                 <td>{m.routingKey}</td>
@@ -145,6 +149,34 @@ export function MessageList(props: {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** "Replay rule transient-payments: attempt 1 of 3, next after 10/29/2026, 3:00 AM", or "…: attempts used up". */
+function ruleText(r: RuleBadge): string {
+  if (r.usedUp) return `Replay rule ${r.name}: attempts used up (${r.attempts} of ${r.maxAttempts})`;
+  const next = r.nextAttemptAt ? `, next after ${new Date(r.nextAttemptAt).toLocaleString()}` : '';
+  return `Replay rule ${r.name}: ${r.attempts} of ${r.maxAttempts} attempts used${next}`;
+}
+
+/** A running Replay Rule matches the Message: its attempts, or that it has given up on it. */
+function RuleBadgeView({ rule: r }: { rule: RuleBadge }) {
+  return (
+    <span className={`badge rule${r.usedUp ? ' used-up' : ''}`} title={ruleText(r)}>
+      {r.usedUp ? 'attempts used up' : `rule ${r.attempts}/${r.maxAttempts}`}
+    </span>
+  );
+}
+
+/** The Message view's account of the Replay Rule that matches the Message. */
+function RuleNote({ rule: r }: { rule: RuleBadge }) {
+  return (
+    <div className={r.usedUp ? 'warning rule-note' : 'notice rule-note'}>
+      <p>
+        <RuleBadgeView rule={r} /> {ruleText(r)}.
+        {r.usedUp && ' The rule has given up on this Message: it needs a person.'}
+      </p>
     </div>
   );
 }
@@ -201,11 +233,69 @@ function DiedAgainNote({ diedAgain: d }: { diedAgain: DiedAgain }) {
   );
 }
 
+function SkippedBadge() {
+  return (
+    <span className="badge skipped" title="MassTransit skipped this Message (MT-Reason: skip): no consumer handled its type.">
+      skipped
+    </span>
+  );
+}
+
+const FRAMEWORK_NAME: Record<FailureDetails['framework'], string> = { spring: 'Spring AMQP', masstransit: 'MassTransit' };
+
+/** The Message view's Failure Details: what Spring AMQP or MassTransit wrote, the stack trace collapsed. */
+function FailureDetailsSection({ details: f }: { details: FailureDetails }) {
+  const rows: Array<[string, string | number | null]> = [
+    ['Exception type', f.exceptionType],
+    ['Message', f.message],
+    ['Consumer type', f.consumerType],
+    ['Message type', f.messageType],
+    ['Failed at', f.failedAt && !Number.isNaN(Date.parse(f.failedAt)) ? new Date(f.failedAt).toLocaleString() : f.failedAt],
+    ['Retries', f.retryCount],
+    ['Redeliveries', f.redeliveryCount],
+    ['Input queue', f.inputQueue],
+    ['Original exchange', f.originalExchange === '' ? '(default)' : f.originalExchange],
+    ['Original routing key', f.originalRoutingKey],
+    ...Object.entries(f.host ?? {}).map(([name, value]): [string, string] => [`Host ${name}`, value]),
+    ...Object.entries(f.extra),
+  ];
+  return (
+    <section className="failure-details">
+      <h4>
+        Failure Details <small>({FRAMEWORK_NAME[f.framework]})</small>
+      </h4>
+      {f.reason === 'skip' && (
+        <p>
+          <span className="badge skipped">skipped</span> MassTransit skipped this Message: no consumer handled its type. It
+          is not a fault.
+        </p>
+      )}
+      <dl>
+        {rows
+          .filter(([, value]) => value !== null)
+          .map(([label, value]) => (
+            <Fragment key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </Fragment>
+          ))}
+      </dl>
+      {f.stackTrace !== null && (
+        <details>
+          <summary>Stack trace</summary>
+          <pre>{f.stackTrace}</pre>
+        </details>
+      )}
+    </section>
+  );
+}
+
 export function MessageDetailView({ message: m }: { message: MessageDetail }) {
   return (
     <div className="message-detail">
       <h3>{m.messageId ?? 'Message without message_id'}</h3>
       {m.diedAgain && <DiedAgainNote diedAgain={m.diedAgain} />}
+      {m.rule && <RuleNote rule={m.rule} />}
       {m.deliveryBudget?.warning && (
         <div className="warning">
           <p>{m.deliveryBudget.warning}</p>
@@ -227,6 +317,8 @@ export function MessageDetailView({ message: m }: { message: MessageDetail }) {
           </>
         )}
       </dl>
+
+      {m.failureDetails && <FailureDetailsSection details={m.failureDetails} />}
 
       <h4>Properties</h4>
       <pre>{JSON.stringify(m.properties, null, 2)}</pre>

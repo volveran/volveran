@@ -4,7 +4,10 @@ import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { CheckoutLimits, LimitedBy } from '../triage/checkout-collection.js';
 import type { CheckoutTiming } from '../triage/checkout-timing.js';
+import type { ApplyProgressTracker } from '../apply/progress.js';
 import type { ActionDecision } from '../triage/decisions.js';
+import type { CanaryWatchBindings } from '../triage/canary-watch.js';
+import type { CanaryState } from './canary.js';
 import type { CheckoutQueueType } from '../triage/queue-list.js';
 import type { Role } from '../../shared/roles.js';
 import type { AppliedResult, CheckoutStatus, DiedAgain, EndReason } from '../../shared/checkout.js';
@@ -22,6 +25,10 @@ export interface ApprovalRequest {
   requestedAt: Date;
   /** The requester's Role on the profile when they asked: the approved Apply records it. */
   role: Role;
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when there is none. */
+  rate: number | null;
+  /** The handle of the Canary the approved Apply starts with, frozen with the Decisions; null for none. */
+  canary: number | null;
 }
 
 /**
@@ -31,7 +38,8 @@ export interface ApprovalRequest {
  */
 export type ApprovalClosed =
   | { how: 'withdrawn' }
-  | { how: 'approved' | 'rejected'; by: string }
+  | { how: 'approved'; by: string; approverId: string }
+  | { how: 'rejected'; by: string }
   | { how: 'cancelled' };
 
 /** The last rejection of a request for Approval, kept until the next request. */
@@ -97,11 +105,43 @@ export interface Checkout extends QueueRef {
   /** Decisions other than Keep, by Message handle (staging.ts); a Message missing here is Keep. */
   decisions: Map<number, ActionDecision>;
   /**
-   * The Apply in progress, if any. Ending the Checkout (the Operator, its
-   * time limit, a missing heartbeat, shutdown) waits for it, so a Message
-   * whose step is done is never returned and a step is never cut short.
+   * The Apply running in the background, if any. Ending the Checkout (the
+   * Operator, shutdown) waits for it, so a Message whose step is done is never
+   * returned and a step is never cut short; the time limit asks it to stop
+   * before its next step.
    */
-  applying: Promise<unknown> | null;
+  applying: RunningApply | null;
+  /** The progress of the Checkout's Apply, from the moment it starts; kept once it has run. */
+  applyProgress: ApplyProgressTracker | null;
   /** The Apply's result, once it has run. */
   lastApply: AppliedResult | null;
+  /**
+   * How each held Message with a replay origin would be watched as the
+   * Canary, by handle: looked up when the Checkout starts, from the
+   * management API's topology. A Message missing here is unwatched.
+   */
+  canaryWatch: Map<number, CanaryWatchBindings>;
+  /** The Canary of the Apply, from the moment its Replay starts; null without one. */
+  canary: CanaryState | null;
+}
+
+/** An Apply running in the background on a Checkout (manager.ts). */
+export interface RunningApply {
+  /** Settles once the Apply has run and the Checkout has ended; never rejects. */
+  settled: Promise<void>;
+  /** Set to make the executor attempt no further step; null while it goes on. */
+  stop: ApplyStop | null;
+  /** Aborted together with setting `stop` (and when the Checkout is lost), so a wait for the next paced step, or after the Canary, ends at once. */
+  stopController: AbortController;
+  /** Set while the Apply waits after its Canary (canary_watch, canary_done): lets it go on with the rest (Continue). */
+  continueAfterCanary: (() => void) | null;
+}
+
+/** Why an Apply attempts no further step, and how the Checkout ends afterwards. */
+export interface ApplyStop {
+  /** The reason of every step left `not-attempted`. */
+  reason: string;
+  endReason: EndReason;
+  /** The Operator who stopped it (display name), for `applyProgress.stoppedBy`; null for the time limit. */
+  stoppedBy: string | null;
 }

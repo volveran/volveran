@@ -6,6 +6,10 @@
 // limits) and held unacknowledged in memory, keyed by delivery tag (the
 // Message handle).
 //
+// Once the Messages are held, where each would be watched as a Canary is
+// looked up from the management API (triage/canary-watch.ts), so the Apply
+// confirmation can say beforehand when a Canary would be unwatched.
+//
 // A closed channel or connection, or a consumer the broker cancels, is
 // reported through `onLost`: the broker has returned everything, at the cost
 // of one delivery on quorum queues.
@@ -15,7 +19,10 @@ import { permissionRefused } from '../broker-credentials.js';
 import type { ManagementClient } from '../management.js';
 import type { ProfileAccess } from '../profile-access.js';
 import type { QueueRef } from '../profiles.js';
+import { canaryWatchBindings, type CanaryWatchBindings } from '../triage/canary-watch.js';
 import { checkoutSize } from '../triage/checkout-collection.js';
+import { replayOrigin } from '../triage/replay-origin.js';
+import type { VhostTopology } from '../triage/setup-checks.js';
 import { consumerTimeoutMs } from '../triage/checkout-timing.js';
 import { holderFromLockArguments, lockArguments, lockQueueName } from '../triage/checkout-lock.js';
 import { isCheckoutQueueType, notCheckoutableReason } from '../triage/queue-list.js';
@@ -146,6 +153,60 @@ export async function openCheckout(
   checkout.heldBytes = collected.heldBytes;
   if (collected.overflow.length > 0) checkout.limitedBy = 'bytes';
   await hooks.afterCollect?.(checkout, { windows: collected.windows, overflow: collected.overflow.length });
+  checkout.canaryWatch = await lookUpCanaryWatch(checkout, management);
+}
+
+/** Source queues looked up at most, for the Messages' Canary watch; Messages from others are unwatched. */
+const MAX_CANARY_SOURCES = 20;
+
+/**
+ * How each held Message would be watched as the Canary: its source queue's
+ * dead-letter exchange (or, Replayed to a MassTransit input queue, its
+ * `_error` exchange) and that exchange's bindings to the Checkout's queue.
+ * Never throws: a topology it cannot read leaves the Messages unwatched,
+ * with the reason.
+ */
+async function lookUpCanaryWatch(checkout: Checkout, management: ManagementClient): Promise<Map<number, CanaryWatchBindings>> {
+  // Keyed by the origin: the same queue can be reached through x-death and as a MassTransit input queue.
+  const sourceOf = new Map<number, { queue: string; via: 'x-death' | 'masstransit'; key: string }>();
+  for (const [handle, m] of checkout.held) {
+    const origin = replayOrigin(m.properties.headers);
+    if (origin.ok) sourceOf.set(handle, { queue: origin.queue, via: origin.via, key: `${origin.via}:${origin.queue}` });
+  }
+  const result = new Map<number, CanaryWatchBindings>();
+  if (sourceOf.size === 0) return result;
+  const sources = [...new Set([...sourceOf.values()].map((s) => s.queue))].slice(0, MAX_CANARY_SOURCES);
+  let topology: VhostTopology;
+  let queues: Map<string, Awaited<ReturnType<ManagementClient['getQueue']>>>;
+  try {
+    const [exchanges, bindings, found] = await Promise.all([
+      management.listExchanges(checkout.vhost),
+      management.listBindings(checkout.vhost),
+      Promise.all(sources.map((q) => management.getQueue(checkout.vhost, q))),
+    ]);
+    topology = { exchanges: new Map(exchanges.map((e) => [e.name, e])), bindings };
+    queues = new Map(sources.map((q, i) => [q, found[i]!]));
+  } catch (err) {
+    const reason = `Could not read where the Messages dead-letter from the management API (${(err as Error).message}). The Canary's outcome will only say whether it was Replayed.`;
+    for (const handle of sourceOf.keys()) result.set(handle, { watchable: false, reason });
+    return result;
+  }
+  const bySource = new Map<string, CanaryWatchBindings>();
+  for (const [handle, { queue, via, key }] of sourceOf) {
+    let bindings = bySource.get(key);
+    if (!bindings) {
+      const info = queues.get(queue);
+      bindings = canaryWatchBindings({
+        source: info ? { name: queue, arguments: info.arguments, effectivePolicy: info.effectivePolicy } : null,
+        ...(via === 'masstransit' && { massTransitInputQueue: queue }),
+        deadLetterQueue: checkout.queue,
+        topology,
+      });
+      bySource.set(key, bindings);
+    }
+    result.set(handle, bindings);
+  }
+  return result;
 }
 
 /**
