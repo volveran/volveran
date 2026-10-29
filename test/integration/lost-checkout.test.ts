@@ -22,6 +22,7 @@ import {
   startApp,
   testProfile,
   uniqueName,
+  waitForReady,
   withChannel,
   type TestApp,
 } from './harness.js';
@@ -75,11 +76,11 @@ describe('Lost Checkout', () => {
     });
     expect(lost.lostReason).toMatch(/connection to the broker was closed.*returned every Message/);
     expect(lost.messages).toEqual([]);
-    expect(await readyCount('/', queue)).toBe(3);
+    await waitForReady('/', queue, 3);
     // The broker deleted the lock queue with the connection, and the Operator may start again.
     expect((await app.get('/api/session')).body.checkoutId).toBeNull();
     const again = await app.post(checkoutPath(queue));
-    expect(again.status).toBe(201);
+    expect(again.status, JSON.stringify(again.body)).toBe(201);
     await app.delete(`/api/checkouts/${again.body.checkout.id}`);
   });
 
