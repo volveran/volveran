@@ -1,9 +1,9 @@
 // Approvals (Team Mode): other Operators' Checkouts waiting for an Approval
 // this Operator may give (role `operator` or `admin` on the profile), and a
 // read-only view of one of them: its Decisions, Messages and Message view,
-// as the requester sees them. Approve asks for the queue name typed, then
-// starts the Apply on the requester's Checkout (the requester sees its
-// progress and outcome there); Reject
+// as the requester sees them, and two ticked Messages side by side. Approve
+// asks for the queue name typed, then starts the Apply on the requester's
+// Checkout (the requester sees its progress and outcome there); Reject
 // asks for a reason, which the requester sees. No key approves or rejects
 // (keyboard-commands.ts): both always need their confirmation, a Prompt
 // (keyboard.tsx) that focuses its typed field, closes on Escape and gives
@@ -15,6 +15,7 @@ import { decisionLabel } from '../shared/decisions.js';
 import { rateText } from '../shared/replay-rate.js';
 import { formatCountdown } from './countdown.js';
 import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail } from './api.js';
+import { ComparisonView } from './ComparisonView.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
 import { ErrorBox } from './ErrorBox.js';
 import { useNow, usePolling } from './timers.js';
@@ -124,6 +125,9 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
   const [error, setError] = useState<ApiError>();
   const [focused, setFocused] = useState<number>();
   const [detail, setDetail] = useState<MessageDetail>();
+  /** Ticked Messages: two of them can be compared. */
+  const [ticked, setTicked] = useState<ReadonlySet<number>>(new Set());
+  const [comparing, setComparing] = useState<readonly [number, number] | null>(null);
   /** The open confirmation: Approve (queue name typed) or Reject (a reason). */
   const [confirming, setConfirming] = useState<'approve' | 'reject' | null>(null);
   const [typed, setTyped] = useState('');
@@ -345,16 +349,43 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
         )}
       </div>
 
-      <div className="checkout-body">
-        <MessageList
-          messages={checkout.messages}
-          empty="The Checkout holds no Messages."
-          quorum={checkout.queueType === 'quorum' && checkout.deliveryLimit !== null}
-          focused={focused}
-          onFocus={setFocused}
+      {comparing ? (
+        <ComparisonView
+          source="approval"
+          id={checkout.id}
+          handles={comparing}
+          rows={checkout.messages}
+          onClose={() => setComparing(null)}
         />
-        {detail && <MessageDetailView message={detail} />}
-      </div>
+      ) : (
+        <>
+          <p className="decision-bar">
+            <strong>{ticked.size} ticked</strong>
+            <button
+              disabled={ticked.size !== 2}
+              onClick={() => {
+                const [a, b] = checkout.messages.filter((m) => ticked.has(m.handle)).map((m) => m.handle);
+                if (a !== undefined && b !== undefined) setComparing([a, b]);
+              }}
+              title="Tick two Messages to see them side by side, with what differs highlighted"
+            >
+              Compare
+            </button>
+          </p>
+          <div className="checkout-body">
+            <MessageList
+              messages={checkout.messages}
+              empty="The Checkout holds no Messages."
+              quorum={checkout.queueType === 'quorum' && checkout.deliveryLimit !== null}
+              focused={focused}
+              onFocus={setFocused}
+              selection={ticked}
+              onSelection={setTicked}
+            />
+            {detail && <MessageDetailView message={detail} />}
+          </div>
+        </>
+      )}
     </section>
   );
 }

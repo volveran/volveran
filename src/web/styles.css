@@ -680,3 +680,80 @@ dialog.prompt .confirm {
 .no-role .groups li {
   margin: 2px 0;
 }
+
+/* Two Messages side by side (ComparisonView) */
+.comparison {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+.comparison-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+.comparison-head h3 {
+  margin-right: auto;
+}
+.comparison-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+.comparison-side,
+.comparison-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.comparison pre {
+  background: var(--bg);
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 24rem;
+  margin: 0;
+}
+.comparison-fields {
+  table-layout: fixed;
+}
+.comparison-fields th {
+  width: 25%;
+  word-break: break-all;
+}
+.comparison-fields td {
+  width: 37.5%;
+  word-break: break-all;
+}
+.comparison-text {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.comparison-text td {
+  padding: 0;
+  vertical-align: top;
+}
+.comparison-text pre {
+  max-height: none;
+  border-radius: 0;
+  padding: 0 0.5rem;
+  white-space: pre-wrap;
+}
+/* Differing values: changed on both sides, or set on one side only. */
+.diff-changed td,
+.diff-changed td pre {
+  background: var(--warning-bg);
+}
+.diff-onlyLeft td:nth-of-type(1),
+.diff-onlyRight td:nth-of-type(2) {
+  background: var(--warning-bg);
+}
+.diff-changed th,
+.diff-onlyLeft th,
+.diff-onlyRight th {
+  color: var(--warning);
+}

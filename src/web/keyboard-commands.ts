@@ -36,6 +36,8 @@ export type KeyboardCommand =
   | { kind: 'assign'; decision: DecisionKind; to: 'selection' | 'focused-message' }
   | { kind: 'focus-filter' }
   | { kind: 'clear-selection' }
+  /** Open the comparison of the two Messages in the Selection. */
+  | { kind: 'compare' }
   | { kind: 'close-prompt' }
   | { kind: 'show-shortcuts' };
 
@@ -79,6 +81,7 @@ export function commandFor(press: KeyPress, state: KeyboardState): KeyboardComma
     return state.focusedItem ? { kind: 'assign', decision, to: 'focused-message' } : null;
   }
   if (key === '/') return { kind: 'focus-filter' };
+  if (key === 'c' && !shiftKey) return state.selection === 2 ? { kind: 'compare' } : null;
   if (escape) return state.selection > 0 ? { kind: 'clear-selection' } : null;
   return null;
 }
@@ -136,6 +139,7 @@ export const SHORTCUTS: Array<{ view: KeyboardState['view']; title: string; shor
       { keys: ['Shift+R'], does: 'Replay the Selection, or else the focused Message' },
       { keys: ['Shift+M'], does: 'Move the Selection, or else the focused Message (asks for a destination)' },
       { keys: ['Shift+K'], does: 'Keep the Selection, or else the focused Message' },
+      { keys: ['c'], does: 'Compare the two Messages in the Selection' },
       { keys: ['/'], does: 'Focus the filter' },
       { keys: ['Escape'], does: 'Close the open prompt or this list, or else clear the Selection' },
       { keys: ['?'], does: 'Open this list' },

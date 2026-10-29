@@ -185,6 +185,7 @@ describe('Roles per Broker Profile', () => {
       for (const [method, path, body] of [
         ['GET', `/api/checkouts/${id}`],
         ['GET', `/api/checkouts/${id}/messages/${handle}`],
+        ['GET', `/api/checkouts/${id}/compare?a=${handle}&b=${handle}`],
         ['POST', `/api/checkouts/${id}/matching`, { filter: [] }],
         ['POST', `/api/checkouts/${id}/decisions`, { handles: [handle], decision: { kind: 'discard', reason: 'x' } }],
         ['POST', `/api/checkouts/${id}/apply`, { confirm: true, confirmQueueName: queue }],

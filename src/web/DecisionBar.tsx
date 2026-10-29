@@ -3,7 +3,8 @@
 // and Move open a prompt (DecisionPrompt) for the reason or the destination,
 // the same prompt their keys open (Shift+D, Shift+M). The Move destination is
 // picked from what exists in the Checkout's vhost: another queue, or an
-// exchange plus a routing key.
+// exchange plus a routing key. With exactly two Messages selected, Compare
+// shows them side by side (ComparisonView).
 import { useState } from 'react';
 import type { Decision, MoveDestination, MoveDestinations } from './api.js';
 import { Prompt } from './keyboard.js';
@@ -15,6 +16,7 @@ export function DecisionBar({
   onPrompt,
   onDecide,
   onClearSelection,
+  onCompare,
 }: {
   selected: number;
   /** Selected Messages that can't be given Replay (no x-death history). */
@@ -24,6 +26,8 @@ export function DecisionBar({
   onPrompt: (kind: 'discard' | 'move') => void;
   onDecide: (decision: Decision) => void;
   onClearSelection: () => void;
+  /** Shows the two selected Messages side by side. */
+  onCompare: () => void;
 }) {
   const disabled = busy || selected === 0;
   return (
@@ -65,6 +69,14 @@ export function DecisionBar({
         title="Clears the Decision (Shift+K)"
       >
         Keep
+      </button>
+      <button
+        disabled={selected !== 2}
+        onClick={onCompare}
+        aria-keyshortcuts="c"
+        title="Show the two selected Messages side by side, with what differs highlighted (c)"
+      >
+        Compare
       </button>
       <button disabled={selected === 0} onClick={onClearSelection} className="link" aria-keyshortcuts="Escape">
         Clear selection

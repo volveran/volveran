@@ -81,6 +81,15 @@ describe('Keyboard commands in a Checkout', () => {
     expect(commandFor({ key: 'D', shiftKey: false }, checkout)).toBeNull();
   });
 
+  it('compares the Selection with c only when it holds exactly two Messages', () => {
+    expect(commandFor(press('c'), { ...checkout, selection: 2 })).toEqual({ kind: 'compare' });
+    for (const selection of [0, 1, 3]) expect(commandFor(press('c'), { ...checkout, selection }), String(selection)).toBeNull();
+    expect(commandFor(press('Shift+C'), { ...checkout, selection: 2 })).toBeNull();
+    expect(commandFor(press('c'), { ...checkout, selection: 2, focus: 'text-field' })).toBeNull();
+    expect(commandFor(press('c'), { ...checkout, selection: 2, prompt: true })).toBeNull();
+    expect(commandFor(press('c'), { ...queueList, selection: 2 })).toBeNull();
+  });
+
   it('focuses the filter with /', () => {
     expect(commandFor(press('/'), checkout)).toEqual({ kind: 'focus-filter' });
   });
@@ -148,7 +157,7 @@ function everyState(): KeyboardState[] {
   for (const view of ['queue-list', 'checkout'] as const)
     for (const focus of ['text-field', 'control', 'other'] as const)
       for (const prompt of [false, true])
-        for (const selection of [0, 5])
+        for (const selection of [0, 2, 5])
           for (const focusedItem of [false, true]) states.push({ view, focus, prompt, selection, focusedItem });
   return states;
 }
@@ -184,6 +193,7 @@ describe('Keyboard commands everywhere', () => {
       'assign',
       'clear-selection',
       'close-prompt',
+      'compare',
       'focus-filter',
       'move',
       'show-shortcuts',

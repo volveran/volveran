@@ -4,6 +4,7 @@
 //          body { overrideConsumers?: boolean }: start even though other consumers read the queue
 //   GET    /api/checkouts/:id                                            → { checkout }
 //   GET    /api/checkouts/:id/messages/:handle                           → { message }
+//   GET    /api/checkouts/:id/compare?a=<handle>&b=<handle>              → { left, right, diff }
 //   POST   /api/checkouts/:id/heartbeat  the browser still shows it        → { checkout }
 //   DELETE /api/checkouts/:id                                            → { checkout }
 //   POST   /api/checkouts/:id/end   same as DELETE, for navigator.sendBeacon
@@ -19,6 +20,8 @@ import type { CheckoutManager } from '../checkout/manager.js';
 import { CheckoutError } from '../checkout/errors.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
+import { diffMessages } from '../triage/message-diff.js';
+import type { MessageComparison } from '../../shared/message-diff.js';
 import { operatorOf } from '../operator.js';
 import type { Capability, ProfileAccess, ProfileAccessCheck } from '../profile-access.js';
 
@@ -37,6 +40,29 @@ export function checkoutAccess(
   capability: Capability,
 ): ProfileAccess {
   return access.of(operatorOf(req), capability, checkouts.checkout(req.params.id));
+}
+
+/** A Message handle from the URL; 404 `message_not_found` when it is not a number. */
+export function parseHandle(raw: unknown): number {
+  const handle = Number(raw);
+  if (typeof raw !== 'string' || raw === '' || !Number.isSafeInteger(handle)) {
+    throw new CheckoutError('message_not_found', `"${String(raw)}" is not a Message handle.`);
+  }
+  return handle;
+}
+
+/**
+ * The two Messages that `?a=<handle>&b=<handle>` names, side by side with
+ * their diff. 400 for a missing handle or the same handle twice, 404 for a
+ * handle the Checkout does not hold.
+ */
+export function compareMessages(checkouts: CheckoutManager, id: string, query: unknown): MessageComparison {
+  const { a, b } = isRecord(query) ? query : {};
+  if (a === undefined || b === undefined) throw new InvalidRequestError('Name the two Messages to compare with "a" and "b".');
+  const [left, right] = [parseHandle(a), parseHandle(b)];
+  if (left === right) throw new InvalidRequestError('Compare two different Messages: "a" and "b" are the same handle.');
+  const views = [checkouts.message(id, left), checkouts.message(id, right)] as const;
+  return { left: views[0], right: views[1], diff: diffMessages(views[0], views[1]) };
 }
 
 export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
@@ -69,12 +95,14 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
   });
 
   app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
-    const handle = Number(req.params.handle);
-    if (!Number.isSafeInteger(handle)) {
-      throw new CheckoutError('message_not_found', `"${req.params.handle}" is not a Message handle.`);
-    }
+    const handle = parseHandle(req.params.handle);
     checkoutAccess(deps, req, 'checkout');
     return { message: checkouts.message(req.params.id, handle) };
+  });
+
+  app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', async (req) => {
+    checkoutAccess(deps, req, 'checkout');
+    return compareMessages(checkouts, req.params.id, req.query);
   });
 
   // Only a heartbeat keeps a Checkout alive: reading it does not, so a stray

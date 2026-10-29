@@ -12,6 +12,7 @@
 //   GET  /api/approvals                              → { approvals: ApprovalSummary[] }
 //   GET  /api/approvals/:checkoutId                  → { checkout }  read-only, the owner's shape
 //   GET  /api/approvals/:checkoutId/messages/:handle → { message }
+//   GET  /api/approvals/:checkoutId/compare?a=<handle>&b=<handle> → { left, right, diff }
 //   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → 202 { checkout }  the Apply started, as for the owner's Apply
 //        (409 `apply_would_outlast_checkout` when at the frozen rate too little time is left by now)
 //   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
@@ -24,13 +25,12 @@
 // for a missing or wrong typed queue name on request or approve, 400
 // `invalid_request` for a rejection without a reason.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { CheckoutError } from '../checkout/errors.js';
 import { InvalidRequestError } from '../http-error.js';
 import { view } from '../checkout/view.js';
 import { operatorOf } from '../operator.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import { checkApplyConfirmation, type ApplyRequestBody } from './apply.js';
-import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
+import { checkoutAccess, compareMessages, parseHandle, type CheckoutRouteDeps } from './checkouts.js';
 
 export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts, access } = deps;
@@ -70,13 +70,14 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     '/api/approvals/:checkoutId/messages/:handle',
     async (req) => {
       const checkout = awaiting(req);
-      const handle = Number(req.params.handle);
-      if (!Number.isSafeInteger(handle)) {
-        throw new CheckoutError('message_not_found', `"${req.params.handle}" is not a Message handle.`);
-      }
-      return { message: checkouts.message(checkout.id, handle) };
+      return { message: checkouts.message(checkout.id, parseHandle(req.params.handle)) };
     },
   );
+
+  app.get<{ Params: { checkoutId: string }; Querystring: unknown }>('/api/approvals/:checkoutId/compare', async (req) => {
+    const checkout = awaiting(req);
+    return compareMessages(checkouts, checkout.id, req.query);
+  });
 
   app.post<{ Params: { checkoutId: string }; Body: { confirmQueueName?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/approve',
