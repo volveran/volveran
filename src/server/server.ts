@@ -12,7 +12,8 @@ import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { loadConfig } from './config.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
-import { checkProfilesForRunMode, loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { checkProfilesForRunMode, checkReplayRules, loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
 import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
@@ -23,6 +24,7 @@ import { registerExportRoutes } from './routes/export.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerProfileRoutes } from './routes/profiles.js';
+import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { attachOperator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
@@ -66,10 +68,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
   const profiles = await loadProfilesFile(options.profilesFile, options.env);
   checkProfilesForRunMode(profiles, config.mode.kind);
+  const limits = { ...config.checkoutLimits, ...options.checkoutLimits };
+  checkReplayRules(profiles, limits);
   const audit = new AuditStore(options.dataDir);
   const checkouts = new CheckoutManager({
     audit,
-    limits: { ...config.checkoutLimits, ...options.checkoutLimits },
+    limits,
     enforceApproval: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
     endedRetentionMs: options.endedCheckoutRetentionMs,
@@ -86,11 +90,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }),
       };
   const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
+  const replayRules = new ReplayRules(checkouts);
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
     access,
     checkouts,
+    replayRules,
     audit: { audit, restore, usage },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
@@ -118,6 +124,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       app.log.warn(
         { profile: p.name },
         `Broker Profile "${p.name}" has no roles: every signed-in Operator is admin on it, and can Restore`,
+      );
+    }
+  }
+
+  // Replay Rules on a Protected Profile run without Approval (ADR 0011): say so once per rule.
+  for (const p of profiles.filter((p) => p.protected)) {
+    for (const rule of p.replayRules) {
+      app.log.info(
+        { profile: p.name, rule: rule.name },
+        `Replay rule "${rule.name}" on Protected Profile "${p.name}" Replays without Approval: the review of the profiles file is its second pair of eyes`,
       );
     }
   }
@@ -160,13 +176,14 @@ interface AppOptions {
   profiles: BrokerProfile[];
   access: Access;
   checkouts: CheckoutManager;
+  replayRules: ReplayRules;
   audit: AuditRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -195,6 +212,7 @@ async function buildApp({ profiles, access, checkouts, audit, webRoot, logger }:
   const checkoutDeps = { checkouts, access: profileAccess };
   registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
   registerProfileRoutes(app, profileAccess);
+  registerReplayRuleRoutes(app, replayRules, profileAccess);
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);

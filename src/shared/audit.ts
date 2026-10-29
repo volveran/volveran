@@ -64,6 +64,10 @@ export interface AuditEntryJson {
   messageCount: number | null;
   /** The Replay Rate of the Apply that wrote the entry, in Messages per second; null when unthrottled, for other actions and before v0.4. */
   rate: number | null;
+  /** The Replay Rule whose Rule Pass wrote the entry (its name; the Operator is then the rule); null for an Operator's actions and before v0.4. */
+  rule: string | null;
+  /** The Rule Pass that wrote the entry; null when no rule did. */
+  rulePassId: string | null;
   /** The Message acted on; null for an export, which keeps no copy. */
   message: {
     properties: Record<string, unknown>;

@@ -14,7 +14,7 @@ import { executeApply, NOT_ACTIVE_REASON } from '../apply/executor.js';
 import { ApplyProgressTracker } from '../apply/progress.js';
 import { ConfirmPublisher } from '../apply/publisher.js';
 import { permissionRefused } from '../broker-credentials.js';
-import { AckUncertainError, type ApplyContext, type MessageOutcome } from '../apply/types.js';
+import { AckUncertainError, type ApplyContext, type MessageOutcome, type RuleActing } from '../apply/types.js';
 import type { AuditStore } from '../audit/store.js';
 import { queueRefOf } from '../profiles.js';
 import { buildApplyPlan } from '../triage/decisions.js';
@@ -28,6 +28,8 @@ export interface RunApplyOptions {
   role: Role;
   /** The Operator who approved the Apply, for the Audit Entries; null when it needed no Approval. */
   approver: Pick<Operator, 'id' | 'displayName'> | null;
+  /** A Rule Pass: the rule and pass, for the Audit Entries; null or left out for an Operator's Apply. */
+  rule?: RuleActing | null;
   /** Asked before every step while the Checkout is active: null to go on, or why no further step is attempted. */
   stopReason(): string | null;
   /** Aborted when the Apply is told to stop: a wait for the next paced step ends at once. */
@@ -58,6 +60,7 @@ export async function runApply(
       role: options.role,
       brokerUser: checkout.brokerUser,
       approver: options.approver,
+      rule: options.rule ?? null,
     },
     startedAt: new Date(),
     ack: (message) => ack(checkout, message),

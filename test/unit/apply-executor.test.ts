@@ -43,6 +43,7 @@ describe('Apply executor', () => {
           role: 'operator',
           brokerUser: 'volveran-admin',
           approver: null,
+          rule: null,
         },
         startedAt: new Date(),
         ack,

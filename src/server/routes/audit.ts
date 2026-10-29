@@ -1,6 +1,6 @@
 // Audit Entry routes: browsing, Restore and the body store's size.
 //
-//   GET /api/audit-entries?profile=&queue=&messageId=&action=&operator=&checkoutId=&replayId=&from=&to=&limit=
+//   GET /api/audit-entries?profile=&queue=&messageId=&action=&operator=&checkoutId=&replayId=&rule=&from=&to=&limit=
 //       → { entries: AuditEntryJson[] }, newest first, without Message bodies
 //   GET /api/audit-entries/:id → { entry: AuditEntryJson } with the body (base64; null once expired)
 //   POST /api/audit-entries/:id/restore { confirm, queue?, confirmUncertain?, confirmQueueName? }
@@ -54,6 +54,8 @@ export interface AuditSearchParams {
   checkoutId?: string;
   /** The x-volveran-replay-id of a Replayed or Moved Message. */
   replayId?: string;
+  /** The name of the Replay Rule whose passes wrote the entries. */
+  rule?: string;
   /** ISO 8601 date or date-time; entries at or after it. */
   from?: string;
   /** ISO 8601 date or date-time; entries at or before it (a bare date includes that whole day). */
@@ -73,6 +75,7 @@ export function parseAuditSearch(params: AuditSearchParams): AuditQuery {
   if (given(params.messageId)) query.messageId = given(params.messageId);
   if (given(params.checkoutId)) query.checkoutId = given(params.checkoutId);
   if (given(params.replayId)) query.replayId = given(params.replayId);
+  if (given(params.rule)) query.rule = given(params.rule);
   const action = given(params.action);
   if (action) {
     if (!(AUDIT_ACTIONS as readonly string[]).includes(action)) {
