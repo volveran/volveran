@@ -37,7 +37,7 @@ import {
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
 import { ApplyProgressPanel } from './ApplyProgress.js';
-import { CanaryPanel } from './CanaryPanel.js';
+import { CanaryPanel, requestedCanaryText } from './CanaryPanel.js';
 import { ComparisonView } from './ComparisonView.js';
 import { formatCountdown } from './countdown.js';
 import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
@@ -243,11 +243,11 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   };
 
   /** Asks another Operator to approve the Apply, after the same confirmation as an Apply. */
-  const requestApproval = async (confirmQueueName?: string, rate?: number) => {
+  const requestApproval = async (confirmQueueName?: string, rate?: number, canary?: CanaryChoice) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      setCheckout(await api.requestApproval(id, confirmQueueName, rate));
+      setCheckout(await api.requestApproval(id, confirmQueueName, rate, canary));
       setReceivedAt(Date.now());
       setError(undefined);
     } catch (err) {
@@ -418,8 +418,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
           <p>
             Requested at {new Date(checkout.approvalRequest.requestedAt).toLocaleTimeString()}: another Operator with the
             role <code>operator</code> or <code>admin</code> on {checkout.profile} must approve this Apply (
-            {checkout.decisionSummaryText}, at {rateText(checkout.approvalRequest.rate)}). They find it under Approvals.
-            Your Decisions and the rate cannot change until then.
+            {checkout.decisionSummaryText}, at {rateText(checkout.approvalRequest.rate)}
+            {checkout.approvalRequest.canary && `; ${requestedCanaryText(checkout.approvalRequest.canary)}`}). They find it
+            under Approvals. Your Decisions, the rate and the Canary cannot change until then.
           </p>
           <p>
             <strong>{formatCountdown(checkout.remainingMs - (now - receivedAt))} left</strong> before the Checkout reaches

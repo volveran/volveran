@@ -85,7 +85,11 @@ describe('Canary Replay', () => {
       await ch.bindQueue(headers.dlq, headers.dlx, '', { 'x-match': 'any', kind: 'order' });
     });
     app = await startApp({
-      profiles: [testProfile({ name: 'local' }), testProfile({ name: 'quick', canary: { watchWindow: '5s' } })],
+      profiles: [
+        testProfile({ name: 'local' }),
+        testProfile({ name: 'quick', canary: { watchWindow: '5s' } }),
+        testProfile({ name: 'required', canary: { requiredAbove: 2 } }),
+      ],
       checkoutTiming: { timeLimitMs: 120_000 },
     });
   });
@@ -212,6 +216,39 @@ describe('Canary Replay', () => {
     expect((await view(id)).status).toBe('active');
   });
 
+  it('refuses an Apply with more Replays than requiredAbove and no Canary (canary_required), and says so beforehand', async () => {
+    await deadLettered(3);
+    const { id, handles } = await startCheckout(route.dlq, 'required');
+    await decide(id, handles.slice(0, 2), REPLAY);
+    // At the limit a Canary is not required.
+    expect((await view(id)).applyConfirmation.canary).toMatchObject({ requiredAbove: 2, required: false });
+
+    await decide(id, handles, REPLAY);
+    expect((await view(id)).applyConfirmation.canary).toMatchObject({ requiredAbove: 2, required: true });
+    const refused = await app.post(`/api/checkouts/${id}/apply`, { confirm: true });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatchObject({ code: 'canary_required', requiredAbove: 2 });
+    expect(refused.body.error.message).toContain('more than 2 Replays');
+    expect((await app.post(`/api/checkouts/${id}/apply`, { confirm: true, canary: false })).body.error.code).toBe('canary_required');
+    expect((await view(id)).status).toBe('active');
+
+    expect((await app.post(`/api/checkouts/${id}/apply`, { confirm: true, canary: true })).status).toBe(202);
+    await waitingIn(id, 'canary_watch');
+  });
+
+  it('requires no Canary at or below requiredAbove Replays', async () => {
+    await deadLettered(3);
+    const { id, handles } = await startCheckout(route.dlq, 'required');
+    await decide(id, handles.slice(0, 2), REPLAY);
+    await decide(id, handles.slice(2), DISCARD);
+    expect((await app.post(`/api/checkouts/${id}/apply`, { confirm: true })).status).toBe(202);
+    expect(outcomesOf(await appliedCheckout(app, id))).toEqual([
+      ['canary-0', 'done'],
+      ['canary-1', 'done'],
+      ['canary-2', 'done'],
+    ]);
+  });
+
   it('says beforehand that a Canary from a DLQ fed by a headers dead-letter exchange is unwatched, and reports it so', async () => {
     await withChannel('/', async (ch) => {
       ch.sendToQueue(headers.work, Buffer.from('h'), { messageId: 'headers-0', headers: { kind: 'order' } });
@@ -230,6 +267,8 @@ describe('Canary Replay', () => {
     const { applyConfirmation } = await view(id);
     expect(applyConfirmation.canary).toEqual({
       watchWindowMs: 30_000,
+      requiredAbove: null,
+      required: false,
       candidates: [
         { handle: handles[0], watch: { watchable: false, reason: expect.stringContaining('headers exchange "canary.headers.dlx"') } },
         { handle: handles[1], watch: { watchable: false, reason: expect.any(String) } },
@@ -253,6 +292,8 @@ describe('Canary Replay', () => {
     await decide(id, handles, REPLAY);
     expect((await view(id)).applyConfirmation.canary).toEqual({
       watchWindowMs: 5_000,
+      requiredAbove: null,
+      required: false,
       candidates: [{ handle: handles[0], watch: { watchable: true } }],
     });
   });

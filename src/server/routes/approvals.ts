@@ -4,8 +4,9 @@
 //
 // The owner (under /api/checkouts/:id, so the owner check of
 // routes/checkouts.ts applies):
-//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName, rate? }  → { checkout }
-//          `rate` as for an Apply (routes/apply.ts), frozen with the Decisions: the approved Apply runs at it
+//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName, rate?, canary? }  → { checkout }
+//          `rate` and `canary` as for an Apply (routes/apply.ts, incl. 400 `canary_required`), frozen with
+//          the Decisions: the approved Apply runs at that rate and starts with that Canary
 //   DELETE /api/checkouts/:id/approval-request  withdraws it                        → { checkout }
 //
 // Approvers (`operator` or `admin` on the Checkout's profile, never its owner):
@@ -17,11 +18,13 @@
 //        (409 `apply_would_outlast_checkout` when at the frozen rate too little time is left by now)
 //   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
 //   POST /api/approvals/:checkoutId/apply/stop                     → { checkout }  stops the Apply this approver approved
+//   POST /api/approvals/:checkoutId/apply/continue                 → { checkout }  continues it after its Canary
 //
 // Once they have approved it, `GET /api/approvals/:checkoutId` keeps showing
-// the approver the Checkout (its Apply's progress, then its outcomes), and
-// they may stop that Apply as its owner can (routes/apply.ts). Anyone else
-// gets 403 `not_checkout_owner`.
+// the approver the Checkout (its Apply's progress, its Canary, then its
+// outcomes), and they may stop or continue that Apply as its owner can
+// (routes/apply.ts); the Approval covered the whole plan, Canary included, so
+// continuing needs no second one. Anyone else gets 403 `not_checkout_owner`.
 //
 // Errors: 409 `approval_not_required` (the Apply needs none), 409
 // `awaiting_approval` (already requested), 409 `not_awaiting_approval`
@@ -46,7 +49,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     async (req) => {
       const { role } = checkoutAccess(deps, req, 'checkout');
       checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-      return { checkout: checkouts.requestApproval(req.params.id, role, req.body?.rate) };
+      return { checkout: checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary) };
     },
   );
 
@@ -101,6 +104,12 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
     return { checkout: checkouts.stopApplyBy(req.params.checkoutId, approver, true) };
+  });
+
+  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/continue', async (req) => {
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return { checkout: checkouts.continueApplyBy(req.params.checkoutId, approver, true) };
   });
 
   app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(
