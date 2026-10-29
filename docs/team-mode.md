@@ -79,7 +79,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_PROD_PASSWORD \
-  ghcr.io/volveran/volveran:0.3.0
+  ghcr.io/volveran/volveran:0.4.0
 ```
 
 Open `https://volveran.example.com`: the browser goes to Keycloak, then JumpCloud, and back. The top bar shows the signed-in Operator and a **Sign out** button.
