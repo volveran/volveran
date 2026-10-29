@@ -3,10 +3,13 @@
 // paused, its next scheduled pass and its last passes (scheduled or Run now:
 // when, held, Replayed, Moved, used up, not due; skipped or failed and why),
 // and Run now for an `admin`, which runs one Rule Pass and shows its counts.
-// While someone holds the queue, Run now is refused and says who.
+// While someone holds the queue, Run now is refused and says who. A paused
+// rule says why (its automatic stop's reason in words, or the Operator's),
+// by whom and since when. Pause, with a reason, is for an `operator` or
+// above; Resume for an `admin`.
 import { useEffect, useState } from 'react';
 import { roleIncludes, type Role } from '../shared/roles.js';
-import { durationText } from '../shared/replay-rules.js';
+import { durationText, pauseReasonText } from '../shared/replay-rules.js';
 import { rateText } from '../shared/replay-rate.js';
 import { api, ApiError, type ReplayRuleView, type RulePass } from './api.js';
 
@@ -17,6 +20,7 @@ export function ReplayRulesView({ profile, role }: { profile: string; role: Role
   const [error, setError] = useState<ApiError>();
   const [tick, setTick] = useState(0);
   const mayRun = role !== undefined && roleIncludes(role, 'admin');
+  const mayPause = role !== undefined && roleIncludes(role, 'operator');
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +54,14 @@ export function ReplayRulesView({ profile, role }: { profile: string; role: Role
       )}
       {rules && rules.length === 0 && <p className="empty">Broker Profile {profile} declares no Replay rules.</p>}
       {rules?.map((view) => (
-        <RuleCard key={view.rule.name} profile={profile} view={view} mayRun={mayRun} onRan={() => setTick((n) => n + 1)} />
+        <RuleCard
+          key={view.rule.name}
+          profile={profile}
+          view={view}
+          mayRun={mayRun}
+          mayPause={mayPause}
+          onChanged={() => setTick((n) => n + 1)}
+        />
       ))}
     </div>
   );
@@ -60,27 +71,35 @@ function RuleCard({
   profile,
   view,
   mayRun,
-  onRan,
+  mayPause,
+  onChanged,
 }: {
   profile: string;
   view: ReplayRuleView;
   mayRun: boolean;
-  onRan: () => void;
+  mayPause: boolean;
+  onChanged: () => void;
 }) {
   const { rule, state, passes, nextPassAt } = view;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<ApiError>();
+  const [busy, setBusy] = useState<'run' | 'pause' | 'resume'>();
+  const [error, setError] = useState<{ action: 'run' | 'pause' | 'resume'; error: ApiError }>();
+  const [pausing, setPausing] = useState(false);
+  const [reason, setReason] = useState('');
 
-  const run = async () => {
-    setBusy(true);
+  const act = async (action: 'run' | 'pause' | 'resume') => {
+    setBusy(action);
     setError(undefined);
     try {
-      await api.runReplayRule(profile, rule.name);
-      onRan();
+      if (action === 'run') await api.runReplayRule(profile, rule.name);
+      else if (action === 'pause') await api.pauseReplayRule(profile, rule.name, reason.trim());
+      else await api.resumeReplayRule(profile, rule.name);
+      setPausing(false);
+      setReason('');
+      onChanged();
     } catch (err) {
-      setError(err as ApiError);
+      setError({ action, error: err as ApiError });
     } finally {
-      setBusy(false);
+      setBusy(undefined);
     }
   };
 
@@ -120,27 +139,79 @@ function RuleCard({
           <>
             Paused{state.pausedAt && <> since {time(state.pausedAt)}</>}
             {state.pausedBy && <> by {state.pausedBy}</>}
-            {state.pausedReason && <>: {state.pausedReason}</>}. No pass is scheduled.
+            {state.pausedReason && <>: {pauseReasonText(state.pausedReason)}</>}. No pass is scheduled.
           </>
         ) : (
           nextPassAt && <>Next pass {time(nextPassAt)}.</>
         )}
       </p>
       <PassHistory passes={passes} />
-      {mayRun ? (
-        <button onClick={run} disabled={busy}>
-          {busy ? 'Running…' : 'Run now'}
-        </button>
-      ) : (
-        <span className="unavailable">
-          Run now needs the role <code>admin</code>
-        </span>
+      <div className="rule-actions">
+        {mayRun ? (
+          <button onClick={() => act('run')} disabled={busy !== undefined}>
+            {busy === 'run' ? 'Running…' : 'Run now'}
+          </button>
+        ) : (
+          <span className="unavailable">
+            Run now needs the role <code>admin</code>
+          </span>
+        )}
+        {state.paused ? (
+          mayRun ? (
+            <button onClick={() => act('resume')} disabled={busy !== undefined}>
+              {busy === 'resume' ? 'Resuming…' : 'Resume'}
+            </button>
+          ) : (
+            <span className="unavailable">
+              Resume needs the role <code>admin</code>
+            </span>
+          )
+        ) : mayPause ? (
+          !pausing && (
+            <button onClick={() => setPausing(true)} disabled={busy !== undefined}>
+              Pause…
+            </button>
+          )
+        ) : (
+          <span className="unavailable">
+            Pause needs the role <code>operator</code>
+          </span>
+        )}
+      </div>
+      {pausing && !state.paused && (
+        <form
+          className="confirm"
+          aria-label={`Pause Replay rule ${rule.name}`}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act('pause');
+          }}
+        >
+          <label>
+            Why pause it?{' '}
+            <input value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Pause reason" required autoFocus />
+          </label>{' '}
+          <button type="submit" disabled={busy !== undefined || reason.trim() === ''}>
+            {busy === 'pause' ? 'Pausing…' : 'Pause'}
+          </button>{' '}
+          <button type="button" onClick={() => setPausing(false)}>
+            Cancel
+          </button>
+        </form>
       )}
       {error && (
         <div className="error" role="alert">
-          <strong>{error.code === 'checkout_in_progress' ? 'The queue is held' : 'The pass did not run'}</strong>
-          <p>{error.message}</p>
-          <code>{error.code}</code>
+          <strong>
+            {error.action === 'run'
+              ? error.error.code === 'checkout_in_progress'
+                ? 'The queue is held'
+                : 'The pass did not run'
+              : error.action === 'pause'
+                ? 'The rule was not paused'
+                : 'The rule was not resumed'}
+          </strong>
+          <p>{error.error.message}</p>
+          <code>{error.error.code}</code>
         </div>
       )}
     </section>
@@ -161,6 +232,7 @@ function PassHistory({ passes }: { passes: RulePass[] }) {
           <th>Used up</th>
           <th>Not due</th>
           <th>Not matching</th>
+          <th title="Due, but with nowhere to Replay to (no Replay origin); Kept">Cannot Replay</th>
           <th>Failed</th>
         </tr>
       </thead>
@@ -176,10 +248,11 @@ function PassHistory({ passes }: { passes: RulePass[] }) {
                 <td className="num">{p.summary.usedUp}</td>
                 <td className="num">{p.summary.notDue}</td>
                 <td className="num">{p.summary.noMatch}</td>
+                <td className="num">{p.summary.cannotReplay}</td>
                 <td className={p.summary.failed > 0 ? 'num error-text' : 'num'}>{p.summary.failed}</td>
               </>
             ) : (
-              <td colSpan={7} className={p.status === 'failed' ? 'error-text' : 'muted'}>
+              <td colSpan={8} className={p.status === 'failed' ? 'error-text' : 'muted'}>
                 {p.status === 'skipped' ? 'Skipped' : 'Failed'}: {p.reason}
               </td>
             )}

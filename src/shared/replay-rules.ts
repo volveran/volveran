@@ -55,6 +55,8 @@ export interface RulePassSummary {
   notDue: number;
   /** Messages the rule's filter does not select. */
   noMatch: number;
+  /** Due Messages it cannot Replay because they have nowhere to go (no Replay origin, e.g. Spring AMQP); Kept, and no reason to pause. */
+  cannotReplay: number;
   /** Replays and Moves that failed or were not attempted; their Messages went back to the queue. */
   failed: number;
 }
@@ -76,6 +78,20 @@ export interface RulePass {
   summary: RulePassSummary | null;
   /** Why it was skipped or failed; null when it ran. */
   reason: string | null;
+}
+
+/** Why a rule paused itself (its automatic stop), as stored in `RuleState.pausedReason`. */
+export const AUTOMATIC_PAUSE_REASONS = {
+  died_again: 'too many of the Messages it Replayed died again within its window',
+  queue_not_found: 'its queue does not exist',
+  broker_permission_denied: 'the broker refused its broker user a permission it needs',
+  lock_not_permitted: 'its broker user may not declare the Checkout lock queue',
+  publish_failed: 'a Replay or Move of its last pass failed to publish',
+} as const;
+
+/** A pause reason as people read it: the automatic stop's reasons in words, an Operator's as written. */
+export function pauseReasonText(reason: string): string {
+  return (AUTOMATIC_PAUSE_REASONS as Record<string, string>)[reason] ?? reason;
 }
 
 /** A rule's state, kept in the audit store across restarts. */

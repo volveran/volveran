@@ -95,6 +95,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const replayRules = new ReplayRules({
     checkouts,
     state: audit.ruleState,
+    audit,
     profiles,
     testHooks: options.checkoutTestHooks?.ruleScheduler,
     // Called only once the app below is listening.

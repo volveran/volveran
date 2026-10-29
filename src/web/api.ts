@@ -7,7 +7,7 @@ import type { FilterClause } from '../shared/filters.js';
 import type { MessageComparison } from '../shared/message-diff.js';
 import { product } from '../shared/product.js';
 import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
-import type { ReplayRuleView, RulePass } from '../shared/replay-rules.js';
+import type { ReplayRuleView, RulePass, RuleState } from '../shared/replay-rules.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
 export type { AuditAction, AuditOutcome } from '../shared/audit.js';
@@ -180,6 +180,16 @@ export const api = {
   runReplayRule: (profile: string, name: string) =>
     getJson<{ pass: RulePass }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/run`, 'POST', {}).then(
       (b) => b.pass,
+    ),
+  /** Pauses a rule (`operator`+) with a reason; returns its new state. */
+  pauseReplayRule: (profile: string, name: string, reason: string) =>
+    getJson<{ state: RuleState }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/pause`, 'POST', { reason }).then(
+      (b) => b.state,
+    ),
+  /** Resumes a paused rule (`admin`); returns its new state. */
+  resumeReplayRule: (profile: string, name: string) =>
+    getJson<{ state: RuleState }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/resume`, 'POST', {}).then(
+      (b) => b.state,
     ),
   /** Republishes the Discarded Message of Audit Entry `id`; returns the Restore's own Audit Entry. */
   restore: (id: number, options: RestoreOptions) =>

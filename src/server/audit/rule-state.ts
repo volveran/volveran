@@ -8,6 +8,9 @@
 // - Its last passes, at most PASS_HISTORY per rule (the oldest go).
 // - When a pass first saw each message id: the back-off's last fallback for
 //   when a Message was dead-lettered, at most FIRST_SEEN_LIMIT per rule.
+// - The Died Again Messages its passes saw whose last Audit Entry is the
+//   rule's, by that entry and when first seen: the count of the automatic
+//   stop. Only the stop's window is kept; a resume clears them.
 import type { DatabaseSync } from 'node:sqlite';
 import type { RulePass, RulePassStatus, RuleState } from '../../shared/replay-rules.js';
 
@@ -57,8 +60,8 @@ export class RuleStateStore {
     try {
       this.db
         .prepare(
-          `INSERT INTO replay_rule_passes (id, rule_key, at, status, reason, held, replayed, moved, used_up, not_due, no_match, failed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO replay_rule_passes (id, rule_key, at, status, reason, held, replayed, moved, used_up, not_due, no_match, cannot_replay, failed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           pass.id,
@@ -72,6 +75,7 @@ export class RuleStateStore {
           s?.usedUp ?? null,
           s?.notDue ?? null,
           s?.noMatch ?? null,
+          s?.cannotReplay ?? null,
           s?.failed ?? null,
         );
       this.db
@@ -107,6 +111,7 @@ export class RuleStateStore {
               usedUp: r.used_up ?? 0,
               notDue: r.not_due ?? 0,
               noMatch: r.no_match ?? 0,
+              cannotReplay: r.cannot_replay ?? 0,
               failed: r.failed ?? 0,
             },
     }));
@@ -144,6 +149,36 @@ export class RuleStateStore {
     return seen;
   }
 
+  /**
+   * Notes the Died Again Messages a pass of the rule saw at `now`, by the
+   * Audit Entry each last came from; only entries of this rule (`profile`,
+   * `rule`) count, and each counts once. Forgets those seen before `since`
+   * and answers how many are left: the count of the automatic stop.
+   */
+  countDiedAgain(ruleKey: string, rule: { profile: string; name: string }, auditEntryIds: readonly number[], now: Date, since: Date): number {
+    this.db.exec('BEGIN');
+    try {
+      const insert = this.db.prepare(
+        `INSERT INTO replay_rule_died_again (rule_key, audit_entry_id, seen_at)
+         SELECT ?, id, ? FROM audit_entries WHERE id = ? AND profile = ? AND rule = ?
+         ON CONFLICT DO NOTHING`,
+      );
+      for (const id of new Set(auditEntryIds)) insert.run(ruleKey, now.getTime(), id, rule.profile, rule.name);
+      this.db.prepare('DELETE FROM replay_rule_died_again WHERE rule_key = ? AND seen_at < ?').run(ruleKey, since.getTime());
+      const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM replay_rule_died_again WHERE rule_key = ?').get(ruleKey) as { n: number };
+      this.db.exec('COMMIT');
+      return Number(n);
+    } catch (err) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Forgets the Died Again Messages counted for the rule's automatic stop (a resume). */
+  clearDiedAgain(ruleKey: string): void {
+    this.db.prepare('DELETE FROM replay_rule_died_again WHERE rule_key = ?').run(ruleKey);
+  }
+
   /** When a pass of the rule first saw `messageId`, without storing anything; null when none has. */
   firstSeenAt(ruleKey: string, messageId: string): Date | null {
     const row = this.db
@@ -171,5 +206,6 @@ interface PassRow {
   used_up: number | null;
   not_due: number | null;
   no_match: number | null;
+  cannot_replay: number | null;
   failed: number | null;
 }

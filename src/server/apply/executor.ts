@@ -73,8 +73,8 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     const id = messages.get(handle)?.properties.messageId;
     return typeof id === 'string' ? id : id == null ? null : String(id);
   };
-  const outcome = (handle: number, decision: Decision, status: MessageOutcome['status'], reason: string | null = null) => {
-    const o = { handle, messageId: messageIdOf(handle), decision, status, reason };
+  const outcome = (handle: number, decision: Decision, status: MessageOutcome['status'], reason: string | null = null, refused = false) => {
+    const o: MessageOutcome = { handle, messageId: messageIdOf(handle), decision, status, reason, ...(refused && { refused: true }) };
     outcomes.set(handle, o);
     if (status !== 'kept') run.onStep?.(o);
   };
@@ -156,7 +156,13 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     } catch {
       // The entry stays `pending`; the outcome below is still reported.
     }
-    outcome(handle, decision, result.status, result.status === 'failed' ? result.reason : null);
+    outcome(
+      handle,
+      decision,
+      result.status,
+      result.status === 'failed' ? result.reason : null,
+      result.status === 'failed' && result.refused === true,
+    );
     if (isCanary) await canary.afterStep(outcomes.get(handle)!);
   }
 

@@ -1,5 +1,6 @@
 // Replay Rule state in the audit store: the paused flag as first declared,
-// then as stored; the bounded pass history; first-seen times by message id.
+// then as stored; the bounded pass history; first-seen times by message id;
+// the Died Again count of the automatic stop.
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ function pass(n: number): RulePass {
     id: `pass-${n}`,
     at: new Date(Date.UTC(2026, 9, 1, 0, n)).toISOString(),
     status: 'ran',
-    summary: { held: n, replayed: 1, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, failed: 0 },
+    summary: { held: n, replayed: 1, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, cannotReplay: 0, failed: 0 },
     reason: null,
   };
 }
@@ -75,5 +76,40 @@ describe('Replay Rule state', () => {
     store.ruleState.firstSeen(KEY, many, new Date('2026-10-02T00:00:00Z'));
     expect(store.ruleState.firstSeenAt(KEY, 'a')).toBeNull();
     expect(store.ruleState.firstSeenAt(KEY, 'm-0')).not.toBeNull();
+  });
+
+  it("counts each Died Again Message whose last Audit Entry is the rule's once, within the window, until a resume clears it", () => {
+    store = new AuditStore();
+    const at = new Date(Date.UTC(2026, 9, 1));
+    const entry = (rule: string | null, profile = 'local') =>
+      store!.record({
+        at,
+        operator: { id: rule ? `rule:${profile}/${rule}` : 'ana', displayName: rule ? `Replay rule ${rule}` : 'ana' },
+        brokerUser: 'volveran-admin',
+        profile,
+        vhost: '/',
+        queue: 'payments.dlq',
+        messageId: 'p-1',
+        action: 'replay',
+        reason: null,
+        destination: null,
+        checkoutId: null,
+        message: null,
+        rule,
+      });
+    const rule = { profile: 'local', name: 'transient-payments' };
+    const ours = [entry('transient-payments'), entry('transient-payments')];
+    const others = [entry(null), entry('other-rule'), entry('transient-payments', 'staging')];
+    const minutes = (n: number) => new Date(at.getTime() + n * 60_000);
+    const count = (ids: number[], now: number, windowMinutes = 60) =>
+      store!.ruleState.countDiedAgain(KEY, rule, ids, minutes(now), minutes(now - windowMinutes));
+
+    expect(count([ours[0]!, ...others], 0)).toBe(1);
+    // Seen again on the next pass: still one.
+    expect(count([ours[0]!, ours[1]!], 5)).toBe(2);
+    // At 30 minutes, a 27-minute window leaves out the one first seen at 0 but keeps the one seen at 5.
+    expect(count([], 30, 27)).toBe(1);
+    store.ruleState.clearDiedAgain(KEY);
+    expect(count([], 31)).toBe(0);
   });
 });

@@ -66,7 +66,8 @@ export interface ApplyContext {
   publish(exchange: string, routingKey: string, content: Buffer, options: amqp.Options.Publish): Promise<PublishResult>;
 }
 
-export type StepResult = { status: 'done' } | { status: 'failed'; reason: string };
+/** `refused`: the broker refused the broker user permission for the step (a publish, 403 ACCESS_REFUSED). */
+export type StepResult = { status: 'done' } | { status: 'failed'; reason: string; refused?: boolean };
 
 /** What the Audit Entry of one step records besides who, when and where from. */
 export interface AuditDetails {

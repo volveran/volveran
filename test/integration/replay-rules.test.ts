@@ -147,7 +147,7 @@ describe('Replay rules', () => {
     expect(res.status).toBe(200);
     expect(res.body.pass).toMatchObject({
       status: 'ran',
-      summary: { held: 5, replayed: 2, moved: 0, usedUp: 1, notDue: 1, noMatch: 1, failed: 0 },
+      summary: { held: 5, replayed: 2, moved: 0, usedUp: 1, notDue: 1, noMatch: 1, cannotReplay: 0, failed: 0 },
     });
     // Kept in order, and on the quorum queue x-delivery-count is unchanged.
     expect(await readyMessages(dlq)).toEqual(before.filter((m) => !m.id.startsWith('due-')));

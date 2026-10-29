@@ -25,7 +25,7 @@ export async function publishHeld(
   if (!published.ok) {
     // A refusal names the missing permission itself; the destination's own description would mislead.
     const reason = published.refused ? `${published.reason} It stays in the queue.` : describe(published.reason);
-    return { status: 'failed', reason };
+    return { status: 'failed', reason, ...(published.refused && { refused: true }) };
   }
   try {
     await ctx.ack(message);

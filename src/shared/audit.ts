@@ -3,10 +3,14 @@
 import type { Role } from './roles.js';
 import type { Filter } from './filters.js';
 
-/** Every triage action an Audit Entry can record. */
-export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore', 'export'] as const;
+/**
+ * Every action an Audit Entry can record: the triage actions, and the pause
+ * and resume of a Replay Rule (no Message; the Operator is the person, or the
+ * rule itself for an automatic pause, and `reason` says why).
+ */
+export const AUDIT_ACTIONS = ['discard', 'replay', 'move', 'restore', 'export', 'rule_pause', 'rule_resume'] as const;
 
-/** The triage action an Audit Entry records. */
+/** The action an Audit Entry records. */
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /**
