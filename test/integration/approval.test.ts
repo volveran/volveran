@@ -142,6 +142,18 @@ describe('Approval', () => {
     const handle = read.body.checkout.messages[0].handle;
     const message = await approver.get(`/api/approvals/${id}/messages/${handle}`);
     expect([message.status, message.body.message.messageId]).toEqual([200, `${QUEUE}-0`]);
+    const [a, b] = read.body.checkout.messages.map((m: any) => m.handle);
+    const compared = await approver.get(`/api/approvals/${id}/compare?a=${a}&b=${b}`);
+    expect(compared.status).toBe(200);
+    expect([compared.body.left.messageId, compared.body.right.messageId]).toEqual([`${QUEUE}-0`, `${QUEUE}-1`]);
+    expect(compared.body.diff.properties).toContainEqual({
+      name: 'messageId',
+      status: 'changed',
+      left: `${QUEUE}-0`,
+      right: `${QUEUE}-1`,
+    });
+    const twice = await approver.get(`/api/approvals/${id}/compare?a=${a}&b=${a}`);
+    expect([twice.status, twice.body.error.code]).toEqual([400, 'invalid_request']);
     // The owner-only routes stay owner-only.
     expect((await approver.get(`/api/checkouts/${id}`)).body.error.code).toBe('not_checkout_owner');
 
@@ -210,6 +222,7 @@ describe('Approval', () => {
       for (const res of [
         await browser.get(`/api/approvals/${id}`),
         await browser.get(`/api/approvals/${id}/messages/${messages[0].handle}`),
+        await browser.get(`/api/approvals/${id}/compare?a=${messages[0].handle}&b=${messages[0].handle}`),
         await browser.post(`/api/approvals/${id}/approve`, { confirmQueueName: QUEUE }),
       ]) {
         expect([res.status, res.body.error.code]).toEqual([403, code]);
