@@ -2,8 +2,9 @@
 // "Watch queue lifetime"). Before the Canary is published, a watch queue
 // `volveran.canary.<checkout id>` (exclusive, auto-delete) is declared on a
 // channel of the Checkout's own connection and bound to the dead-letter
-// exchange the Canary's source queue uses, with the bindings that route to
-// the dead-letter queue (triage/canary-watch.ts). A Canary that fails again
+// exchange the Canary's source queue uses (for a MassTransit Replay, the
+// `_error` exchange MassTransit publishes faults to), with the bindings that
+// route to the dead-letter queue (triage/canary-watch.ts). A Canary that fails again
 // is recognised there by its `x-volveran-replay-id`; nothing is consumed
 // from the dead-letter queue. The queue goes with the channel when the watch
 // ends, and with the connection when the Checkout does.

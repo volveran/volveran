@@ -7,9 +7,13 @@
 //
 // Only direct, fanout and topic exchanges route by bindings Volverán can copy;
 // for anything else (a headers exchange, no dead-letter exchange, a topology
-// it could not read) the Canary is unwatched, with the reason. To watch
-// somewhere else (e.g. a framework's error exchange), add a case here that
-// returns the exchange and keys to bind.
+// it could not read) the Canary is unwatched, with the reason.
+//
+// A Canary Replayed to a MassTransit input queue (ADR 0010) does not come
+// back through broker dead-lettering: MassTransit publishes the fault to the
+// `<input queue>_error` exchange, which routes it to the `_error` queue. The
+// watch queue is bound there instead, with that exchange's bindings to the
+// Checkout's queue.
 import { effectiveDeadLetter, type CheckedQueue, type VhostTopology } from './setup-checks.js';
 
 export type CanaryWatchBindings =
@@ -21,10 +25,12 @@ const WATCHABLE_TYPES = new Set(['direct', 'fanout', 'topic']);
 /**
  * How to bind a Canary's watch queue: `source` is the queue the Canary is
  * Replayed to (null when it could not be read), `deadLetterQueue` the
- * Checkout's queue.
+ * Checkout's queue. `massTransitInputQueue` is set when the Replay origin is
+ * a MassTransit input queue rather than x-death.
  */
 export function canaryWatchBindings(input: {
   source: Pick<CheckedQueue, 'name' | 'arguments' | 'effectivePolicy'> | null;
+  massTransitInputQueue?: string;
   deadLetterQueue: string;
   topology: VhostTopology;
 }): CanaryWatchBindings {
@@ -33,6 +39,26 @@ export function canaryWatchBindings(input: {
     watchable: false,
     reason: `${why} The Canary's outcome will only say whether it was Replayed.`,
   });
+  const boundTo = (exchange: string): CanaryWatchBindings => {
+    const routingKeys = topology.bindings
+      .filter((b) => b.source === exchange && b.destinationType === 'queue' && b.destination === deadLetterQueue)
+      .map((b) => b.routingKey);
+    if (routingKeys.length === 0) {
+      return unwatched(`The exchange "${exchange}" has no binding to "${deadLetterQueue}" that a watch queue could copy.`);
+    }
+    return { watchable: true, exchange, routingKeys: [...new Set(routingKeys)] };
+  };
+  if (input.massTransitInputQueue !== undefined) {
+    const errorExchange = `${input.massTransitInputQueue}_error`;
+    const exchange = topology.exchanges.get(errorExchange);
+    if (!exchange) {
+      return unwatched(`MassTransit publishes the faults of "${input.massTransitInputQueue}" to the error exchange "${errorExchange}", which does not exist.`);
+    }
+    if (!WATCHABLE_TYPES.has(exchange.type)) {
+      return unwatched(`The MassTransit error exchange "${errorExchange}" is a ${exchange.type} exchange; Volverán can only watch direct, fanout and topic exchanges.`);
+    }
+    return boundTo(errorExchange);
+  }
   if (!source) return unwatched('Where the queue the Canary goes back to dead-letters is not known.');
   const target = effectiveDeadLetter(source);
   if (!target) return unwatched(`"${source.name}" has no dead-letter exchange, so a Canary that fails again is not dead-lettered anywhere Volverán can watch.`);
@@ -46,11 +72,5 @@ export function canaryWatchBindings(input: {
       `"${source.name}" dead-letters to the ${exchange.type} exchange "${target.exchange}"; Volverán can only watch direct, fanout and topic dead-letter exchanges.`,
     );
   }
-  const routingKeys = topology.bindings
-    .filter((b) => b.source === target.exchange && b.destinationType === 'queue' && b.destination === deadLetterQueue)
-    .map((b) => b.routingKey);
-  if (routingKeys.length === 0) {
-    return unwatched(`The dead-letter exchange "${target.exchange}" has no binding to "${deadLetterQueue}" that a watch queue could copy.`);
-  }
-  return { watchable: true, exchange: target.exchange, routingKeys: [...new Set(routingKeys)] };
+  return boundTo(target.exchange);
 }

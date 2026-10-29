@@ -98,8 +98,9 @@ describe('Failure Details from Spring AMQP and MassTransit headers', () => {
       originalQueue: 'submit-order',
       failureDetails: { framework: 'masstransit', inputQueue: 'submit-order', reason: 'fault' },
     });
-    // Replay availability is unchanged: still x-death only.
-    expect(message('mt').replay.available).toBe(false);
+    // The MassTransit input queue is a Replay origin (ADR 0010); Spring AMQP names none.
+    expect(message('mt').replay.available).toBe(true);
+    expect(message('spring').replay.available).toBe(false);
 
     const view = (await app.get(`/api/checkouts/${checkout.id}/messages/${message('spring').handle}`)).body.message;
     expect(view.failureDetails).toEqual({

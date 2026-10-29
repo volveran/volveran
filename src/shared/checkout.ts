@@ -2,7 +2,7 @@
 // Messages and the outcome of its Apply. Types only, shared by the server
 // and the web app.
 import type { AuditAction } from './audit.js';
-import type { Decision, DecisionSummaryLine } from './decisions.js';
+import type { Decision, DecisionSummaryLine, MoveDestination } from './decisions.js';
 
 /** The queue types a Checkout can hold Messages from. */
 export type CheckoutQueueType = 'classic' | 'quorum';
@@ -127,8 +127,14 @@ export interface MessageDetail extends MessageSummary {
   diedAgain: DiedAgain | null;
 }
 
-/** Whether a Message can be given Replay; when not, why (shown to the Operator). */
-export type ReplayAvailability = { available: true } | { available: false; reason: string };
+/**
+ * Whether a Message can be given Replay; when not, why (shown to the
+ * Operator). A Spring AMQP Message suggests a Move to where it was first
+ * published (ADR 0010), which prefills the Move prompt.
+ */
+export type ReplayAvailability =
+  | { available: true }
+  | { available: false; reason: string; suggestedMove?: MoveDestination };
 
 /** The Audit Entry of the Replay, Move or Restore that last sent a Died Again Message out. */
 export interface DiedAgainSource {

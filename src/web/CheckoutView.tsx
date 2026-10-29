@@ -31,6 +31,7 @@ import {
   type Decision,
   type FilterClause,
   type MessageDetail,
+  type MoveDestination,
   type MoveDestinations,
   type CanaryChoice,
 } from './api.js';
@@ -478,6 +479,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
               count={prompt.handles.length}
               sourceQueue={checkout.queue}
               destinations={destinations}
+              suggestedMove={sharedSuggestedMove(checkout.messages, prompt.handles)}
               busy={busy}
               onDecide={(decision) => void decide(decision, prompt.handles)}
               onClose={() => setPrompt(null)}
@@ -618,4 +620,17 @@ function endedLine(c: Checkout): string {
 
 function replayWarning(diedAgain: number): string {
   return `${diedAgain} of these Messages already died again after being sent back: their consumer failed on them before. Replay them only once the cause is fixed.`;
+}
+
+/** The Move every one of `handles` suggests (where Spring AMQP first published it), when they all suggest the same one. */
+function sharedSuggestedMove(messages: Checkout['messages'], handles: number[]): MoveDestination | null {
+  let shared: MoveDestination | null = null;
+  for (const handle of handles) {
+    const replay = messages.find((m) => m.handle === handle)?.replay;
+    const suggested = replay && !replay.available ? replay.suggestedMove : undefined;
+    if (!suggested) return null;
+    if (shared && JSON.stringify(shared) !== JSON.stringify(suggested)) return null;
+    shared = suggested;
+  }
+  return shared;
 }

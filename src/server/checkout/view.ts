@@ -49,7 +49,9 @@ export function view(c: Checkout): CheckoutView {
       return {
         ...messageSummary(handle, m, info),
         decision: c.decisions.get(handle) ?? { kind: 'keep' },
-        replay: origin.ok ? { available: true } : { available: false, reason: origin.reason },
+        replay: origin.ok
+          ? { available: true }
+          : { available: false, reason: origin.reason, suggestedMove: origin.suggestedMove },
         diedAgain: c.diedAgain.get(handle) ?? null,
       };
     }),

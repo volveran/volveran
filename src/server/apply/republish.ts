@@ -7,7 +7,11 @@
 // Message to queues the Operator did not pick. `x-death`, `x-first-death-*`,
 // `x-last-death-*`, `x-delivery-count` and `x-acquired-count` would mislead
 // consumers that count retries (the broker passes a client-supplied
-// `x-death` through untouched); the Audit Entry keeps the originals.
+// `x-death` through untouched). The Failure Details Spring AMQP and
+// MassTransit wrote (`x-exception-*`, `x-original-exchange`,
+// `x-original-routingKey`, `MT-Reason`, `MT-Fault-*`, `MT-Host-*`) would show
+// the consumer a stale exception (ADR 0010). The Audit Entry keeps the
+// originals.
 import type * as amqp from 'amqplib';
 
 /** Where a republished Message comes from, for its `x-volveran-*` headers. */
@@ -21,14 +25,23 @@ export interface Provenance {
 export const REPLAY_ID_HEADER = 'x-volveran-replay-id';
 export const FROM_HEADER = 'x-volveran-from';
 
-const REMOVED = new Set(['CC', 'BCC', 'x-death', 'x-delivery-count', 'x-acquired-count']);
-const REMOVED_PREFIXES = ['x-first-death-', 'x-last-death-'];
+const REMOVED = new Set([
+  'CC',
+  'BCC',
+  'x-death',
+  'x-delivery-count',
+  'x-acquired-count',
+  'x-original-exchange',
+  'x-original-routingKey',
+  'MT-Reason',
+]);
+const REMOVED_PREFIXES = ['x-first-death-', 'x-last-death-', 'x-exception-', 'MT-Fault-', 'MT-Host-'];
 
 function removed(name: string): boolean {
   return REMOVED.has(name) || REMOVED_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-/** The headers a republished Message carries: `headers` without the routing and dead-letter headers, plus provenance. */
+/** The headers a republished Message carries: `headers` without the routing, dead-letter and Failure Details headers, plus provenance. */
 export function cleanHeaders(headers: Record<string, unknown> | undefined, provenance: Provenance): Record<string, unknown> {
   const kept = Object.entries(headers ?? {}).filter(([name]) => !removed(name));
   return { ...Object.fromEntries(kept), [REPLAY_ID_HEADER]: provenance.replayId, [FROM_HEADER]: provenance.from };
