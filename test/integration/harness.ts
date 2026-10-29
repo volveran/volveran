@@ -40,6 +40,8 @@ export interface ProfileFixture {
   tokenUsernameClaim?: string;
   /** Team Mode: the groups holding each Role on the profile. */
   roles?: Partial<Record<'viewer' | 'operator' | 'admin', unknown>>;
+  /** The default and maximum Replay Rate, in Messages per second. */
+  replayRate?: { default?: unknown; max?: unknown };
 }
 
 /**

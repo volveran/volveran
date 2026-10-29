@@ -23,6 +23,8 @@ export interface ApprovalRequest {
   requestedAt: Date;
   /** The requester's Role on the profile when they asked: the approved Apply records it. */
   role: Role;
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
+  rate: number | null;
 }
 
 /**
@@ -116,6 +118,8 @@ export interface RunningApply {
   settled: Promise<void>;
   /** Set to make the executor attempt no further step; null while it goes on. */
   stop: ApplyStop | null;
+  /** Aborted together with setting `stop`, so a wait for the next paced step ends at once. */
+  stopped: AbortController;
 }
 
 /** Why an Apply attempts no further step, and how the Checkout ends afterwards. */

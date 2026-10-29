@@ -157,8 +157,9 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 3 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    // Newest first: v6 (#44 export), v5 (#45 approver), v4 (#38 role).
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+    // Newest first: v7 (#56 rate), v6 (#44 export), v5 (#45 approver), v4 (#38 role).
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN rate;
+             ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
              ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              ALTER TABLE audit_entries DROP COLUMN operator_role; PRAGMA user_version = 3;`);
     db.exec(`INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue, action, outcome)
@@ -176,6 +177,7 @@ describe('AuditStore', () => {
       approverName: null,
       filter: null,
       messageCount: null,
+      rate: null,
     });
   });
 
@@ -192,8 +194,9 @@ describe('AuditStore', () => {
     new AuditStore(dir).close();
     // Turn it back into a version 1 store holding one entry.
     const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
-    // Newest first: v6 (#44), v5 (#45), then v3 (#10), v2 (#8) and v4 (#38) as before.
-    db.exec(`ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
+    // Newest first: v7 (#56), v6 (#44), v5 (#45), then v3 (#10), v2 (#8) and v4 (#38) as before.
+    db.exec(`ALTER TABLE audit_entries DROP COLUMN rate;
+             ALTER TABLE audit_entries DROP COLUMN filter; ALTER TABLE audit_entries DROP COLUMN message_count;
              ALTER TABLE audit_entries DROP COLUMN approver_id; ALTER TABLE audit_entries DROP COLUMN approver_name;
              DROP INDEX audit_entries_restore_of; DROP INDEX audit_entries_stored_bodies;
              ALTER TABLE audit_entries DROP COLUMN restore_of; ALTER TABLE audit_entries DROP COLUMN body_expired_at;

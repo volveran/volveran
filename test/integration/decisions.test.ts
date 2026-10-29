@@ -147,7 +147,7 @@ describe('Selection, filters and Decisions', () => {
       { kind: 'move', destination: { queue: 'triage.manual' }, count: 1 },
     ]);
     expect(reloaded.body.checkout.decisionSummaryText).toBe('2 Discard, 1 Replay, 1 Move to triage.manual');
-    expect(reloaded.body.checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
+    expect(reloaded.body.checkout.applyConfirmation).toMatchObject({ typeQueueName: false, approvalRequired: false });
 
     // Nothing reached the broker: the Messages are still held, nothing was
     // published anywhere, and ending the Checkout returns all four in order.
@@ -253,12 +253,12 @@ describe('Selection, filters and Decisions', () => {
       await seedOrders();
       const started = await guarded.post(checkoutPath('orders.dlq'));
       const id = started.body.checkout.id;
-      expect(started.body.checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
+      expect(started.body.checkout.applyConfirmation).toMatchObject({ typeQueueName: false, approvalRequired: false });
       const res = await guarded.post(`/api/checkouts/${id}/decisions`, {
         handles: [started.body.checkout.messages[0].handle],
         decision: { kind: 'discard', reason: 'x' },
       });
-      expect(res.body.checkout.applyConfirmation).toEqual({ typeQueueName: true, approvalRequired: false });
+      expect(res.body.checkout.applyConfirmation).toMatchObject({ typeQueueName: true, approvalRequired: false });
       await guarded.delete(`/api/checkouts/${id}`);
     } finally {
       await guarded.close();

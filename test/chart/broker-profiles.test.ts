@@ -52,6 +52,14 @@ describe('Broker Profiles', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, requireApproval: 'sometimes' }] } })).toMatch(/requireApproval/);
   });
 
+  it('accepts replayRate, writes it into profiles.yaml, and refuses a rate that is not a number', () => {
+    const replayRate = { default: 5, max: 50 };
+    const configMap = render({ brokerProfiles: { profiles: [{ ...prod, replayRate }] } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, replayRate }] });
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { max: 'fast' } }] } })).toMatch(/replayRate/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { min: 1 } }] } })).toMatch(/replayRate/);
+  });
+
   it("accepts credentials: operatorToken with tokenUsernameClaim and no username or passwordEnv, and writes them into profiles.yaml", () => {
     const { username: _u, passwordEnv: _p, ...rest } = prod;
     const tokenProfile = { ...rest, credentials: 'operatorToken', tokenUsernameClaim: 'preferred_username' };

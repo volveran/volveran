@@ -224,12 +224,22 @@ export interface ApplyConfirmation {
    * requests it (POST /api/checkouts/:id/approval-request) instead of Applying.
    */
   approvalRequired: boolean;
+  /** The Broker Profile's Replay Rate: the default the rate field starts from, and the most it may be; null when not set. */
+  replayRate: { default: number | null; max: number | null };
+  /**
+   * How long the Replay and Move steps of the current Decisions take at the
+   * Replay Rate: the rate frozen with a request for Approval, else the
+   * profile's default; null when unthrottled.
+   */
+  estimatedDurationMs: number | null;
 }
 
 /** A pending request for Approval of a Checkout's Apply. */
 export interface ApprovalRequestView {
   /** When the requester asked for Approval (ISO 8601). */
   requestedAt: string;
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
+  rate: number | null;
 }
 
 /** The last rejection of the Checkout's request for Approval, shown to the requester until they request again. */
@@ -262,6 +272,8 @@ export interface ApprovalSummary {
   /** Messages per Decision. */
   decisionSummary: DecisionSummaryLine[];
   decisionSummaryText: string;
+  /** The Replay Rate the approved Apply runs at, in Messages per second; null when unthrottled. */
+  rate: number | null;
 }
 
 export interface CheckoutView {

@@ -615,6 +615,24 @@
           "description": "Only with protected: true (Volverán refuses it otherwise). Default true: an Apply waits for a second Operator's Approval.",
           "type": "boolean"
         },
+        "replayRate": {
+          "description": "The Replay Rate in Messages per second (0.1 to 1000): default, the rate an Apply runs at when the Operator gives none; max, the most an Operator may choose. Volverán refuses default above max.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "default": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 1000
+            },
+            "max": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 1000
+            }
+          }
+        },
         "roles": {
           "description": "Team Mode: the OIDC groups holding each Role on this profile. Without it, every signed-in Operator is admin.",
           "type": "object",

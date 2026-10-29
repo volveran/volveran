@@ -4,7 +4,8 @@
 //
 // The owner (under /api/checkouts/:id, so the owner check of
 // routes/checkouts.ts applies):
-//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName }  → { checkout }
+//   POST   /api/checkouts/:id/approval-request  { confirm: true, confirmQueueName, rate? }  → { checkout }
+//          `rate` as for an Apply (routes/apply.ts), frozen with the Decisions: the approved Apply runs at it
 //   DELETE /api/checkouts/:id/approval-request  withdraws it                        → { checkout }
 //
 // Approvers (`operator` or `admin` on the Checkout's profile, never its owner):
@@ -12,6 +13,7 @@
 //   GET  /api/approvals/:checkoutId                  → { checkout }  read-only, the owner's shape
 //   GET  /api/approvals/:checkoutId/messages/:handle → { message }
 //   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → 202 { checkout }  the Apply started, as for the owner's Apply
+//        (409 `apply_would_outlast_checkout` when at the frozen rate too little time is left by now)
 //   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
 //
 // Errors: 409 `approval_not_required` (the Apply needs none), 409
@@ -38,7 +40,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     async (req) => {
       const { role } = checkoutAccess(deps, req, 'checkout');
       checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-      return { checkout: checkouts.requestApproval(req.params.id, role) };
+      return { checkout: checkouts.requestApproval(req.params.id, role, req.body?.rate) };
     },
   );
 
