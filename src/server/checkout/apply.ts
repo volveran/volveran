@@ -1,7 +1,7 @@
 // Running a Checkout's Apply (ADR 0001): the Decisions carried out one
 // Message at a time (apply/executor.ts), asking before every step whether
 // the Checkout is still active and whether the manager asked it to stop
-// (the time limit), and counting each step in the Checkout's Apply progress.
+// (the time limit, an Operator), and counting each step in the Checkout's Apply progress.
 // Replay and Move steps are paced at the Apply's Replay Rate, if any.
 // An approved Apply runs here too, on the
 // requester's Checkout and connection, recorded as the requester's with the
@@ -30,7 +30,7 @@ export interface RunApplyOptions {
   approver: Pick<Operator, 'id' | 'displayName'> | null;
   /** A Rule Pass: the rule and pass, for the Audit Entries; null or left out for an Operator's Apply. */
   rule?: RuleActing | null;
-  /** Asked before every step while the Checkout is active: null to go on, or why no further step is attempted. */
+  /** Asked before every step: null to go on, or why no further step is attempted (the time limit, an Operator's stop). */
   stopReason(): string | null;
   /** Aborted when the Apply is told to stop: a wait for the next paced step ends at once. */
   stopSignal?: AbortSignal;
@@ -88,7 +88,8 @@ export async function runApply(
     messages: new Map(checkout.held),
     ctx,
     audit: options.audit,
-    stopReason: () => (checkout.status === 'active' ? options.stopReason() : NOT_ACTIVE_REASON),
+    // A stop asked for first wins over the Checkout being lost afterwards.
+    stopReason: () => options.stopReason() ?? (checkout.status === 'active' ? null : NOT_ACTIVE_REASON),
     rate: options.rate,
     stopSignal: options.stopSignal,
     onStep: (o) => {

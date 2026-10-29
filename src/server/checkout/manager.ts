@@ -23,7 +23,11 @@
 // cancel an Apply), and an Operator's end and shutdown wait for it. The time
 // limit stays a hard bound: it asks the Apply to attempt no further step
 // (the rest is reported not attempted), and the Checkout then ends
-// ('time-limit'). The broker can still cut it short (Lost Checkout).
+// ('time-limit'). The broker can still cut it short (Lost Checkout). The
+// owner, or the approver of an approved Apply, can stop it the same way
+// (stopApplyBy); the Checkout then ends ('applied'). Every stop checks and
+// sets the request without awaiting, so the first of a stop, the time limit,
+// a Lost Checkout and the Apply's last step wins.
 //
 // An Apply runs at a Replay Rate (the request's, else the Broker Profile's
 // default, capped by its maximum; triage/replay-rate.ts) or unthrottled. It
@@ -63,6 +67,7 @@ import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import {
   applyInProgress,
+  applyNotRunning,
   approvalNotRequired,
   approvalRequired,
   applyWouldOutlastCheckout,
@@ -71,6 +76,7 @@ import {
   CheckoutError,
   checkoutNotActive,
   inCheckout,
+  notApplyApprover,
   notAwaitingApproval,
   notCheckoutOwner,
   operatorHasCheckout,
@@ -132,6 +138,9 @@ export interface CheckoutManagerOptions {
 
 /** The reason of the steps an Apply did not reach before the Checkout's time limit. */
 const TIME_LIMIT_REASON = 'The Checkout reached its time limit before this Message; it is back in the queue.';
+
+/** The reason of the steps an Apply did not reach because an Operator stopped it. */
+const stoppedByReason = (name: string) => `Stopped by ${name} before this Message; it is back in the queue.`;
 
 const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
 
@@ -394,6 +403,13 @@ export class CheckoutManager {
     return checkout;
   }
 
+  /** Checkout `id` when `approver` approved its Apply (to follow its progress and outcomes), else null. */
+  approvedBy(id: string, approver: Operator): Checkout | null {
+    const checkout = this.find(id);
+    const closed = checkout.approvalClosed;
+    return closed?.how === 'approved' && closed.approverId === approver.id ? checkout : null;
+  }
+
   /**
    * A second Operator approves the requested Apply: it starts in the
    * background on the owner's Checkout, recorded as the owner's (with the
@@ -405,7 +421,7 @@ export class CheckoutManager {
   approve(id: string, approver: Operator): CheckoutView {
     const checkout = this.awaitingCheckout(id, approver);
     this.assertFitsTimeLeft(checkout, checkout.approvalRequest!.rate);
-    const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName });
+    const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName, approverId: approver.id });
     return this.startApply(checkout, request.role, approver, request.rate);
   }
 
@@ -485,6 +501,33 @@ export class CheckoutManager {
     // end() that waited for this Apply then finds the Checkout already ended.
     await this.finish(checkout, running.stop?.endReason ?? 'applied').catch(() => {});
     checkout.applying = null;
+  }
+
+  /**
+   * `operator` stops the Checkout's Apply: the step in progress finishes, and
+   * every step left is reported not attempted, "stopped by" them, and goes
+   * back to the queue with the Checkout's end. The caller has checked that
+   * `operator` owns the Checkout, or (`asApprover`) holds the `approve`
+   * capability; here the approver must be the one who approved this Apply
+   * (403 `not_checkout_owner` otherwise). Throws 409 `apply_not_running` when
+   * nothing is left to stop: no Apply runs, it has attempted its last step,
+   * the Checkout was lost, or a stop (the time limit, another Operator) came
+   * first. Nothing awaits, so this and those are serialised per Checkout.
+   */
+  stopApplyBy(id: string, operator: Operator, asApprover = false): CheckoutView {
+    const checkout = this.find(id);
+    if (asApprover && !this.approvedBy(id, operator)) throw notApplyApprover(id);
+    const running = checkout.applying;
+    if (!running) throw applyNotRunning(checkout, 'none is running');
+    if (checkout.status === 'lost') throw applyNotRunning(checkout, 'the Checkout was lost, so its Apply attempts no further step');
+    if (running.stop) {
+      const by = running.stop.stoppedBy ?? (running.stop.endReason === 'time-limit' ? 'the time limit' : 'the Checkout ending');
+      throw applyNotRunning(checkout, `${by} already stopped it`);
+    }
+    if (checkout.applyProgress?.view().remaining === 0) throw applyNotRunning(checkout, 'it has attempted every step');
+    const name = operator.displayName;
+    this.stopApply(checkout, { reason: stoppedByReason(name), endReason: 'applied', stoppedBy: name });
+    return view(checkout);
   }
 
   /**

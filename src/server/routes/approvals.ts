@@ -16,6 +16,12 @@
 //   POST /api/approvals/:checkoutId/approve  { confirmQueueName }  → 202 { checkout }  the Apply started, as for the owner's Apply
 //        (409 `apply_would_outlast_checkout` when at the frozen rate too little time is left by now)
 //   POST /api/approvals/:checkoutId/reject   { reason }            → { checkout }  back in staging
+//   POST /api/approvals/:checkoutId/apply/stop                     → { checkout }  stops the Apply this approver approved
+//
+// Once they have approved it, `GET /api/approvals/:checkoutId` keeps showing
+// the approver the Checkout (its Apply's progress, then its outcomes), and
+// they may stop that Apply as its owner can (routes/apply.ts). Anyone else
+// gets 403 `not_checkout_owner`.
 //
 // Errors: 409 `approval_not_required` (the Apply needs none), 409
 // `awaiting_approval` (already requested), 409 `not_awaiting_approval`
@@ -63,7 +69,9 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
   };
 
   app.get<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId', async (req) => {
-    return { checkout: view(awaiting(req)) };
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return { checkout: view(checkouts.approvedBy(req.params.checkoutId, approver) ?? awaiting(req)) };
   });
 
   app.get<{ Params: { checkoutId: string; handle: string } }>(
@@ -88,6 +96,12 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
       return reply.code(202).send({ checkout: checkouts.approve(checkout.id, operatorOf(req)) });
     },
   );
+
+  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/stop', async (req) => {
+    const approver = operatorOf(req);
+    access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
+    return { checkout: checkouts.stopApplyBy(req.params.checkoutId, approver, true) };
+  });
 
   app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/reject',
