@@ -67,7 +67,7 @@ Removing a Message from its queue for good, keeping a full copy in its Audit Ent
 _Avoid_: Selective Purge, purge, delete, drop
 
 **Replay**:
-Sending a Message back to the queue it was dead-lettered from, so that only the consumer that failed sees it again.
+Sending a Message back to the queue it was dead-lettered from (its most recent `x-death` entry, else the MassTransit input queue), so that only the consumer that failed sees it again.
 _Avoid_: Retry, requeue, resend, re-route
 
 **Move**:

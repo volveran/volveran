@@ -51,7 +51,9 @@ export function view(c: Checkout, ruleBadge?: RuleBadgeOf): CheckoutView {
       return {
         ...messageSummary(handle, m, info),
         decision: c.decisions.get(handle) ?? { kind: 'keep' },
-        replay: origin.ok ? { available: true } : { available: false, reason: origin.reason },
+        replay: origin.ok
+          ? { available: true }
+          : { available: false, reason: origin.reason, suggestedMove: origin.suggestedMove },
         diedAgain: c.diedAgain.get(handle) ?? null,
         rule: ruleBadge?.(c, m, c.diedAgain.get(handle)?.count ?? 0) ?? null,
       };

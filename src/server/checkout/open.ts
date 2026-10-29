@@ -161,19 +161,21 @@ const MAX_CANARY_SOURCES = 20;
 
 /**
  * How each held Message would be watched as the Canary: its source queue's
- * dead-letter exchange and that exchange's bindings to the Checkout's queue.
+ * dead-letter exchange (or, Replayed to a MassTransit input queue, its
+ * `_error` exchange) and that exchange's bindings to the Checkout's queue.
  * Never throws: a topology it cannot read leaves the Messages unwatched,
  * with the reason.
  */
 async function lookUpCanaryWatch(checkout: Checkout, management: ManagementClient): Promise<Map<number, CanaryWatchBindings>> {
-  const sourceOf = new Map<number, string>();
+  // Keyed by the origin: the same queue can be reached through x-death and as a MassTransit input queue.
+  const sourceOf = new Map<number, { queue: string; via: 'x-death' | 'masstransit'; key: string }>();
   for (const [handle, m] of checkout.held) {
     const origin = replayOrigin(m.properties.headers);
-    if (origin.ok) sourceOf.set(handle, origin.queue);
+    if (origin.ok) sourceOf.set(handle, { queue: origin.queue, via: origin.via, key: `${origin.via}:${origin.queue}` });
   }
   const result = new Map<number, CanaryWatchBindings>();
   if (sourceOf.size === 0) return result;
-  const sources = [...new Set(sourceOf.values())].slice(0, MAX_CANARY_SOURCES);
+  const sources = [...new Set([...sourceOf.values()].map((s) => s.queue))].slice(0, MAX_CANARY_SOURCES);
   let topology: VhostTopology;
   let queues: Map<string, Awaited<ReturnType<ManagementClient['getQueue']>>>;
   try {
@@ -190,16 +192,17 @@ async function lookUpCanaryWatch(checkout: Checkout, management: ManagementClien
     return result;
   }
   const bySource = new Map<string, CanaryWatchBindings>();
-  for (const [handle, source] of sourceOf) {
-    let bindings = bySource.get(source);
+  for (const [handle, { queue, via, key }] of sourceOf) {
+    let bindings = bySource.get(key);
     if (!bindings) {
-      const info = queues.get(source);
+      const info = queues.get(queue);
       bindings = canaryWatchBindings({
-        source: info ? { name: source, arguments: info.arguments, effectivePolicy: info.effectivePolicy } : null,
+        source: info ? { name: queue, arguments: info.arguments, effectivePolicy: info.effectivePolicy } : null,
+        ...(via === 'masstransit' && { massTransitInputQueue: queue }),
         deadLetterQueue: checkout.queue,
         topology,
       });
-      bySource.set(source, bindings);
+      bySource.set(key, bindings);
     }
     result.set(handle, bindings);
   }

@@ -29,6 +29,30 @@ describe('cleanHeaders', () => {
     });
   });
 
+  it('removes the Failure Details headers Spring AMQP and MassTransit wrote', () => {
+    const headers = {
+      'x-exception-message': 'Listener method threw exception',
+      'x-exception-stacktrace': 'at OrderListener.onOrder',
+      'x-exception-cause-fqcn': 'java.lang.IllegalStateException',
+      'x-original-exchange': 'orders',
+      'x-original-routingKey': 'orders.created',
+      'MT-Reason': 'fault',
+      'MT-Fault-ExceptionType': 'System.TimeoutException',
+      'MT-Fault-InputAddress': 'rabbitmq://localhost/submit-order',
+      'MT-Host-MachineName': 'orders-7d9f',
+      'MT-MessageType': 'urn:message:Acme.Contracts:SubmitOrder',
+      'x-original-queue': 'kept',
+      tenant: 'acme',
+    };
+    expect(cleanHeaders(headers, provenance)).toEqual({
+      'MT-MessageType': 'urn:message:Acme.Contracts:SubmitOrder',
+      'x-original-queue': 'kept',
+      tenant: 'acme',
+      'x-volveran-replay-id': 'r-1',
+      'x-volveran-from': 'orders.dlq',
+    });
+  });
+
   it('adds only the provenance headers to a Message without headers', () => {
     expect(cleanHeaders(undefined, provenance)).toEqual({ 'x-volveran-replay-id': 'r-1', 'x-volveran-from': 'orders.dlq' });
   });
