@@ -85,7 +85,7 @@ describe('Canary Replay', () => {
       await ch.bindQueue(headers.dlq, headers.dlx, '', { 'x-match': 'any', kind: 'order' });
     });
     app = await startApp({
-      profiles: [testProfile({ name: 'local' }), testProfile({ name: 'quick', canary: { watchWindow: 5 } })],
+      profiles: [testProfile({ name: 'local' }), testProfile({ name: 'quick', canary: { watchWindow: '5s' } })],
       checkoutTiming: { timeLimitMs: 120_000 },
     });
   });

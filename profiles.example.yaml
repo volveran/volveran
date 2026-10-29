@@ -38,7 +38,7 @@ profiles:
       default: 10                #   the rate an Apply runs at unless the Operator picks another
       max: 50                    #   the most an Operator may pick; without a default, every Apply needs a rate
     canary:                      # optional; Canary Replay
-      watchWindow: 30            #   seconds (5 to 600) to watch a Canary for dying again; default 30
+      watchWindow: 30s           #   how long (5s to 10m) to watch a Canary for dying again; default 30s
     requireApproval: true        # Team Mode (the default when protected): an Apply waits for a second
                                  #   Operator's Approval; false keeps typed confirmation only.
     roles:                       # Team Mode: OIDC groups per role (VOLVERAN_OIDC_GROUPS_CLAIM);

@@ -634,14 +634,14 @@
           }
         },
         "canary": {
-          "description": "Canary Replay: watchWindow, how long a Canary is watched for dying again, in seconds (5 to 600; default 30).",
+          "description": "Canary Replay: watchWindow, how long a Canary is watched for dying again, a duration from 5s to 10m (default 30s); Volverán checks the range at startup.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "watchWindow": {
-              "type": "number",
-              "minimum": 5,
-              "maximum": 600
+              "type": "string",
+              "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+              "minLength": 2
             }
           }
         },

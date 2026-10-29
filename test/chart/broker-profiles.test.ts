@@ -60,12 +60,12 @@ describe('Broker Profiles', () => {
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { min: 1 } }] } })).toMatch(/replayRate/);
   });
 
-  it('accepts canary with a watchWindow, writes it into profiles.yaml, and refuses one out of range or an unknown key', () => {
-    const canary = { watchWindow: 45 };
+  it('accepts canary with a watchWindow, writes it into profiles.yaml, and refuses one that is not a duration or an unknown key', () => {
+    const canary = { watchWindow: '45s' };
     const configMap = render({ brokerProfiles: { profiles: [{ ...prod, canary }] } }).one('ConfigMap');
     expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, canary }] });
-    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { watchWindow: 2 } }] } })).toMatch(/watchWindow/);
-    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { window: 30 } }] } })).toMatch(/canary/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { watchWindow: 30 } }] } })).toMatch(/watchWindow/);
+    expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { window: '30s' } }] } })).toMatch(/canary/);
   });
 
   it('accepts replayRules, writes them into profiles.yaml, and refuses a rule without stopWhen or with an unknown whenAttemptsUsedUp', () => {

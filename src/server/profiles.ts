@@ -10,7 +10,7 @@ import { parse } from 'yaml';
 import { ProfilesConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
 import type { RunMode } from './run-mode.js';
-import { DEFAULT_WATCH_WINDOW_SECONDS, isWatchWindow, MAX_WATCH_WINDOW_SECONDS, MIN_WATCH_WINDOW_SECONDS } from '../shared/canary.js';
+import { durationWithin } from './duration.js';
 import { parseReplayRules, type ReplayRule } from './replay-rules/config.js';
 import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../shared/replay-rate.js';
 import { ROLES, type Role } from '../shared/roles.js';
@@ -82,7 +82,7 @@ export interface BrokerProfile {
 
 /** A Broker Profile's `canary`. */
 export interface CanarySettings {
-  /** The Watch Window in milliseconds (the file gives seconds, 5 to 600; default 30). */
+  /** The Watch Window in milliseconds (the file gives a duration from 5s to 10m; default 30s). */
   watchWindowMs: number;
 }
 
@@ -284,19 +284,21 @@ function parseReplayRate(value: unknown, where: string): ReplayRateLimits {
   return limits;
 }
 
+/** A Canary's Watch Window when the profile sets none, and its bounds. */
+const DEFAULT_WATCH_WINDOW_MS = 30_000;
+const MIN_WATCH_WINDOW_MS = 5_000;
+const MAX_WATCH_WINDOW_MS = 10 * 60_000;
+
 function parseCanary(value: unknown, where: string): CanarySettings {
-  if (value === undefined || value === null) return { watchWindowMs: DEFAULT_WATCH_WINDOW_SECONDS * 1000 };
+  if (value === undefined || value === null) return { watchWindowMs: DEFAULT_WATCH_WINDOW_MS };
   if (!isRecord(value)) throw new ProfilesConfigError(`${where} must be a mapping with watchWindow`);
   for (const key of Object.keys(value)) {
     if (key !== 'watchWindow') throw new ProfilesConfigError(`${where}.${key} is not a key of canary; it takes watchWindow`);
   }
-  const seconds = value.watchWindow ?? DEFAULT_WATCH_WINDOW_SECONDS;
-  if (!isWatchWindow(seconds)) {
-    throw new ProfilesConfigError(
-      `${where}.watchWindow must be a number of seconds from ${MIN_WATCH_WINDOW_SECONDS} to ${MAX_WATCH_WINDOW_SECONDS}`,
-    );
-  }
-  return { watchWindowMs: seconds * 1000 };
+  if (value.watchWindow === undefined || value.watchWindow === null) return { watchWindowMs: DEFAULT_WATCH_WINDOW_MS };
+  const watchWindowMs = durationWithin(value.watchWindow, MIN_WATCH_WINDOW_MS, MAX_WATCH_WINDOW_MS);
+  if (watchWindowMs === null) throw new ProfilesConfigError(`${where}.watchWindow must be a duration from 5s to 10m`);
+  return { watchWindowMs };
 }
 
 function parseProtected(value: unknown, where: string): boolean {
