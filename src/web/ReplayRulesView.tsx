@@ -119,7 +119,7 @@ function RuleCard({
         <dd>{rule.filter ? <code>{JSON.stringify(rule.filter)}</code> : 'every Message'}</dd>
         <dt>Every</dt>
         <dd>
-          {durationText(rule.everyMs)}, up to {rule.maxPerPass} Replays per pass at {rateText(rule.rate)}
+          {durationText(rule.everyMs)}, up to {rule.maxPerPass} Replays per pass {rateText(rule.rate)}
         </dd>
         <dt>Back-off</dt>
         <dd>

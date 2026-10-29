@@ -30,7 +30,7 @@
 // a Lost Checkout and the Apply's last step wins.
 //
 // An Apply runs at a Replay Rate (the request's, else the Broker Profile's
-// default, capped by its maximum; triage/replay-rate.ts) or unthrottled. It
+// default, capped by its maximum; triage/replay-rate.ts) or with none. It
 // is refused before it starts when at that rate it would outlast the
 // Checkout's time left. A stop wakes a wait for the next paced step at once.
 //
@@ -58,23 +58,21 @@ import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
 import { queueRefOf, type QueueRef } from '../profiles.js';
-import { MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../../shared/replay-rate.js';
-import { canaryNeedsReplay, canaryRequired, rateAboveMaximum } from '../apply/errors.js';
-import type { RuleActing } from '../apply/types.js';
-import { InvalidRequestError } from '../http-error.js';
-import { isRecord } from '../is-record.js';
+import { STOP_REASONS } from '../apply/stop-reasons.js';
+import type { ApplyOptions, RuleActing } from '../apply/types.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
-import { applyOutlastsCheckout, resolveReplayRate } from '../triage/replay-rate.js';
+import { applyOutlastsCheckout, replayRateFor } from '../triage/replay-rate.js';
 import { messageDetail, type Delivery, type MessageDetail } from '../triage/message-view.js';
-import type { RuleSchedulerTestHooks } from '../replay-rules/scheduler.js';
+import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, ProfileScope } from '../audit/store.js';
 import { diedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
+import { canaryFor } from './canary.js';
 import {
   applyInProgress,
   applyNotRunning,
@@ -116,7 +114,7 @@ export interface CheckoutTestHooks {
   beforeApplyStep?(entryId: number): Promise<void>;
   /** An export is about to make the line of the Message at `position` (1 is the head of the queue). */
   beforeExportLine?(position: number): Promise<void>;
-  /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/scheduler.ts); the server hands them to it. */
+  /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/rule-clock.ts); the server hands them to it. */
   ruleScheduler?: RuleSchedulerTestHooks;
 }
 
@@ -154,14 +152,19 @@ export interface CheckoutManagerOptions {
   onApplyError?(checkoutId: string, err: unknown): void;
 }
 
-/** The reason of the steps an Apply did not reach before the Checkout's time limit. */
-const TIME_LIMIT_REASON = 'The Checkout reached its time limit before this Message; it is back in the queue.';
+/**
+ * Who stops or continues an Apply: its Checkout's owner, or the Operator who
+ * approved it (applyActedOnBy).
+ */
+export interface ApplyActor {
+  operator: Operator;
+  as: 'owner' | 'approver';
+}
 
-/** The reason of the steps an Apply did not reach because an Operator stopped it. */
-const stoppedByReason = (name: string) => `Stopped by ${name} before this Message; it is back in the queue.`;
-
-/** The reason of the steps an Apply did not reach because the Checkout ended while it waited after its Canary. */
-const endedWhileWaitingReason = 'The Checkout ended while the Apply waited after its Canary; this Message is back in the queue.';
+/** What stopped an Apply first, as a refused stop or Continue says it. */
+function stopperText(stop: ApplyStop): string {
+  return stop.stoppedBy ?? (stop.endReason === 'time-limit' ? 'the time limit' : 'the Checkout ending');
+}
 
 const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
 
@@ -258,7 +261,7 @@ export class CheckoutManager {
   heartbeat(id: string): CheckoutView {
     const checkout = this.find(id);
     // While an Apply runs the heartbeat window is suspended, except while it waits after a Canary.
-    if (checkout.status === 'active' && (!checkout.applying || checkout.applying.resume)) checkout.heartbeatTimer?.refresh();
+    if (checkout.status === 'active' && (!checkout.applying || checkout.applying.continueAfterCanary)) checkout.heartbeatTimer?.refresh();
     return this.view(checkout);
   }
 
@@ -327,48 +330,18 @@ export class CheckoutManager {
    * that is over or lost, `apply_in_progress` while one runs,
    * `approval_required` when the Apply needs Approval and
    * `awaiting_approval` while it waits for it, and the Replay Rate's
-   * refusals (replayRateFor). `role` is the Applying Operator's Role on the
+   * refusals (rateFor). `role` is the Applying Operator's Role on the
    * profile, recorded in each Audit Entry. `rate` is the request's Replay
    * Rate as sent (left out: the profile's default). `canary` is the
-   * request's Canary as sent (canaryFor).
+   * request's Canary as sent (canary.ts, canaryFor).
    */
   apply(id: string, role: Role, rate?: unknown, canary?: unknown): CheckoutView {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'only an approver can Apply it');
     if (this.view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
-    const canaryHandle = this.canaryFor(checkout, canary);
-    return this.startApply(checkout, role, null, this.replayRateFor(checkout, rate), { canary: canaryHandle });
-  }
-
-  /**
-   * The handle of the Apply's Canary from the request's `canary`: left out
-   * or false for none, true for the first Message with the Decision Replay
-   * in Checkout order, `{ handle }` for that Message, which must have the
-   * Decision Replay. Throws 400 `canary_needs_replay` when a Canary is asked
-   * for and no Message has the Decision Replay, 400 `canary_required` when
-   * none is and the profile requires one for this many Replays, 400
-   * `invalid_request` for anything else.
-   */
-  private canaryFor(checkout: Checkout, requested: unknown): number | null {
-    const replays = [...checkout.held.keys()].filter((h) => checkout.decisions.get(h)?.kind === 'replay');
-    if (requested === undefined || requested === null || requested === false) {
-      const { requiredAbove } = checkout.profile.canary;
-      if (requiredAbove !== null && replays.length > requiredAbove) {
-        throw canaryRequired(checkout.profile.name, requiredAbove, replays.length);
-      }
-      return null;
-    }
-    const picked = isRecord(requested) ? requested.handle : undefined;
-    if (requested !== true && !(typeof picked === 'number' && Number.isInteger(picked))) {
-      throw new InvalidRequestError('"canary" must be true (the first Replay is the Canary), { "handle": <Message handle> }, or left out.');
-    }
-    if (replays.length === 0) throw canaryNeedsReplay();
-    if (requested === true) return replays[0]!;
-    if (!replays.includes(picked as number)) {
-      throw new InvalidRequestError(`The Canary must be a held Message with the Decision Replay; Message ${String(picked)} is not.`);
-    }
-    return picked as number;
+    const canaryHandle = canaryFor(checkout, canary);
+    return this.startApply(checkout, { role, approver: null, rate: this.rateFor(checkout, rate), canary: canaryHandle, rule: null });
   }
 
   /**
@@ -382,28 +355,21 @@ export class CheckoutManager {
   async applyForRule(id: string, { rate, rule }: { rate: number; rule: RuleActing }): Promise<CheckoutView> {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
-    this.startApply(checkout, 'operator', null, rate, { rule });
+    this.startApply(checkout, { role: 'operator', approver: null, rate, canary: null, rule });
     await checkout.applying?.settled;
     return this.view(checkout);
   }
 
   /**
    * The Replay Rate an Apply of the Checkout runs at, from the request's
-   * `requested` rate and the profile's `replayRate`. Throws 400
-   * `invalid_request` for a rate that is not a number from 0.1 to 1,000, 400
-   * `rate_above_maximum`, and 409 `apply_would_outlast_checkout` when the
-   * Replay and Move steps at that rate would outlast the time left.
+   * `requested` rate: replayRateFor's refusals (triage/replay-rate.ts), and
+   * 409 `apply_would_outlast_checkout` when the Replay and Move steps at
+   * that rate would outlast the time left.
    */
-  private replayRateFor(checkout: Checkout, requested: unknown): number | null {
-    const resolved = resolveReplayRate(requested, checkout.profile.replayRate);
-    if (!resolved.ok && resolved.problem === 'invalid') {
-      throw new InvalidRequestError(
-        `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`,
-      );
-    }
-    if (!resolved.ok) throw rateAboveMaximum(checkout.profile.name, resolved.max, (requested as number | null | undefined) ?? null);
-    this.assertFitsTimeLeft(checkout, resolved.rate);
-    return resolved.rate;
+  private rateFor(checkout: Checkout, requested: unknown): number | null {
+    const rate = replayRateFor(requested, checkout.profile, { pacedSteps: pacedSteps(checkout) });
+    this.assertFitsTimeLeft(checkout, rate);
+    return rate;
   }
 
   /** Throws `apply_would_outlast_checkout` when the Apply's paced steps at `rate` would outlast the Checkout. */
@@ -422,7 +388,7 @@ export class CheckoutManager {
    * sent). `role` is the owner's Role on the profile, recorded when the
    * Apply runs. Throws `approval_not_required` when the Apply needs no
    * Approval, `awaiting_approval` when it is already requested, and the
-   * Replay Rate's refusals (replayRateFor). `canary` is the request's
+   * Replay Rate's refusals (rateFor). `canary` is the request's
    * Canary as sent, frozen too: the approved Apply starts with it (same
    * refusals as for an Apply, canaryFor).
    */
@@ -431,8 +397,8 @@ export class CheckoutManager {
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'Approval is already requested');
     if (!this.view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
-    const frozenCanary = this.canaryFor(checkout, canary);
-    const frozenRate = this.replayRateFor(checkout, rate);
+    const frozenCanary = canaryFor(checkout, canary);
+    const frozenRate = this.rateFor(checkout, rate);
     checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate, canary: frozenCanary };
     checkout.approvalClosed = null;
     checkout.rejection = null;
@@ -491,7 +457,7 @@ export class CheckoutManager {
     const checkout = this.awaitingCheckout(id, approver);
     this.assertFitsTimeLeft(checkout, checkout.approvalRequest!.rate);
     const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName, approverId: approver.id });
-    return this.startApply(checkout, request.role, approver, request.rate, { canary: request.canary });
+    return this.startApply(checkout, { role: request.role, approver, rate: request.rate, canary: request.canary, rule: null });
   }
 
   /**
@@ -532,54 +498,31 @@ export class CheckoutManager {
    * is `applying` (so a second Apply or approve finds it in progress), and
    * suspends the heartbeat window while it runs.
    */
-  private startApply(
-    checkout: Checkout,
-    role: Role,
-    approver: Operator | null,
-    rate: number | null,
-    { canary = null, rule = null }: { canary?: number | null; rule?: RuleActing | null } = {},
-  ): CheckoutView {
+  private startApply(checkout: Checkout, options: ApplyOptions): CheckoutView {
     clearTimeout(checkout.heartbeatTimer);
-    const running: RunningApply = { settled: Promise.resolve(), stop: null, stopped: new AbortController(), resume: null };
+    const running: RunningApply = {
+      settled: Promise.resolve(),
+      stop: null,
+      stopController: new AbortController(),
+      continueAfterCanary: null,
+    };
     checkout.applying = running;
-    running.settled = this.carryOutApply(checkout, running, { role, approver, rate, canary, rule });
+    running.settled = this.carryOutApply(checkout, running, options);
     return this.view(checkout);
   }
 
-  private async carryOutApply(
-    checkout: Checkout,
-    running: RunningApply,
-    {
-      role,
-      approver,
-      rate,
-      canary,
-      rule,
-    }: { role: Role; approver: Operator | null; rate: number | null; canary: number | null; rule: RuleActing | null },
-  ) {
+  private async carryOutApply(checkout: Checkout, running: RunningApply, options: ApplyOptions) {
+    const { approver } = options;
     try {
       const { startedAt, outcomes } = await runApply(checkout, {
+        apply: { ...options, approver: approver && { id: approver.id, displayName: approver.displayName } },
         audit: this.options.audit,
-        role,
-        approver: approver && { id: approver.id, displayName: approver.displayName },
-        rate,
-        rule,
         stopReason: () => running.stop?.reason ?? null,
-        stopSignal: running.stopped.signal,
+        stopSignal: running.stopController.signal,
         beforeStep: this.hooks.beforeApplyStep,
-        canary: canary === null ? undefined : {
-          handle: canary,
-          watchWindowMs: checkout.profile.canary.watchWindowMs,
-          // The Checkout stays active while the Apply waits: its heartbeat window runs again.
-          waiting: (resume) => {
-            if (running.resume) return;
-            running.resume = resume;
-            if (checkout.status === 'active') this.armHeartbeat(checkout);
-          },
-          resumed: () => {
-            running.resume = null;
-            clearTimeout(checkout.heartbeatTimer);
-          },
+        canaryWait: {
+          waitStarted: (continueAfterCanary) => this.canaryWaitStarted(checkout, running, continueAfterCanary),
+          waitEnded: () => this.canaryWaitEnded(checkout, running),
         },
       });
       checkout.lastApply = { at: startedAt.toISOString(), outcomes, approvedBy: approver?.displayName ?? null };
@@ -593,52 +536,71 @@ export class CheckoutManager {
   }
 
   /**
-   * `operator` stops the Checkout's Apply: the step in progress finishes, and
+   * `by` stops the Checkout's Apply: the step in progress finishes, and
    * every step left is reported not attempted, "stopped by" them, and goes
-   * back to the queue with the Checkout's end. The caller has checked that
-   * `operator` owns the Checkout, or (`asApprover`) holds the `approve`
-   * capability; here the approver must be the one who approved this Apply
-   * (403 `not_checkout_owner` otherwise). Throws 409 `apply_not_running` when
-   * nothing is left to stop: no Apply runs, it has attempted its last step,
-   * the Checkout was lost, or a stop (the time limit, another Operator) came
-   * first. Nothing awaits, so this and those are serialised per Checkout.
+   * back to the queue with the Checkout's end. Who may: applyActedOnBy.
+   * Throws 409 `apply_not_running` when nothing is left to stop: no Apply
+   * runs, it has attempted its last step, the Checkout was lost, or a stop
+   * (the time limit, another Operator) came first. Nothing awaits, so this
+   * and those are serialised per Checkout.
    */
-  stopApplyBy(id: string, operator: Operator, asApprover = false): CheckoutView {
-    const checkout = this.find(id);
-    if (asApprover && !this.approvedBy(id, operator)) throw notApplyApprover(id);
-    const running = checkout.applying;
-    if (!running) throw applyNotRunning(checkout, 'none is running');
-    if (checkout.status === 'lost') throw applyNotRunning(checkout, 'the Checkout was lost, so its Apply attempts no further step');
-    if (running.stop) {
-      const by = running.stop.stoppedBy ?? (running.stop.endReason === 'time-limit' ? 'the time limit' : 'the Checkout ending');
-      throw applyNotRunning(checkout, `${by} already stopped it`);
-    }
+  stopApplyBy(id: string, by: ApplyActor): CheckoutView {
+    const { checkout } = this.applyActedOnBy(id, by, applyNotRunning);
     if (checkout.applyProgress?.view().remaining === 0) throw applyNotRunning(checkout, 'it has attempted every step');
-    const name = operator.displayName;
-    this.stopApply(checkout, { reason: stoppedByReason(name), endReason: 'applied', stoppedBy: name });
+    const name = by.operator.displayName;
+    this.stopApply(checkout, { reason: STOP_REASONS.stoppedBy(name), endReason: 'applied', stoppedBy: name });
     return this.view(checkout);
   }
 
   /**
-   * `operator` lets the Apply waiting after its Canary carry out every
-   * remaining step, at its Replay Rate; allowed before the Watch Window
-   * ends, which ends the watch. Same checks of who may as stopApplyBy.
-   * Throws 409 `apply_not_waiting` unless the Apply waits after a Canary and
-   * nothing stopped it first. Nothing awaits, so this and a stop are
-   * serialised per Checkout.
+   * `by` lets the Apply waiting after its Canary carry out every remaining
+   * step, at its Replay Rate; allowed before the Watch Window ends, which
+   * ends the watch. Who may: applyActedOnBy. Throws 409 `apply_not_waiting`
+   * unless the Apply waits after a Canary and nothing stopped it first.
+   * Nothing awaits, so this and a stop are serialised per Checkout.
    */
-  continueApplyBy(id: string, operator: Operator, asApprover = false): CheckoutView {
-    const checkout = this.find(id);
-    if (asApprover && !this.approvedBy(id, operator)) throw notApplyApprover(id);
-    const running = checkout.applying;
-    if (!running) throw applyNotWaiting(checkout, 'no Apply is running');
-    if (checkout.status === 'lost') throw applyNotWaiting(checkout, 'the Checkout was lost');
-    if (running.stop) throw applyNotWaiting(checkout, 'it was stopped');
-    if (!running.resume) throw applyNotWaiting(checkout, 'it is not waiting after a Canary');
-    running.resume();
-    running.resume = null;
-    clearTimeout(checkout.heartbeatTimer);
+  continueApplyBy(id: string, by: ApplyActor): CheckoutView {
+    const { checkout, running } = this.applyActedOnBy(id, by, applyNotWaiting);
+    const continueAfterCanary = running.continueAfterCanary;
+    if (!continueAfterCanary) throw applyNotWaiting(checkout, 'it is not waiting after a Canary');
+    this.canaryWaitEnded(checkout, running);
+    continueAfterCanary();
     return this.view(checkout);
+  }
+
+  /**
+   * The Apply running on Checkout `id`, for `by` to stop or continue. The
+   * caller has checked that `by.operator` owns the Checkout, or (`as:
+   * 'approver'`) holds the `approve` capability; here the approver must be
+   * the one who approved this Apply (403 `not_checkout_owner` otherwise).
+   * Throws `refuse` (409) when no Apply runs, the Checkout was lost, or a
+   * stop came first.
+   */
+  private applyActedOnBy(
+    id: string,
+    by: ApplyActor,
+    refuse: (checkout: Checkout, why: string) => CheckoutError,
+  ): { checkout: Checkout; running: RunningApply } {
+    const checkout = this.find(id);
+    if (by.as === 'approver' && !this.approvedBy(id, by.operator)) throw notApplyApprover(id);
+    const running = checkout.applying;
+    if (!running) throw refuse(checkout, 'no Apply is running');
+    if (checkout.status === 'lost') throw refuse(checkout, 'the Checkout was lost, so its Apply attempts no further step');
+    if (running.stop) throw refuse(checkout, `${stopperText(running.stop)} already stopped it`);
+    return { checkout, running };
+  }
+
+  /** The Apply waits after its Canary, the Checkout still active: its heartbeat window runs again. */
+  private canaryWaitStarted(checkout: Checkout, running: RunningApply, continueAfterCanary: () => void) {
+    if (running.continueAfterCanary) return;
+    running.continueAfterCanary = continueAfterCanary;
+    if (checkout.status === 'active') this.armHeartbeat(checkout);
+  }
+
+  /** The wait after the Canary is over (Continue, a stop): the heartbeat window is suspended again. */
+  private canaryWaitEnded(checkout: Checkout, running: RunningApply) {
+    running.continueAfterCanary = null;
+    clearTimeout(checkout.heartbeatTimer);
   }
 
   /**
@@ -650,7 +612,7 @@ export class CheckoutManager {
     const running = checkout.applying;
     if (!running || running.stop) return;
     running.stop = stop;
-    running.stopped.abort();
+    running.stopController.abort();
     if (stop.stoppedBy && checkout.applyProgress) checkout.applyProgress.stoppedBy = stop.stoppedBy;
   }
 
@@ -672,7 +634,9 @@ export class CheckoutManager {
     // finish() runs now, before any await: an approve arriving meanwhile
     // finds the Checkout over instead of starting an Apply on it.
     // An Apply waiting after its Canary would wait on: it stops instead.
-    if (checkout.applying?.resume) this.stopApply(checkout, { reason: endedWhileWaitingReason, endReason: reason, stoppedBy: null });
+    if (checkout.applying?.continueAfterCanary) {
+      this.stopApply(checkout, { reason: STOP_REASONS.checkoutEndedWhileWaiting, endReason: reason, stoppedBy: null });
+    }
     if (checkout.applying) await checkout.applying.settled;
     return this.finish(checkout, reason);
   }
@@ -734,7 +698,7 @@ export class CheckoutManager {
     checkout.timeLimitTimer = setTimeout(async () => {
       await this.hooks.beforeTimeLimitEnd?.(checkout);
       // An Apply attempts no further step; end() then waits for its step in progress.
-      this.stopApply(checkout, { reason: TIME_LIMIT_REASON, endReason: 'time-limit', stoppedBy: null });
+      this.stopApply(checkout, { reason: STOP_REASONS.timeLimit, endReason: 'time-limit', stoppedBy: null });
       await this.end(checkout.id, 'time-limit').catch(() => {});
     }, Math.max(0, left));
     checkout.timeLimitTimer.unref();
@@ -760,7 +724,7 @@ export class CheckoutManager {
     checkout.status = 'lost';
     checkout.lostReason = reason;
     // A wait for the next paced step ends now; the executor then finds the Checkout not active.
-    checkout.applying?.stopped.abort();
+    checkout.applying?.stopController.abort();
     this.cancelApprovalRequest(checkout);
     checkout.held.clear();
     checkout.overflow = [];

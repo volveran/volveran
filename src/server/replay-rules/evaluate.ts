@@ -9,7 +9,7 @@
 // Attempts are the Message's Died Again count, so they survive a restart and
 // count Replays by people and other rules too (ADR 0011). The delay before
 // attempt n is `min(initial × multiplier^n, max)`, measured from the most
-// recent `x-death` time, else the Failure Details' fault time, else the time
+// recent `x-death` time, else the Failure Details' failure time, else the time
 // the rule first saw the Message (when the caller knows it). A Message with
 // none of these is due now.
 import { matchesFilter } from '../triage/filters.js';
@@ -51,13 +51,13 @@ export function backoffDelayMs(backoff: ReplayRule['backoff'], attempts: number)
   return Math.min(backoff.initialMs * backoff.multiplier ** attempts, backoff.maxMs);
 }
 
-/** When the Message was last dead-lettered: its most recent `x-death` time, else its Failure Details' fault time. */
+/** When the Message was last dead-lettered: its most recent `x-death` time, else its Failure Details' failure time. */
 function deadLetteredAt(headers: Record<string, unknown> | undefined): Date | null {
   const times = parseXDeath(headers)
     .map((e) => (e.time === null ? NaN : Date.parse(e.time)))
     .filter((t) => !Number.isNaN(t));
   if (times.length > 0) return new Date(Math.max(...times));
-  const faultAt = failureDetails(headers)?.faultAt;
-  const fault = faultAt ? Date.parse(faultAt) : NaN;
-  return Number.isNaN(fault) ? null : new Date(fault);
+  const failedAt = failureDetails(headers)?.failedAt;
+  const failed = failedAt ? Date.parse(failedAt) : NaN;
+  return Number.isNaN(failed) ? null : new Date(failed);
 }

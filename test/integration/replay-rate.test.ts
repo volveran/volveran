@@ -48,14 +48,14 @@ describe('Throttled Replay', () => {
   const deadLettered = (n: number) =>
     deadLetter(
       route,
-      Array.from({ length: n }, (_, i) => ({ body: `order ${i}`, options: { messageId: `throttled-${i}` } })),
+      Array.from({ length: n }, (_, i) => ({ body: `order ${i}`, options: { messageId: `paced-${i}` } })),
     );
 
   beforeAll(async () => {
     app = await startApp({
       profiles: [
         testProfile({ name: 'local' }),
-        testProfile({ name: 'throttled', replayRate: { default: 10, max: 20 } }),
+        testProfile({ name: 'paced', replayRate: { default: 10, max: 20 } }),
         testProfile({ name: 'capped', replayRate: { max: 5 } }),
       ],
       checkoutTiming: { timeLimitMs: 120_000 },
@@ -94,7 +94,7 @@ describe('Throttled Replay', () => {
 
   it("runs at the profile's default rate when the request gives none, and shows it with the estimate", async () => {
     await deadLettered(4);
-    const { id, handles } = await startCheckout('throttled', route.dlq);
+    const { id, handles } = await startCheckout('paced', route.dlq);
     const decided = await decide(id, handles.slice(0, 3), REPLAY);
     expect(decided.body.checkout.applyConfirmation).toMatchObject({
       replayRate: { default: 10, max: 20 },
@@ -108,7 +108,7 @@ describe('Throttled Replay', () => {
     expect((await auditEntries(id)).map((e) => e.rate)).toEqual([10, 10, 10]);
   });
 
-  it('shows no estimate and records no rate for an unthrottled Apply', async () => {
+  it('shows no estimate and records no rate for an Apply with no Replay Rate', async () => {
     await seedMessages('/', route.dlq, 2);
     const { id, handles } = await startCheckout('local', route.dlq);
     const decided = await decide(id, handles, DISCARD);
@@ -123,22 +123,37 @@ describe('Throttled Replay', () => {
 
   it("refuses a rate above the profile's maximum, and no rate when the profile has a maximum but no default, naming the maximum", async () => {
     await deadLettered(2);
-    const throttled = await startCheckout('throttled', route.dlq);
-    await decide(throttled.id, throttled.handles, REPLAY);
-    const above = await app.post(`/api/checkouts/${throttled.id}/apply`, { confirm: true, rate: 50 });
+    const paced = await startCheckout('paced', route.dlq);
+    await decide(paced.id, paced.handles, REPLAY);
+    const above = await app.post(`/api/checkouts/${paced.id}/apply`, { confirm: true, rate: 50 });
     expect([above.status, above.body.error.code, above.body.error.max]).toEqual([400, 'rate_above_maximum', 20]);
     expect(above.body.error.message).toContain('20');
     await app.delete(`/api/checkouts/${open.pop()}`);
 
     const capped = await startCheckout('capped', route.dlq);
     await decide(capped.id, capped.handles, REPLAY);
-    const unthrottled = await app.post(`/api/checkouts/${capped.id}/apply`, { confirm: true });
-    expect([unthrottled.status, unthrottled.body.error.code, unthrottled.body.error.max]).toEqual([400, 'rate_above_maximum', 5]);
-    expect(unthrottled.body.error.message).toContain('5');
+    const noRate = await app.post(`/api/checkouts/${capped.id}/apply`, { confirm: true });
+    expect([noRate.status, noRate.body.error.code, noRate.body.error.max]).toEqual([400, 'rate_above_maximum', 5]);
+    expect(noRate.body.error.message).toContain('5');
 
     const allowed = await applyAndWait(app, `/api/checkouts/${capped.id}/apply`, { confirm: true, rate: 5 });
     expect(allowed.status).toBe(202);
     expect(allowed.body.checkout.applyProgress.rate).toBe(5);
+  });
+
+  it('runs a Discard-only Apply with no rate when the profile has a maximum but no default: there is nothing to pace', async () => {
+    await seedMessages('/', route.dlq, 2);
+    const { id, handles } = await startCheckout('capped', route.dlq);
+    await decide(id, handles, DISCARD);
+
+    const applied = await applyAndWait(app, `/api/checkouts/${id}/apply`, { confirm: true });
+
+    expect(applied.status).toBe(202);
+    expect(applied.body.checkout.applyProgress.rate).toBeNull();
+    expect((await auditEntries(id)).map((e) => [e.action, e.outcome, e.rate])).toEqual([
+      ['discard', 'done', null],
+      ['discard', 'done', null],
+    ]);
   });
 
   it('refuses a rate that is not a number from 0.1 to 1,000', async () => {

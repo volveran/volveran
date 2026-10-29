@@ -180,11 +180,13 @@ describe('Canary Replay', () => {
       ['canary-3', 'not-attempted'],
     ]);
     expect(await readyMessageIds('/', route.dlq)).toEqual(['canary-0', 'canary-1', 'canary-3']);
+    // Stopped during the Watch Window: the watch did not run its course.
+    expect(applied.canary.status).toBe('watch_cut_short');
     // Nothing to continue once stopped.
     expect((await app.post(`/api/checkouts/${id}/apply/continue`)).status).toBe(409);
   });
 
-  it('continues before the Watch Window ends', async () => {
+  it('continues before the Watch Window ends: the watch was cut short, not passed', async () => {
     await deadLettered(2);
     const { id, handles } = await startCheckout();
     await decide(id, handles, REPLAY);
@@ -197,7 +199,24 @@ describe('Canary Replay', () => {
       ['canary-0', 'done'],
       ['canary-1', 'done'],
     ]);
-    expect(applied.canary.status).toBe('not_dead_lettered');
+    expect(applied.canary.status).toBe('watch_cut_short');
+    expect((await auditEntries(id)).find((e) => e.messageId === 'canary-0')).toMatchObject({ canaryOutcome: 'watch_cut_short' });
+  });
+
+  it('a copy that died again before Continue cut the watch short still makes the Canary died_again', async () => {
+    await deadLettered(2);
+    const { id, handles } = await startCheckout();
+    await decide(id, handles, REPLAY);
+    expect((await app.post(`/api/checkouts/${id}/apply`, { confirm: true, canary: true })).status).toBe(202);
+    await waitingIn(id, 'canary_watch');
+    await consume('reject');
+    // The dead-letter exchange routed the copy to the DLQ and the watch queue alike.
+    await eventually(async () => expect(await readyCount('/', route.dlq)).toBe(1));
+
+    expect((await app.post(`/api/checkouts/${id}/apply/continue`)).status).toBe(200);
+    const applied = await appliedCheckout(app, id);
+    expect(applied.canary).toMatchObject({ status: 'died_again', deadLetterReason: 'rejected' });
+    expect((await auditEntries(id)).find((e) => e.messageId === 'canary-0')).toMatchObject({ canaryOutcome: 'died_again' });
   });
 
   it('refuses a Canary without a Replay (canary_needs_replay), and a picked Canary whose Decision is not Replay', async () => {
@@ -358,7 +377,8 @@ describe('Canary Replay', () => {
         ['canary-0', 'done'],
         ['canary-1', 'not-attempted'],
       ]);
-      expect(applied.canary.status).toBe('not_dead_lettered');
+      // The Checkout ended during the Watch Window.
+      expect(applied.canary.status).toBe('watch_cut_short');
     } finally {
       await quiet.close();
     }

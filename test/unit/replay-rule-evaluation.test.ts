@@ -88,13 +88,13 @@ describe('evaluateRule', () => {
     expect(verdict(message(headers))).toBe('not_due');
   });
 
-  it("falls back to the Failure Details' fault time without x-death", () => {
+  it("falls back to the Failure Details' failure time without x-death", () => {
     const mt = (at: Date) => ({ 'MT-Reason': 'fault', 'MT-Fault-Timestamp': at.toISOString() });
     expect(verdict(message(mt(minutesAgo(0.5))))).toBe('not_due');
     expect(verdict(message(mt(minutesAgo(2))))).toBe('replay');
   });
 
-  it('prefers x-death to the fault time', () => {
+  it('prefers x-death to the failure time', () => {
     const headers = { 'x-death': xDeathAt(minutesAgo(0.5)), 'MT-Reason': 'fault', 'MT-Fault-Timestamp': minutesAgo(60).toISOString() };
     expect(verdict(message(headers))).toBe('not_due');
   });

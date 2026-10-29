@@ -15,7 +15,7 @@ describe('pacer', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('lets every step start at once when unthrottled', async () => {
+  it('lets every step start at once with no Replay Rate', async () => {
     const pace = pacer(null);
     for (let i = 0; i < 3; i++) expect(await settledAfter(pace.wait(), 0)).toBe(true);
   });

@@ -35,6 +35,33 @@ export interface RuleActing {
   passId: string;
 }
 
+/**
+ * How one Apply runs, fixed when it starts (checkout/manager.ts) and carried
+ * down to the executor unchanged.
+ */
+export interface ApplyOptions {
+  /** The Role of the Operator Applying (the requester, for an approved Apply), recorded in each Audit Entry. */
+  role: Role;
+  /** The second Operator who approved the Apply, recorded in each Audit Entry; null when it needed no Approval. */
+  approver: Pick<Operator, 'id' | 'displayName'> | null;
+  /** The Replay Rate in Messages per second, recorded in each Audit Entry; null when there is none. */
+  rate: number | null;
+  /** The handle of the Canary, a held Message with the Decision Replay, carried out first and alone; null for none. */
+  canary: number | null;
+  /** A Rule Pass: the rule and the pass, recorded in each Audit Entry; null for an Operator's Apply. */
+  rule: RuleActing | null;
+}
+
+/** The executor's hooks for the Canary step (executor.ts `canary`, made by checkout/canary.ts). */
+export interface CanaryHooks {
+  /** The Canary's handle: its step goes first and alone. */
+  handle: number;
+  /** Awaited after the Canary's `pending` Audit Entry is written, before it is published with `replayId`. */
+  beforePublish(entryId: number, replayId: string | null): Promise<void>;
+  /** Awaited once the Canary's step was attempted and settled; the rest waits until it resolves. */
+  afterStep(outcome: MessageOutcome): Promise<void>;
+}
+
 /** The outcome of one publish: ok only when confirmed without a preceding basic.return. */
 export type PublishResult =
   | { ok: true }

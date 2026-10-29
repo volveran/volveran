@@ -25,7 +25,7 @@ export interface ApprovalRequest {
   requestedAt: Date;
   /** The requester's Role on the profile when they asked: the approved Apply records it. */
   role: Role;
-  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when there is none. */
   rate: number | null;
   /** The handle of the Canary the approved Apply starts with, frozen with the Decisions; null for none. */
   canary: number | null;
@@ -131,10 +131,10 @@ export interface RunningApply {
   settled: Promise<void>;
   /** Set to make the executor attempt no further step; null while it goes on. */
   stop: ApplyStop | null;
-  /** Aborted together with setting `stop`, so a wait for the next paced step ends at once. */
-  stopped: AbortController;
+  /** Aborted together with setting `stop` (and when the Checkout is lost), so a wait for the next paced step, or after the Canary, ends at once. */
+  stopController: AbortController;
   /** Set while the Apply waits after its Canary (canary_watch, canary_done): lets it go on with the rest (Continue). */
-  resume: (() => void) | null;
+  continueAfterCanary: (() => void) | null;
 }
 
 /** Why an Apply attempts no further step, and how the Checkout ends afterwards. */

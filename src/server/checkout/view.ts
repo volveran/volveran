@@ -3,7 +3,7 @@
 import { summaryText } from '../../shared/decisions.js';
 import { applyConfirmationFor } from '../triage/apply-confirmation.js';
 import { summarizeDecisions } from '../triage/decisions.js';
-import { messageSummary, type QueueInfo } from '../triage/message-view.js';
+import { messageIdOf, messageSummary, type QueueInfo } from '../triage/message-view.js';
 import { replayOrigin } from '../triage/replay-origin.js';
 import { remainingMs } from '../triage/checkout-timing.js';
 import { pacedDurationMs } from '../../shared/replay-rate.js';
@@ -86,8 +86,7 @@ export function view(c: Checkout, ruleBadge?: RuleBadgeOf): CheckoutView {
 /** The Canary frozen with a request for Approval, by handle and message id; null for none. */
 function requestedCanary(c: Checkout, handle: number | null): RequestedCanary | null {
   if (handle === null) return null;
-  const id: unknown = c.held.get(handle)?.properties.messageId;
-  return { handle, messageId: typeof id === 'string' ? id : id == null ? null : String(id) };
+  return { handle, messageId: messageIdOf(c.held.get(handle)) };
 }
 
 /** The Messages that may be the Canary (Decision Replay, in Checkout order), each with whether it can be watched. */

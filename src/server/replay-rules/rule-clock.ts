@@ -38,10 +38,3 @@ export interface RuleSchedulerTestHooks {
   scheduler?(control: RuleSchedulerControl): void;
 }
 
-/** The longest random jitter added to a pass's interval, so rules declared alike do not all pass at once. */
-export const MAX_JITTER_MS = 30_000;
-
-/** A random jitter for a rule passing every `everyMs`: up to a tenth of it, at most MAX_JITTER_MS. */
-export function jitterMs(everyMs: number, random: () => number = Math.random): number {
-  return Math.floor(random() * Math.min(everyMs / 10, MAX_JITTER_MS));
-}

@@ -299,14 +299,16 @@ describe('Apply with Discard', () => {
   it('does not let a missing heartbeat end the Checkout while Apply runs', async () => {
     const quick = await startApp({
       profiles: [testProfile({ name: 'local' })],
-      checkoutTiming: { heartbeatWindowMs: 1_000 },
+      checkoutTiming: { heartbeatWindowMs: 2_000 },
       checkoutTestHooks: { beforeApplyStep: async (entryId) => beforeApplyStep?.(entryId) },
     });
     try {
       await seedMessages('/', 'orders.dlq', 3);
       const { checkout, id } = await startCheckout('orders.dlq', quick);
       await decide(id, checkout.messages.map((m: any) => m.handle).slice(0, 2), discard(), quick);
-      beforeApplyStep = () => sleep(1_500); // the heartbeat window passes during each step
+      beforeApplyStep = () => sleep(2_500); // the heartbeat window passes during each step
+      // The window runs until the Apply starts: a slow setup must not end the Checkout before it.
+      expect((await quick.post(`/api/checkouts/${id}/heartbeat`)).body.checkout.status).toBe('active');
 
       const applied = await apply(id, quick);
 

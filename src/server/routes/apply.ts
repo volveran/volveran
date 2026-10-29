@@ -6,10 +6,10 @@
 //
 // `rate` is the Replay Rate in Messages per second (0.1 to 1,000): Replay and
 // Move steps start at least 1/rate apart. Left out, the Broker Profile's
-// `replayRate.default` applies, else the Apply is unthrottled. 400
+// `replayRate.default` applies, else the Apply runs with no Replay Rate. 400
 // `invalid_request` for another value, 400 `rate_above_maximum` { max } above
 // the profile's `replayRate.max` (or with no rate when it has a maximum but
-// no default), 409 `apply_would_outlast_checkout` { neededMs, remainingMs }
+// no default and the Apply has a Replay or Move step), 409 `apply_would_outlast_checkout` { neededMs, remainingMs }
 // when at that rate it would outlast the Checkout's time left (less a margin).
 //
 // `canary` starts the Apply with a Canary: `true` for the first Message with
@@ -60,7 +60,7 @@ export interface ApplyRequestBody {
   confirm?: unknown;
   /** #9: on a Protected Profile, the queue name as the Operator typed it. */
   confirmQueueName?: unknown;
-  /** The Replay Rate in Messages per second; left out, the Broker Profile's default, else unthrottled. */
+  /** The Replay Rate in Messages per second; left out, the Broker Profile's default, else no Replay Rate. */
   rate?: unknown;
   /** Start with a Canary: true (the first Replay) or { handle }. */
   canary?: unknown;
@@ -96,11 +96,11 @@ export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDep
 
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.stopApplyBy(req.params.id, operatorOf(req)) };
+    return { checkout: checkouts.stopApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/continue', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.continueApplyBy(req.params.id, operatorOf(req)) };
+    return { checkout: checkouts.continueApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 }

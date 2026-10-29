@@ -14,6 +14,7 @@ import { api, ApiError, type AuditAction, type AuditEntry, type AuditSearch, typ
 const CANARY_OUTCOMES: Record<NonNullable<AuditEntry['canaryOutcome']>, string> = {
   died_again: 'died again',
   not_dead_lettered: 'not dead-lettered',
+  watch_cut_short: 'watch cut short',
   unwatched: 'unwatched',
   failed: 'failed',
 };

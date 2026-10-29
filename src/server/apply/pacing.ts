@@ -10,7 +10,7 @@ export { pacedDurationMs } from '../../shared/replay-rate.js';
 export interface Pacer {
   /**
    * Resolves when the next paced step may start: at once for the first one
-   * and when unthrottled, else 1/rate after the previous one started. Resolves
+   * and with no Replay Rate, else 1/rate after the previous one started. Resolves
    * early (and from then on at once) when `signal` aborts. Never rejects.
    */
   wait(signal?: AbortSignal): Promise<void>;

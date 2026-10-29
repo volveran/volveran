@@ -81,7 +81,7 @@ export interface FailureDetails {
   consumerType: string | null;
   messageType: string | null;
   /** When the consumer failed: ISO time, or the header as written when it does not read as a time. */
-  faultAt: string | null;
+  failedAt: string | null;
   retryCount: number | null;
   redeliveryCount: number | null;
   /** MassTransit's `MT-Host-*` headers, by the name after the prefix (e.g. `MachineName`). */
@@ -237,11 +237,13 @@ export type ApplyPhase = 'running' | 'canary_watch' | 'canary_done';
 
 /**
  * watching: the Watch Window runs. died_again: a copy of the Canary was
- * dead-lettered again. not_dead_lettered: none was while it was watched.
+ * dead-lettered again. not_dead_lettered: none was for the whole Watch
+ * Window. watch_cut_short: none was before the watch was cut short (Continue,
+ * Stop, the Checkout ending), so the window did not run its course.
  * unwatched: it could not be watched (`watchProblem` says why), so only the
  * Replay's outcome is known. failed: the Canary's Replay failed.
  */
-export type CanaryStatus = 'watching' | 'died_again' | 'not_dead_lettered' | 'unwatched' | 'failed';
+export type CanaryStatus = 'watching' | 'died_again' | 'not_dead_lettered' | 'watch_cut_short' | 'unwatched' | 'failed';
 
 /** The Canary of a Checkout's Apply, from the moment its Replay starts. */
 export interface CanaryView {
@@ -290,7 +292,7 @@ export interface ApplyConfirmation {
   /**
    * How long the Replay and Move steps of the current Decisions take at the
    * Replay Rate: the rate frozen with a request for Approval, else the
-   * profile's default; null when unthrottled.
+   * profile's default; null when there is none.
    */
   estimatedDurationMs: number | null;
   /** The Canary the Apply may start with (`canary` in the Apply body). */
@@ -301,7 +303,7 @@ export interface ApplyConfirmation {
 export interface ApprovalRequestView {
   /** When the requester asked for Approval (ISO 8601). */
   requestedAt: string;
-  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when unthrottled. */
+  /** The Replay Rate frozen with the Decisions, which the approved Apply runs at; null when there is none. */
   rate: number | null;
   /** The Canary the approved Apply starts with, frozen with the Decisions; null for none. */
   canary: RequestedCanary | null;
@@ -343,7 +345,7 @@ export interface ApprovalSummary {
   /** Messages per Decision. */
   decisionSummary: DecisionSummaryLine[];
   decisionSummaryText: string;
-  /** The Replay Rate the approved Apply runs at, in Messages per second; null when unthrottled. */
+  /** The Replay Rate the approved Apply runs at, in Messages per second; null when there is none. */
   rate: number | null;
   /** The Canary the approved Apply starts with; null for none. */
   canary: RequestedCanary | null;

@@ -250,7 +250,7 @@ function FailureDetailsSection({ details: f }: { details: FailureDetails }) {
     ['Message', f.message],
     ['Consumer type', f.consumerType],
     ['Message type', f.messageType],
-    ['Failed at', f.faultAt && !Number.isNaN(Date.parse(f.faultAt)) ? new Date(f.faultAt).toLocaleString() : f.faultAt],
+    ['Failed at', f.failedAt && !Number.isNaN(Date.parse(f.failedAt)) ? new Date(f.failedAt).toLocaleString() : f.failedAt],
     ['Retries', f.retryCount],
     ['Redeliveries', f.redeliveryCount],
     ['Input queue', f.inputQueue],

@@ -175,7 +175,7 @@ describe('Apply executor', () => {
     }
   });
 
-  it('records no rate on the Audit Entries of an unthrottled Apply', async () => {
+  it('records no rate on the Audit Entries of an Apply with no Replay Rate', async () => {
     const { outcomes } = run({ kept: [], steps: [{ handle: 1, decision: DISCARD }] }, async () => {});
     await outcomes;
     expect(audit.list().map((e) => e.rate)).toEqual([null]);

@@ -21,14 +21,23 @@
 // touched, then updated with the outcome. A crash in between leaves the
 // Message in the queue *and* in the store: a duplicate, never a loss.
 import type { AuditStore } from '../audit/store.js';
+import { messageIdOf } from '../triage/message-view.js';
 import type { ActionDecision, ApplyPlan, Decision } from '../triage/decisions.js';
 import { handlerFor } from './handlers.js';
 import { pacer } from './pacing.js';
-import { AckUncertainError, type ApplyContext, type AuditDetails, type HeldMessage, type MessageOutcome, type StepResult } from './types.js';
+import { STOP_REASONS } from './stop-reasons.js';
+import {
+  AckUncertainError,
+  type ApplyContext,
+  type ApplyOptions,
+  type AuditDetails,
+  type CanaryHooks,
+  type HeldMessage,
+  type MessageOutcome,
+  type StepResult,
+} from './types.js';
 
 const KIND_LABEL: Record<ActionDecision['kind'], string> = { discard: 'Discard', replay: 'Replay', move: 'Move' };
-/** The reason of a step not attempted because the Checkout stopped being active (a Lost Checkout). */
-export const NOT_ACTIVE_REASON = 'The Checkout stopped being active before this Message; it is back in the queue.';
 
 export interface ApplyRun {
   plan: ApplyPlan;
@@ -42,8 +51,8 @@ export interface ApplyRun {
    * which becomes the reason of each step left.
    */
   stopReason(): string | null;
-  /** The Replay Rate in Messages per second, recorded on every Audit Entry; null or left out when unthrottled. */
-  rate?: number | null;
+  /** The Apply's Replay Rate (ApplyOptions); null or left out when there is none. */
+  rate?: ApplyOptions['rate'];
   /** Aborted when the Apply is told to stop, so a wait for the next paced step ends at once. */
   stopSignal?: AbortSignal;
   /** Called as each step settles (done, failed or not attempted), in plan order. */
@@ -53,13 +62,7 @@ export interface ApplyRun {
   /** Test seam: awaited after a step's `pending` Audit Entry is written, before the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
   /** The Canary (a Replay step of the plan), carried out first and alone; its Audit Entry is marked as the Canary. */
-  canary?: {
-    handle: number;
-    /** Awaited after the Canary's `pending` Audit Entry is written, before it is published with `replayId`. */
-    beforePublish(entryId: number, replayId: string | null): Promise<void>;
-    /** Awaited once the Canary's step was attempted and settled; the rest waits until it resolves. */
-    afterStep(outcome: MessageOutcome): Promise<void>;
-  };
+  canary?: CanaryHooks;
 }
 
 /** Runs the plan; returns one outcome per Message of the plan, in Checkout order. */
@@ -69,12 +72,8 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
   const rate = run.rate ?? null;
   const pace = pacer(rate);
   const outcomes = new Map<number, MessageOutcome>();
-  const messageIdOf = (handle: number) => {
-    const id = messages.get(handle)?.properties.messageId;
-    return typeof id === 'string' ? id : id == null ? null : String(id);
-  };
   const outcome = (handle: number, decision: Decision, status: MessageOutcome['status'], reason: string | null = null, refused = false) => {
-    const o: MessageOutcome = { handle, messageId: messageIdOf(handle), decision, status, reason, ...(refused && { refused: true }) };
+    const o: MessageOutcome = { handle, messageId: messageIdOf(messages.get(handle)), decision, status, reason, ...(refused && { refused: true }) };
     outcomes.set(handle, o);
     if (status !== 'kept') run.onStep?.(o);
   };
@@ -99,9 +98,9 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       continue;
     }
     if (message && decision.kind !== 'discard') await pace.wait(run.stopSignal);
-    const stop = message ? run.stopReason() : NOT_ACTIVE_REASON;
+    const stop = message ? run.stopReason() : STOP_REASONS.checkoutNotActive;
     if (!message || stop !== null) {
-      outcome(handle, decision, 'not-attempted', stop ?? NOT_ACTIVE_REASON);
+      outcome(handle, decision, 'not-attempted', stop ?? STOP_REASONS.checkoutNotActive);
       continue;
     }
 
@@ -118,7 +117,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         profile: target.profile.name,
         vhost: target.vhost,
         queue: target.queue,
-        messageId: messageIdOf(handle),
+        messageId: messageIdOf(message),
         action: details.action,
         reason: details.reason,
         destination: details.destination,
