@@ -17,6 +17,7 @@ export type CheckoutErrorCode =
   | 'checkout_not_active'
   | 'apply_in_progress'
   | 'apply_not_running'
+  | 'apply_not_waiting'
   | 'message_not_found'
   | 'decision_not_allowed'
   | 'checkout_failed'
@@ -39,6 +40,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   checkout_not_active: 409,
   apply_in_progress: 409,
   apply_not_running: 409,
+  apply_not_waiting: 409,
   message_not_found: 404,
   decision_not_allowed: 422,
   checkout_failed: 502,
@@ -137,6 +139,11 @@ export function applyInProgress({ id }: { id: string }): CheckoutError {
  */
 export function applyNotRunning({ id }: { id: string }, why: string): CheckoutError {
   return new CheckoutError('apply_not_running', `No Apply of Checkout ${id} can be stopped: ${why}.`);
+}
+
+/** Continue, but the Apply is not waiting after a Canary. */
+export function applyNotWaiting({ id }: { id: string }, why: string): CheckoutError {
+  return new CheckoutError('apply_not_waiting', `The Apply of Checkout ${id} cannot continue: ${why}.`);
 }
 
 /** Someone other than the approver of an approved Apply asks to stop it. */

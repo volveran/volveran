@@ -3,7 +3,7 @@
 // records each step's outcome here; the Checkout view shows it
 // (`applyProgress`). Pacing (a Replay Rate) and a stop by an Operator fill
 // `rate` and `stoppedBy`.
-import type { ApplyProgress, OutcomeStatus } from '../../shared/checkout.js';
+import type { ApplyPhase, ApplyProgress, OutcomeStatus } from '../../shared/checkout.js';
 
 export type { ApplyProgress };
 
@@ -17,6 +17,8 @@ export class ApplyProgressTracker {
   private lastAttemptAt: Date | null = null;
   /** The Operator who stopped the Apply (display name); null unless one did. */
   stoppedBy: string | null = null;
+  /** Running, or waiting after a Canary (checkout/canary.ts sets it). */
+  phase: ApplyPhase = 'running';
 
   constructor(
     /** The Apply's steps: every Decision other than Keep. */
@@ -46,6 +48,7 @@ export class ApplyProgressTracker {
       startedAt: this.startedAt.toISOString(),
       estimatedEndAt: this.estimatedEnd(now)?.toISOString() ?? null,
       stoppedBy: this.stoppedBy,
+      phase: this.phase,
     };
   }
 

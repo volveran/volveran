@@ -758,6 +758,30 @@ dialog.prompt .confirm {
   color: var(--warning);
 }
 
+.canary-panel {
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.canary-panel p {
+  margin: 0.4rem 0;
+}
+.canary-panel.canary-died_again,
+.canary-panel.canary-failed {
+  border-left-color: var(--danger);
+}
+
+.canary-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.canary-choice .rate-problem {
+  color: var(--danger);
+}
+
 /* Replay rules view */
 .replay-rule {
   background: var(--surface);

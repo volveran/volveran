@@ -8,6 +8,8 @@ import { replayOrigin } from '../triage/replay-origin.js';
 import { remainingMs } from '../triage/checkout-timing.js';
 import { pacedDurationMs } from '../../shared/replay-rate.js';
 import type { Checkout } from './state.js';
+import { canaryView } from './canary.js';
+import type { CanaryConfirmation } from '../../shared/checkout.js';
 import type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability } from '../../shared/checkout.js';
 
 export type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability };
@@ -62,12 +64,30 @@ export function view(c: Checkout): CheckoutView {
       }),
       replayRate: { ...c.profile.replayRate },
       estimatedDurationMs: pacedDurationMs(pacedSteps(c), c.approvalRequest ? c.approvalRequest.rate : c.profile.replayRate.default),
+      canary: canaryConfirmation(c),
     },
     approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString(), rate: c.approvalRequest.rate },
     rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
     applyProgress: c.applyProgress?.view() ?? null,
     lastApply: c.lastApply,
+    canary: c.canary && canaryView(c.canary),
   };
+}
+
+/** The Messages that may be the Canary (Decision Replay, in Checkout order), each with whether it can be watched. */
+function canaryConfirmation(c: Checkout): CanaryConfirmation {
+  const candidates: CanaryConfirmation['candidates'] = [];
+  for (const handle of c.held.keys()) {
+    if (c.decisions.get(handle)?.kind !== 'replay') continue;
+    const bindings = c.canaryWatch.get(handle);
+    candidates.push({
+      handle,
+      watch: bindings?.watchable
+        ? { watchable: true }
+        : { watchable: false, reason: bindings?.reason ?? 'Where this Message dead-letters is not known.' },
+    });
+  }
+  return { watchWindowMs: c.profile.canary.watchWindowMs, candidates };
 }
 
 /** How many held Messages have a Decision that publishes (Replay, Move): the steps paced at a Replay Rate. */

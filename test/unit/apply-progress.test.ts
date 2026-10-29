@@ -18,6 +18,7 @@ describe('Apply progress', () => {
       startedAt: at(0).toISOString(),
       estimatedEndAt: null,
       stoppedBy: null,
+      phase: 'running',
     });
 
     progress.record('done', at(2));

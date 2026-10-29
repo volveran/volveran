@@ -32,10 +32,12 @@ import {
   type FilterClause,
   type MessageDetail,
   type MoveDestinations,
+  type CanaryChoice,
 } from './api.js';
 import { ApplyOutcomes } from './ApplyOutcomes.js';
 import { ApplyPanel } from './ApplyPanel.js';
 import { ApplyProgressPanel } from './ApplyProgress.js';
+import { CanaryPanel } from './CanaryPanel.js';
 import { ComparisonView } from './ComparisonView.js';
 import { formatCountdown } from './countdown.js';
 import { DecisionBar, DecisionPrompt } from './DecisionBar.js';
@@ -203,11 +205,11 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     }
   };
 
-  const apply = async (confirmQueueName?: string, rate?: number) => {
+  const apply = async (confirmQueueName?: string, rate?: number, canary?: CanaryChoice) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      setCheckout(await api.apply(id, confirmQueueName, rate));
+      setCheckout(await api.apply(id, confirmQueueName, rate, canary));
       setReceivedAt(Date.now());
       setSelection(new Set());
       setError(undefined);
@@ -222,6 +224,17 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   const stopApply = async () => {
     try {
       setCheckout(await api.stopApply(id));
+      setReceivedAt(Date.now());
+      setError(undefined);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  };
+
+  /** Lets the Apply waiting after its Canary carry out the rest. */
+  const continueApply = async () => {
+    try {
+      setCheckout(await api.continueApply(id));
       setReceivedAt(Date.now());
       setError(undefined);
     } catch (err) {
@@ -385,6 +398,15 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       )}
       {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}
       {error && <ErrorBox error={error} />}
+      {checkout.canary && (
+        <CanaryPanel
+          canary={checkout.canary}
+          progress={applying ? checkout.applyProgress : null}
+          now={now}
+          onContinue={continueApply}
+          onStop={stopApply}
+        />
+      )}
       {applying && checkout.applyProgress && (
         <ApplyProgressPanel progress={checkout.applyProgress} now={now} onStop={stopApply} />
       )}
@@ -432,6 +454,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             typeQueueName={checkout.applyConfirmation.typeQueueName}
             approvalRequired={checkout.applyConfirmation.approvalRequired}
             replayRate={checkout.applyConfirmation.replayRate}
+            canary={checkout.applyConfirmation.canary}
+            messageLabel={(handle) => checkout.messages.find((m) => m.handle === handle)?.messageId ?? `Message ${handle}`}
             summary={checkout.decisionSummary}
             summaryText={checkout.decisionSummaryText}
             busy={busy}
