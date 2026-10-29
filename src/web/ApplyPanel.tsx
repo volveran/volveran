@@ -9,6 +9,11 @@
 // confirmation requests Approval instead: the Checkout then waits for a
 // second Operator (routes/approvals.ts).
 //
+// With any Replay or Move, the confirmation has a Replay Rate field,
+// prefilled with the Broker Profile's default, and shows how long those
+// steps take at the rate. Empty runs unthrottled, unless the profile sets a
+// maximum; the server checks the rate too.
+//
 // The confirmation is a Prompt (keyboard.tsx): opening it focuses the typed
 // queue name, or else Cancel, so no key press confirms it; Escape closes it
 // and gives the focus back to "Apply…". The Checkout view says whether it is
@@ -17,7 +22,9 @@ import { useState } from 'react';
 import type { DecisionSummaryLine } from './api.js';
 import { decisionLabel } from '../shared/decisions.js';
 import type { CheckoutQueueType } from '../shared/checkout.js';
+import { MAX_REPLAY_RATE, MIN_REPLAY_RATE, pacedDurationMs } from '../shared/replay-rate.js';
 import { returnOrder } from '../shared/return-order.js';
+import { formatCountdown } from './countdown.js';
 import { Prompt } from './keyboard.js';
 
 interface ConfirmationProps {
@@ -27,10 +34,13 @@ interface ConfirmationProps {
   queueType: CheckoutQueueType;
   typeQueueName: boolean;
   approvalRequired: boolean;
+  /** The Broker Profile's default Replay Rate (prefilled) and maximum; null when not set. */
+  replayRate: { default: number | null; max: number | null };
   summary: DecisionSummaryLine[];
   summaryText: string;
   busy: boolean;
-  onApply: (confirmQueueName?: string) => void;
+  /** `rate`: the Replay Rate chosen; left out when the field is empty (unthrottled). */
+  onApply: (confirmQueueName?: string, rate?: number) => void;
 }
 
 export function ApplyPanel({
@@ -56,6 +66,7 @@ function ApplyConfirmation({
   queueType,
   typeQueueName,
   approvalRequired,
+  replayRate,
   summary,
   summaryText,
   busy,
@@ -63,9 +74,26 @@ function ApplyConfirmation({
   onClose,
 }: ConfirmationProps & { onClose(): void }) {
   const [typed, setTyped] = useState('');
+  const [rateInput, setRateInput] = useState(replayRate.default === null ? '' : String(replayRate.default));
   const count = (kind: DecisionSummaryLine['kind']) =>
     summary.filter((l) => l.kind === kind).reduce((n, l) => n + l.count, 0);
   const typedOk = !typeQueueName || typed === queue;
+  const paced = count('replay') + count('move');
+  // A profile with a maximum needs a rate for any Apply (unthrottled is above it).
+  const askRate = paced > 0 || replayRate.max !== null;
+  const rate = rateInput.trim() === '' ? null : Number(rateInput);
+  const highest = replayRate.max ?? MAX_REPLAY_RATE;
+  const rateProblem =
+    !askRate
+      ? null
+      : rate === null
+        ? replayRate.max === null
+          ? null
+          : `${profile} allows at most ${replayRate.max} Messages/s: give a rate.`
+        : !Number.isFinite(rate) || rate < MIN_REPLAY_RATE || rate > highest
+          ? `The rate must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${highest}.`
+          : null;
+  const estimate = pacedDurationMs(paced, rate);
 
   return (
     <Prompt label={approvalRequired ? 'Request Approval' : 'Confirm Apply'} onClose={onClose}>
@@ -97,6 +125,27 @@ function ApplyConfirmation({
             can withdraw the request.
           </span>
         )}
+        {askRate && (
+          <label className="replay-rate">
+            <span>Replay Rate (Messages per second; empty for as fast as the broker confirms)</span>
+            <input
+              type="number"
+              min={MIN_REPLAY_RATE}
+              max={highest}
+              step="any"
+              value={rateInput}
+              onChange={(e) => setRateInput(e.target.value)}
+              aria-label="Replay Rate"
+              aria-invalid={rateProblem !== null}
+            />
+            <small className={rateProblem ? 'rate-problem' : 'muted'}>
+              {rateProblem ??
+                (estimate === null
+                  ? `${paced} Replay and Move steps, unthrottled.`
+                  : `${paced} Replay and Move steps take about ${formatCountdown(estimate)} at ${rate} Messages/s; Discards are not slowed down.`)}
+            </small>
+          </label>
+        )}
         {typeQueueName && (
           <label className="type-queue-name">
             <span>
@@ -115,11 +164,11 @@ function ApplyConfirmation({
         <span>
           <button
             className="danger"
-            disabled={busy || !typedOk}
+            disabled={busy || !typedOk || rateProblem !== null}
             onClick={() => {
               const confirmQueueName = typeQueueName ? typed : undefined;
               onClose();
-              onApply(confirmQueueName);
+              onApply(confirmQueueName, askRate && rate !== null ? rate : undefined);
             }}
           >
             {approvalRequired ? 'Request Approval' : 'Confirm Apply'}

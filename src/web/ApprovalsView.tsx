@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { heldLine } from '../shared/held-line.js';
 import { decisionLabel } from '../shared/decisions.js';
+import { rateText } from '../shared/replay-rate.js';
 import { formatCountdown } from './countdown.js';
 import { api, ApiError, type ApprovalSummary, type Checkout, type MessageDetail } from './api.js';
 import { MessageDetailView, MessageList } from './MessageList.js';
@@ -78,6 +79,7 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
               <th>Waiting</th>
               <th>Time left</th>
               <th>Decisions</th>
+              <th>Replay Rate</th>
               <th />
             </tr>
           </thead>
@@ -103,6 +105,7 @@ export function ApprovalsView({ initialOpen = null, onClosed }: { initialOpen?: 
                     ))}
                   </ul>
                 </td>
+                <td>{rateText(a.rate)}</td>
                 <td>
                   <button onClick={() => setOpen(a.checkoutId)}>Open</button>
                 </td>
@@ -248,6 +251,15 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
             {checkout.profile} · vhost {checkout.vhost} · started by {checkout.operator}
             {checkout.approvalRequest &&
               ` · Approval requested at ${new Date(checkout.approvalRequest.requestedAt).toLocaleTimeString()}`}
+          </p>
+          <p className="replay-rate-line">
+            {checkout.approvalRequest && (
+              <>
+                Runs at <strong>{rateText(checkout.approvalRequest.rate)}</strong>
+                {checkout.applyConfirmation.estimatedDurationMs !== null &&
+                  `: its Replay and Move steps take about ${formatCountdown(checkout.applyConfirmation.estimatedDurationMs)}`}
+              </>
+            )}
           </p>
           <p className="held">{heldLine(checkout)}</p>
         </div>

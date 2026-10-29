@@ -132,6 +132,8 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_MAX_BYTES` | `1GiB` | most bytes of Discarded bodies kept in total, in bytes or with `KiB`, `MiB`, `GiB`, `TiB`; beyond it the oldest bodies are evicted first. The Audit view warns at 90 % |
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 
+A Broker Profile may set a **Replay Rate** (`replayRate: { default, max }` in Messages per second, see `profiles.example.yaml`): an Apply then starts its Replay and Move steps at least 1/rate apart, so a consumer that has just recovered gets a steady trickle instead of a burst. The Operator can pick another rate in the Apply confirmation, up to `max`, which also shows how long the Apply will take; an Apply that would outlast the Checkout's time left is refused before it starts.
+
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)).
 
 ### Exporting Messages
