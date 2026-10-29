@@ -67,13 +67,15 @@ export interface NewAuditEntry {
   filter?: Filter | null;
   /** An export: how many Messages it holds. */
   messageCount?: number | null;
+  /** An Apply: its Replay Rate in Messages per second; null (or left out) when unthrottled, and for the other actions. */
+  rate?: number | null;
 }
 
 /** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
 export interface AuditEntry
   extends Omit<
     NewAuditEntry,
-    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount'
+    'operator' | 'role' | 'approver' | 'message' | 'replayId' | 'restoreOf' | 'filter' | 'messageCount' | 'rate'
   > {
   id: number;
   /** The Operator's Role when they acted; null on entries written before v0.3. */
@@ -85,6 +87,8 @@ export interface AuditEntry
   restoreOf: number | null;
   filter: Filter | null;
   messageCount: number | null;
+  /** The Replay Rate of the Apply that wrote the entry; null when unthrottled (and on entries before v0.4). */
+  rate: number | null;
   /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
   bodyExpiredAt: Date | null;
   operatorId: string;
@@ -186,6 +190,8 @@ const MIGRATIONS: string[] = [
   // v6 (#44): an export records the filter its Messages matched (JSON) and how many it holds.
   `ALTER TABLE audit_entries ADD COLUMN filter TEXT;
    ALTER TABLE audit_entries ADD COLUMN message_count INTEGER;`,
+  // v7 (#56): every entry an Apply writes records its Replay Rate (Messages per second; null when unthrottled).
+  `ALTER TABLE audit_entries ADD COLUMN rate REAL;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -215,8 +221,8 @@ export class AuditStore {
              message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
              outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
              approver_id, approver_name,
-             filter, message_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             filter, message_count, rate)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.at.getTime(),
@@ -243,6 +249,7 @@ export class AuditStore {
           entry.approver?.displayName ?? null,
           entry.filter ? JSON.stringify(entry.filter) : null,
           entry.messageCount ?? null,
+          entry.rate ?? null,
         );
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
@@ -405,6 +412,7 @@ interface Row {
   approver_name: string | null;
   filter: string | null;
   message_count: number | null;
+  rate: number | null;
 }
 
 function toEntry(row: Row): AuditEntry {
@@ -439,6 +447,7 @@ function toEntry(row: Row): AuditEntry {
     bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
     filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
     messageCount: row.message_count,
+    rate: row.rate,
     message:
       row.message_properties === null
         ? null

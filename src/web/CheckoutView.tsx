@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 import { approvalLink } from '../shared/approval-link.js';
 import { heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
+import { rateText } from '../shared/replay-rate.js';
 import { returnOrder } from '../shared/return-order.js';
 import {
   api,
@@ -202,11 +203,11 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
     }
   };
 
-  const apply = async (confirmQueueName?: string) => {
+  const apply = async (confirmQueueName?: string, rate?: number) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      setCheckout(await api.apply(id, confirmQueueName));
+      setCheckout(await api.apply(id, confirmQueueName, rate));
       setReceivedAt(Date.now());
       setSelection(new Set());
       setError(undefined);
@@ -218,11 +219,11 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   };
 
   /** Asks another Operator to approve the Apply, after the same confirmation as an Apply. */
-  const requestApproval = async (confirmQueueName?: string) => {
+  const requestApproval = async (confirmQueueName?: string, rate?: number) => {
     setBusy(true);
     setNotice(undefined);
     try {
-      setCheckout(await api.requestApproval(id, confirmQueueName));
+      setCheckout(await api.requestApproval(id, confirmQueueName, rate));
       setReceivedAt(Date.now());
       setError(undefined);
     } catch (err) {
@@ -382,7 +383,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
           <p>
             Requested at {new Date(checkout.approvalRequest.requestedAt).toLocaleTimeString()}: another Operator with the
             role <code>operator</code> or <code>admin</code> on {checkout.profile} must approve this Apply (
-            {checkout.decisionSummaryText}). They find it under Approvals. Your Decisions cannot change until then.
+            {checkout.decisionSummaryText}, at {rateText(checkout.approvalRequest.rate)}). They find it under Approvals.
+            Your Decisions and the rate cannot change until then.
           </p>
           <p>
             <strong>{formatCountdown(checkout.remainingMs - (now - receivedAt))} left</strong> before the Checkout reaches
@@ -416,6 +418,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
             queueType={checkout.queueType}
             typeQueueName={checkout.applyConfirmation.typeQueueName}
             approvalRequired={checkout.applyConfirmation.approvalRequired}
+            replayRate={checkout.applyConfirmation.replayRate}
             summary={checkout.decisionSummary}
             summaryText={checkout.decisionSummaryText}
             busy={busy}

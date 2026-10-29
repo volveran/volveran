@@ -200,17 +200,20 @@ export const api = {
    * Checkout `applying`. Its `applyProgress` shows how far it has got, and
    * its `lastApply` the outcome per Message once it has ended the Checkout.
    * On a Protected Profile `confirmQueueName` is the queue name as the Operator typed it.
+   * `rate` is the Replay Rate in Messages per second; left out, the profile's default applies.
    */
-  apply: (id: string, confirmQueueName?: string) =>
+  apply: (id: string, confirmQueueName?: string, rate?: number) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
+      ...(rate !== undefined && { rate }),
     }).then((b) => b.checkout),
-  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions. */
-  requestApproval: (id: string, confirmQueueName?: string) =>
+  /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions and the Replay Rate. */
+  requestApproval: (id: string, confirmQueueName?: string, rate?: number) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
+      ...(rate !== undefined && { rate }),
     }).then((b) => b.checkout),
   withdrawApproval: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),

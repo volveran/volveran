@@ -10,6 +10,7 @@ import { parse } from 'yaml';
 import { ConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
 import type { RunMode } from './run-mode.js';
+import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../shared/replay-rate.js';
 import { ROLES, type Role } from '../shared/roles.js';
 
 /**
@@ -65,6 +66,18 @@ export interface BrokerProfile {
    * Solo Mode ignores it.
    */
   roles: RoleMapping | undefined;
+  /**
+   * The Replay Rate an Apply runs at when the Operator gives none
+   * (`default`), and the most an Operator may choose (`max`), in Messages
+   * per second; null when not set.
+   */
+  replayRate: ReplayRateLimits;
+}
+
+/** A Broker Profile's `replayRate`; `default` is never above `max`. */
+export interface ReplayRateLimits {
+  default: number | null;
+  max: number | null;
 }
 
 /** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
@@ -156,6 +169,7 @@ export function parseProfiles(
       protected: isProtected,
       requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
+      replayRate: parseReplayRate(raw.replayRate, `${where} ("${name}").replayRate`),
     };
   });
 }
@@ -226,6 +240,31 @@ function parseRoles(value: unknown, where: string): RoleMapping | undefined {
     roles[key as Role] = groups as string[];
   }
   return roles;
+}
+
+function parseReplayRate(value: unknown, where: string): ReplayRateLimits {
+  if (value === undefined || value === null) return { default: null, max: null };
+  if (!isRecord(value)) throw new ProfilesConfigError(`${where} must be a mapping with default and/or max`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'default' && key !== 'max') {
+      throw new ProfilesConfigError(`${where}.${key} is not a key of replayRate; it takes default and max`);
+    }
+  }
+  const rate = (key: 'default' | 'max'): number | null => {
+    const v = value[key];
+    if (v === undefined || v === null) return null;
+    if (!isReplayRate(v)) {
+      throw new ProfilesConfigError(
+        `${where}.${key} must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}`,
+      );
+    }
+    return v;
+  };
+  const limits = { default: rate('default'), max: rate('max') };
+  if (limits.default !== null && limits.max !== null && limits.default > limits.max) {
+    throw new ProfilesConfigError(`${where}.default (${limits.default}) is above replayRate.max (${limits.max})`);
+  }
+  return limits;
 }
 
 function parseProtected(value: unknown, where: string): boolean {

@@ -25,6 +25,11 @@
 // (the rest is reported not attempted), and the Checkout then ends
 // ('time-limit'). The broker can still cut it short (Lost Checkout).
 //
+// An Apply runs at a Replay Rate (the request's, else the Broker Profile's
+// default, capped by its maximum; triage/replay-rate.ts) or unthrottled. It
+// is refused before it starts when at that rate it would outlast the
+// Checkout's time left. A stop wakes a wait for the next paced step at once.
+//
 // Approval (Team Mode, a Protected Profile with `requireApproval`): an Apply
 // with any Decision other than Keep is not run by its owner. The owner
 // requests Approval, which freezes the Decisions (the Checkout is
@@ -42,9 +47,13 @@ import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
 import { queueRefOf, type QueueRef } from '../profiles.js';
+import { MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../../shared/replay-rate.js';
+import { rateAboveMaximum } from '../apply/errors.js';
+import { InvalidRequestError } from '../http-error.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
-import { DEFAULT_CHECKOUT_TIMING, type CheckoutTiming } from '../triage/checkout-timing.js';
+import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
+import { applyOutlastsCheckout, resolveReplayRate } from '../triage/replay-rate.js';
 import { messageDetail, type MessageDetail } from '../triage/message-view.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, ProfileScope } from '../audit/store.js';
@@ -55,6 +64,7 @@ import {
   applyInProgress,
   approvalNotRequired,
   approvalRequired,
+  applyWouldOutlastCheckout,
   awaitingApproval,
   cannotApproveOwnApply,
   CheckoutError,
@@ -67,7 +77,7 @@ import {
 import { startExport, type CheckoutExport } from './export.js';
 import { openCheckout, type StartOptions } from './open.js';
 import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
-import { approvalSummary, queueInfo, view, type ApprovalSummary, type CheckoutView } from './view.js';
+import { approvalSummary, pacedSteps, queueInfo, view, type ApprovalSummary, type CheckoutView } from './view.js';
 
 export { checkoutConnectionName, type StartOptions } from './open.js';
 
@@ -269,29 +279,63 @@ export class CheckoutManager {
    * Throws, before starting anything, `checkout_not_active` on a Checkout
    * that is over or lost, `apply_in_progress` while one runs,
    * `approval_required` when the Apply needs Approval and
-   * `awaiting_approval` while it waits for it. `role` is the Applying
-   * Operator's Role on the profile, recorded in each Audit Entry.
+   * `awaiting_approval` while it waits for it, and the Replay Rate's
+   * refusals (replayRateFor). `role` is the Applying Operator's Role on the
+   * profile, recorded in each Audit Entry. `rate` is the request's Replay
+   * Rate as sent (left out: the profile's default).
    */
-  apply(id: string, role: Role): CheckoutView {
+  apply(id: string, role: Role, rate?: unknown): CheckoutView {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'only an approver can Apply it');
     if (view(checkout).applyConfirmation.approvalRequired) throw approvalRequired(checkout);
-    return this.startApply(checkout, role, null);
+    return this.startApply(checkout, role, null, this.replayRateFor(checkout, rate));
+  }
+
+  /**
+   * The Replay Rate an Apply of the Checkout runs at, from the request's
+   * `requested` rate and the profile's `replayRate`. Throws 400
+   * `invalid_request` for a rate that is not a number from 0.1 to 1,000, 400
+   * `rate_above_maximum`, and 409 `apply_would_outlast_checkout` when the
+   * Replay and Move steps at that rate would outlast the time left.
+   */
+  private replayRateFor(checkout: Checkout, requested: unknown): number | null {
+    const resolved = resolveReplayRate(requested, checkout.profile.replayRate);
+    if (!resolved.ok && resolved.problem === 'invalid') {
+      throw new InvalidRequestError(
+        `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`,
+      );
+    }
+    if (!resolved.ok) throw rateAboveMaximum(checkout.profile.name, resolved.max, (requested as number | null | undefined) ?? null);
+    this.assertFitsTimeLeft(checkout, resolved.rate);
+    return resolved.rate;
+  }
+
+  /** Throws `apply_would_outlast_checkout` when the Apply's paced steps at `rate` would outlast the Checkout. */
+  private assertFitsTimeLeft(checkout: Checkout, rate: number | null): void {
+    const outlasts = applyOutlastsCheckout({
+      pacedSteps: pacedSteps(checkout),
+      rate,
+      remainingMs: remainingMs(checkout.endsAt, new Date()),
+    });
+    if (outlasts) throw applyWouldOutlastCheckout(checkout, outlasts);
   }
 
   /**
    * The owner asks for Approval of the Apply of the current Decisions, which
-   * freezes them. `role` is the owner's Role on the profile, recorded when
-   * the Apply runs. Throws `approval_not_required` when the Apply needs no
-   * Approval, `awaiting_approval` when it is already requested.
+   * freezes them, with the Replay Rate the Apply will run at (`rate` as
+   * sent). `role` is the owner's Role on the profile, recorded when the
+   * Apply runs. Throws `approval_not_required` when the Apply needs no
+   * Approval, `awaiting_approval` when it is already requested, and the
+   * Replay Rate's refusals (replayRateFor).
    */
-  requestApproval(id: string, role: Role): CheckoutView {
+  requestApproval(id: string, role: Role, rate?: unknown): CheckoutView {
     const checkout = this.find(id);
     this.assertCanApply(checkout);
     if (checkout.approvalRequest) throw awaitingApproval(checkout, 'Approval is already requested');
     if (!view(checkout).applyConfirmation.approvalRequired) throw approvalNotRequired(checkout);
-    checkout.approvalRequest = { requestedAt: new Date(), role };
+    const frozenRate = this.replayRateFor(checkout, rate);
+    checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate };
     checkout.approvalClosed = null;
     checkout.rejection = null;
     return view(checkout);
@@ -331,13 +375,16 @@ export class CheckoutManager {
   /**
    * A second Operator approves the requested Apply: it starts in the
    * background on the owner's Checkout, recorded as the owner's (with the
-   * Role they held when they asked) and with `approver` alongside. Returns
-   * the Checkout `applying`. Same checks as awaitingCheckout.
+   * Role they held when they asked) and with `approver` alongside, at the
+   * Replay Rate frozen with the request. Returns the Checkout `applying`.
+   * Same checks as awaitingCheckout, and `apply_would_outlast_checkout` when
+   * too little time is left by now (the request stays).
    */
   approve(id: string, approver: Operator): CheckoutView {
     const checkout = this.awaitingCheckout(id, approver);
+    this.assertFitsTimeLeft(checkout, checkout.approvalRequest!.rate);
     const request = this.takeApprovalRequest(checkout, { how: 'approved', by: approver.displayName });
-    return this.startApply(checkout, request.role, approver);
+    return this.startApply(checkout, request.role, approver, request.rate);
   }
 
   /**
@@ -378,21 +425,27 @@ export class CheckoutManager {
    * is `applying` (so a second Apply or approve finds it in progress), and
    * suspends the heartbeat window while it runs.
    */
-  private startApply(checkout: Checkout, role: Role, approver: Operator | null): CheckoutView {
+  private startApply(checkout: Checkout, role: Role, approver: Operator | null, rate: number | null): CheckoutView {
     clearTimeout(checkout.heartbeatTimer);
-    const running: RunningApply = { settled: Promise.resolve(), stop: null };
+    const running: RunningApply = { settled: Promise.resolve(), stop: null, stopped: new AbortController() };
     checkout.applying = running;
-    running.settled = this.carryOutApply(checkout, running, role, approver);
+    running.settled = this.carryOutApply(checkout, running, { role, approver, rate });
     return view(checkout);
   }
 
-  private async carryOutApply(checkout: Checkout, running: RunningApply, role: Role, approver: Operator | null) {
+  private async carryOutApply(
+    checkout: Checkout,
+    running: RunningApply,
+    { role, approver, rate }: { role: Role; approver: Operator | null; rate: number | null },
+  ) {
     try {
       const { startedAt, outcomes } = await runApply(checkout, {
         audit: this.options.audit,
         role,
         approver: approver && { id: approver.id, displayName: approver.displayName },
+        rate,
         stopReason: () => running.stop?.reason ?? null,
+        stopSignal: running.stopped.signal,
         beforeStep: this.hooks.beforeApplyStep,
       });
       checkout.lastApply = { at: startedAt.toISOString(), outcomes, approvedBy: approver?.displayName ?? null };
@@ -407,12 +460,14 @@ export class CheckoutManager {
 
   /**
    * Asks the Apply running on the Checkout to attempt no further step; the
-   * step in progress finishes. The first stop wins.
+   * step in progress finishes, and a wait for the next paced step ends at
+   * once. The first stop wins.
    */
   private stopApply(checkout: Checkout, stop: ApplyStop): void {
     const running = checkout.applying;
     if (!running || running.stop) return;
     running.stop = stop;
+    running.stopped.abort();
     if (stop.stoppedBy && checkout.applyProgress) checkout.applyProgress.stoppedBy = stop.stoppedBy;
   }
 
@@ -519,6 +574,8 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return;
     checkout.status = 'lost';
     checkout.lostReason = reason;
+    // A wait for the next paced step ends now; the executor then finds the Checkout not active.
+    checkout.applying?.stopped.abort();
     this.cancelApprovalRequest(checkout);
     checkout.held.clear();
     checkout.overflow = [];

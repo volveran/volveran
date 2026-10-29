@@ -1,7 +1,9 @@
 // The progress of an Apply running in the background: a bar of the steps
-// done, failed and still to go, and when it should end at its pace so far.
+// done, failed and still to go, the Replay Rate it runs at, and when it
+// should end at its pace so far.
 // The Checkout view polls the Checkout while it shows this.
 import type { ApplyProgress } from './api.js';
+import { rateText } from '../shared/replay-rate.js';
 import { formatCountdown } from './countdown.js';
 
 export function ApplyProgressPanel({ progress, now }: { progress: ApplyProgress; now: number }) {
@@ -9,7 +11,7 @@ export function ApplyProgressPanel({ progress, now }: { progress: ApplyProgress;
   const endsAt = progress.estimatedEndAt === null ? null : Date.parse(progress.estimatedEndAt);
   return (
     <div className="apply-progress" role="status">
-      <strong>Applying</strong>
+      <strong>Applying</strong> <small className="muted">at {rateText(progress.rate)}</small>
       <div
         className="progress-bar"
         role="progressbar"

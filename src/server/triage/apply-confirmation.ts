@@ -6,14 +6,15 @@
 // Approval.
 import type { ApplyConfirmation } from '../../shared/checkout.js';
 
-export type { ApplyConfirmation };
+/** What an Apply needs confirmed, beyond its Replay Rate (checkout/view.ts adds that). */
+export type ConfirmationNeeded = Pick<ApplyConfirmation, 'typeQueueName' | 'approvalRequired'>;
 
 export function applyConfirmationFor(input: {
   protectedProfile: boolean;
   /** Team Mode and the profile's `requireApproval`. */
   requireApproval: boolean;
   actionCount: number;
-}): ApplyConfirmation {
+}): ConfirmationNeeded {
   const changes = input.actionCount > 0;
   return {
     typeQueueName: input.protectedProfile && changes,
@@ -25,7 +26,7 @@ export type ConfirmationProblem = 'confirmation_required' | 'queue_name_confirma
 
 /** Returns what is missing from the request, or null when it confirms the Apply. */
 export function confirmationProblem(
-  needed: ApplyConfirmation,
+  needed: ConfirmationNeeded,
   queue: string,
   body: { confirm?: unknown; confirmQueueName?: unknown } | undefined,
 ): ConfirmationProblem | null {

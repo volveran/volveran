@@ -62,6 +62,8 @@ export interface AuditEntryJson {
   filter: Filter | null;
   /** An export: how many Messages it holds; null for the other actions. */
   messageCount: number | null;
+  /** The Replay Rate of the Apply that wrote the entry, in Messages per second; null when unthrottled, for other actions and before v0.4. */
+  rate: number | null;
   /** The Message acted on; null for an export, which keeps no copy. */
   message: {
     properties: Record<string, unknown>;

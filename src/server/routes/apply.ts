@@ -1,6 +1,14 @@
 // The Apply route: carries out a Checkout's Decisions (ADR 0001).
 //
-//   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName? }  → 202 { checkout }
+//   POST /api/checkouts/:id/apply  { confirm: true, confirmQueueName?, rate? }  → 202 { checkout }
+//
+// `rate` is the Replay Rate in Messages per second (0.1 to 1,000): Replay and
+// Move steps start at least 1/rate apart. Left out, the Broker Profile's
+// `replayRate.default` applies, else the Apply is unthrottled. 400
+// `invalid_request` for another value, 400 `rate_above_maximum` { max } above
+// the profile's `replayRate.max` (or with no rate when it has a maximum but
+// no default), 409 `apply_would_outlast_checkout` { neededMs, remainingMs }
+// when at that rate it would outlast the Checkout's time left (less a margin).
 //
 // The Apply runs in the background (ADR 0009): the answer comes at once,
 // with the Checkout `applying`. Its view shows the Apply's progress
@@ -30,6 +38,8 @@ export interface ApplyRequestBody {
   confirm?: unknown;
   /** #9: on a Protected Profile, the queue name as the Operator typed it. */
   confirmQueueName?: unknown;
+  /** The Replay Rate in Messages per second; left out, the Broker Profile's default, else unthrottled. */
+  rate?: unknown;
 }
 
 /**
@@ -57,6 +67,6 @@ export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDep
     // 404 for an unknown Checkout before asking for confirmation. Nothing
     // awaits between this check and apply() reading the Decisions.
     checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-    return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role) });
+    return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role, req.body?.rate) });
   });
 }

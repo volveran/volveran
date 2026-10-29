@@ -2,6 +2,7 @@
 // Message at a time (apply/executor.ts), asking before every step whether
 // the Checkout is still active and whether the manager asked it to stop
 // (the time limit), and counting each step in the Checkout's Apply progress.
+// Replay and Move steps are paced at the Apply's Replay Rate, if any.
 // An approved Apply runs here too, on the
 // requester's Checkout and connection, recorded as the requester's with the
 // approver alongside. Replay and Move publish on a confirm channel
@@ -29,6 +30,10 @@ export interface RunApplyOptions {
   approver: Pick<Operator, 'id' | 'displayName'> | null;
   /** Asked before every step while the Checkout is active: null to go on, or why no further step is attempted. */
   stopReason(): string | null;
+  /** Aborted when the Apply is told to stop: a wait for the next paced step ends at once. */
+  stopSignal?: AbortSignal;
+  /** The Replay Rate in Messages per second; null when unthrottled. */
+  rate: number | null;
   /** Test seam: an Apply step's `pending` Audit Entry is committed; next the step touches the broker. */
   beforeStep?(entryId: number): Promise<void>;
 }
@@ -73,7 +78,7 @@ export async function runApply(
     },
   };
   const plan = buildApplyPlan([...checkout.held.keys()], checkout.decisions);
-  const progress = new ApplyProgressTracker(plan.steps.length, ctx.startedAt);
+  const progress = new ApplyProgressTracker(plan.steps.length, ctx.startedAt, options.rate);
   checkout.applyProgress = progress;
   const outcomes = await executeApply({
     plan,
@@ -81,6 +86,8 @@ export async function runApply(
     ctx,
     audit: options.audit,
     stopReason: () => (checkout.status === 'active' ? options.stopReason() : NOT_ACTIVE_REASON),
+    rate: options.rate,
+    stopSignal: options.stopSignal,
     onStep: (o) => {
       if (o.status !== 'kept') progress.record(o.status);
     },

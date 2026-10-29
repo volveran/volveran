@@ -8,6 +8,10 @@
 // reason given. A step in progress always finishes. Each step's outcome is
 // reported as it settles (`onStep`), for the Apply's progress.
 //
+// With a Replay Rate, Replay and Move steps start at least 1/rate apart
+// (pacing.ts); Discards are not paced. The wait comes between steps, before
+// asking whether to go on, and a stop (`stopSignal`) cuts it short.
+//
 // For every attempted step an Audit Entry is written as `pending` (for a
 // Discard, with the full Message, in a durable commit) before the broker is
 // touched, then updated with the outcome. A crash in between leaves the
@@ -15,6 +19,7 @@
 import type { AuditStore } from '../audit/store.js';
 import type { ActionDecision, ApplyPlan, Decision } from '../triage/decisions.js';
 import { handlerFor } from './handlers.js';
+import { pacer } from './pacing.js';
 import { AckUncertainError, type ApplyContext, type AuditDetails, type HeldMessage, type MessageOutcome, type StepResult } from './types.js';
 
 const KIND_LABEL: Record<ActionDecision['kind'], string> = { discard: 'Discard', replay: 'Replay', move: 'Move' };
@@ -33,6 +38,10 @@ export interface ApplyRun {
    * which becomes the reason of each step left.
    */
   stopReason(): string | null;
+  /** The Replay Rate in Messages per second, recorded on every Audit Entry; null or left out when unthrottled. */
+  rate?: number | null;
+  /** Aborted when the Apply is told to stop, so a wait for the next paced step ends at once. */
+  stopSignal?: AbortSignal;
   /** Called as each step settles (done, failed or not attempted), in plan order. */
   onStep?(outcome: MessageOutcome): void;
   /** Called as soon as a step is done, so its Message is no longer treated as held. */
@@ -45,6 +54,8 @@ export interface ApplyRun {
 export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
   const { plan, messages, ctx, audit } = run;
   const { target } = ctx;
+  const rate = run.rate ?? null;
+  const pace = pacer(rate);
   const outcomes = new Map<number, MessageOutcome>();
   const messageIdOf = (handle: number) => {
     const id = messages.get(handle)?.properties.messageId;
@@ -70,6 +81,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       );
       continue;
     }
+    if (message && decision.kind !== 'discard') await pace.wait(run.stopSignal);
     const stop = message ? run.stopReason() : NOT_ACTIVE_REASON;
     if (!message || stop !== null) {
       outcome(handle, decision, 'not-attempted', stop ?? NOT_ACTIVE_REASON);
@@ -95,6 +107,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         destination: details.destination,
         checkoutId: target.checkoutId,
         replayId: details.replayId,
+        rate,
         message: {
           body: details.copy === 'full' ? message.content : null,
           properties: propertiesWithoutHeaders(message),

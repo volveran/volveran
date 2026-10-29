@@ -627,6 +627,25 @@ dialog.prompt .confirm {
   max-width: 100%;
 }
 
+.replay-rate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.replay-rate input {
+  max-width: 10em;
+}
+
+.replay-rate small {
+  font-weight: normal;
+}
+
+.replay-rate .rate-problem {
+  color: var(--danger);
+}
+
 /* Audit view (AuditView.tsx) */
 .view-switch {
   display: flex;

@@ -23,7 +23,8 @@ export type CheckoutErrorCode =
   | 'approval_not_required'
   | 'awaiting_approval'
   | 'not_awaiting_approval'
-  | 'cannot_approve_own_apply';
+  | 'cannot_approve_own_apply'
+  | 'apply_would_outlast_checkout';
 
 const STATUS: Record<CheckoutErrorCode, number> = {
   queue_not_found: 404,
@@ -44,6 +45,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   awaiting_approval: 409,
   not_awaiting_approval: 409,
   cannot_approve_own_apply: 403,
+  apply_would_outlast_checkout: 409,
 };
 
 export class CheckoutError extends HttpError<CheckoutErrorCode> {
@@ -203,6 +205,20 @@ function endedBecause(reason: EndReason | null, requester: string): string {
     case null:
       return 'the Checkout is over';
   }
+}
+
+/** At its Replay Rate the Apply would need more than the Checkout's time left (less a margin). */
+export function applyWouldOutlastCheckout(
+  { vhost, queue }: Queue,
+  { neededMs, remainingMs }: { neededMs: number; remainingMs: number },
+): CheckoutError {
+  const seconds = (ms: number) => `${Math.ceil(ms / 1000)} s`;
+  return new CheckoutError(
+    'apply_would_outlast_checkout',
+    `At its Replay Rate this Apply needs about ${seconds(neededMs)}, but the Checkout of "${queue}" in vhost "${vhost}" has ${seconds(remainingMs)} left, ` +
+      'so it would stop part way. Choose a higher rate, or Replay fewer Messages in this Checkout.',
+    { neededMs, remainingMs },
+  );
 }
 
 export function cannotApproveOwnApply({ id }: { id: string }): CheckoutError {

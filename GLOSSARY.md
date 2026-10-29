@@ -34,6 +34,10 @@ _Avoid_: Action, mark, plan item, Undecided
 Carrying out all the Decisions of a Checkout against the broker, confirmed once. It runs in the background, one Message at a time, and ends the Checkout.
 _Avoid_: Commit, execute, submit
 
+**Replay Rate**:
+The most Messages per second an Apply publishes: its Replay and Move steps start at least 1/rate apart, while Discards are not slowed down. A Broker Profile can set a default and a maximum; without a rate an Apply runs as fast as the broker confirms.
+_Avoid_: Throttle, speed, QPS
+
 **Message**:
 A single RabbitMQ message, identified to the user by its `message_id`.
 _Avoid_: Event, item, record

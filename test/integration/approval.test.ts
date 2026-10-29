@@ -75,6 +75,12 @@ describe('Approval', () => {
         }),
         testProfile({ name: 'staging', roles: { operator: ['staging-team'] } }),
         testProfile({ name: 'lax', protected: true, requireApproval: false }),
+        testProfile({
+          name: 'paced',
+          protected: true,
+          roles: { operator: ['oncall'] },
+          replayRate: { default: 2, max: 10 },
+        }),
       ],
       port,
       env: teamModeEnv(baseUrl),
@@ -94,7 +100,7 @@ describe('Approval', () => {
     const requester = await signedIn(rita);
     const approver = await signedIn(alan);
     const { id, checkout } = await checkoutWithDiscards(requester, 'prod', [`${QUEUE}-0`, `${QUEUE}-1`]);
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: true, approvalRequired: true });
+    expect(checkout.applyConfirmation).toMatchObject({ typeQueueName: true, approvalRequired: true });
 
     // The requester cannot Apply alone.
     const refused = await requester.post(`/api/checkouts/${id}/apply`, { confirm: true, confirmQueueName: QUEUE });
@@ -423,16 +429,46 @@ describe('Approval', () => {
     await seedMessages('/', QUEUE, 1);
     const requester = await signedIn(rita);
     const { id, checkout } = await checkoutWithDiscards(requester, 'prod', []);
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: false, approvalRequired: false });
+    expect(checkout.applyConfirmation).toMatchObject({ typeQueueName: false, approvalRequired: false });
     const res = await requestApproval(requester, id);
     expect([res.status, res.body.error.code]).toEqual([409, 'approval_not_required']);
+  });
+
+  it('freezes the Replay Rate with the Decisions, shows it to the approver, and runs the approved Apply at it', async () => {
+    await seedMessages('/', QUEUE, 2);
+    const requester = await signedIn(rita);
+    const approver = await signedIn(alan);
+    const { id } = await checkoutWithDiscards(requester, 'paced', [`${QUEUE}-0`, `${QUEUE}-1`]);
+    const tooFast = await requester.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName: QUEUE, rate: 50 });
+    expect([tooFast.status, tooFast.body.error.code, tooFast.body.error.max]).toEqual([400, 'rate_above_maximum', 10]);
+
+    const requested = await requester.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName: QUEUE, rate: 4 });
+    expect(requested.status).toBe(200);
+    expect(requested.body.checkout.approvalRequest).toMatchObject({ rate: 4 });
+    // Asking again, at another rate, does not change it.
+    const again = await requester.post(`/api/checkouts/${id}/approval-request`, { confirm: true, confirmQueueName: QUEUE, rate: 8 });
+    expect([again.status, again.body.error.code]).toEqual([409, 'awaiting_approval']);
+
+    const list = (await approver.get('/api/approvals')).body.approvals;
+    expect(list).toEqual([expect.objectContaining({ checkoutId: id, rate: 4 })]);
+    const read = (await approver.get(`/api/approvals/${id}`)).body.checkout;
+    expect(read.approvalRequest).toMatchObject({ rate: 4 });
+
+    const approved = await approve(approver, id, requester);
+    expect(approved.status).toBe(202);
+    expect(approved.body.checkout.applyProgress.rate).toBe(4);
+    const entries = (await requester.get(`/api/audit-entries?checkoutId=${id}`)).body.entries;
+    expect(entries.map((e: any) => [e.approverName, e.rate])).toEqual([
+      ['alan@example.com', 4],
+      ['alan@example.com', 4],
+    ]);
   });
 
   it('keeps the v0.2 behaviour with requireApproval: false', async () => {
     await seedMessages('/', QUEUE, 1);
     const requester = await signedIn(rita);
     const { id, checkout } = await checkoutWithDiscards(requester, 'lax', [`${QUEUE}-0`]);
-    expect(checkout.applyConfirmation).toEqual({ typeQueueName: true, approvalRequired: false });
+    expect(checkout.applyConfirmation).toMatchObject({ typeQueueName: true, approvalRequired: false });
     const applied = await applyAndWait(requester, `/api/checkouts/${id}/apply`, { confirm: true, confirmQueueName: QUEUE });
     expect(applied.status).toBe(202);
     expect(await readyMessageIds('/', QUEUE)).toEqual([]);

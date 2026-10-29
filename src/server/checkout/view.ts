@@ -6,6 +6,7 @@ import { summarizeDecisions } from '../triage/decisions.js';
 import { messageSummary, type QueueInfo } from '../triage/message-view.js';
 import { replayOrigin } from '../triage/replay-origin.js';
 import { remainingMs } from '../triage/checkout-timing.js';
+import { pacedDurationMs } from '../../shared/replay-rate.js';
 import type { Checkout } from './state.js';
 import type { ApprovalSummary, CheckoutView, MessageRow, ReplayAvailability } from '../../shared/checkout.js';
 
@@ -53,16 +54,30 @@ export function view(c: Checkout): CheckoutView {
     diedAgainCount: handles.filter((h) => c.diedAgain.has(h)).length,
     decisionSummary,
     decisionSummaryText: summaryText(decisionSummary),
-    applyConfirmation: applyConfirmationFor({
-      protectedProfile: c.profile.protected,
-      requireApproval: c.requireApproval,
-      actionCount: handles.filter((h) => c.decisions.has(h)).length,
-    }),
-    approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString() },
+    applyConfirmation: {
+      ...applyConfirmationFor({
+        protectedProfile: c.profile.protected,
+        requireApproval: c.requireApproval,
+        actionCount: handles.filter((h) => c.decisions.has(h)).length,
+      }),
+      replayRate: { ...c.profile.replayRate },
+      estimatedDurationMs: pacedDurationMs(pacedSteps(c), c.approvalRequest ? c.approvalRequest.rate : c.profile.replayRate.default),
+    },
+    approvalRequest: c.approvalRequest && { requestedAt: c.approvalRequest.requestedAt.toISOString(), rate: c.approvalRequest.rate },
     rejection: c.rejection && { reason: c.rejection.reason, rejectedBy: c.rejection.rejectedBy, at: c.rejection.at.toISOString() },
     applyProgress: c.applyProgress?.view() ?? null,
     lastApply: c.lastApply,
   };
+}
+
+/** How many held Messages have a Decision that publishes (Replay, Move): the steps paced at a Replay Rate. */
+export function pacedSteps(c: Checkout): number {
+  let n = 0;
+  for (const handle of c.held.keys()) {
+    const kind = c.decisions.get(handle)?.kind;
+    if (kind === 'replay' || kind === 'move') n++;
+  }
+  return n;
 }
 
 /** An Applying Checkout stays `applying` until the Apply has ended it and returned the rest; a lost one shows `lost` at once. */
@@ -89,5 +104,6 @@ export function approvalSummary(c: Checkout & { approvalRequest: NonNullable<Che
     remainingMs: remainingMs(c.endsAt, new Date()),
     decisionSummary,
     decisionSummaryText: summaryText(decisionSummary),
+    rate: c.approvalRequest.rate,
   };
 }
