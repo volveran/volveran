@@ -1,4 +1,4 @@
-// Links into the web app's depth history and Audit view, root-relative so a
+// Links into the web app's depth history, Dead-letter Map and Audit view, root-relative so a
 // notification can put its public URL in front. Everything travels in the URL
 // fragment, which the server never routes on and sign-in keeps (returnTo).
 
@@ -8,6 +8,8 @@ export interface HistoryTarget {
   queue: string;
 }
 
+export type MapTarget = Omit<HistoryTarget, 'queue'>;
+
 /** The fields of the Audit view's search that a link can fill in. */
 export interface AuditLinkSearch {
   profile?: string;
@@ -16,6 +18,7 @@ export interface AuditLinkSearch {
 }
 
 const HISTORY_PREFIX = '#/history/';
+const MAP_PREFIX = '#/dead-letter-map/';
 const AUDIT_PREFIX = '#/audit?';
 const AUDIT_API_PREFIX = '/api/audit-entries?';
 const AUDIT_FIELDS = ['profile', 'queue', 'checkoutId'] as const;
@@ -33,6 +36,24 @@ export function historyTargetIn(hash: string): HistoryTarget | null {
   try {
     const [profile, vhost, queue] = parts.map(decodeURIComponent) as [string, string, string];
     return { profile, vhost, queue };
+  } catch {
+    return null;
+  }
+}
+
+/** The link to a vhost's Dead-letter Map. */
+export function deadLetterMapPath({ profile, vhost }: MapTarget): string {
+  return `/${MAP_PREFIX}${[profile, vhost].map(encodeURIComponent).join('/')}`;
+}
+
+/** The vhost a URL fragment links to the Dead-letter Map of, or null. */
+export function deadLetterMapTargetIn(hash: string): MapTarget | null {
+  if (!hash.startsWith(MAP_PREFIX)) return null;
+  const parts = hash.slice(MAP_PREFIX.length).split('/');
+  if (parts.length !== 2 || parts.some((p) => p === '')) return null;
+  try {
+    const [profile, vhost] = parts.map(decodeURIComponent) as [string, string];
+    return { profile, vhost };
   } catch {
     return null;
   }

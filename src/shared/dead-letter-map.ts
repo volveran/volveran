@@ -1,7 +1,8 @@
 // The Dead-letter Map of a vhost as the API sends it
 // (src/server/triage/dead-letter-map.ts, routes/profiles.ts). Types only,
 // shared by the server and the web app.
-import type { SetupWarning } from './queues.js';
+import type { CheckoutHolder } from './checkout.js';
+import type { CheckoutAvailability, SetupWarning } from './queues.js';
 
 /** A queue that dead-letters or is dead-lettered into. `id` is `queue:<name>`. */
 export interface DeadLetterMapQueue {
@@ -14,6 +15,10 @@ export interface DeadLetterMapQueue {
   setupWarnings: SetupWarning[];
   /** Messages can come back to this queue: it is in one of `cycles`. */
   inCycle: boolean;
+  /** As in the queue list: only these have a depth history. */
+  deadLetterQueue: boolean;
+  checkout: CheckoutAvailability;
+  checkedOutBy: CheckoutHolder | null;
 }
 
 /** An exchange on a dead-letter path. `id` is `exchange:<name>`; "" is the default exchange. */
