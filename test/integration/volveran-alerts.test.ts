@@ -1,5 +1,5 @@
 // Alert Rules on Volverán itself against the real broker, with the sampler's and
-// scheduler's test clocks and a fake receiver: a Replay Rule pausing and resuming,
+// scheduler's test clocks and a fake Alert Destination: a Replay Rule pausing and resuming,
 // a policy that loses Messages coming and going, and a broker out of reach.
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -15,7 +15,7 @@ import {
   testProfile,
   type TestApp,
 } from './harness.js';
-import { startFakeReceiver, type FakeReceiver } from './fake-receiver.js';
+import { startFakeDestination, type FakeDestination } from './fake-destination.js';
 
 const dlq = deadLetterRoutes.classic.dlq;
 const MINUTE = 60_000;
@@ -34,16 +34,16 @@ const replayRule = (over: Record<string, unknown> = {}) => ({
 const alert = (name: string, when: unknown, over: Record<string, unknown> = {}) => ({ name, destinations: ['pager'], when, ...over });
 
 describe('Alert Rules on Volverán itself', () => {
-  let receiver: FakeReceiver;
+  let destination: FakeDestination;
   const apps: TestApp[] = [];
   const dirs: string[] = [];
 
   beforeAll(async () => {
-    receiver = await startFakeReceiver();
+    destination = await startFakeDestination();
   });
-  afterAll(() => receiver.close());
+  afterAll(() => destination.close());
   beforeEach(() => {
-    receiver.received.length = 0;
+    destination.received.length = 0;
   });
   afterEach(async () => {
     while (apps.length) await apps.pop()!.close();
@@ -52,16 +52,16 @@ describe('Alert Rules on Volverán itself', () => {
   });
 
   async function start(options: Parameters<typeof startApp>[0]) {
-    const app = await startApp({ alertDestinations: destinations, env: { HOOK_URL: receiver.url }, ...options });
+    const app = await startApp({ alertDestinations: destinations, env: { HOOK_URL: destination.url }, ...options });
     apps.push(app);
     return app;
   }
 
-  const sent = () => receiver.received.map((r) => r.json);
-  const expectSent = (count: number) => eventually(async () => expect(receiver.received).toHaveLength(count), 10_000, 50);
+  const sent = () => destination.received.map((r) => r.json);
+  const expectSent = (count: number) => eventually(async () => expect(destination.received).toHaveLength(count), 10_000, 50);
   const expectNoMore = async (count: number) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(receiver.received).toHaveLength(count);
+    expect(destination.received).toHaveLength(count);
   };
 
   it('tells of a Replay Rule pausing itself, with the reason, and of its resume', async () => {

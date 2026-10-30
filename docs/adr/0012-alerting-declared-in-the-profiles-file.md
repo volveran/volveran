@@ -19,4 +19,4 @@ Two rules hold for every notification:
 - An unset variable stops startup, even for a destination no rule uses yet.
 - A notification alone cannot say which Message failed: the Operator follows the link.
 - Redirects are not followed: a webhook that moves counts as failed with its 3xx status, rather than handing notifications to an address nobody reviewed.
-- A test notification has the same shape as an Alert's, with `test: true` in the generic webhook's body, so a receiver can be checked end to end and still tell it apart.
+- A test notification has the same shape as an Alert's, with `test: true` in the generic webhook's body, so an Alert Destination can be checked end to end and still tell it apart.

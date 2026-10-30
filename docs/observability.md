@@ -203,8 +203,8 @@ A generic webhook receives this JSON, in version 1. `version` changes if its sha
 | Field | Meaning |
 | --- | --- |
 | `version` | `1`. |
-| `test` | `true` only on a test notification, which also has `status: firing`, `condition: test`, a new `alertId` and null `profile`. Receivers should ignore these, so a test never pages anyone. |
-| `alertId` | The same from an Alert's firing, through its repeats, to its resolved, so a receiver can deduplicate and pair them. |
+| `test` | `true` only on a test notification, which also has `status: firing`, `condition: test`, a new `alertId` and null `profile`. Your service should ignore these, so a test never pages anyone. |
+| `alertId` | The same from an Alert's firing, through its repeats, to its resolved, so your service can deduplicate and pair them. |
 | `status` | `firing` or `resolved`. A repeat is another `firing`. |
 | `rule`, `profile` | The Alert Rule and its Broker Profile. |
 | `vhost`, `queue` | Null when the condition is not about a queue. |

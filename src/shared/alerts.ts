@@ -25,7 +25,7 @@ export interface NotificationDelivery {
   /** The Replay Rule a `replayRulePaused` notification is about; null otherwise. */
   replayRule: string | null;
   outcome: DeliveryOutcome;
-  /** The receiver's last HTTP status; null when it never answered. */
+  /** The Alert Destination's last HTTP status; null when it never answered. */
   httpStatus: number | null;
   /** Why it failed without an HTTP status: `timeout`, `server_stopping` or a network error code. */
   error: string | null;

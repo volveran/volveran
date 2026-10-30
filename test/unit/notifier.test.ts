@@ -1,6 +1,6 @@
 // Delivery of notifications: timeout, attempts with back-off, the recorded
 // outcome, and deliveries that do not wait for each other. Against a real
-// local HTTP receiver, with short timings; the integration tests cover the
+// local HTTP Alert Destination, with short timings; the integration tests cover the
 // real timings through the test endpoint.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -18,7 +18,7 @@ describe('Notifier', () => {
     for (const clean of cleanups.splice(0).reverse()) await clean();
   });
 
-  async function receiver(handle: http.RequestListener) {
+  async function destination(handle: http.RequestListener) {
     const server = http.createServer(handle);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     cleanups.push(() => {
@@ -43,14 +43,14 @@ describe('Notifier', () => {
 
   const notification = () => testNotification(new Date(), 'id');
 
-  it('gives up on a receiver that does not answer in time, and records a timeout after three attempts', async () => {
-    const url = await receiver(() => {});
+  it('gives up on a destination that does not answer in time, and records a timeout after three attempts', async () => {
+    const url = await destination(() => {});
     const { notifier } = notifierFor({ slow: url }, { timeoutMs: 100, firstBackoffMs: 5 });
     const delivery = await notifier.send('slow', notification());
     expect(delivery).toMatchObject({ outcome: 'failed', httpStatus: null, error: 'timeout', attempts: 3 });
   });
 
-  it('records why an unreachable receiver failed, without its URL', async () => {
+  it('records why an unreachable destination failed, without its URL', async () => {
     const closed = http.createServer();
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
     const { port } = closed.address() as AddressInfo;
@@ -64,11 +64,11 @@ describe('Notifier', () => {
 
   it('does not follow a redirect, which would hand the body to another address', async () => {
     let followed = false;
-    const target = await receiver((_req, res) => {
+    const target = await destination((_req, res) => {
       followed = true;
       res.end();
     });
-    const url = await receiver((_req, res) => {
+    const url = await destination((_req, res) => {
       res.writeHead(302, { location: target });
       res.end();
     });
@@ -78,8 +78,8 @@ describe('Notifier', () => {
   });
 
   it('does not make one delivery wait for another', async () => {
-    const hung = await receiver(() => {});
-    const quick = await receiver((_req, res) => res.end());
+    const hung = await destination(() => {});
+    const quick = await destination((_req, res) => res.end());
     const { notifier } = notifierFor({ hung, quick });
     let hungEnded = false;
     const slow = notifier.send('hung', notification()).finally(() => (hungEnded = true));
@@ -90,8 +90,8 @@ describe('Notifier', () => {
   });
 
   it('keeps the outcome of each delivery, newest first', async () => {
-    const ok = await receiver((_req, res) => res.end());
-    const bad = await receiver((_req, res) => {
+    const ok = await destination((_req, res) => res.end());
+    const bad = await destination((_req, res) => {
       res.statusCode = 404;
       res.end();
     });
@@ -105,7 +105,7 @@ describe('Notifier', () => {
   });
 
   it('keeps the Replay Rule of a notification, and none when it has no Replay Rule', async () => {
-    const url = await receiver((_req, res) => res.writeHead(204).end());
+    const url = await destination((_req, res) => res.writeHead(204).end());
     const { notifier, store } = notifierFor({ pager: url });
     await notifier.send('pager', { ...testNotification(new Date(), 'a'), replayRule: 'retry' });
     await notifier.send('pager', testNotification(new Date(), 'b'));
@@ -113,7 +113,7 @@ describe('Notifier', () => {
   });
 
   it('on close, ends the deliveries in progress at once and records them', async () => {
-    const hung = await receiver(() => {});
+    const hung = await destination(() => {});
     const { notifier, store } = notifierFor({ hung });
     const delivery = notifier.send('hung', notification());
     await new Promise((resolve) => setTimeout(resolve, 20));
