@@ -135,6 +135,8 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_DAYS` | `30` | Discarded Message bodies older than this are evicted (1 to 36500); Audit Entries are kept indefinitely, marked "body expired", and can no longer be Restored |
 | `VOLVERAN_BODY_RETENTION_MAX_BYTES` | `1GiB` | most bytes of Discarded bodies kept in total, in bytes or with `KiB`, `MiB`, `GiB`, `TiB`; beyond it the oldest bodies are evicted first. The Audit view warns at 90 % |
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
+| `VOLVERAN_HISTORY_RETENTION_DAYS` | `14` | how long the outcomes of notifications are kept (1 to 90), removed when retention runs |
+| `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
 
@@ -171,6 +173,20 @@ Each line is one JSON object per Message, in queue order:
 | `failureDetails` | The Failure Details Spring AMQP or MassTransit wrote into the headers, decoded, otherwise `null` ([Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md)). Added in 0.4 with `v` still `1`. |
 
 `properties` and `headers` use the same lossless AMQP JSON as Audit Entries, so they hold the Message byte for byte: a byte array is `{ "$bytes": "<base64>" }`, a 64-bit integer `{ "$bigint": "<decimal>" }`, and a table with a key starting with `$` is wrapped as `{ "$table": { ... } }`. Typed values such as decimals stay as amqplib decodes them (`{ "!": "decimal", "value": { "places": 2, "digits": 1234 } }`). For example, `jq -r 'select(.bodyKind == "json") | .body | @base64d' export.ndjson` prints the JSON bodies.
+
+### Alert Destinations
+
+Declare where notifications go once, at the top of the profiles file (`alertDestinations`, see `profiles.example.yaml` and [ADR 0012](docs/adr/0012-alerting-declared-in-the-profiles-file.md)): a Slack incoming webhook, a Microsoft Teams workflow webhook (Office 365 connector URLs are not supported), or a generic webhook. Each URL and signing secret comes from an environment variable, and startup refuses one that is not set. To check a destination, an `admin` on any Broker Profile (anyone in Solo Mode) calls `POST /api/alert-destinations/:name/test`, which sends a clearly labelled test notification and answers with the outcome. A delivery has a 5-second timeout and up to 3 attempts, and its outcome is kept in the audit store. A notification never contains a Message's body, headers or `message_id`.
+
+A generic webhook receives this JSON (`version` changes if its shape does). `test` is `true` only on a test notification, which also has `status: firing`, so a receiver should ignore those; `alertId` stays the same from an Alert's firing to its resolved.
+
+```json
+{ "version": 1, "test": false, "alertId": "…", "status": "firing", "rule": "deep-orders", "profile": "prod", "vhost": "/",
+  "queue": "orders.dlq", "condition": "depthAbove", "value": 500, "threshold": 100,
+  "startedAt": "2026-10-30T10:00:00.000Z", "endedAt": null, "url": "https://volveran.example.com/…" }
+```
+
+With `signingSecretEnv`, it also carries `x-volveran-timestamp` (Unix seconds) and `x-volveran-signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">`. Check the signature over the raw body, and refuse an old timestamp to stop replays. Each retry is signed anew.
 
 ## Learn more
 

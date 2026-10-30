@@ -16,6 +16,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import { NotificationStore } from './notifications.js';
 import { RuleStateStore } from './rule-state.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
@@ -265,6 +266,25 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (rule_key, audit_entry_id)
    );
    ALTER TABLE replay_rule_passes ADD COLUMN cannot_replay INTEGER;`,
+  // v12 (#78): the outcome of each notification to an Alert Destination.
+  `CREATE TABLE notifications (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     alert_id TEXT NOT NULL,
+     destination TEXT NOT NULL,
+     destination_type TEXT NOT NULL,
+     status TEXT NOT NULL,
+     test INTEGER NOT NULL,
+     rule TEXT NOT NULL,
+     profile TEXT,
+     vhost TEXT,
+     queue TEXT,
+     outcome TEXT NOT NULL,
+     http_status INTEGER,
+     error TEXT,
+     attempts INTEGER NOT NULL
+   );
+   CREATE INDEX notifications_at ON notifications (at);`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -273,6 +293,8 @@ export class AuditStore {
   private readonly db: DatabaseSync;
   /** The state of the Replay Rules, in the same database. */
   readonly ruleState: RuleStateStore;
+  /** The outcomes of notifications, in the same database. */
+  readonly notifications: NotificationStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -284,6 +306,7 @@ export class AuditStore {
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     this.migrate();
     this.ruleState = new RuleStateStore(this.db);
+    this.notifications = new NotificationStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */

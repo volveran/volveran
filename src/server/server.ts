@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
+import { Notifier } from './alerts/notifier.js';
 import { RestoreService } from './audit/restore.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
@@ -19,6 +20,7 @@ import type { CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
+import { registerAlertDestinationRoutes } from './routes/alert-destinations.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
@@ -66,7 +68,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   if (!loaded.ok) throw new ConfigError(loaded.error);
   const { config } = loaded;
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const profiles = await loadProfilesFile(options.profilesFile, options.env);
+  const { profiles, alertDestinations } = await loadProfilesFile(options.profilesFile, options.env);
   checkProfilesForRunMode(profiles, config.mode.kind);
   const limits = { ...config.checkoutLimits, ...options.checkoutLimits };
   checkReplayRules(profiles, limits);
@@ -101,12 +103,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Called only once the app below is listening.
     onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
   });
+  const notifier = new Notifier({
+    destinations: alertDestinations,
+    store: audit.notifications,
+    publicUrl: config.publicUrl,
+    // Called only once the app below is listening.
+    onError: (err) => app.log.error({ err }, 'The outcome of a notification could not be recorded'),
+  });
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
     access,
     checkouts,
     replayRules,
+    notifier,
     audit: { audit, restore, usage },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
@@ -156,6 +166,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     } catch (err) {
       app.log.error(err, 'Retention could not evict Discarded Message bodies');
     }
+    try {
+      audit.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
+    } catch (err) {
+      app.log.error(err, 'Retention could not remove old notification outcomes');
+    }
   };
   evict();
   const retentionTimer = setInterval(evict, retention.intervalMs);
@@ -166,6 +181,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // finishes first) before the audit store closes and the process exits.
   app.addHook('onClose', async () => {
     clearInterval(retentionTimer);
+    await notifier.close();
     await replayRules.stop();
     await checkouts.endAll();
     audit.close();
@@ -192,13 +208,14 @@ interface AppOptions {
   access: Access;
   checkouts: CheckoutManager;
   replayRules: ReplayRules;
+  notifier: Notifier;
   audit: AuditRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -228,6 +245,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, audit, webRo
   registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
   registerProfileRoutes(app, profileAccess);
   registerReplayRuleRoutes(app, replayRules, profileAccess);
+  registerAlertDestinationRoutes(app, notifier, profileAccess);
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);

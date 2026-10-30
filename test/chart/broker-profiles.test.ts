@@ -24,6 +24,24 @@ describe('Broker Profiles', () => {
     expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [prod] });
   });
 
+  it('leaves alertDestinations out of profiles.yaml unless given, and writes them when given', () => {
+    const destinations = [
+      { name: 'ops-slack', type: 'slack', urlEnv: 'VOLVERAN_SLACK_URL' },
+      { name: 'pager', type: 'webhook', urlEnv: 'VOLVERAN_HOOK_URL', signingSecretEnv: 'VOLVERAN_HOOK_SECRET' },
+    ];
+    const configMap = render({ brokerProfiles: { alertDestinations: destinations } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ alertDestinations: destinations, profiles: [prod] });
+  });
+
+  it('refuses a malformed Alert Destination, and a URL written into one', () => {
+    const refuse = (destination: Record<string, unknown>) =>
+      renderRefusal({ brokerProfiles: { alertDestinations: [destination] } });
+    expect(refuse({ name: 'a', type: 'email', urlEnv: 'X' })).toContain('/brokerProfiles/alertDestinations/0/type');
+    expect(refuse({ name: 'a', type: 'slack' })).toContain('urlEnv');
+    expect(refuse({ name: 'a', type: 'slack', urlEnv: 'X', url: 'https://hooks.example' })).toMatch(/url/);
+    expect(refuse({ name: 'a', type: 'slack', urlEnv: 'X', signingSecretEnv: 'Y' })).toContain('signingSecretEnv');
+  });
+
   it('mounts profiles.yaml read-only where Volverán reads it', () => {
     const chart = render();
     expect(env(chart, 'VOLVERAN_PROFILES_FILE').value).toBe('/config/profiles.yaml');

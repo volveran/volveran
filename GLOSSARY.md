@@ -100,6 +100,12 @@ _Avoid_: Permission, access level
 A second Operator's consent, after reviewing its Decisions, to an Apply on a Protected Profile. In Team Mode, an Apply with any Decision other than Keep on a Protected Profile waits for it (unless the profile sets `requireApproval: false`); approving runs the Apply, and its Audit Entries record both people. Rejecting, with a reason, returns the Checkout to staging; withdrawing it or the Checkout ending cancels the request.
 _Avoid_: Sign-off, review, four-eyes (four-eyes may describe the feature in prose)
 
+## Alerting
+
+**Alert Destination**:
+Where notifications go: a Slack incoming webhook, a Microsoft Teams workflow webhook or a generic webhook, declared once in the profiles file. Its URL and signing secret come from environment variables.
+_Avoid_: Channel, receiver, sink, notifier
+
 ## Running
 
 **Solo Mode**:
