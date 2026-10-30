@@ -26,7 +26,7 @@ const ids = (...n: number[]) => n.map((i) => `${QUEUE}-${i}`);
 describe('An Apply on a delayed store', () => {
   let app: TestApp;
   /** Holds calls of this name until released; `reached` resolves when one arrives. */
-  let held: { call: string; reached: () => void; released: Promise<void> } | null = null;
+  let held: { call: string; reached: () => void; released: Promise<void>; release: () => void } | null = null;
   let beforeApplyStep: ((entryId: number) => Promise<void>) | null = null;
 
   function hold(call: string) {
@@ -34,7 +34,7 @@ describe('An Apply on a delayed store', () => {
     let reached!: () => void;
     const released = new Promise<void>((resolve) => (release = resolve));
     const arrived = new Promise<void>((resolve) => (reached = resolve));
-    held = { call, reached, released };
+    held = { call, reached, released, release };
     return { arrived, release };
   }
 
@@ -52,7 +52,13 @@ describe('An Apply on a delayed store', () => {
   const outcomes = (checkout: any) => checkout.lastApply.outcomes.map((o: any) => [o.messageId, o.status]);
 
   async function loseCheckout(id: string) {
-    for (const name of await checkoutConnectionNames(QUEUE)) await closeConnection(name);
+    // The management API lists a new connection within a second or so.
+    const names = await eventually(async () => {
+      const found = await checkoutConnectionNames(QUEUE);
+      expect(found.length).toBeGreaterThan(0);
+      return found;
+    });
+    for (const name of names) await closeConnection(name);
     await eventually(async () => expect((await app.get(`/api/checkouts/${id}`)).body.checkout.status).toBe('lost'));
   }
 
@@ -69,6 +75,8 @@ describe('An Apply on a delayed store', () => {
     });
   });
   afterEach(async () => {
+    // A test that failed part way must not leave its Apply waiting on the store.
+    held?.release();
     held = null;
     beforeApplyStep = null;
     await eventually(async () => expect(await checkoutConnectionNames(QUEUE)).toEqual([]));
