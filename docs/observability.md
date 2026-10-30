@@ -166,7 +166,7 @@ profiles:
 | `setupWarning: loses_messages` or `may_lose_messages` | A dead-letter queue has a set-up warning at least this bad (`may_lose_messages` includes `loses_messages`); each queue is its own Alert. The codes are in the notification. | How many warnings; none. |
 | `samplingFailing: { for }` | The profile has had no good sampling run for `for` (1s to 7d), counted from its last good run. The error code is in the notification. | Seconds since then; `for` in seconds. |
 
-- `queuePattern` is the same glob as `defaultQueueFilter` (`*` and `?`). Each matching dead-letter queue is its own Alert.
+- `queuePattern` is the same glob as `defaultQueueFilter` (`*` and `?`). Startup refuses a pattern that looks like a regular expression (one with `^`, `$`, `\`, `(`, `)`, `+`, `|`, `[` or `]`). Each matching dead-letter queue is its own Alert.
 - `for` (1s to 7d) is how long the condition must hold before the Alert fires. `samplingFailing` takes its own `for` and no other.
 - `repeatEvery` (1m to 7d) sends a firing Alert again. By default it is sent once.
 - Durations are written `30s`, `5m`, `1h30m`, `7d`.

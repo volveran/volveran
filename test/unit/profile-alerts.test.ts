@@ -61,6 +61,10 @@ describe('alerts in the profiles file', () => {
 
   it('refuses malformed patterns and durations', () => {
     refuses([rule({ when: { vhost: '/', queuePattern: ' ', depthAbove: 1 } })], /queuePattern must be a non-empty glob/);
+    for (const pattern of ['^orders', 'orders$', 'a\\.dlq', '(a|b).dlq', 'a+.dlq', 'a|b', '[ab].dlq', 'a].dlq', 'a).dlq']) {
+      refuses([rule({ when: { vhost: '/', queuePattern: pattern, depthAbove: 1 } })], /profiles\[0\] \("prod"\).*\.when\.queuePattern "[^"]+" looks like a regular expression/);
+    }
+    expect(parse([rule({ when: { vhost: '/', queuePattern: 'a.?-_*.dlq', depthAbove: 1 } })])).toHaveLength(1);
     refuses([rule({ for: '5 minutes' })], /\.for must be a duration/);
     refuses([rule({ for: 300 })], /\.for must be a duration/);
     refuses([rule({ repeatEvery: '1x' })], /\.repeatEvery must be a duration/);
