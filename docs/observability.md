@@ -273,7 +273,7 @@ Dead-letter queue metrics come from the latest Samples, so they move once per sa
 
 - **While a broker is down** the queue metrics keep their last values and `volveran_sampling_up` is 0, so read a depth together with it. After a restart they are absent until the first good run; the two sampling metrics still show the last known run.
 - **A deleted queue's** depth and warnings leave at the next good run. Its counter stays until the process restarts, and simply stops rising.
-- **Arrivals are estimated**, because the broker does not count dead-lettered Messages: the rise in depth since the Sample before, plus the Messages Volverán took out in between. A consumer outside Volverán hides arrivals. Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth and briefly overstate the count. A queue's first Sample has unknown arrivals, so its counter has no series until the second.
+- **Arrivals are estimated**, because the broker does not count dead-lettered Messages: the change in depth since the Sample before, plus the Messages Volverán took out in between, never below zero. A consumer outside Volverán hides arrivals. Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth and briefly overstate the count. A queue's first Sample has unknown arrivals, so its counter has no series until the second.
 - **`operatorToken` profiles are absent** from all of these. Such a profile connects with the signed-in Operator's token, and with nobody signed in there is no credential to sample with. A missing series for one is expected.
 
 ### Example alerts

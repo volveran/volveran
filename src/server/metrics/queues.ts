@@ -11,7 +11,7 @@ import { MetricCounter, type MetricFamily, type MetricSeries } from './expositio
 export class QueueMetrics {
   private readonly arrivals = new MetricCounter(
     'volveran_dead_letter_queue_estimated_arrived_messages_total',
-    'Estimated Messages that arrived in a dead-letter queue since the process started: rises in depth plus the Messages Volverán took out, counted once the depth has borne them out. Consumers outside Volverán hide arrivals. No series while arrivals are unknown.',
+    'Estimated Messages that arrived in a dead-letter queue since the process started: changes in depth plus the Messages Volverán took out, never below zero, counted once the depth has borne them out. Consumers outside Volverán hide arrivals. No series while arrivals are unknown.',
   );
   /** Per queue, the take-outs whose drop in depth has not shown yet. */
   private readonly unsettled = new Map<string, number>();
