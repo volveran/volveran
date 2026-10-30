@@ -36,11 +36,11 @@ function entry(overrides: Partial<NewAuditEntry> = {}): NewAuditEntry {
   };
 }
 
-describe('the asynchronous audit store', () => {
-  it('covers everything the synchronous store offers (checked by the compiler)', () => {
-    expect(coversTheSynchronousStore).toBe(true);
-  });
+it('covers everything the synchronous store offers (checked by the compiler)', () => {
+  expect(coversTheSynchronousStore).toBe(true);
+});
 
+describe('the asynchronous audit store', () => {
   let sync: SyncAuditStore;
   let store: AuditStore;
   const open = () => {
