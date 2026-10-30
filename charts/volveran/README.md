@@ -204,6 +204,19 @@ brokerProfiles:
 |---|---|---|
 | `service.port` | `8080` | Port of the ClusterIP Service. The container always listens on 8080. |
 
+### Metrics
+
+Prometheus metrics, off by default. See [Metrics](#metrics-1) below and the [metric reference](../../docs/observability.md#metrics).
+
+| Value | Default | Description |
+|---|---|---|
+| `metrics.enabled` | `false` | Sets `VOLVERAN_METRICS_PORT` and adds the container port and a `metrics` Service port. The HTTPRoute and Ingress never reference it. |
+| `metrics.port` | `9464` | The port of the metrics listener and of the Service. Must differ from 8080 and from `service.port`. |
+| `metrics.serviceMonitor.enabled` | `false` | Render a Prometheus Operator `ServiceMonitor` (needs its CRDs). Requires `metrics.enabled`. |
+| `metrics.serviceMonitor.labels` | `{}` | Added to the `ServiceMonitor`'s labels, to match your Prometheus's `serviceMonitorSelector`, for example `{release: prometheus}`. |
+| `metrics.serviceMonitor.interval` | `""` (Prometheus's `scrape_interval`) | How often to scrape, a Prometheus duration such as `30s`. |
+| `metrics.serviceMonitor.scrapeTimeout` | `""` (Prometheus's `scrape_timeout`) | Scrape timeout, a Prometheus duration such as `10s`, at most the interval. |
+
 ### Settings
 
 Volverán's own settings, each mapped to the `VOLVERAN_*` variable documented in the project README. `null` leaves the
@@ -265,8 +278,34 @@ refused at render time.
 |---|---|---|
 | `networkPolicy.enabled` | `false` | Renders a NetworkPolicy that selects only the Volverán pod. See [Network policy](#network-policy). |
 | `networkPolicy.ingressFrom` | `[]` | NetworkPolicy peers (`namespaceSelector`, `podSelector`, `ipBlock`) admitted to the http port, for example the Gateway or ingress controller. Empty admits no peer. |
+| `networkPolicy.metricsFrom` | `[]` | NetworkPolicy peers admitted to the metrics port only, when `metrics.enabled`, for example your Prometheus's pods. They gain no access to the http port. Empty admits no peer. |
 | `networkPolicy.egress` | `[]` (egress open) | NetworkPolicy egress rules (`to`, `ports`), for example the brokers and the OIDC provider. Any rule restricts egress to these rules plus DNS to `networkPolicy.dnsTo`. |
 | `networkPolicy.dnsTo` | namespace `kube-system`, pods `k8s-app: kube-dns` | The cluster DNS resolver as NetworkPolicy peers. Allowed on port 53, UDP and TCP, whenever egress is restricted. |
+
+## Metrics
+
+`metrics.enabled` serves Prometheus metrics at `/metrics` on a port of their own, with no session. Volverán binds it to the same address as the web app (`0.0.0.0` in the pod), so anything that can reach the pod can reach it unless a NetworkPolicy says otherwise. No route ever references that port. With the Prometheus Operator:
+
+```yaml
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus              # what your Prometheus's serviceMonitorSelector matches
+    interval: 30s
+    scrapeTimeout: 10s
+
+networkPolicy:
+  enabled: true
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+```
 
 ## Network policy
 
@@ -278,6 +317,9 @@ effect.
 else in the cluster reaches the sign-in or the API. Each entry is a standard NetworkPolicy peer. A peer with both
 `namespaceSelector` and `podSelector` matches those pods in those namespaces. Two separate entries match either one. With
 no peers, the policy admits nothing.
+
+**Metrics.** The peers in `networkPolicy.metricsFrom` reach only the metrics port, when `metrics.enabled`, and the peers
+in `networkPolicy.ingressFrom` do not reach it. With `metricsFrom` empty, nothing can scrape the pod.
 
 **Probes.** No peer is needed for the kubelet probes on `/healthz` and `/readyz`. Kubernetes defines that a pod
 isolated for ingress still accepts connections from its own node, and the kubelet runs its probes from that node.

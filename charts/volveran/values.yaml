@@ -67,6 +67,22 @@ persistence:
 service:
   port: 8080
 
+# Prometheus metrics, on a port of their own that no route references. They need
+# no session, so with a NetworkPolicy admit only the scraper (networkPolicy.metricsFrom).
+metrics:
+  # -- Sets VOLVERAN_METRICS_PORT and adds the container port and a metrics Service port.
+  enabled: false
+  port: 9464
+  serviceMonitor:
+    # -- A Prometheus Operator ServiceMonitor (needs its CRDs). Requires metrics.enabled.
+    enabled: false
+    # -- Added to the ServiceMonitor's labels, to match your Prometheus's serviceMonitorSelector.
+    labels: {}
+    # -- For example 30s. Empty uses your Prometheus's scrape_interval.
+    interval: ""
+    # -- For example 10s, at most interval. Empty uses your Prometheus's scrape_timeout.
+    scrapeTimeout: ""
+
 # Volverán's own settings, each mapped to its VOLVERAN_* variable. null leaves
 # the variable unset, so Volverán's own default (in the comment) applies.
 settings:
@@ -146,6 +162,9 @@ networkPolicy:
   # -- NetworkPolicy peers (namespaceSelector, podSelector, ipBlock) admitted to the http port,
   # for example the Gateway or ingress controller. Empty admits nothing but the pod's node.
   ingressFrom: []
+  # -- NetworkPolicy peers admitted to the metrics port only, for example your Prometheus's
+  # pods, when metrics.enabled. They gain no access to the http port. Empty admits nobody.
+  metricsFrom: []
   # -- NetworkPolicy egress rules (to, ports), for example the brokers and the OIDC provider.
   # Empty leaves egress open; any rule restricts egress to these rules plus DNS (dnsTo).
   egress: []

@@ -84,6 +84,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
           # Volverán listens only once OIDC discovery has succeeded, so the
           # startup probe allows 5 minutes (5s x 60) before liveness takes over.
           startupProbe:
@@ -139,6 +144,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.oidc.existingSecret | quote }}
                   key: {{ .Values.oidc.sessionSecretKey | quote }}
+            {{- if .Values.metrics.enabled }}
+            - name: VOLVERAN_METRICS_PORT
+              value: {{ printf "%d" (int64 .Values.metrics.port) | quote }}
+            {{- end }}
             {{- with include "volveran.settingsEnv" . | trim }}
             {{- . | nindent 12 }}
             {{- end }}

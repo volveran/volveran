@@ -125,7 +125,8 @@ The [chart README](../charts/volveran/README.md#values) lists every value with i
 | `settings`, `extraEnv` | Checkout limits, time limit, heartbeat and body retention; other `VOLVERAN_*` variables. |
 | `persistence` | The audit store claim: size, StorageClass, access mode, or an `existingClaim`. |
 | `httpRoute`, `ingress` | Exposure. Neither is rendered by default. |
-| `networkPolicy` | Who may reach the pod, and optionally where it may connect. |
+| `metrics` | The Prometheus metrics port, off by default, and an optional `ServiceMonitor`. |
+| `networkPolicy` | Who may reach the pod (`ingressFrom` the web app, `metricsFrom` the metrics port), and optionally where it may connect. |
 | `image`, `pod`, `service` | Image repository, tag or digest, pull Secrets; resources, grace period, scheduling; the Service port. |
 
 Pin the image by digest with `image.digest: sha256:<digest>`, and pull from a private mirror with `image.repository` and `image.pullSecrets`. Raise `pod.resources` memory together with `settings.checkoutMaxMb`: a Checkout holds its Message bodies in memory.
@@ -139,6 +140,12 @@ The chart renders a Gateway API `HTTPRoute` (`httpRoute`), a classic `Ingress` (
 - **TLS terminates at the Gateway or ingress controller.** The pod serves plain HTTP. An `https` redirect URL makes the session cookies `Secure` however the request reached the pod, so there is no proxy setting to add.
 
 The [chart README](../charts/volveran/README.md#exposure) has an `Ingress` example. With `networkPolicy.enabled`, admit the Gateway's or ingress controller's pods in `networkPolicy.ingressFrom` ([Network policy](../charts/volveran/README.md#network-policy)).
+
+## Metrics
+
+`metrics.enabled` turns on the [metrics](observability.md#metrics) port (9464 by default) and adds it to the Service; the `HTTPRoute` and `Ingress` never reference it. `metrics.serviceMonitor` renders a `ServiceMonitor`, which needs the Prometheus Operator's CRDs: set its `labels` to what your Prometheus's `serviceMonitorSelector` matches, and optionally `interval` and `scrapeTimeout`.
+
+The port has no session and listens on the pod's `0.0.0.0`. With `networkPolicy.enabled`, name the scraper in `networkPolicy.metricsFrom`, which admits it to that port only; until you do, nothing can scrape the pod. The [chart README](../charts/volveran/README.md#metrics-1) has an example.
 
 ## Secrets
 
