@@ -94,7 +94,7 @@ export function narrowQueues<Q extends { name: string; deadLetterQueue: boolean 
  * without broker dead-lettering. (Its `_skipped` queues hold Messages no
  * consumer handles; they are not dead-letter queues.)
  */
-function isMassTransitErrorQueue(name: string): boolean {
+export function isMassTransitErrorQueue(name: string): boolean {
   return name.endsWith('_error');
 }
 
