@@ -18,7 +18,7 @@
 // ends it at once: the Canary is then `watch_cut_short`, not
 // `not_dead_lettered`, unless a copy died again first.
 import type * as amqp from 'amqplib';
-import type { AuditStore } from '../audit/store.js';
+import type { AuditStore } from '../audit/audit-store.js';
 import { permissionRefused } from '../broker-credentials.js';
 import { canaryNeedsReplay, canaryRequired } from '../apply/errors.js';
 import type { CanaryHooks } from '../apply/types.js';
@@ -100,12 +100,13 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
   let over = false;
   void goOn.then(() => (over = true));
 
-  const settle = (status: Exclude<CanaryStatus, 'watching'>) => {
+  // The Checkout's view changes first: a store call is an interleave point (ADR 0013).
+  const settle = async (status: Exclude<CanaryStatus, 'watching'>) => {
     const c = checkout.canary!;
     c.status = status;
     if (entry !== null) {
       try {
-        options.audit.setCanaryOutcome(entry, status);
+        await options.audit.setCanaryOutcome(entry, status);
       } catch {
         // The entry keeps no outcome; the Checkout view still shows it.
       }
@@ -140,9 +141,9 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
       if (outcome.status !== 'done') {
         await watch?.close();
         c.watchProblem = outcome.reason;
-        settle('failed');
+        await settle('failed');
       } else if (!watch) {
-        settle('unwatched');
+        await settle('unwatched');
       } else {
         c.watchEndsAt = new Date(Date.now() + options.watchWindowMs);
         if (progress) progress.phase = 'canary_watch';
@@ -153,16 +154,16 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
         clearTimeout(timer);
         await watch.close();
         if (ended === 'window') {
-          settle('not_dead_lettered');
+          await settle('not_dead_lettered');
         } else if (ended === 'cut') {
           // A copy that died again before the cut has already won the race above.
           c.watchEndsAt = new Date();
-          settle('watch_cut_short');
+          await settle('watch_cut_short');
         } else {
           const summary = messageSummary(0, ended, queueInfo(checkout));
           c.deadLetterReason = summary.deadLetterReason;
           c.failureDetails = summary.failureDetails;
-          settle('died_again');
+          await settle('died_again');
         }
       }
       if (!over) {

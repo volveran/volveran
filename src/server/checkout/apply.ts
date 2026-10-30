@@ -17,7 +17,7 @@ import { ConfirmPublisher } from '../apply/publisher.js';
 import { STOP_REASONS } from '../apply/stop-reasons.js';
 import { permissionRefused } from '../broker-credentials.js';
 import { AckUncertainError, type ApplyContext, type ApplyOptions, type MessageOutcome } from '../apply/types.js';
-import type { AuditStore } from '../audit/store.js';
+import type { AuditStore } from '../audit/audit-store.js';
 import { queueRefOf } from '../profiles.js';
 import { buildApplyPlan } from '../triage/decisions.js';
 import { canaryHooks, type CanaryOptions } from './canary.js';

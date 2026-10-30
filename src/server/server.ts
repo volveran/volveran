@@ -9,6 +9,7 @@ import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
+import type { AuditStore as AsyncAuditStore } from './audit/audit-store.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
@@ -64,6 +65,8 @@ export interface ServerOptions {
   endedCheckoutRetentionMs?: number;
   /** Overrides the body retention from VOLVERAN_BODY_RETENTION_DAYS / _MAX_BYTES / _INTERVAL_MINUTES. */
   bodyRetention?: Partial<BodyRetention>;
+  /** Test seam: what the callers on the audit store interface talk to (a delayed store); unset in production. */
+  wrapAuditStore?(store: AsyncAuditStore): AsyncAuditStore;
   /** Test seams of the Checkout manager; unset in production. */
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
@@ -91,6 +94,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     throw new ConfigError(`VOLVERAN_METRICS_PORT must differ from the web app's port (${options.port}): metrics are never served on it.`);
   }
   const audit = new AuditStore(options.dataDir);
+  const asyncAudit = options.wrapAuditStore?.(audit.async) ?? audit.async;
   // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
   const triageMetrics = new TriageMetrics({
     ruleStates: () => replayRules.states(),
@@ -98,7 +102,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     storedBodyBytes: () => audit.storedBodyBytes(),
   });
   const checkouts = new CheckoutManager({
-    audit,
+    audit: asyncAudit,
+    syncAudit: audit,
     limits,
     enforceApproval: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },

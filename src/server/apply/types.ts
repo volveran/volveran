@@ -3,7 +3,7 @@
 // Decision kind: what its Audit Entry records and how it is carried out on
 // the broker.
 import type * as amqp from 'amqplib';
-import type { AuditAction, AuditDestination } from '../audit/store.js';
+import type { AuditAction, AuditDestination } from '../../shared/audit.js';
 import type { Operator } from '../operator.js';
 import type { QueueRef } from '../profiles.js';
 import type { ActionDecision } from '../triage/decisions.js';
