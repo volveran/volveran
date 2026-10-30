@@ -39,7 +39,7 @@ export function deadLetterMap(reading: Pick<VhostReading, 'queues' | 'edges'>): 
     if (nodes.has(id)) continue;
     if (id.startsWith('queue:')) {
       const row = rows.get(id.slice('queue:'.length))!;
-      nodes.set(id, { id, kind: 'queue', name: row.name, type: row.type, approximateMessages: row.approximateMessages, setupWarnings: row.setupWarnings, inCycle: false });
+      nodes.set(id, { id, kind: 'queue', name: row.name, type: row.type, approximateMessages: row.approximateMessages, setupWarnings: row.setupWarnings, inCycle: false, deadLetterQueue: row.deadLetterQueue, checkout: row.checkout, checkedOutBy: row.checkedOutBy });
     } else {
       nodes.set(id, { id, kind: 'exchange', name: id.slice('exchange:'.length), missing: missing.has(id), inCycle: false });
     }

@@ -100,7 +100,8 @@ describe('Dead-letter Map API', () => {
         { kind: 'binding', from: 'exchange:chain.park', to: 'queue:chain.parked', bindingKey: '', sources: ['chain.dead'] },
       ]),
     );
-    expect(map.nodes.find((n: any) => n.id === 'queue:chain.dead')).toMatchObject({ kind: 'queue', name: 'chain.dead', type: 'quorum', approximateMessages: 0, inCycle: false });
+    expect(map.nodes.find((n: any) => n.id === 'queue:chain.dead')).toMatchObject({ kind: 'queue', name: 'chain.dead', type: 'quorum', approximateMessages: 0, inCycle: false, deadLetterQueue: true, checkout: { available: true }, checkedOutBy: null });
+    expect(map.nodes.find((n: any) => n.id === 'queue:chain.work')).toMatchObject({ deadLetterQueue: false });
   });
 
   it('follows an exchange-to-exchange binding', () => {
