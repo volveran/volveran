@@ -1,6 +1,6 @@
 # Configuration
 
-Every setting is an environment variable. Team Mode's OIDC settings are in the [Team Mode guide](team-mode.md).
+Every setting is an environment variable.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -24,3 +24,27 @@ A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each
 ### Health checks
 
 `GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that) and `503` once shutdown starts. Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
+
+## Team Mode settings
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VOLVERAN_AUTH` | `none` | `oidc` turns Team Mode on |
+| `VOLVERAN_HOST` | `127.0.0.1` | `0.0.0.0` to listen on the network (only Team Mode may) |
+| `VOLVERAN_OIDC_ISSUER` | required | the provider's issuer URL; Volverán reads `<issuer>/.well-known/openid-configuration` at startup and exits if it cannot |
+| `VOLVERAN_OIDC_CLIENT_ID` | required | client ID |
+| `VOLVERAN_OIDC_CLIENT_SECRET` | required | client secret (sent as `client_secret_post`) |
+| `VOLVERAN_OIDC_REDIRECT_URL` | required | `https://<volveran-host>/auth/callback`, as the browser reaches it |
+| `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
+| `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](team-mode.md#the-groups-claim)) |
+| `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
+
+The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+
+## The audit store volume
+
+The volume at `/data` holds the audit store (`audit.sqlite`): every Audit Entry and the full copy of every Discarded Message. Keep it across upgrades and back it up; it is the only thing Volverán writes, so the rest of the container stays `--read-only`. The image runs as the numeric user `1000:1000` (the `node` user), so Kubernetes can verify `runAsNonRoot`. A named volume (`volveran-data` above) is writable by it out of the box; to bind-mount a host directory instead, make it writable by uid 1000.
+
+## Why Solo Mode uses the host network
+
+Why `--network host`: a container's own loopback cannot be reached through a published port (`-p`), and listening on `0.0.0.0` inside the container would rely on every `docker run` publishing the port on `127.0.0.1` only. With the host's network, `127.0.0.1` inside is `127.0.0.1` on your machine, and brokers on `localhost` work as written. On Docker Desktop (macOS, Windows), turn on host networking in Settings → Resources → Network (Docker Desktop 4.34 or later). Listening on the network with a published port is reserved for Team Mode (`VOLVERAN_AUTH=oidc`), which signs every Operator in.

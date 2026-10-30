@@ -1,49 +1,108 @@
-# Volverán
+<p align="center">
+  <img src="docs/images/logo.svg" width="96" alt="">
+</p>
 
-> *Volverán las oscuras golondrinas…* (Gustavo Adolfo Bécquer)
+<h1 align="center">Volverán</h1>
 
-**Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
+<p align="center"><strong>Dead letters come back.</strong><br>
+<em>Volverán las oscuras golondrinas…</em> (Gustavo Adolfo Bécquer)</p>
 
-> **Status: v0.4.1 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, Roles and four-eyes Approval, Died Again detection, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.4: Replay at scale (Throttled Replay, Canary Replay, stopping an Apply part way, and Replay rules that Replay on their own with back-off and an automatic stop), comparing two Messages side by side, and the Failure Details of Spring AMQP and MassTransit. Upgrading from 0.3: Apply now runs in the background, and the Apply API answers `202` without the outcomes (see the [changelog](CHANGELOG.md)). Observability is next; see the [roadmap](ROADMAP.md).
+<p align="center">
+  <a href="https://github.com/volveran/volveran/releases/latest"><img src="https://img.shields.io/github/v/release/volveran/volveran" alt="Latest release"></a>
+  <a href="https://github.com/volveran/volveran/actions/workflows/ci.yml"><img src="https://github.com/volveran/volveran/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/volveran/volveran" alt="Apache 2.0 licence"></a>
+</p>
+
+Your dead-letter queue has hundreds of messages in it and the incident is finally over. Some should go back, some should go to the bin, and a few need a human. Volverán is an open-source, self-hosted tool for RabbitMQ that holds those messages still while you look at them, lets you decide what happens to each one, and carries it all out in one step.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/checkout-dark.png">
+  <img src="docs/images/checkout-light.png" alt="A Checkout of orders.dlq: each Message has a Decision, and two are flagged Died Again">
+</picture>
 
 ## Why
 
 The RabbitMQ management UI can peek at a queue, purge all of it, or shovel all of it somewhere else. Real dead-letter work is different: delete these 12, send these 40 back where they came from, move these 3 to a manual-handling queue, and keep a record of who did what.
 
-Peeking is not free either. Every peek requeues the Message, and on quorum queues a requeue can use up one of the Message's delivery attempts.
+Peeking is not free either. Every peek requeues the message, and on quorum queues a requeue can use up one of its delivery attempts. Look at a queue often enough and you can lose the very messages you were trying to save.
+
+| | Management UI | Volverán |
+|---|---|---|
+| Looking at a message | Requeues it | Holds it, and nothing is requeued while you look |
+| Others acting on the same messages | Possible | Kept away until you finish |
+| Different actions in one go | No | Discard, Replay, Move and Keep, applied together |
+| A record of who did what | No | Every action, with who approved it |
+| Undoing a delete | No | Discarded messages can be Restored |
+
+[How Volverán compares](docs/comparison.md) with other tools for RabbitMQ messages.
 
 ## How it works
 
-1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged, so nobody else can act on them and nothing is requeued while you look. If Volverán or your browser dies, the broker returns every held Message to the queue. The held Messages can be exported as lossless NDJSON ([Exporting Messages](docs/exporting.md)).
-2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue, or to an exchange with a routing key) or **Keep**. Pick two Messages to compare them side by side, with their differences highlighted. A Message that Volverán sent out before and that was dead-lettered again is flagged **Died Again**, with how many times and a link to the Audit Entry of its last trip, so you don't Replay the same poison Message over and over. All of it works from the keyboard: press `?` in the app for the shortcuts. No key Applies.
-3. **Apply.** Every Decision is carried out in one step, in the background: the Checkout shows the progress, and you can stop part way, after which the rest goes back to the queue. Each Message is settled at-least-once, so a failure can create a duplicate but never loses a Message. You see the outcome for every Message. A **Replay Rate** spares a consumer that has just recovered a burst, and a **Canary** Replays one Message first and waits while you see whether it is dead-lettered again ([Replaying many Messages](docs/replaying.md)). On a Protected Profile in Team Mode, an Apply that changes where Messages end up first waits for a second Operator's **Approval**.
-4. **Audit and Restore.** Every action is recorded with who did it (and who approved it). Discarded Messages are kept so they can be Restored.
+![Checking out a queue, giving Messages their Decisions, and Applying them](docs/images/flow.gif)
 
-**Replay rules** take the routine cases off your hands: declared per Broker Profile in the profiles file, a rule Replays the matching Messages of one dead-letter queue on a schedule, with a back-off between attempts and an attempt limit, and pauses itself when its Replays keep dying again ([Replay rules guide](docs/replay-rules.md)).
+1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged. If Volverán or your browser dies, the broker returns every held Message to the queue.
+2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue or exchange) or **Keep**. A Message that came back after you sent it out is flagged **Died Again**, so you don't Replay the same poison Message over and over. All of it works from the keyboard, and no key Applies.
+3. **Apply.** Every Decision is carried out in one step, in the background, and you see the outcome for every Message.
+4. **Audit and Restore.** Every action is recorded with who did it. Discarded Messages are kept so they can be Restored.
 
-Messages that Spring AMQP or MassTransit gave up on carry no `x-death`; Volverán reads the **Failure Details** these frameworks write into the headers instead (the exception, the stack trace, the original queue), shows and filters on them, and Replays MassTransit Messages to their input queue ([Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md)).
+The queue list also warns about the ways the broker silently loses Messages: a dead-letter exchange that is missing or routes nowhere, a dead-letter queue whose TTL or length limit drops them, and more.
 
-The queue list also checks each queue's dead-letter set-up and warns about the ways the broker silently loses Messages: a dead-letter exchange that is missing or routes nowhere, a dead-letter queue whose TTL, length limit or expiry drops Messages, a quorum queue past its delivery limit with nowhere to dead-letter, and a quorum queue that dead-letters at-most-once.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/queues-dark.png">
+  <img src="docs/images/queues-light.png" alt="The queue list, with set-up warnings on queues that lose Messages">
+</picture>
 
-In Team Mode, each Broker Profile can map your OIDC groups to a **Role** (`viewer`, `operator` or `admin`), and can connect to the broker with each Operator's own OAuth 2.0 token instead of shared credentials, so RabbitMQ applies their own permissions ([Team Mode guide](docs/team-mode.md)).
+Messages that Spring AMQP or MassTransit gave up on carry no `x-death`. Volverán reads the failure details these frameworks write instead: the exception, the stack trace and the original queue ([guide](docs/spring-amqp-and-masstransit.md)). You can also compare two Messages side by side and export held Messages as [lossless NDJSON](docs/exporting.md).
 
-Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
+## Replay at scale
 
-There are two modes. **Solo Mode** runs on your laptop with no sign-in and listens on loopback only. **Team Mode** is a shared service with single sign-on through any OIDC provider. Team Mode also runs on Kubernetes, from a Helm chart or with Flux CD ([Kubernetes guide](docs/kubernetes.md)).
+The consumer has often only just recovered when the Replay starts. Sending everything back at once is how you get the second incident.
+
+- **Replay Rate** limits how fast Messages go back.
+- **Canary** Replays one Message first and waits while you see whether it dies again.
+- **Stop** an Apply part way, and the rest goes back to the queue.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/canary-dark.png">
+  <img src="docs/images/canary-light.png" alt="A Canary being watched on a Protected Profile, with the Apply running at 5 Messages per second">
+</picture>
+
+**Replay rules** take the routine cases off your hands. Declared per Broker Profile in the profiles file, a rule Replays the matching Messages of one queue on a schedule, with back-off and an attempt limit, and pauses itself when its Replays keep dying again ([guide](docs/replay-rules.md)).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/rules-dark.png">
+  <img src="docs/images/rules-light.png" alt="Two Replay rules with their schedule, back-off, attempts and stop condition">
+</picture>
+
+## Built for teams
+
+Run it on your laptop in **Solo Mode**, or as a shared service in **Team Mode**, with single sign-on through any OIDC provider (Keycloak, JumpCloud, Okta, Entra ID).
+
+- **Protected Profiles** frame production in red and need the queue name typed before anything changes.
+- **Approval** makes a second Operator confirm an Apply on a Protected Profile.
+- **Roles** map your OIDC groups to `viewer`, `operator` or `admin`, per Broker Profile.
+- **Your own permissions**: a Broker Profile can connect with each Operator's OAuth 2.0 token, so RabbitMQ applies their permissions.
+- **Audit**: searchable, kept indefinitely, with who did it and who approved it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/audit-dark.png">
+  <img src="docs/images/audit-light.png" alt="The Audit view: each action with its Operator, destination and outcome, and a Restore button">
+</picture>
+
+## Safe by design
+
+- **At-least-once settling.** A failure can create a duplicate, but never loses a Message ([why](docs/adr/0001-apply-settles-each-message-at-least-once.md)).
+- **Durable before it's gone.** A Discarded Message is written to disk before the broker is told to drop it.
+- **Tested against a real broker.** Every [RabbitMQ behaviour](docs/rabbitmq-behaviour.md) Volverán relies on has a test, run on every change and weekly against the latest RabbitMQ 4.
+- **Signed releases.** The image and Helm chart are signed with keyless cosign, and the image carries an SBOM and provenance.
+- **Small footprint.** One read-only container that writes only to its audit volume. Solo Mode refuses to listen on anything but loopback.
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.4.1`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
-
-### Solo Mode
-
-Solo Mode is for one Operator on their own machine. It has no sign-in, so it only listens on a loopback address and refuses to start on anything else (`0.0.0.0`, a LAN address).
-
-1. Write `profiles.yaml` from [`profiles.example.yaml`](profiles.example.yaml). Each Broker Profile names the environment variable holding its password (`passwordEnv`); passwords never go in the file. An optional `caFile` adds a PEM CA for `amqps://` and `https://` brokers signed by a private CA.
-2. Export each password variable your profiles name, for example `export VOLVERAN_DEV_PASSWORD=guest`.
-3. Run the image with the host's network, so Volverán's loopback address is your machine's loopback address:
+Write `profiles.yaml` from [`profiles.example.yaml`](profiles.example.yaml). Each Broker Profile names the environment variable holding its password, so passwords never go in the file. Then:
 
 ```sh
+export VOLVERAN_DEV_PASSWORD=guest
 docker run --rm --read-only --network host \
   -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
   -v volveran-data:/data \
@@ -52,81 +111,31 @@ docker run --rm --read-only --network host \
   ghcr.io/volveran/volveran:0.4.1
 ```
 
-4. Open <http://127.0.0.1:8080>.
+Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audit trail and every Discarded Message. On Docker Desktop, turn on host networking first ([details](docs/configuration.md#why-solo-mode-uses-the-host-network)). With Compose, use [`docker-compose.example.yml`](docker-compose.example.yml).
 
-With Docker Compose, copy [`docker-compose.example.yml`](docker-compose.example.yml) to `docker-compose.yml` next to `profiles.yaml` and run `docker compose up`.
+**Team Mode:** see the [Team Mode guide](docs/team-mode.md).
 
-The volume at `/data` holds the audit store (`audit.sqlite`): every Audit Entry and the full copy of every Discarded Message. Keep it across upgrades and back it up; it is the only thing Volverán writes, so the rest of the container stays `--read-only`. The image runs as the numeric user `1000:1000` (the `node` user), so Kubernetes can verify `runAsNonRoot`. A named volume (`volveran-data` above) is writable by it out of the box; to bind-mount a host directory instead, make it writable by uid 1000.
-
-Why `--network host`: a container's own loopback cannot be reached through a published port (`-p`), and listening on `0.0.0.0` inside the container would rely on every `docker run` publishing the port on `127.0.0.1` only. With the host's network, `127.0.0.1` inside is `127.0.0.1` on your machine, and brokers on `localhost` work as written. On Docker Desktop (macOS, Windows), turn on host networking in Settings → Resources → Network (Docker Desktop 4.34 or later). Listening on the network with a published port is reserved for Team Mode (`VOLVERAN_AUTH=oidc`), which signs every Operator in.
-
-### Team Mode
-
-Team Mode (`VOLVERAN_AUTH=oidc`) is a shared service: Operators sign in through your OIDC provider (Keycloak, JumpCloud, Okta, Entra ID, ...) and every API call needs a session. The Operator recorded for an action is the signed-in person (the provider's `sub`, shown as their email or name); brokers are reached with each Broker Profile's shared credentials, or, on a profile with `credentials: operatorToken`, with the signed-in Operator's own OAuth 2.0 access token, so RabbitMQ applies their own permissions (see the [Team Mode guide](docs/team-mode.md#the-operators-own-broker-token)).
-
-1. Register Volverán at your provider as a confidential client using the authorization code flow, with redirect URL `https://<volveran-host>/auth/callback`. [docs/team-mode.md](docs/team-mode.md) has a generic guide and a worked example for Keycloak brokering JumpCloud.
-2. Run the image listening on the network (`-e VOLVERAN_HOST=0.0.0.0 -p 8080:8080` instead of `--network host`; only Team Mode may), behind your TLS-terminating proxy or load balancer:
+**Kubernetes:** a signed Helm chart, also with a [Flux CD example](examples/flux/). See the [Kubernetes guide](docs/kubernetes.md).
 
 ```sh
-docker run --rm --read-only -p 8080:8080 \
-  -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
-  -v volveran-data:/data \
-  -e VOLVERAN_HOST=0.0.0.0 \
-  -e VOLVERAN_AUTH=oidc \
-  -e VOLVERAN_OIDC_ISSUER=https://sso.example.com/realms/ops \
-  -e VOLVERAN_OIDC_CLIENT_ID=volveran \
-  -e VOLVERAN_OIDC_CLIENT_SECRET \
-  -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
-  -e VOLVERAN_SESSION_SECRET \
-  -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.4.1
-```
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `VOLVERAN_AUTH` | `none` | `oidc` turns Team Mode on |
-| `VOLVERAN_HOST` | `127.0.0.1` | `0.0.0.0` to listen on the network (only Team Mode may) |
-| `VOLVERAN_OIDC_ISSUER` | required | the provider's issuer URL; Volverán reads `<issuer>/.well-known/openid-configuration` at startup and exits if it cannot |
-| `VOLVERAN_OIDC_CLIENT_ID` | required | client ID |
-| `VOLVERAN_OIDC_CLIENT_SECRET` | required | client secret (sent as `client_secret_post`) |
-| `VOLVERAN_OIDC_REDIRECT_URL` | required | `https://<volveran-host>/auth/callback`, as the browser reaches it |
-| `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
-| `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](docs/team-mode.md#the-groups-claim)) |
-| `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
-
-The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](docs/adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
-
-### Kubernetes
-
-The Helm chart `oci://ghcr.io/volveran/charts/volveran` runs Team Mode as a shared service: one replica, a PersistentVolumeClaim for the audit store, a pod that passes the `restricted` Pod Security Standard, and an optional `HTTPRoute` or `Ingress`. The chart version equals the Volverán version, and the chart is signed with keyless cosign like the image. Create the Secrets it references, write the values (OIDC settings, Broker Profiles, the route), and install:
-
-```sh
-kubectl create namespace volveran
-kubectl -n volveran create secret generic volveran-oidc \
-  --from-literal=client-secret='<OIDC client secret>' \
-  --from-literal=session-secret="$(openssl rand -base64 48)"
-kubectl -n volveran create secret generic volveran-broker-passwords \
-  --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
 helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.4.1 \
   --namespace volveran -f values.yaml
 ```
 
-The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposure, secrets, private CAs, upgrades and backups; every value is in the [chart README](charts/volveran/README.md). For GitOps, [`examples/flux/`](examples/flux/) is a Flux CD layout with a cosign-verified `OCIRepository`, a `HelmRelease` and SOPS-encrypted Secrets.
+## Where it's going
 
-### More
+Not available yet, in priority order ([roadmap](ROADMAP.md)):
 
-- [Configuration](docs/configuration.md): every setting, and the health checks.
-- [Replaying many Messages](docs/replaying.md).
-- [Exporting Messages](docs/exporting.md): the NDJSON format.
+- **Observability:** queue depth and rate history, alerts to Slack, Teams and webhooks, Prometheus metrics, and a dead-letter topology map.
+- **Production hardening:** PostgreSQL as an audit store, several replicas (Team Mode runs one today), a security review, and a stable configuration format.
 
 ## Learn more
 
+- [Configuration](docs/configuration.md): every setting and the health checks.
+- [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
 - [Architecture decisions](docs/adr/).
-- [Roadmap](ROADMAP.md).
-- [Replay rules](docs/replay-rules.md): how a rule decides what to Replay and stops itself, with worked examples.
-- [Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md): what Volverán reads from the failure headers these frameworks write, and how their Messages are Replayed.
-- [How Volverán compares](docs/comparison.md) with Warren, RabbitGUI and RabbitScout.
+- [Changelog](CHANGELOG.md).
 - [Contributing](CONTRIBUTING.md): development, tests and releases.
 
 ## License

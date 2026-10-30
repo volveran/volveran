@@ -25,7 +25,7 @@ docker build -t volveran .   # the image, as the release workflow builds it
    - `package.json` and (not checked) `package-lock.json`: `npm version <version> --no-git-tag-version` updates both.
    - `src/shared/product.ts` (the version the app reports; the server build compiles only `src/`, so it cannot import `package.json`).
    - `charts/volveran/Chart.yaml`: `version` and `appVersion`.
-   - `README.md`: the image tags and the `helm install --version` of the quick start, and (not checked) the status line and the example tag in the quick start's introduction.
+   - `README.md`: the image tag and the `helm install --version` of the quick start. Then retake `docs/images` if the UI changed: `npm run build`, then `node scripts/test-broker.mjs run -- scripts/screenshots/capture.sh`.
    - `docs/team-mode.md` (the image tag) and `docs/kubernetes.md` (`helm install --version`).
    - `docker-compose.example.yml` (the image tag).
    - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `0.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
