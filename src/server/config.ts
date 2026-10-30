@@ -3,8 +3,8 @@
 // a message naming the variable. The profiles file is read separately
 // (profiles.ts).
 import { parseBodyRetention, type BodyRetention } from './audit/body-retention.js';
-import { parseHistoryInterval } from './history-interval.js';
-import { parseHistoryRetention } from './history-retention.js';
+import { parseHistoryInterval } from './history/interval.js';
+import { parseHistoryRetention } from './history/retention.js';
 import { resolvePublicUrl } from './public-url.js';
 import { parseMetricsPort } from './metrics/config.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
