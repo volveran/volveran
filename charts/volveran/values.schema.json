@@ -314,6 +314,47 @@
         }
       }
     },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Sets VOLVERAN_METRICS_PORT and adds the container port and a metrics Service port.",
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "description": "A Prometheus Operator ServiceMonitor. Requires metrics.enabled, checked in templates/_helpers.tpl.",
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "interval": {
+              "description": "A Prometheus duration such as 30s; empty uses Prometheus's scrape_interval.",
+              "type": "string",
+              "pattern": "^(([0-9]+(ms|s|m|h|d|w|y))+)?$"
+            },
+            "scrapeTimeout": {
+              "description": "A Prometheus duration such as 10s; empty uses Prometheus's scrape_timeout.",
+              "type": "string",
+              "pattern": "^(([0-9]+(ms|s|m|h|d|w|y))+)?$"
+            }
+          }
+        }
+      }
+    },
     "settings": {
       "type": "object",
       "additionalProperties": false,
@@ -469,6 +510,13 @@
         },
         "ingressFrom": {
           "description": "NetworkPolicy peers admitted to the http port.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/networkPolicyPeer"
+          }
+        },
+        "metricsFrom": {
+          "description": "NetworkPolicy peers admitted to the metrics port only, when metrics.enabled.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/networkPolicyPeer"
