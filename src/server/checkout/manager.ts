@@ -72,7 +72,6 @@ import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, ProfileScope } from '../audit/audit-store.js';
-import type { AuditStore as SyncAuditStore } from '../audit/store.js';
 import { diedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
@@ -139,8 +138,6 @@ export interface CheckoutStartOptions extends StartOptions {
 export interface CheckoutManagerOptions {
   /** Where Apply writes its Audit Entries. */
   audit: AuditStore;
-  /** The synchronous form, for export and Died Again until they move to the interface (#96). */
-  syncAudit: SyncAuditStore;
   limits: CheckoutLimits;
   /**
    * Team Mode: Protected Profiles with `requireApproval` need Approval for an
@@ -259,7 +256,7 @@ export class CheckoutManager {
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
-    this.findDiedAgain(checkout, options.auditScope);
+    await this.findDiedAgain(checkout, options.auditScope);
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return this.view(checkout);
@@ -321,10 +318,10 @@ export class CheckoutManager {
   }
 
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
-  private findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): void {
-    const trail = replayTrail(this.options.syncAudit, auditScope);
+  private async findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): Promise<void> {
+    const trail = replayTrail(this.options.audit, auditScope);
     for (const [handle, m] of checkout.held) {
-      const found = diedAgain(m.properties.headers, trail);
+      const found = await diedAgain(m.properties.headers, trail);
       if (found) checkout.diedAgain.set(handle, found);
     }
   }
@@ -637,8 +634,8 @@ export class CheckoutManager {
    * on the broker. Throws `checkout_not_active` on a Checkout that is over
    * or lost. `role` is the exporting Operator's Role, recorded in the Audit Entry.
    */
-  exportMessages(id: string, filter: Filter | null, role: Role): CheckoutExport {
-    return startExport(this.find(id), filter, { audit: this.options.syncAudit, role, beforeLine: this.hooks.beforeExportLine });
+  async exportMessages(id: string, filter: Filter | null, role: Role): Promise<CheckoutExport> {
+    return startExport(this.find(id), filter, { audit: this.options.audit, role, beforeLine: this.hooks.beforeExportLine });
   }
 
   /** Ends the Checkout: every held Message goes back to the queue untouched, in its original order. */

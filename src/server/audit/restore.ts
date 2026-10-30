@@ -24,7 +24,7 @@ import type { Operator } from '../operator.js';
 import type { ProfileAccess } from '../profile-access.js';
 import { profileHasVhost, type QueueRef } from '../profiles.js';
 import { requireTypedQueueName } from '../protected-profile.js';
-import type { AuditEntry, AuditStore } from './store.js';
+import type { AuditEntry, AuditStore } from './audit-store.js';
 
 export type RestoreErrorCode =
   | 'audit_entry_not_found'
@@ -93,7 +93,7 @@ export class RestoreService {
     operator: Operator,
     target: ProfileAccess | null,
   ): Promise<AuditEntry> {
-    const discard = this.audit.get(id);
+    const discard = await this.audit.get(id);
     if (!discard) throw new RestoreError('audit_entry_not_found', `No Audit Entry ${id}.`);
     if (request?.confirm !== true) {
       throw new RestoreError('confirmation_required', 'Restore needs the Operator\'s confirmation: send { "confirm": true }.');
@@ -136,17 +136,17 @@ export class RestoreService {
       );
     }
     if (this.running.has(id)) throw new RestoreError('restore_in_progress', `Audit Entry ${id} is being Restored.`);
-    const earlier = this.audit.list({ restoreOf: id }).find((e) => e.outcome !== 'failed');
-    if (earlier) {
-      throw new RestoreError(
-        'already_restored',
-        `The Message of Audit Entry ${id} was already Restored to "${earlier.destination?.queue}" (Audit Entry ${earlier.id}).`,
-      );
-    }
 
-    // Claimed before the first await, so a second request for the same entry is refused.
+    // Claimed before the store is asked about earlier Restores, so a second request for the same entry is refused.
     this.running.add(id);
     try {
+      const earlier = (await this.audit.list({ restoreOf: id })).find((e) => e.outcome !== 'failed');
+      if (earlier) {
+        throw new RestoreError(
+          'already_restored',
+          `The Message of Audit Entry ${id} was already Restored to "${earlier.destination?.queue}" (Audit Entry ${earlier.id}).`,
+        );
+      }
       if (!profileHasVhost(profile, discard.vhost) || !(await management.getQueue(discard.vhost, queue))) {
         throw new RestoreError(
           'queue_not_found',
@@ -154,7 +154,7 @@ export class RestoreService {
         );
       }
       // Read after the checks: retention may have evicted it meanwhile.
-      const body = this.audit.body(id);
+      const body = await this.audit.body(id);
       if (!body) {
         throw new RestoreError('body_expired', `The body of the Message of Audit Entry ${id} is no longer stored, so it cannot be Restored.`);
       }
@@ -162,7 +162,7 @@ export class RestoreService {
       // The Operator's own token on a profile with `credentials: operatorToken`.
       const credentials = target.credentials();
       const replayId = randomUUID();
-      const entryId = this.audit.record({
+      const entryId = await this.audit.record({
         at: new Date(),
         operator,
         role,
@@ -191,10 +191,10 @@ export class RestoreService {
         'A Restore publishes through the default exchange, so the broker user needs write permission on it.',
       );
       const failure = await publish({ profile, vhost: discard.vhost, queue }, credentials, body, options, () => refusal.message);
-      this.audit.setOutcome(entryId, failure ? 'failed' : 'done', failure?.reason ?? null);
+      await this.audit.setOutcome(entryId, failure ? 'failed' : 'done', failure?.reason ?? null);
       // Like a refused read or configure: the Operator learns which permission is missing.
       if (failure?.refused) throw refusal;
-      return this.audit.get(entryId)!;
+      return (await this.audit.get(entryId))!;
     } finally {
       this.running.delete(id);
     }

@@ -4,15 +4,16 @@
 // Exporting only reads: it never acks, rejects or reorders a Message, and
 // leaves the Decisions as they are. Which Messages, their Decisions and the
 // count are taken when the export starts, so the download stays the same
-// even if the Checkout ends while it is written. Lines are made one at a
+// even if the Checkout ends while it is written, or while the entry is stored. Lines are made one at a
 // time as the response is read, so a Checkout near the byte limit is never
 // copied whole into memory.
 //
 // Each export writes one Audit Entry (action `export`, no Message copy) with
 // the filter and the count, before the first line: `pending` while the
 // download is written, `done` once every line is, `failed` when it stopped
-// part way (the browser went away).
-import type { AuditStore } from '../audit/store.js';
+// part way (the browser went away). The download ends only once the outcome is
+// stored.
+import type { AuditStore } from '../audit/audit-store.js';
 import type { Role } from '../../shared/roles.js';
 import { exportFilename, exportLine } from '../triage/export-line.js';
 import { matchesFilter, type Filter } from '../triage/filters.js';
@@ -40,10 +41,10 @@ export interface ExportOptions {
 
 /**
  * Starts exporting `checkout`'s held Messages matching `filter` (every one
- * when null) and records its Audit Entry. Throws `checkout_not_active` on a
- * Checkout that is over or lost, `apply_in_progress` while it is Applied.
+ * when null) and records its Audit Entry. Rejects with `checkout_not_active`
+ * on a Checkout that is over or lost, `apply_in_progress` while it is Applied.
  */
-export function startExport(checkout: Checkout, filter: Filter | null, { audit, role, beforeLine }: ExportOptions): CheckoutExport {
+export async function startExport(checkout: Checkout, filter: Filter | null, { audit, role, beforeLine }: ExportOptions): Promise<CheckoutExport> {
   if (checkout.status !== 'active') throw checkoutNotActive(checkout, 'its Messages can no longer be exported');
   if (checkout.applying) throw applyInProgress(checkout);
 
@@ -52,7 +53,7 @@ export function startExport(checkout: Checkout, filter: Filter | null, { audit, 
     .map(([handle, message], i) => ({ position: i + 1, message, decision: checkout.decisions.get(handle) ?? { kind: 'keep' as const } }))
     .filter(({ message }) => filter === null || matchesFilter(filter, message));
   const at = new Date();
-  const entryId = audit.record({
+  const entryId = await audit.record({
     at,
     operator: checkout.operator,
     role,
@@ -80,8 +81,8 @@ export function startExport(checkout: Checkout, filter: Filter | null, { audit, 
       }
     } finally {
       // Runs too when the response is destroyed part way.
-      if (written === picked.length) audit.setOutcome(entryId, 'done');
-      else audit.setOutcome(entryId, 'failed', `The download stopped after ${written} of ${picked.length} Messages.`);
+      if (written === picked.length) await audit.setOutcome(entryId, 'done');
+      else await audit.setOutcome(entryId, 'failed', `The download stopped after ${written} of ${picked.length} Messages.`);
     }
   }
 

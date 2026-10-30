@@ -103,7 +103,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const checkouts = new CheckoutManager({
     audit: asyncAudit,
-    syncAudit: audit,
     limits,
     enforceApproval: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
@@ -123,7 +122,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
         }),
       };
-  const restore = new RestoreService(audit, (id) => checkouts.isRunning(id));
+  const restore = new RestoreService(asyncAudit, (id) => checkouts.isRunning(id));
   const replayRules = new ReplayRules({
     checkouts,
     state: audit.ruleState,
@@ -167,7 +166,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
   });
   sampler.onRun((finished) => alerting.evaluate(finished));
-  const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
+  const usage = async () => bodyStoreUsage(await asyncAudit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
     access,
@@ -175,7 +174,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     replayRules,
     notifier,
     alertDestinations,
-    audit: { audit, restore, usage },
+    audit: { audit: asyncAudit, restore, usage },
+    alertStores: { alerts: audit.alerts, notifications: audit.notifications },
     history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
@@ -307,13 +307,15 @@ interface AppOptions {
   notifier: Notifier;
   alertDestinations: AlertDestination[];
   audit: AuditRouteDeps;
+  /** The stores of the Alert readings, still synchronous until #97 moves them. */
+  alertStores: Pick<AuditStore, 'alerts' | 'notifications'>;
   history: HistoryRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, alertStores, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -341,7 +343,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
   const checkoutDeps = { checkouts, access: profileAccess };
   registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
-  const alertReadings = { alerts: audit.audit.alerts, notifications: audit.audit.notifications, destinations: alertDestinations };
+  const alertReadings = { ...alertStores, destinations: alertDestinations };
   registerProfileRoutes(app, profileAccess, history, alertReadings);
   registerReplayRuleRoutes(app, replayRules, profileAccess);
   registerAlertDestinationRoutes(app, notifier, profileAccess);

@@ -11,30 +11,30 @@ const record = (auditEntryId: number, earlierReplayId: string | null): ReplayRec
   fromQueue: 'orders.dlq',
   earlierReplayId,
 });
-const trailOf = (records: Record<string, ReplayRecord>): ReplayTrail => (id) => records[id] ?? null;
+const trailOf = (records: Record<string, ReplayRecord>): ReplayTrail => async (id) => records[id] ?? null;
 
 describe('diedAgain', () => {
-  it('is null for a Message without a replay id', () => {
+  it('is null for a Message without a replay id', async () => {
     for (const headers of [undefined, {}, { 'x-volveran-replay-id': '' }, { 'x-volveran-replay-id': 42 }]) {
-      expect(diedAgain(headers, trailOf({}))).toBeNull();
+      expect(await diedAgain(headers, trailOf({}))).toBeNull();
     }
   });
 
-  it('reads a replay id decoded as bytes', () => {
-    expect(diedAgain({ 'x-volveran-replay-id': Buffer.from('r1') }, trailOf({ r1: record(7, null) }))).toEqual({
+  it('reads a replay id decoded as bytes', async () => {
+    expect(await diedAgain({ 'x-volveran-replay-id': Buffer.from('r1') }, trailOf({ r1: record(7, null) }))).toEqual({
       replayId: 'r1',
       count: 1,
       last: { auditEntryId: 7, action: 'replay', at: '2026-10-01T10:00:00.000Z', operatorName: 'Ana', fromQueue: 'orders.dlq' },
     });
   });
 
-  it('counts every replay id in the chain, also one with no Audit Entry here', () => {
+  it('counts every replay id in the chain, also one with no Audit Entry here', async () => {
     const trail = trailOf({ r3: record(9, 'r2'), r2: record(5, 'r1') });
-    expect(diedAgain({ 'x-volveran-replay-id': 'r3' }, trail)).toMatchObject({ count: 3, last: { auditEntryId: 9 } });
+    expect(await diedAgain({ 'x-volveran-replay-id': 'r3' }, trail)).toMatchObject({ count: 3, last: { auditEntryId: 9 } });
   });
 
-  it('stops at a chain that loops back on itself', () => {
+  it('stops at a chain that loops back on itself', async () => {
     const trail = trailOf({ a: record(1, 'b'), b: record(2, 'a') });
-    expect(diedAgain({ 'x-volveran-replay-id': 'a' }, trail)).toMatchObject({ count: 2 });
+    expect(await diedAgain({ 'x-volveran-replay-id': 'a' }, trail)).toMatchObject({ count: 2 });
   });
 });
