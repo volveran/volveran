@@ -2,11 +2,26 @@
 // as long as the depth history (VOLVERAN_HISTORY_RETENTION_DAYS).
 import type { DatabaseSync } from 'node:sqlite';
 import type { NotificationDelivery } from '../../shared/alerts.js';
+import type { ProfileScope } from './store.js';
 
 export type NewNotificationDelivery = Omit<NotificationDelivery, 'id' | 'at'> & { at: Date };
 
 /** How many outcomes `recent` answers with unless told otherwise. */
 const RECENT_LIMIT = 100;
+
+/** Which outcomes to keep: those of these Broker Profiles and, or not, test notifications (which belong to none). */
+export interface NotificationScope {
+  profiles: ProfileScope;
+  tests: boolean;
+}
+
+function scopeClause({ profiles, tests }: NotificationScope): { where: string; params: string[] } {
+  const names = 'only' in profiles ? profiles.only : profiles.except;
+  const list = names.map(() => '?').join(', ');
+  // NOT IN () is true of everything; a test notification's NULL profile matches neither form.
+  const ofProfile = 'only' in profiles ? (names.length ? `profile IN (${list})` : '0') : names.length ? `profile NOT IN (${list})` : 'profile IS NOT NULL';
+  return { where: `((test = 0 AND ${ofProfile}) OR (test = 1 AND ${tests ? '1' : '0'}))`, params: names };
+}
 
 export class NotificationStore {
   constructor(private readonly db: DatabaseSync) {}
@@ -37,9 +52,12 @@ export class NotificationStore {
     return { ...d, id: Number(lastInsertRowid), at: d.at.toISOString() };
   }
 
-  /** The latest outcomes, newest first. */
-  recent(limit = RECENT_LIMIT): NotificationDelivery[] {
-    const rows = this.db.prepare('SELECT * FROM notifications ORDER BY at DESC, id DESC LIMIT ?').all(limit) as unknown as Row[];
+  /** The latest outcomes, newest first; `visible` narrows them in the query, so the limit counts only what is kept. */
+  recent(limit = RECENT_LIMIT, visible?: NotificationScope): NotificationDelivery[] {
+    const { where, params } = visible ? scopeClause(visible) : { where: '1', params: [] };
+    const rows = this.db
+      .prepare(`SELECT * FROM notifications WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`)
+      .all(...params, limit) as unknown as Row[];
     return rows.map((row) => ({
       id: Number(row.id),
       at: new Date(row.at).toISOString(),

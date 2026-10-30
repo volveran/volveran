@@ -3,7 +3,8 @@
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
 // The Replay rules view (ReplayRulesView.tsx) shows the selected profile's
-// Replay Rules and runs a pass on demand.
+// Replay Rules and runs a pass on demand. The Alerts view (AlertsView.tsx) shows
+// what is firing and the notifications sent; a firing Alert also shows on its queue.
 // In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
 // Applies waiting for an Approval this Operator may give; a requester's link
 // (#/approvals/<checkout id>, approval-link.ts) opens it on their Checkout.
@@ -18,6 +19,7 @@
 // (keys mapped in keyboard-commands.ts), and h opens a dead-letter queue's depth
 // history (HistoryView.tsx), also reachable by link (#/history/..., history-link.ts).
 import { useEffect, useRef, useState } from 'react';
+import { alertValueText } from '../shared/alerts.js';
 import { waitingCheckoutIn } from '../shared/approval-link.js';
 import { auditSearchIn, historyPath, historyTargetIn, type HistoryTarget } from '../shared/history-link.js';
 import { product } from '../shared/product.js';
@@ -34,6 +36,7 @@ import {
   type SetupWarningSeverity,
 } from './api.js';
 import { ApprovalsView } from './ApprovalsView.js';
+import { AlertsView } from './AlertsView.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
 import { HistoryView, Sparkline } from './HistoryView.js';
@@ -88,7 +91,7 @@ export function App() {
   const [historyTarget, setHistoryTarget] = useState(() => historyTargetIn(window.location.hash));
   /** The search a history mark's link opens the Audit view on, and which link it was, to search again. */
   const [auditLink, setAuditLink] = useState(() => ({ hash: window.location.hash, search: auditSearchIn(window.location.hash) }));
-  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules' | 'history'>(() =>
+  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules' | 'alerts' | 'history'>(() =>
     linkedApproval ? 'approvals' : historyTarget ? 'history' : auditLink.search ? 'audit' : 'queues',
   );
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
@@ -282,6 +285,9 @@ export function App() {
           <button type="button" aria-pressed={view === 'rules'} onClick={() => switchView('rules')}>
             Replay rules
           </button>
+          <button type="button" aria-pressed={view === 'alerts'} onClick={() => switchView('alerts')}>
+            Alerts
+          </button>
           {session?.mode === 'team' && (
             <button type="button" aria-pressed={view === 'approvals'} onClick={() => switchView('approvals')}>
               Approvals
@@ -381,6 +387,8 @@ export function App() {
           <HistoryView target={historyTarget} onBack={() => switchView('queues')} />
         ) : view === 'rules' && !checkoutId ? (
           profileName && <ReplayRulesView profile={profileName} role={role} />
+        ) : view === 'alerts' && !checkoutId ? (
+          <AlertsView profile={profileName} roles={session?.roles ?? {}} />
         ) : (
           // Hidden, not removed, under Approvals: the Operator's own Checkout keeps its heartbeat.
           <div hidden={view === 'approvals'}>
@@ -629,6 +637,14 @@ function QueueTable({
               {q.deadLetteredFrom.length > 0 && (
                 <span className="dlq-source">dead-lettered from {q.deadLetteredFrom.join(', ')}</span>
               )}
+              {q.firingAlerts?.map((a) => (
+                <span key={a.alertId} className="firing-alert" role="note">
+                  <span className="badge alert-firing">Alert firing</span>
+                  <small>
+                    {a.rule}: {alertValueText(a)}
+                  </small>
+                </span>
+              ))}
               {q.setupWarnings.map((w) => (
                 <span key={w.code} className="setup-warning" role="note">
                   <span className={`badge severity-${w.severity}`}>{severityLabel[w.severity]}</span>

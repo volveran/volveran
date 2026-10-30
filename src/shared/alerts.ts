@@ -1,4 +1,5 @@
 // Pure values shared by the server and the web app (no Node or DOM APIs).
+import { durationText } from './replay-rules.js';
 
 export const ALERT_DESTINATION_TYPES = ['slack', 'teams', 'webhook'] as const;
 export type AlertDestinationType = (typeof ALERT_DESTINATION_TYPES)[number];
@@ -27,4 +28,86 @@ export interface NotificationDelivery {
   /** Why it failed without an HTTP status: `timeout`, `server_stopping` or a network error code. */
   error: string | null;
   attempts: number;
+}
+
+/** One Alert, as the API shows it. `vhost` and `queue` are null for an Alert about no queue. */
+export interface AlertView {
+  alertId: string;
+  profile: string;
+  rule: string;
+  vhost: string | null;
+  queue: string | null;
+  status: 'pending' | 'firing';
+  /** The kind of condition, such as `depthAbove`. */
+  condition: string;
+  value: number | null;
+  threshold: number | null;
+  /** When the condition began to hold. */
+  since: string;
+}
+
+/** An Alert Destination as the browser may see it: never its URL or signing secret. */
+export interface AlertDestinationView {
+  name: string;
+  type: AlertDestinationType;
+}
+
+/** What `GET /api/alerts` answers. */
+export interface AlertsOverview {
+  /** On the profiles the Operator has a Role on: firing first. */
+  alerts: AlertView[];
+  /** The latest outcomes the Operator may see, newest first. */
+  notifications: NotificationDelivery[];
+  destinations: AlertDestinationView[];
+}
+
+/** An Alert Rule's condition: its kind and whatever the kind takes. */
+export interface AlertRuleCondition {
+  kind: string;
+  [key: string]: unknown;
+}
+
+/** An Alert Rule as the profiles file declares it. */
+export interface AlertRuleView {
+  name: string;
+  destinations: AlertDestinationView[];
+  when: AlertRuleCondition;
+  forMs: number;
+  /** null: never sent again. */
+  repeatEveryMs: number | null;
+}
+
+export function alertPlaceText({ vhost, queue }: { vhost: string | null; queue: string | null }): string {
+  if (queue !== null) return vhost === null ? queue : `${queue} (vhost ${vhost})`;
+  return vhost === null ? 'The whole Broker Profile' : `Vhost ${vhost}`;
+}
+
+export function alertValueText({ value, threshold }: { value: number | null; threshold: number | null }): string {
+  if (value === null) return threshold === null ? '—' : `threshold ${threshold}`;
+  return threshold === null ? String(value) : `${value} (threshold ${threshold})`;
+}
+
+/** An Alert Rule's condition in words; a kind with no words here is shown by name. */
+export function ruleConditionText(when: AlertRuleCondition): string {
+  const { kind, vhost, queue, queuePattern } = when;
+  const place = typeof queue === 'string' ? queue : typeof queuePattern === 'string' ? `queues matching ${queuePattern}` : null;
+  const on = place === null ? '' : ` on ${place}${typeof vhost === 'string' ? ` (vhost ${vhost})` : ''}`;
+  switch (kind) {
+    case 'depthAbove':
+      return `Depth above ${String(when.threshold)}${on}`;
+    case 'arrivalsAbove':
+      return `More than ${String(when.count)} estimated arrivals within ${durationText(Number(when.withinMs))}${on}`;
+    case 'anyArrival':
+      return `Any Message arrives${on}`;
+    default:
+      return kind;
+  }
+}
+
+/** Whether a delivery got through and, when not, why. */
+export function deliveryText({ outcome, httpStatus, error, attempts }: Pick<NotificationDelivery, 'outcome' | 'httpStatus' | 'error' | 'attempts'>): string {
+  if (outcome === 'delivered') return attempts > 1 ? `Delivered on attempt ${attempts}` : 'Delivered';
+  if (attempts === 0) return 'Failed: no attempt was made';
+  const why = httpStatus !== null ? `HTTP ${httpStatus}` : error ?? 'unknown error';
+  return `Failed after ${attempts} attempt${attempts === 1 ? '' : 's'}: ${why}`;
 }

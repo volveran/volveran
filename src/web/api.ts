@@ -8,6 +8,7 @@ import type { QueueHistory } from '../shared/history.js';
 import type { MessageComparison } from '../shared/message-diff.js';
 import { product } from '../shared/product.js';
 import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
+import type { AlertRuleView, AlertsOverview, NotificationDelivery } from '../shared/alerts.js';
 import type { ReplayRuleView, RulePass, RuleState } from '../shared/replay-rules.js';
 
 export type { Decision, DecisionSummaryLine, MoveDestination } from '../shared/decisions.js';
@@ -184,6 +185,13 @@ export const api = {
   },
   auditStore: () => getJson<AuditStoreUsage>('/api/audit-store'),
   /** The Replay Rules of a Broker Profile, with the last pass of each. */
+  alerts: () => getJson<AlertsOverview>('/api/alerts'),
+
+  alertRules: (profile: string) => getJson<{ rules: AlertRuleView[] }>(`/api/profiles/${segment(profile)}/alert-rules`).then((b) => b.rules),
+
+  testAlertDestination: (name: string) =>
+    getJson<{ delivery: NotificationDelivery }>(`/api/alert-destinations/${segment(name)}/test`, 'POST', {}).then((b) => b.delivery),
+
   replayRules: (profile: string) =>
     getJson<{ rules: ReplayRuleView[] }>(`/api/profiles/${segment(profile)}/replay-rules`).then((b) => b.rules),
   /** Runs one pass of a rule now (`admin`) and returns it once it has ended. */
