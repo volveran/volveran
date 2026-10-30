@@ -141,8 +141,8 @@ export function arrivalsSummary(samples: ReadonlyArray<{ estimatedArrivals: numb
   const unknown = samples.length - known.length;
   const partly = samples.filter((s) => s.arrivalsPartlyUnknown).length;
   const notes = [
-    unknown > 0 && `unknown for ${unknown} of ${samples.length} points`,
-    partly > 0 && (unknown > 0 ? `partly unknown for ${partly} more` : `partly unknown for ${partly} of ${samples.length} points`),
+    unknown > 0 && `unknown for ${unknown} of ${samples.length} Samples shown`,
+    partly > 0 && (unknown > 0 ? `partly unknown for ${partly} more` : `partly unknown for ${partly} of ${samples.length} Samples shown`),
   ].filter(Boolean);
   return `Estimated arrivals: ${total} in this range${notes.map((note) => `, ${note}`).join('')}.`;
 }

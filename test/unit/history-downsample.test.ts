@@ -1,4 +1,4 @@
-// A queue's history is served at no more than about 500 points: each bucket's
+// A queue's history is served at no more than about 500 buckets of Samples: each bucket's
 // last depth and summed estimated arrivals.
 import { describe, expect, it } from 'vitest';
 import { downsample } from '../../src/server/history/downsample.js';

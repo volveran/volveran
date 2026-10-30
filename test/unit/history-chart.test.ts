@@ -168,7 +168,7 @@ describe('text summaries', () => {
       'Estimated arrivals: 7 in this range.',
     );
     expect(arrivalsSummary([{ estimatedArrivals: null }, { estimatedArrivals: 4 }])).toBe(
-      'Estimated arrivals: 4 in this range, unknown for 1 of 2 points.',
+      'Estimated arrivals: 4 in this range, unknown for 1 of 2 Samples shown.',
     );
   });
 
@@ -191,9 +191,9 @@ describe('a downsampled point that is partly unknown', () => {
   });
 
   it('is said in the summary, not added up as complete', () => {
-    expect(arrivalsSummary(samples)).toBe('Estimated arrivals: 6 in this range, partly unknown for 1 of 3 points.');
+    expect(arrivalsSummary(samples)).toBe('Estimated arrivals: 6 in this range, partly unknown for 1 of 3 Samples shown.');
     const unknown = { at: at(30), estimatedArrivals: null };
-    expect(arrivalsSummary([...samples, unknown])).toBe('Estimated arrivals: 6 in this range, unknown for 1 of 4 points, partly unknown for 1 more.');
+    expect(arrivalsSummary([...samples, unknown])).toBe('Estimated arrivals: 6 in this range, unknown for 1 of 4 Samples shown, partly unknown for 1 more.');
   });
 });
 

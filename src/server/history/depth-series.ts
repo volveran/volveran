@@ -8,7 +8,7 @@ import type { DepthSeries } from '../../shared/history.js';
 import type { QueueRow } from '../../shared/queues.js';
 
 /** A small chart cannot show more, and every listed queue sends this many. */
-const MAX_POINTS = 96;
+const MAX_SAMPLES = 96;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function depthSeriesOf(
@@ -24,7 +24,7 @@ export function depthSeriesOf(
   );
   return queues.map((queue) => {
     if (!queue.deadLetterQueue) return queue;
-    const samples = downsample(history.samples({ profile, vhost, queue: queue.name }, from, to), MAX_POINTS);
+    const samples = downsample(history.samples({ profile, vhost, queue: queue.name }, from, to), MAX_SAMPLES);
     return { ...queue, depthSeries: { from, to, points: samples.map((s) => [s.at, s.depth]), gaps } };
   });
 }

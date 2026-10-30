@@ -1,8 +1,8 @@
-// Pure: fits a queue's Samples into at most `limit` points by cutting their
+// Pure: fits a queue's Samples into at most `limit` by cutting their
 // time span into equal buckets: each keeps its last depth and time and its
 // summed estimated arrivals (unknown when every Sample in it is, and marked as
 // partly unknown when only some are, so a short unknown stretch never vanishes
-// at a long range). Empty buckets leave no point, so a gap stays a gap.
+// at a long range). Empty buckets leave nothing, so a gap stays a gap.
 export interface DownsampleInput {
   at: number;
   depth: number;

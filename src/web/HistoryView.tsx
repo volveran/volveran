@@ -140,12 +140,12 @@ function markCounts(mark: HistoryMark): string {
     .join(', ');
 }
 
-function markWho(mark: HistoryMark): string {
+function markOrigin(mark: HistoryMark): string {
   return mark.kind === 'rule_pass' ? `Rule Pass of ${mark.rule}` : `Apply by ${mark.operator}`;
 }
 
 function markText(mark: HistoryMark): string {
-  return `${markWho(mark)}: ${markCounts(mark)}`;
+  return `${markOrigin(mark)}: ${markCounts(mark)}`;
 }
 
 const RANGE_CHOICES: Array<{ range: HistoryRange; label(retentionDays: number): string }> = [
@@ -269,7 +269,7 @@ export function HistoryView({ target, onBack }: { target: HistoryTarget; onBack(
             <ul className="history-marks">
               {[...history.marks].reverse().map((mark) => (
                 <li key={mark.checkoutId}>
-                  {formatTime(mark.at)}: {markWho(mark)}, {markCounts(mark)}. <a href={auditViewPath(mark.auditUrl)}>Audit Entries</a>
+                  {formatTime(mark.at)}: {markOrigin(mark)}, {markCounts(mark)}. <a href={auditViewPath(mark.auditUrl)}>Audit Entries</a>
                 </li>
               ))}
             </ul>
