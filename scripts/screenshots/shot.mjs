@@ -26,6 +26,26 @@ const shot = async (name, full = false) => {
   await page.screenshot({ path: `${outDir}/${name}-${theme}.png`, fullPage: full });
   console.log('shot', name);
 };
+// A band over the bottom of the page, so each GIF frame names its step.
+const caption = (text) =>
+  page.evaluate((text) => {
+    document.getElementById('shot-caption')?.remove();
+    const band = document.createElement('div');
+    band.id = 'shot-caption';
+    band.textContent = text;
+    band.style.cssText = 'position:fixed;inset:auto 0 0 0;z-index:2147483647;padding:24px 32px;background:#1f4fa3;color:#fff;font:700 54px/1.1 var(--font-sans);';
+    (document.querySelector('dialog[open]') ?? document.body).append(band);
+  }, text);
+// Part of the page, for a phone: the region of an element, up to a width.
+const clip = async (name, selector, maxWidth) => {
+  await wait(400);
+  const box = await page.evaluate((selector) => {
+    const r = document.querySelector(selector).getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  }, selector);
+  await page.screenshot({ path: `${outDir}/${name}-${theme}.png`, clip: { ...box, width: Math.min(box.width, maxWidth), height: Math.min(box.height, 900 - box.y) } });
+  console.log('clip', name);
+};
 const clickText = async (sel, text) => {
   const ok = await page.evaluate(
     (sel, text) => {
@@ -87,11 +107,12 @@ const scenariosImpl = {
   // The stills of docs/images/flow.gif: Checkout, Decisions, Apply, outcome.
   async flow() {
     await pickProfile('staging');
-    await shot('flow-1-queues');
     await startCheckout('orders.dlq');
-    await shot('flow-2-checkout');
+    await caption('Checkout: hold the messages');
+    await shot('flow-1-checkout');
     await discard('Malformed currency, rejected upstream');
-    await shot('flow-3-discard');
+    await caption('Decide: Discard this one');
+    await shot('flow-2-discard');
     await page.keyboard.press('j');
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press(' ');
@@ -100,13 +121,16 @@ const scenariosImpl = {
     await shiftKey('R');
     await page.keyboard.press('Escape');
     await wait(400);
-    await shot('flow-4-replay');
+    await caption('Decide: Replay these three');
+    await shot('flow-3-replay');
     await clickText('button', 'Apply');
     await wait(800);
-    await shot('flow-5-apply');
+    await caption('Apply: carry it all out in one step');
+    await shot('flow-4-apply');
     await clickText('dialog button', 'Confirm Apply');
     await wait(5000);
-    await shot('flow-6-outcome');
+    await caption('See the outcome for every message');
+    await shot('flow-5-outcome');
   },
   // The queue list of the unprotected profile, with set-up warnings.
   async queues() {
@@ -154,6 +178,7 @@ const scenariosImpl = {
     for (let i = 0; i < 8; i++) await page.keyboard.press('j');
     await wait(1000);
     await shot('checkout');
+    await clip('checkout-list', '.message-list', 500);
   },
   async compare() {
     await pickProfile('staging');
@@ -189,6 +214,7 @@ const scenariosImpl = {
     await clickText('dialog button', 'Confirm');
     await wait(3500);
     await shot('canary');
+    await clip('canary-panel', '.canary-panel', 700);
   },
   async audit() {
     await clickText('.view-switch button', 'Audit');

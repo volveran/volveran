@@ -38,7 +38,10 @@ Peeking is not free either. Every peek requeues the message, and on quorum queue
 
 ## How it works
 
-![Checking out a queue, giving Messages their Decisions, and Applying them](docs/images/flow.gif)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/flow-dark.gif">
+  <img src="docs/images/flow-light.gif" alt="Checking out a queue, giving Messages their Decisions, and Applying them">
+</picture>
 
 1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged. If Volverán or your browser dies, the broker returns every held Message to the queue.
 2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue or exchange) or **Keep**. A Message that came back after you sent it out is flagged **Died Again**, so you don't Replay the same poison Message over and over. All of it works from the keyboard, and no key Applies.

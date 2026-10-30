@@ -31,11 +31,11 @@ for theme in light dark; do
   node "$here/shot.mjs" "$tmp/scratch" "$theme" prep
   node "$here/die-again.mjs"
   node "$here/shot.mjs" "$out" "$theme" queues checkout compare rules audit canary
-  if [ "$theme" = dark ]; then node "$here/shot.mjs" "$tmp/flow" dark flow; fi
+  node "$here/shot.mjs" "$tmp/flow" "$theme" flow
+  ffmpeg -y -loglevel error -framerate 0.5 -pattern_type glob -i "$tmp/flow/flow-*-$theme.png" \
+    -vf 'scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=none' \
+    "$out/flow-$theme.gif"
   stop_server
 done
 
-ffmpeg -y -loglevel error -framerate 0.5 -pattern_type glob -i "$tmp/flow/flow-*-dark.png" \
-  -vf 'scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse=dither=none' \
-  "$out/flow.gif"
 ls -la "$out"
