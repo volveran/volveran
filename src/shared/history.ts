@@ -49,3 +49,8 @@ export interface QueueHistory {
   marks: HistoryMark[];
 }
 
+
+/** Where a queue's history is in the web app, from the root; its parts travel in the URL fragment, like an Approval's link. */
+export function queueHistoryPath(profile: string, vhost: string, queue: string): string {
+  return `/#/history/${[profile, vhost, queue].map(encodeURIComponent).join('/')}`;
+}

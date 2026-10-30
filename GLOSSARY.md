@@ -114,6 +114,14 @@ _Avoid_: Sign-off, review, four-eyes (four-eyes may describe the feature in pros
 Where notifications go: a Slack incoming webhook, a Microsoft Teams workflow webhook or a generic webhook, declared once in the profiles file. Its URL and signing secret come from environment variables.
 _Avoid_: Channel, receiver, sink, notifier
 
+**Alert Rule**:
+A condition on dead-letter queues, declared under a Broker Profile in the profiles file: the depth stays above a threshold, Messages arrive faster than a rate, or any Message arrives at all. It names its Alert Destinations, how long the condition must hold (`for`) and how often to send it again (`repeatEvery`). A rule with a name pattern covers every matching dead-letter queue. Arrivals here are estimated arrivals that the depth has borne out: a take-out counts only once the next Sample shows it did not explain a drop in depth, so arrivals hidden by triage alert one Sample late.
+_Avoid_: Alarm, trigger, monitor
+
+**Alert**:
+One Alert Rule firing for one queue, from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out). A firing Alert survives a restart without being sent again; removing its rule from the file drops it quietly.
+_Avoid_: Incident, event, page
+
 ## Running
 
 **Solo Mode**:

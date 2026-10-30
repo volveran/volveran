@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { Notifier } from './alerts/notifier.js';
+import { Alerting } from './alerts/alerting.js';
 import { RestoreService } from './audit/restore.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
@@ -140,6 +141,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'The outcome of a notification could not be recorded'),
   });
+  const alerting = new Alerting({
+    profiles,
+    store: audit.alerts,
+    notifier,
+    // Called only once the app below is listening.
+    onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
+  });
+  sampler.onRun((finished) => alerting.evaluate(finished));
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
