@@ -2,6 +2,7 @@
 // order they are listed in, search, and Checkout availability by queue type.
 import type { CheckoutQueueType } from '../../shared/checkout.js';
 import type { CheckoutAvailability } from '../../shared/queues.js';
+import { listedEdges, type DeadLetterEdge, type DeadLetterSettings, type ListedBinding } from './dead-letter-edges.js';
 
 export type { CheckoutAvailability, CheckoutQueueType };
 
@@ -17,19 +18,8 @@ export function matchesQueueFilter(name: string, pattern: string): boolean {
   return new RegExp(`^${source}$`).test(name);
 }
 
-/** What deadLetterSources needs to know about a queue. */
-export interface DeadLetterSettings {
-  name: string;
-  arguments: Record<string, unknown>;
-  /** Definition of the policies in effect. */
-  effectivePolicy: Record<string, unknown>;
-}
-
-export interface Binding {
-  source: string;
-  destination: string;
-  destinationType: 'queue' | 'exchange';
-}
+export type { DeadLetterSettings };
+export type Binding = ListedBinding;
 
 /**
  * For every queue that some queue dead-letters into, the names of those
@@ -41,45 +31,18 @@ export interface Binding {
  * dead-letter routing key counts.
  */
 export function deadLetterSources(queues: DeadLetterSettings[], bindings: Binding[]): Map<string, string[]> {
-  const out = new Map<string, Set<string>>();
-  const add = (target: string, source: string) => {
-    if (!out.has(target)) out.set(target, new Set());
-    out.get(target)!.add(source);
-  };
-
-  for (const q of queues) {
-    const settings = [
-      { exchange: q.arguments['x-dead-letter-exchange'], routingKey: q.arguments['x-dead-letter-routing-key'] },
-      { exchange: q.effectivePolicy['dead-letter-exchange'], routingKey: q.effectivePolicy['dead-letter-routing-key'] },
-    ];
-    for (const { exchange, routingKey } of settings) {
-      if (typeof exchange !== 'string') continue;
-      if (exchange === '') {
-        if (typeof routingKey === 'string' && routingKey !== '') add(routingKey, q.name);
-        continue;
-      }
-      for (const target of queuesReachableFrom(exchange, bindings)) add(target, q.name);
-    }
-  }
-  return new Map([...out].map(([target, sources]) => [target, [...sources].sort(compareNames)]));
+  return sourcesFromEdges(queues.flatMap((q) => listedEdges(q, bindings)));
 }
 
-function queuesReachableFrom(exchange: string, bindings: Binding[]): Set<string> {
-  const queues = new Set<string>();
-  const seen = new Set<string>([exchange]);
-  const pending = [exchange];
-  while (pending.length > 0) {
-    const current = pending.pop()!;
-    for (const b of bindings) {
-      if (b.source !== current) continue;
-      if (b.destinationType === 'queue') queues.add(b.destination);
-      else if (!seen.has(b.destination)) {
-        seen.add(b.destination);
-        pending.push(b.destination);
-      }
-    }
+/** The source queues of each queue, sorted, from the edges that count towards `deadLetteredFrom`. */
+export function sourcesFromEdges(edges: DeadLetterEdge[]): Map<string, string[]> {
+  const out = new Map<string, Set<string>>();
+  for (const { countsAsDeadLetteredFrom, target, source } of edges) {
+    if (!countsAsDeadLetteredFrom || target.type !== 'queue') continue;
+    if (!out.has(target.name)) out.set(target.name, new Set());
+    out.get(target.name)!.add(source);
   }
-  return queues;
+  return new Map([...out].map(([target, sources]) => [target, [...sources].sort(compareNames)]));
 }
 
 export interface ArrangeOptions {
@@ -104,17 +67,26 @@ export type Arranged<Q> = Q & {
 /** Orders queues for display: dead-letter queues first, then the rest, each group by name. */
 export function arrangeQueues<Q extends { name: string }>(queues: Q[], options: ArrangeOptions): Array<Arranged<Q>> {
   const filter = options.defaultQueueFilter;
+  const arranged = queues.map((q) => {
+    const matchesDefaultFilter = filter ? matchesQueueFilter(q.name, filter) : false;
+    const deadLetteredFrom = options.deadLetterSources.get(q.name) ?? [];
+    const deadLetterQueue = matchesDefaultFilter || deadLetteredFrom.length > 0 || isMassTransitErrorQueue(q.name);
+    return { ...q, deadLetterQueue, matchesDefaultFilter, deadLetteredFrom };
+  });
+  return narrowQueues(arranged, options).sort((a, b) =>
+    a.deadLetterQueue !== b.deadLetterQueue ? (a.deadLetterQueue ? -1 : 1) : compareNames(a.name, b.name),
+  );
+}
+
+/** The queues the search and the dead-letter queue filter leave listed. */
+export function narrowQueues<Q extends { name: string; deadLetterQueue: boolean }>(
+  queues: Q[],
+  options: Pick<ArrangeOptions, 'onlyDeadLetterQueues' | 'search'>,
+): Q[] {
   const search = options.search?.trim().toLowerCase();
   return queues
-    .map((q) => {
-      const matchesDefaultFilter = filter ? matchesQueueFilter(q.name, filter) : false;
-      const deadLetteredFrom = options.deadLetterSources.get(q.name) ?? [];
-      const deadLetterQueue = matchesDefaultFilter || deadLetteredFrom.length > 0 || isMassTransitErrorQueue(q.name);
-      return { ...q, deadLetterQueue, matchesDefaultFilter, deadLetteredFrom };
-    })
     .filter((q) => !options.onlyDeadLetterQueues || q.deadLetterQueue)
-    .filter((q) => !search || q.name.toLowerCase().includes(search))
-    .sort((a, b) => (a.deadLetterQueue !== b.deadLetterQueue ? (a.deadLetterQueue ? -1 : 1) : compareNames(a.name, b.name)));
+    .filter((q) => !search || q.name.toLowerCase().includes(search));
 }
 
 /**
