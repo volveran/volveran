@@ -2,6 +2,7 @@
 // the server's own, from src/shared/.
 import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
 import type { ApprovalSummary, CheckoutView, MessageDetail } from '../shared/checkout.js';
+import type { DeadLetterMap } from '../shared/dead-letter-map.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
 import type { QueueHistory } from '../shared/history.js';
@@ -146,6 +147,8 @@ export const api = {
     getJson<QueueHistory>(
       `/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/history?${new URLSearchParams(range)}`,
     ),
+  deadLetterMap: (profile: string, vhost: string) =>
+    getJson<DeadLetterMap>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/dead-letter-map`),
   moveDestinations: (profile: string, vhost: string) =>
     getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
   /** `overrideConsumers` starts it even though other consumers read the queue (error `queue_has_consumers` otherwise). */

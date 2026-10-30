@@ -59,6 +59,9 @@ describe('the Dead-letter Map', () => {
       approximateMessages: 7,
       setupWarnings: [warning],
       inCycle: false,
+      deadLetterQueue: false,
+      checkout: { available: true },
+      checkedOutBy: null,
     });
     expect(map.nodes.find((n) => n.id === 'exchange:dlx')).toEqual({ id: 'exchange:dlx', kind: 'exchange', name: 'dlx', missing: false, inCycle: false });
     expect(map.edges).toEqual([
