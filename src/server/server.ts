@@ -15,8 +15,10 @@ import { startMetricsListener, type MetricsListener } from './metrics/listener.j
 import { startRuntimeMetrics } from './metrics/runtime.js';
 import { TriageMetrics } from './metrics/triage.js';
 import { ConfigError } from './config-error.js';
+import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
 import { checkProfilesForRunMode, checkReplayRules, loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
 import type { CheckoutTiming } from './triage/checkout-timing.js';
@@ -28,6 +30,7 @@ import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
@@ -58,6 +61,8 @@ export interface ServerOptions {
   bodyRetention?: Partial<BodyRetention>;
   /** Test seams of the Checkout manager; unset in production. */
   checkoutTestHooks?: CheckoutTestHooks;
+  /** Test seams of the queue sampler; unset in production. */
+  samplerTestHooks?: SamplerTestHooks;
 }
 
 export interface RunningServer {
@@ -119,6 +124,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
     onPassRecorded: (profile, rule, pass) => triageMetrics.passRecorded(profile, rule, pass.status),
   });
+  const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
+  const sampler = new QueueSampler({
+    profiles,
+    history: audit.history,
+    intervalMs: config.historyIntervalMs,
+    testHooks: options.samplerTestHooks,
+    // Called only once the app below is listening.
+    onError: (profile, err) => app.log.error({ err, profile }, 'A sampling run failed unexpectedly'),
+  });
   const notifier = new Notifier({
     destinations: alertDestinations,
     store: audit.notifications,
@@ -134,6 +148,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     replayRules,
     notifier,
     audit: { audit, restore, usage },
+    history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
   });
@@ -188,8 +203,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       app.log.error(err, 'Retention could not remove old notification outcomes');
     }
   };
-  evict();
-  const retentionTimer = setInterval(evict, retention.intervalMs);
+  // The same job removes Samples and sampling runs past the history retention.
+  const removeOldHistory = () => {
+    try {
+      const { samples } = audit.history.removeOlderThan(Date.now() - config.historyRetentionMs);
+      if (samples > 0) app.log.info({ samples }, 'Retention removed old Samples');
+    } catch (err) {
+      app.log.error(err, 'Retention could not remove old Samples');
+    }
+  };
+  const runRetention = () => {
+    evict();
+    removeOldHistory();
+  };
+  runRetention();
+  const retentionTimer = setInterval(runRetention, retention.intervalMs);
   retentionTimer.unref();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
@@ -200,6 +228,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // First: a scrape reads the audit store.
     await metricsListener?.close();
     clearInterval(retentionTimer);
+    await sampler.stop();
     await notifier.close();
     await replayRules.stop();
     await checkouts.endAll();
@@ -207,6 +236,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   // Replay Rules: give each its state and schedule the running ones.
   replayRules.start();
+  sampler.start();
 
   // Metrics: on a port of their own, at the same address, so loopback in Solo Mode.
   if (config.metricsPort !== null) {
@@ -247,12 +277,13 @@ interface AppOptions {
   replayRules: ReplayRules;
   notifier: Notifier;
   audit: AuditRouteDeps;
+  history: HistoryRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -289,6 +320,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, au
   registerApprovalRoutes(app, checkoutDeps);
   registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
+  registerHistoryRoutes(app, history, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {

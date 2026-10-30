@@ -85,6 +85,8 @@ checkoutHeartbeatSeconds: VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS
 bodyRetentionDays: VOLVERAN_BODY_RETENTION_DAYS
 bodyRetentionMaxBytes: VOLVERAN_BODY_RETENTION_MAX_BYTES
 bodyRetentionIntervalMinutes: VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES
+historyIntervalSeconds: VOLVERAN_HISTORY_INTERVAL_SECONDS
+historyRetentionDays: VOLVERAN_HISTORY_RETENTION_DAYS
 {{- end -}}
 
 {{/* The env entries for the settings that are set. Numbers are printed whole (Helm reads them as floats). */}}

@@ -3,6 +3,7 @@
 // a message naming the variable. The profiles file is read separately
 // (profiles.ts).
 import { parseBodyRetention, type BodyRetention } from './audit/body-retention.js';
+import { parseHistoryInterval } from './history-interval.js';
 import { parseHistoryRetention } from './history-retention.js';
 import { resolvePublicUrl } from './public-url.js';
 import { parseMetricsPort } from './metrics/config.js';
@@ -15,9 +16,11 @@ export interface Config {
   checkoutLimits: CheckoutLimits;
   checkoutTiming: CheckoutTiming;
   bodyRetention: BodyRetention;
+  /** How often the sampler runs. */
+  historyIntervalMs: number;
   /** The base of the links in notifications; null: they carry none. */
   publicUrl: string | null;
-  /** How long notification outcomes are kept, in milliseconds (VOLVERAN_HISTORY_RETENTION_DAYS). */
+  /** How long Samples, sampling runs and notification outcomes are kept, in milliseconds (VOLVERAN_HISTORY_RETENTION_DAYS). */
   historyRetentionMs: number;
   /** The metrics listener's port; null keeps it off. */
   metricsPort: number | null;
@@ -36,6 +39,8 @@ export function loadConfig(
   if (!timing.ok) return timing;
   const retention = parseBodyRetention(env);
   if (!retention.ok) return retention;
+  const historyInterval = parseHistoryInterval(env);
+  if (!historyInterval.ok) return historyInterval;
   const publicUrl = resolvePublicUrl(env, mode.mode);
   if (!publicUrl.ok) return publicUrl;
   const historyRetention = parseHistoryRetention(env);
@@ -49,6 +54,7 @@ export function loadConfig(
       checkoutLimits: limits.limits,
       checkoutTiming: timing.timing,
       bodyRetention: retention.retention,
+      historyIntervalMs: historyInterval.intervalMs,
       publicUrl: publicUrl.url,
       historyRetentionMs: historyRetention.retentionMs,
       metricsPort: metricsPort.port,

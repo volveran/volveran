@@ -12,6 +12,7 @@ import tls from 'node:tls';
 import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { BodyRetention } from '../../src/server/audit/body-retention.js';
+import type { SamplerControl, SamplerTestHooks, SamplingRun } from '../../src/server/history/sampler.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
@@ -105,6 +106,8 @@ export interface StartAppOptions {
   checkoutTiming?: Partial<CheckoutTiming>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
+  /** The queue sampler's clock and "sample now" (samplerHooks). */
+  samplerTestHooks?: SamplerTestHooks;
   /** The audit store's directory (kept by the caller); default in memory. */
   dataDir?: string;
   /** Overrides the body retention limits and interval (ms) from the environment. */
@@ -142,6 +145,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTiming: options.checkoutTiming,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
+      samplerTestHooks: options.samplerTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
@@ -375,5 +379,48 @@ export function ruleSchedulerHooks(start = new Date()) {
       if (!control) throw new Error('No app has started with these hooks');
       return control.runScheduledPass(profile, rule);
     },
+  };
+}
+
+/**
+ * A test clock for the queue sampler, and its "sample now" (`hooks`, for
+ * startApp's samplerTestHooks). The clock starts at `start` and moves only when
+ * told: `advance` moves it and fires the timers due by then. `sampleNow` runs
+ * every sampled profile at once, in the app started last with these hooks, and
+ * resolves when each run is recorded. Set the clock to the wall clock before a
+ * run that should see Audit Entries, which carry real time.
+ */
+export function samplerHooks(start = new Date()) {
+  let now = start.getTime();
+  let timers: Array<{ at: number; run: () => void }> = [];
+  let control: SamplerControl | undefined;
+  const clock: RuleClock = {
+    now: () => new Date(now),
+    setTimer(run, ms) {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return { cancel: () => void (timers = timers.filter((t) => t !== timer)) };
+    },
+  };
+  const started = (): SamplerControl => {
+    if (!control) throw new Error('No app has started with these hooks');
+    return control;
+  };
+  const hooks: SamplerTestHooks = { clock, sampler: (c) => (control = c) };
+  return {
+    hooks,
+    now: () => new Date(now),
+    set(at: Date) {
+      now = at.getTime();
+    },
+    advance(ms: number) {
+      now += ms;
+      const due = timers.filter((t) => t.at <= now);
+      timers = timers.filter((t) => t.at > now);
+      for (const t of due) t.run();
+    },
+    sampleNow: (): Promise<SamplingRun[]> => started().sampleNow(),
+    latest: () => started().latest(),
+    onRun: (listener: Parameters<SamplerControl['onRun']>[0]) => started().onRun(listener),
   };
 }

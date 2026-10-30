@@ -428,6 +428,24 @@
           ],
           "minimum": 1,
           "maximum": 1440
+        },
+        "historyIntervalSeconds": {
+          "description": "VOLVERAN_HISTORY_INTERVAL_SECONDS; null leaves Volverán's default (60).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 15,
+          "maximum": 3600
+        },
+        "historyRetentionDays": {
+          "description": "VOLVERAN_HISTORY_RETENTION_DAYS; null leaves Volverán's default (14).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 90
         }
       }
     },
