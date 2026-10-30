@@ -227,8 +227,12 @@ describe('Lost Checkout', () => {
       const expected = queue === 'payments.dlq' ? 1 : undefined;
       expect(after.map((m) => m.deliveryCount)).toEqual([expected, expected, expected]);
       // The broker released the lock with the connection.
-      const again = await app.post(checkoutPath(queue));
-      expect(again.status).toBe(201);
+      // Only once it has noticed the close and deleted the lock queue, which comes after the Messages' return.
+      const again = await eventually(async () => {
+        const res = await app.post(checkoutPath(queue));
+        expect(res.status).toBe(201);
+        return res;
+      });
       await app.delete(`/api/checkouts/${again.body.checkout.id}`);
       // Starting a child process (tsx) and waiting for the broker to notice it died take longer than the default.
     }, 60_000);

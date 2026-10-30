@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- A queue can be Checked Out again straight after its Checkout ends. The start could be refused with `checkout_in_progress`, naming no one, while the broker was still deleting the old lock queue.
+
 ## [0.6.0] - 2026-10-31
 
 An asynchronous audit store, PostgreSQL as an alternative to SQLite, and `check-config`, all on one Replica (see the [roadmap](ROADMAP.md) and the [PostgreSQL guide](docs/postgresql.md)).
