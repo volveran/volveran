@@ -180,11 +180,11 @@ Each line is one JSON object per Message, in queue order:
 
 Declare where notifications go once, at the top of the profiles file (`alertDestinations`, see `profiles.example.yaml` and [ADR 0012](docs/adr/0012-alerting-declared-in-the-profiles-file.md)): a Slack incoming webhook, a Microsoft Teams workflow webhook (Office 365 connector URLs are not supported), or a generic webhook. Each URL and signing secret comes from an environment variable, and startup refuses one that is not set. To check a destination, an `admin` on any Broker Profile (anyone in Solo Mode) calls `POST /api/alert-destinations/:name/test`, which sends a clearly labelled test notification and answers with the outcome. A delivery has a 5-second timeout and up to 3 attempts, and its outcome is kept in the audit store. A notification never contains a Message's body, headers or `message_id`. The Alerts view shows what is firing and pending, the selected Broker Profile's Alert Rules, and whether each recent notification was delivered and why not, and lets an `admin` send a test notification from there; `GET /api/alerts` and `GET /api/profiles/:profile/alert-rules` back it, and never send a destination's URL.
 
-A generic webhook receives this JSON (`version` changes if its shape does). `test` is `true` only on a test notification, which also has `status: firing`, so a receiver should ignore those; `alertId` stays the same from an Alert's firing to its resolved.
+A generic webhook receives this JSON (`version` changes if its shape does). `test` is `true` only on a test notification, which also has `status: firing`, so a receiver should ignore those; `alertId` stays the same from an Alert's firing to its resolved. `vhost` and `queue` are null when the condition is not about a queue. `replayRule` names the Replay rule of a `replayRulePaused` Alert; `reason` says why a condition on Volverán itself holds: the pause's reason, the set-up warning codes, or the sampling error code.
 
 ```json
 { "version": 1, "test": false, "alertId": "…", "status": "firing", "rule": "deep-orders", "profile": "prod", "vhost": "/",
-  "queue": "orders.dlq", "condition": "depthAbove", "value": 500, "threshold": 100,
+  "queue": "orders.dlq", "condition": "depthAbove", "value": 500, "threshold": 100, "replayRule": null, "reason": null,
   "startedAt": "2026-10-30T10:00:00.000Z", "endedAt": null, "url": "https://volveran.example.com/…" }
 ```
 

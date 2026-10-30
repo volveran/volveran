@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyAlertMemory, evaluateAlerts, type AlertMemory } from '../../src/server/alerts/evaluation.js';
 import type { AlertRule } from '../../src/server/alerts/rules.js';
-import type { LatestSample } from '../../src/server/history/sampler.js';
+import type { FinishedRun, LatestSample } from '../../src/server/history/sampler.js';
 
 const MINUTE = 60_000;
 const T0 = Date.parse('2026-10-30T10:00:00.000Z');
@@ -36,7 +36,10 @@ const sample = (minutes: number, depth: number, previousDepth: number | null, ta
 /** Feeds Samples through in order; each step answers the notifications it sent. */
 function run(rules: AlertRule[], memory: AlertMemory = emptyAlertMemory()) {
   const step = (samples: LatestSample[], minutes: number, ok = true) => {
-    const result = evaluateAlerts({ profile: 'prod', rules, memory, run: { run: { profile: 'prod', at: at(minutes), ok, errorCode: ok ? null : 'x' }, samples } });
+    const result = evaluateAlerts({
+      profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
+      run: { run: { profile: 'prod', at: at(minutes), ok, errorCode: ok ? null : 'x' }, samples },
+    });
     memory = result.memory;
     return result.notifications;
   };
@@ -283,5 +286,187 @@ describe('memory', () => {
     const { step, memory } = run([rule({ when: depthAbove(10) })]);
     step([sample(0, 5, 0)], 0);
     expect(memory().arrivals).toEqual([]);
+  });
+});
+
+describe('conditions on Volverán itself', () => {
+  const paused = (name: string, reason: string | null, minutes = 0) => ({ name, reason, pausedAt: at(minutes).getTime() });
+  const goodRun = (minutes: number, samples: LatestSample[] = []) => ({ run: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples });
+  const failedRun = (minutes: number) => ({ run: { profile: 'prod', at: at(minutes), ok: false, errorCode: 'broker_unreachable' }, samples: [] });
+  const warning = (severity: 'loses_messages' | 'may_lose_messages') =>
+    severity === 'loses_messages'
+      ? ({ severity, code: 'dead_letter_exchange_missing', deadLetterExchange: 'x', message: 'lost' } as const)
+      : ({ severity, code: 'quorum_at_most_once_dead_lettering', message: 'may be lost' } as const);
+  const warned = (minutes: number, warnings: ReadonlyArray<ReturnType<typeof warning>>, name = 'orders.dlq', vhost = '/'): LatestSample => ({
+    ...sample(minutes, 0, 0, 0, name), vhost, setupWarnings: [...warnings],
+  });
+
+  function evaluation(rules: AlertRule[]) {
+    let memory = emptyAlertMemory();
+    return {
+      step(minutes: number, over: { run?: FinishedRun | null; pausedReplayRules?: ReturnType<typeof paused>[]; lastSuccessAt?: Date | null } = {}) {
+        const result = evaluateAlerts({ profile: 'prod', rules, memory, at: at(minutes), run: null, pausedReplayRules: [], lastSuccessAt: null, ...over });
+        memory = result.memory;
+        return result.notifications.map((n) => n.notification);
+      },
+      memory: () => memory,
+    };
+  }
+
+  describe('replayRulePaused', () => {
+    const anyRule = rule({ when: { kind: 'replayRulePaused', rule: null } });
+
+    it('fires on the pause naming the Replay Rule and reason, and resolves on the resume with no second Sample', () => {
+      const { step, memory } = evaluation([anyRule]);
+      const [fired, ...others] = step(0, { pausedReplayRules: [paused('retry', 'died_again')] });
+      expect(others).toEqual([]);
+      expect(fired).toMatchObject({
+        status: 'firing', rule: 'r', condition: 'replayRulePaused', replayRule: 'retry', reason: 'died_again', vhost: null, queue: null,
+        startedAt: at(0).toISOString(), endedAt: null, path: '/',
+      });
+      expect(memory().alerts[0]).toMatchObject({ status: 'firing', vhost: null, queue: null, replayRule: 'retry', reason: 'died_again' });
+
+      const [resolved] = step(1, { pausedReplayRules: [] });
+      expect(resolved).toMatchObject({ status: 'resolved', alertId: fired!.alertId, replayRule: 'retry', reason: 'died_again', endedAt: at(1).toISOString() });
+      expect(memory().alerts).toEqual([]);
+    });
+
+    it('makes each paused Replay Rule its own Alert', () => {
+      const { step } = evaluation([anyRule]);
+      const sent = step(0, { pausedReplayRules: [paused('one', 'a'), paused('two', 'b')] });
+      expect(sent.map((n) => n.replayRule)).toEqual(['one', 'two']);
+      expect(sent[0]!.alertId).not.toBe(sent[1]!.alertId);
+      const resolved = step(1, { pausedReplayRules: [paused('two', 'b')] });
+      expect(resolved.map((n) => [n.status, n.replayRule])).toEqual([['resolved', 'one']]);
+    });
+
+    it('watches only the named Replay Rule when `rule` is given', () => {
+      const { step } = evaluation([rule({ when: { kind: 'replayRulePaused', rule: 'one' } })]);
+      expect(step(0, { pausedReplayRules: [paused('two', 'b')] })).toEqual([]);
+      expect(step(1, { pausedReplayRules: [paused('one', 'a'), paused('two', 'b')] }).map((n) => n.replayRule)).toEqual(['one']);
+    });
+
+    it('does not send a firing Alert again at a later evaluation, unless repeatEvery is due', () => {
+      const pausedRules = [paused('retry', 'died_again')];
+      const { step } = evaluation([rule({ when: { kind: 'replayRulePaused', rule: null }, repeatEveryMs: 10 * MINUTE })]);
+      step(0, { pausedReplayRules: pausedRules });
+      expect(step(5, { pausedReplayRules: pausedRules, run: goodRun(5) })).toEqual([]);
+      expect(step(10, { pausedReplayRules: pausedRules, run: goodRun(10) }).map((n) => n.status)).toEqual(['firing']);
+    });
+
+    it('waits for `for`, counted from the pause, and forgets a pending Alert quietly on the resume', () => {
+      const { step } = evaluation([rule({ when: { kind: 'replayRulePaused', rule: null }, forMs: 5 * MINUTE })]);
+      const pausedRules = [paused('retry', 'x')];
+      expect(step(0, { pausedReplayRules: pausedRules })).toEqual([]);
+      expect(step(1, { pausedReplayRules: [] })).toEqual([]);
+      expect(step(2, { pausedReplayRules: [paused('retry', 'x', 2)] })).toEqual([]);
+      expect(step(7, { pausedReplayRules: [paused('retry', 'x', 2)] }).map((n) => n.startedAt)).toEqual([at(2).toISOString()]);
+    });
+
+    it('fires at once when the pause is timed later than the evaluation, as with two clocks', () => {
+      const { step } = evaluation([anyRule]);
+      expect(step(0, { pausedReplayRules: [paused('retry', 'x', 3)] })).toHaveLength(1);
+    });
+
+    it('caps a long reason, since a chat tool refuses a long field and the whole notification with it', () => {
+      const { step } = evaluation([anyRule]);
+      const [fired] = step(0, { pausedReplayRules: [paused('retry', 'y'.repeat(5000))] });
+      expect(fired!.reason!.length).toBeLessThanOrEqual(500);
+    });
+
+    it('leaves queue Alerts, and what arrivals remember, alone when evaluating a pause', () => {
+      const { step, memory } = evaluation([rule({ name: 'deep', when: depthAbove(1) }), rule({ name: 'any', when: anyArrival }), anyRule]);
+      step(0, { run: goodRun(0, [sample(0, 5, 1, 2)]) });
+      const before = memory();
+      expect(step(1, { pausedReplayRules: [paused('retry', 'x')] }).map((n) => n.condition)).toEqual(['replayRulePaused']);
+      expect(memory().alerts.filter((a) => a.condition !== 'replayRulePaused')).toEqual(before.alerts);
+      expect(memory().arrivals).toEqual(before.arrivals);
+    });
+  });
+
+  describe('setupWarning', () => {
+    const atLeast = (severity: 'loses_messages' | 'may_lose_messages') => rule({ when: { kind: 'setupWarning', severity } });
+
+    it('fires per queue that has a warning of that severity, in any vhost, and names the warning', () => {
+      const { step } = evaluation([atLeast('loses_messages')]);
+      const sent = step(0, {
+        run: goodRun(0, [warned(0, [warning('loses_messages')], 'a.dlq'), warned(0, [], 'b.dlq'), warned(0, [warning('loses_messages')], 'a.dlq', 'other')]),
+      });
+      expect(sent.map((n) => [n.vhost, n.queue])).toEqual([['/', 'a.dlq'], ['other', 'a.dlq']]);
+      expect(sent[0]).toMatchObject({
+        condition: 'setupWarning', status: 'firing', value: 1, threshold: null, reason: 'dead_letter_exchange_missing', path: '/#/history/prod/%2F/a.dlq',
+      });
+    });
+
+    it('takes a severity as at least that bad', () => {
+      const may = [warning('may_lose_messages')];
+      const loses = [warning('loses_messages')];
+      expect(evaluation([atLeast('loses_messages')]).step(0, { run: goodRun(0, [warned(0, may)]) })).toEqual([]);
+      expect(evaluation([atLeast('may_lose_messages')]).step(0, { run: goodRun(0, [warned(0, may)]) })).toHaveLength(1);
+      expect(evaluation([atLeast('may_lose_messages')]).step(0, { run: goodRun(0, [warned(0, loses)]) })).toHaveLength(1);
+    });
+
+    it('resolves when the warning has gone for one full Sample, and when the queue has gone', () => {
+      const { step } = evaluation([atLeast('loses_messages')]);
+      const loses = [warning('loses_messages')];
+      step(0, { run: goodRun(0, [warned(0, loses, 'a.dlq'), warned(0, loses, 'b.dlq')]) });
+      expect(step(1, { run: goodRun(1, [warned(1, [], 'a.dlq')]) })).toEqual([]);
+      const resolved = step(2, { run: goodRun(2, [warned(2, [], 'a.dlq')]) });
+      expect(resolved.map((n) => [n.status, n.queue]).sort()).toEqual([['resolved', 'a.dlq'], ['resolved', 'b.dlq']]);
+    });
+
+    it('changes nothing on a failed run, which says nothing about any queue', () => {
+      const { step, memory } = evaluation([atLeast('loses_messages')]);
+      step(0, { run: goodRun(0, [warned(0, [warning('loses_messages')])]) });
+      expect(step(1, { run: failedRun(1) })).toEqual([]);
+      expect(step(2, { run: failedRun(2) })).toEqual([]);
+      expect(memory().alerts).toHaveLength(1);
+    });
+  });
+
+  describe('samplingFailing', () => {
+    const failing = rule({ when: { kind: 'samplingFailing', forMs: 5 * MINUTE } });
+
+    it('fires once the profile has not been sampled well for `for`, counted from its last good run', () => {
+      const { step } = evaluation([failing]);
+      const lastSuccessAt = at(0);
+      expect(step(4, { run: failedRun(4), lastSuccessAt })).toEqual([]);
+      const [fired] = step(5, { run: failedRun(5), lastSuccessAt });
+      expect(fired).toMatchObject({
+        status: 'firing', condition: 'samplingFailing', vhost: null, queue: null, value: 300, threshold: 300, reason: 'broker_unreachable',
+        startedAt: at(0).toISOString(), path: '/',
+      });
+      expect(step(6, { run: failedRun(6), lastSuccessAt })).toEqual([]);
+    });
+
+    it('counts from the first failed run when the profile has never been sampled well', () => {
+      const { step } = evaluation([failing]);
+      expect(step(0, { run: failedRun(0) })).toEqual([]);
+      expect(step(4, { run: failedRun(4) })).toEqual([]);
+      expect(step(5, { run: failedRun(5) })).toHaveLength(1);
+    });
+
+    it('resolves at the next good run, with no second Sample', () => {
+      const { step, memory } = evaluation([failing]);
+      const [fired] = step(5, { run: failedRun(5), lastSuccessAt: at(0) });
+      const [resolved] = step(6, { run: goodRun(6), lastSuccessAt: at(6) });
+      expect(resolved).toMatchObject({ status: 'resolved', alertId: fired!.alertId, endedAt: at(6).toISOString() });
+      expect(memory().alerts).toEqual([]);
+    });
+
+    it('forgets a pending Alert quietly at a good run', () => {
+      const { step, memory } = evaluation([failing]);
+      step(1, { run: failedRun(1), lastSuccessAt: at(0) });
+      expect(step(2, { run: goodRun(2), lastSuccessAt: at(2) })).toEqual([]);
+      expect(memory().alerts).toEqual([]);
+    });
+
+    it('changes nothing when evaluating a pause between runs', () => {
+      const { step, memory } = evaluation([failing]);
+      step(1, { run: failedRun(1), lastSuccessAt: at(0) });
+      const before = memory().alerts;
+      expect(step(9, { lastSuccessAt: at(0) })).toEqual([]);
+      expect(memory().alerts).toEqual(before);
+    });
   });
 });

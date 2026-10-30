@@ -1,10 +1,10 @@
-// Alerts in the audit store (migration v14), so a restart neither forgets nor
+// Alerts in the audit store (migrations v14 and v15), so a restart neither forgets nor
 // re-sends a firing one, with what arrival conditions remember of each queue.
 // One evaluation's result replaces the profile's rows.
 import type { DatabaseSync } from 'node:sqlite';
 import type { AlertMemory, AlertState } from '../alerts/evaluation.js';
 
-/** Stands for no vhost or queue in the tables' keys. */
+/** Stands for no vhost, queue or Replay Rule in the tables' keys. */
 const NONE = '';
 
 export class AlertStore {
@@ -12,7 +12,7 @@ export class AlertStore {
 
   /** What is remembered of the profile. */
   load(profile: string): AlertMemory {
-    const alerts = this.db.prepare('SELECT * FROM alerts WHERE profile = ? ORDER BY rule, vhost, queue').all(profile) as unknown as AlertRow[];
+    const alerts = this.db.prepare('SELECT * FROM alerts WHERE profile = ? ORDER BY rule, vhost, queue, replay_rule').all(profile) as unknown as AlertRow[];
     const arrivals = this.db.prepare('SELECT * FROM alert_queue_arrivals WHERE profile = ? ORDER BY vhost, queue').all(profile) as unknown as ArrivalsRow[];
     return {
       alerts: alerts.map((r) => ({
@@ -27,6 +27,8 @@ export class AlertStore {
         since: r.since,
         lastNotifiedAt: r.last_notified_at,
         falseSince: r.false_since,
+        replayRule: r.replay_rule === NONE ? null : r.replay_rule,
+        reason: r.reason,
       })),
       arrivals: arrivals.map((r) => ({ vhost: r.vhost, queue: r.queue, unsettled: r.unsettled, recent: JSON.parse(r.recent) })),
     };
@@ -38,11 +40,11 @@ export class AlertStore {
       this.db.prepare('DELETE FROM alerts WHERE profile = ?').run(profile);
       this.db.prepare('DELETE FROM alert_queue_arrivals WHERE profile = ?').run(profile);
       const alert = this.db.prepare(
-        `INSERT INTO alerts (profile, rule, vhost, queue, alert_id, status, condition, value, threshold, since, last_notified_at, false_since)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO alerts (profile, rule, vhost, queue, replay_rule, alert_id, status, condition, value, threshold, since, last_notified_at, false_since, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const a of memory.alerts) {
-        alert.run(profile, a.rule, a.vhost ?? NONE, a.queue ?? NONE, a.alertId, a.status, a.condition, a.value, a.threshold, a.since, a.lastNotifiedAt, a.falseSince);
+        alert.run(profile, a.rule, a.vhost ?? NONE, a.queue ?? NONE, a.replayRule ?? NONE, a.alertId, a.status, a.condition, a.value, a.threshold, a.since, a.lastNotifiedAt, a.falseSince, a.reason);
       }
       const arrivals = this.db.prepare('INSERT INTO alert_queue_arrivals (profile, vhost, queue, unsettled, recent) VALUES (?, ?, ?, ?, ?)');
       for (const a of memory.arrivals) arrivals.run(profile, a.vhost, a.queue, a.unsettled, JSON.stringify(a.recent));
@@ -87,6 +89,8 @@ interface AlertRow {
   since: number;
   last_notified_at: number | null;
   false_since: number | null;
+  replay_rule: string;
+  reason: string | null;
 }
 
 interface ArrivalsRow {

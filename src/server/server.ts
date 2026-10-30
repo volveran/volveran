@@ -128,6 +128,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Called only once the app below is listening.
     onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
     onPassRecorded: (profile, rule, pass) => triageMetrics.passRecorded(profile, rule, pass.status),
+    // Alerting is created below, before any rule starts.
+    onPauseChanged: (profile) => alerting.replayRuleChanged(profile),
   });
   const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
   const sampler = new QueueSampler({
@@ -153,6 +155,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     profiles,
     store: audit.alerts,
     notifier,
+    clock: samplerClock,
+    // A rule's `pausedAt` is null until something paused it, so one deployed `startPaused` does not count.
+    pausedReplayRules: (profile) =>
+      replayRules.states().flatMap(({ profile: p, rule, state }) =>
+        p === profile && state.paused && state.pausedAt !== null ? [{ name: rule, reason: state.pausedReason, pausedAt: Date.parse(state.pausedAt) }] : [],
+      ),
+    lastSuccessAt: (profile) => sampler.latest().profiles.find((p) => p.profile === profile)?.lastSuccessAt ?? null,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
   });
@@ -247,8 +256,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await metricsListener?.close();
     clearInterval(retentionTimer);
     await sampler.stop();
-    await notifier.close();
+    // Before the notifier: a last pass can pause its rule, which sends a notification.
     await replayRules.stop();
+    await notifier.close();
     await checkouts.endAll();
     audit.close();
   });

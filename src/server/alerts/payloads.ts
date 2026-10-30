@@ -24,6 +24,10 @@ export interface Notification {
   endedAt: string | null;
   /** Where in Volverán to look, from the root (`/...`); null for no link. VOLVERAN_PUBLIC_URL goes in front. */
   path: string | null;
+  /** The Replay Rule of a replayRulePaused Alert. */
+  replayRule?: string | null;
+  /** Why the condition holds: a pause's reason, set-up warning codes or a sampling error code. */
+  reason?: string | null;
   /** A test notification, not an Alert. */
   test?: boolean;
 }
@@ -102,6 +106,8 @@ function webhookPayload(n: Notification, url: string | null) {
     condition: n.condition,
     value: n.value,
     threshold: n.threshold,
+    replayRule: n.replayRule ?? null,
+    reason: n.reason ?? null,
     startedAt: n.startedAt,
     endedAt: n.endedAt,
     url,
@@ -120,6 +126,8 @@ function factsOf(n: Notification): Array<{ title: string; value: string }> {
     ['Vhost', n.vhost],
     ['Queue', n.queue],
     ['Condition', n.test ? null : n.condition],
+    ['Replay rule', n.replayRule ?? null],
+    ['Reason', n.reason ?? null],
     ['Value', n.value],
     ['Threshold', n.threshold],
     ['Since', n.test ? null : n.startedAt],

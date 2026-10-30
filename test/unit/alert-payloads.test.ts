@@ -41,10 +41,21 @@ describe('webhook body', () => {
       condition: 'depthAbove',
       value: 500,
       threshold: 100,
+      replayRule: null,
+      reason: null,
       startedAt: '2026-10-30T10:00:00.000Z',
       endedAt: null,
       url: 'https://volveran.example.com/queues/orders.dlq',
     });
+  });
+
+  it('names the Replay Rule and reason of a paused rule, in every type', () => {
+    const paused: Notification = { ...firing, condition: 'replayRulePaused', vhost: null, queue: null, value: null, threshold: null, replayRule: 'retry', reason: 'died_again' };
+    expect(JSON.parse(built(webhook, paused).body)).toMatchObject({ replayRule: 'retry', reason: 'died_again', queue: null });
+    for (const destination of [slack, teams]) {
+      expect(built(destination, paused).body).toContain('retry');
+      expect(built(destination, paused).body).toContain('died_again');
+    }
   });
 
   it('has no signature headers without a secret', () => {
