@@ -312,8 +312,8 @@ describe('depth history', () => {
     const unsubscribe = sampler.onRun(async (f) => void finished.push(f));
 
     await sampler.sampleNow();
-    const local = finished.find((f) => f.run.profile === 'local');
-    const down = finished.find((f) => f.run.profile === 'down');
+    const local = finished.find((f) => f.samplingRun.profile === 'local');
+    const down = finished.find((f) => f.samplingRun.profile === 'down');
     expect(down).toMatchObject({ samplingRun: { ok: false }, samples: [] });
     expect(local.samplingRun.ok).toBe(true);
     expect(local.samples.map((s: any) => s.queue)).toContain(dlq);

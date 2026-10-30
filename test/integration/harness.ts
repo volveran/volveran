@@ -290,6 +290,43 @@ export async function startTlsProxy(targetPort: number): Promise<{ port: number;
 }
 
 /** A localhost port with nothing listening on it. */
+/**
+ * The management port behind a proxy: closing it is the broker stopping, as far
+ * as Volverán can tell, and opening it again, on the same port, is the broker
+ * coming back, without touching the broker the other tests share.
+ */
+export async function closableManagementProxy(): Promise<{ url: string; close(): Promise<void>; open(): Promise<void> }> {
+  const sockets = new Set<net.Socket>();
+  let port = 0;
+  let server: net.Server;
+  const open = async () => {
+    server = net.createServer((client) => {
+      const upstream = net.connect(Number(new URL(testBroker.managementUrl).port), '127.0.0.1');
+      for (const socket of [client, upstream]) {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+        socket.on('error', () => {
+          client.destroy();
+          upstream.destroy();
+        });
+      }
+      client.pipe(upstream).pipe(client);
+    });
+    await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+    port = (server.address() as net.AddressInfo).port;
+  };
+  await open();
+  return {
+    url: `http://127.0.0.1:${port}`,
+    open,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
 export async function closedPort(): Promise<number> {
   const server = net.createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

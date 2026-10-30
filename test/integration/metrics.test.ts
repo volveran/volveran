@@ -1,11 +1,11 @@
 // Prometheus metrics, scraped over HTTP on their own port as Prometheus does:
 // off unless VOLVERAN_METRICS_PORT is set, no session, nothing on the web
 // app's port, loopback in Solo Mode, and each family after the triage it counts.
-import net from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyAndWait,
+  closableManagementProxy,
   closedPort,
   deadLetter,
   deadLetterRoutes,
@@ -41,33 +41,6 @@ async function scrape(app: TestApp): Promise<string> {
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('text/plain; version=0.0.4; charset=utf-8');
   return res.text();
-}
-
-/** The management port behind a proxy: closing it is the broker stopping, as far as Volverán can tell, without stopping the broker the other tests share. */
-async function stoppableManagementUrl(): Promise<{ url: string; stop(): Promise<void> }> {
-  const sockets = new Set<net.Socket>();
-  const server = net.createServer((client) => {
-    const upstream = net.connect(Number(new URL(testBroker.managementUrl).port), '127.0.0.1');
-    for (const socket of [client, upstream]) {
-      sockets.add(socket);
-      socket.on('close', () => sockets.delete(socket));
-      socket.on('error', () => {
-        client.destroy();
-        upstream.destroy();
-      });
-    }
-    client.pipe(upstream).pipe(client);
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as net.AddressInfo;
-  return {
-    url: `http://127.0.0.1:${port}`,
-    stop: () =>
-      new Promise<void>((resolve) => {
-        for (const socket of sockets) socket.destroy();
-        server.close(() => resolve());
-      }),
-  };
 }
 
 describe('Metrics', () => {
@@ -264,7 +237,7 @@ describe('Metrics', () => {
     }, 90_000);
 
     it('answers at once with the last values when the broker stops, and sampling_up turns 0 after the next failed run', async () => {
-      const broker = await stoppableManagementUrl();
+      const broker = await closableManagementProxy();
       const sampler = samplerHooks();
       const app = await start({
         profiles: [testProfile({ name: 'local', managementUrl: broker.url, vhosts: ['/'] })],
@@ -283,7 +256,7 @@ describe('Metrics', () => {
         await sample();
         const lastGood = sampler.now().getTime() / 1000;
 
-        await broker.stop();
+        await broker.close();
 
         // Stopped, and no run has noticed yet: a scrape does not contact the broker.
         const startedAt = Date.now();
@@ -302,7 +275,7 @@ describe('Metrics', () => {
         expect(down).toContain(`${arrivalsOf(dlq)} 3\n`);
         expect(down).toContain('volveran_dead_letter_queue_setup_warnings{profile="local",vhost="/",queue="orders.dlq.quorum",');
       } finally {
-        await broker.stop();
+        await broker.close();
       }
     }, 90_000);
 

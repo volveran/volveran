@@ -4,6 +4,7 @@
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  closableManagementProxy,
   closedPort,
   deadLetterRoutes,
   eventually,
@@ -179,6 +180,35 @@ describe('Alert Rules on Volverán itself', () => {
     await sample();
     await expectAboutDlq(2);
     expect(aboutDlq()[1]).toMatchObject({ status: 'resolved', alertId: aboutDlq()[0].alertId });
+  });
+
+  it('resolves samplingFailing when the broker recovers while Volverán keeps running', async () => {
+    const broker = await closableManagementProxy();
+    const sampler = samplerHooks();
+    await start({
+      profiles: [testProfile({ name: 'local', managementUrl: broker.url, vhosts: ['/'], alerts: [alert('unsampled', { samplingFailing: { for: '5m' } })] })],
+      samplerTestHooks: sampler.hooks,
+    });
+    const sampleAfter = async (ms: number) => {
+      sampler.set(new Date(sampler.now().getTime() + ms));
+      return sampler.sampleNow();
+    };
+    try {
+      expect(await sampleAfter(0)).toEqual([expect.objectContaining({ ok: true })]);
+
+      await broker.close();
+      expect(await sampleAfter(MINUTE)).toEqual([expect.objectContaining({ ok: false })]);
+      await sampleAfter(5 * MINUTE);
+      await expectSent(1);
+      expect(sent()[0]).toMatchObject({ status: 'firing', rule: 'unsampled', condition: 'samplingFailing', endedAt: null });
+
+      await broker.open();
+      expect(await sampleAfter(MINUTE)).toEqual([expect.objectContaining({ ok: true })]);
+      await expectSent(2);
+      expect(sent()[1]).toMatchObject({ status: 'resolved', alertId: sent()[0].alertId, condition: 'samplingFailing', endedAt: sampler.now().toISOString() });
+    } finally {
+      await broker.close();
+    }
   });
 
   it('fires samplingFailing after `for` on an unreachable broker, and resolves when it is back', async () => {
