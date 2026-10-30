@@ -72,7 +72,7 @@ Worked example: 100 dead-letter queues at one-minute Samples, for the default 14
 
 Each vhost has a **Dead-letter Map**: which queues dead-letter into which, through which exchange and routing key. It shows the broker's set-up, not the Messages that took a path, and it is read-only. Queues that take no part in dead-lettering are left off.
 
-The Dead-letter Map view (`#/dead-letter-map/<profile>/<vhost>`) draws queues with their depth and set-up warnings, losses, chains and cycles, searches for one queue and shows the part connected to it, opens a queue's history or a Checkout, and lists the same graph as text to read or copy. Any Role on the profile may see it. During a Canary, its watch queue `volveran.canary.<checkout id>` can appear on the map, because it is bound to the dead-letter exchange.
+The Dead-letter Map view (`#/dead-letter-map/<profile>/<vhost>`) draws queues with their depth and set-up warnings, losses, chains and cycles, searches for one queue and shows the part connected to it, opens a queue's history or a Checkout, and lists the same graph as text to read or copy. Any Role on the profile may see it.
 
 `GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map` answers `{ nodes, edges, cycles }`:
 

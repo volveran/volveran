@@ -241,6 +241,26 @@ describe('deadLetteredFrom, derived from the edges', () => {
   });
 });
 
+describe('a Canary watch queue', () => {
+  const watch = 'volveran.canary.abc';
+  const worker = queue('w', { 'x-dead-letter-exchange': 'dlx' });
+
+  it('is left out of the rows, the edges and deadLetteredFrom, though it is bound to the dead-letter exchange', async () => {
+    const reading = await read([worker, queue('w.dlq'), queue(watch)], [exchange('dlx', 'fanout')], [toQueue('dlx', 'w.dlq'), toQueue('dlx', watch)]);
+    expect(reading.queues.map((q) => q.name)).toEqual(['w.dlq', 'w']);
+    expect(reading.queues.find((q) => q.name === 'w.dlq')!.deadLetteredFrom).toEqual(['w']);
+    expect(reading.edges.flatMap((e) => (e.target.type === 'queue' ? [e.target.name] : []))).toEqual(['w.dlq']);
+  });
+
+  it('does not make a dead-letter exchange with nothing else bound look routable', async () => {
+    const alone = await read([worker], [exchange('dlx', 'fanout')], []);
+    const watched = await read([worker, queue(watch)], [exchange('dlx', 'fanout')], [toQueue('dlx', watch)]);
+    expect(watched.queues).toEqual(alone.queues);
+    expect(watched.setupWarningCounts).toEqual(alone.setupWarningCounts);
+    expect(watched.edges).toEqual(alone.edges);
+  });
+});
+
 describe('the queue rows', () => {
   it('are the queue list\'s rows, in its order, without Checkout lock queues, with the warning counts of the vhost', async () => {
     const reading = await read(
