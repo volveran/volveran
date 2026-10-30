@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Volverán: dead-letter triage for RabbitMQ</title>
+<meta name="description" content="Open-source, self-hosted dead-letter triage for RabbitMQ. Hold the messages still, decide what happens to each one, and apply it all in one step.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Volverán: dead letters come back">
+<meta property="og:description" content="Open-source, self-hosted dead-letter triage for RabbitMQ. Hold the messages still, decide what happens to each one, and apply it all in one step.">
+<meta property="og:url" content="https://volveran.github.io/volveran/">
+<meta property="og:image" content="https://volveran.github.io/volveran/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="hero">
+  <svg class="hero-swallow" viewBox="0 0 32 32" aria-hidden="true"><path transform="rotate(-24 16 16)" d="M16 6.5C17 6.5 17.8 7.4 17.9 8.8C20.6 10.6 25 12 31 11.6C27.2 14.6 22.6 16 18.4 16L17.7 19.4L22.2 28L16.9 22.6L16 24L15.1 22.6L9.8 28L14.3 19.4L13.6 16C9.4 16 4.8 14.6 1 11.6C7 12 11.4 10.6 14.1 8.8C14.2 7.4 15 6.5 16 6.5Z"/></svg>
+  <div class="wrap">
+    <p class="brand">Volverán</p>
+    <h1>Dead letters come back.</h1>
+    <p class="lede">Open-source, self-hosted triage for RabbitMQ dead-letter queues. Hold the messages still, decide what happens to each one, and apply it all in one step.</p>
+    <p class="actions">
+      <a class="button" href="#start">Run it in Docker</a>
+      <a class="button quiet" href="https://github.com/volveran/volveran">See the source on GitHub</a>
+    </p>
+    <p class="verse"><em>Volverán las oscuras golondrinas…</em> Gustavo Adolfo Bécquer</p>
+  </div>
+</header>
+
+<main>
+<div class="wrap shot-over">
+  <picture>
+    <source media="(max-width: 40rem) and (prefers-color-scheme: dark)" srcset="images/checkout-list-dark.png">
+    <source media="(max-width: 40rem)" srcset="images/checkout-list-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="images/checkout-dark.png">
+    <img src="images/checkout-light.png" width="1440" height="900" alt="A Checkout of orders.dlq: each Message has a Decision, and two are flagged Died Again">
+  </picture>
+</div>
+
+<section class="wrap rail">
+  <h2>Looking at a dead letter can cost you the letter</h2>
+  <p>The management UI can peek at a queue, purge all of it, or shovel all of it somewhere else. Every peek requeues the message, and on a quorum queue a requeue can use up one of its delivery attempts.</p>
+  <p>Real dead-letter work is different: delete these 12, send these 40 back where they came from, move these 3 to a manual-handling queue, and keep a record of who did what.</p>
+</section>
+
+<section class="wrap fates">
+  <h2>Every message gets its own Decision</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Example messages and their Decisions">
+  <table>
+    <thead><tr><th scope="col">Message</th><th scope="col" class="routing">Routing key</th><th scope="col">Decision</th></tr></thead>
+    <tbody>
+      <tr class="d-discard"><td><code>ord-d9d6-0004</code></td><td class="routing"><code>orders.cancelled.eu</code></td><td><strong>Discard</strong> and keep a copy</td></tr>
+      <tr class="d-replay"><td><code>ord-f8c5-0005</code></td><td class="routing"><code>orders.created.eu</code></td><td><strong>Replay</strong> to <code>orders.work</code></td></tr>
+      <tr class="d-replay"><td><code>ord-117b4-0006</code></td><td class="routing"><code>orders.created.us</code></td><td><strong>Replay</strong> to <code>orders.work</code></td></tr>
+      <tr class="d-move"><td><code>ord-15592-0008</code></td><td class="routing"><code>orders.cancelled.eu</code></td><td><strong>Move</strong> to <code>orders.parked</code></td></tr>
+      <tr class="d-keep"><td><code>ord-9bf8-0002</code></td><td class="routing"><code>orders.work</code></td><td><strong>Keep</strong>: it failed again after a Replay</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="wrap rail">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><strong>Checkout.</strong> Volverán holds the messages at the head of the queue, unacknowledged. If Volverán or your browser dies, the broker returns every one.</li>
+    <li><strong>Decide.</strong> Give each message a Decision: <span class="word-discard">Discard</span>, <span class="word-replay">Replay</span>, <span class="word-move">Move</span> or Keep. A message that failed again after you sent it out is flagged as Died Again.</li>
+    <li><strong>Apply.</strong> Everything is carried out in one step, and you see the outcome for every message. A failure can create a duplicate, but never loses a message.</li>
+    <li><strong>Audit and Restore.</strong> Every action is recorded with who did it. Discarded messages can be brought back.</li>
+  </ol>
+  <picture>
+    <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="images/checkout-dark.png">
+    <source media="(prefers-reduced-motion: reduce)" srcset="images/checkout-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="images/flow-dark.gif">
+    <img class="shot" src="images/flow-light.gif" width="1000" height="625" loading="lazy" alt="Checking out a queue, giving Messages their Decisions, and Applying them">
+  </picture>
+  <p class="flow-link">Motion is off, so this is a still. <a href="images/flow-light.gif">Play the full flow</a>.</p>
+</section>
+
+<section class="wrap rail">
+  <h2>Don't cause the second incident</h2>
+  <p>The consumer has often only just recovered when the Replay starts. Set a Replay Rate, send one Canary first and watch whether it dies again, and stop part way if it does. Replay rules handle the routine cases on a schedule, and pause themselves when their Replays keep dying.</p>
+  <picture>
+    <source media="(max-width: 40rem) and (prefers-color-scheme: dark)" srcset="images/canary-panel-dark.png">
+    <source media="(max-width: 40rem)" srcset="images/canary-panel-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="images/canary-dark.png">
+    <img class="shot" src="images/canary-light.png" width="1440" height="900" loading="lazy" alt="A Canary being watched on a Protected Profile, with the Apply running at 5 Messages per second">
+  </picture>
+</section>
+
+<section class="wrap rail">
+  <h2>Know before anyone asks</h2>
+  <p>A dead-letter queue usually gets noticed when someone complains. Volverán keeps watch between visits, without taking a Checkout or reading a message.</p>
+  <ul class="plain">
+    <li><strong>Depth history</strong> for every dead-letter queue, kept 14 days, with marks for each Apply that took messages out.</li>
+    <li><strong>Alerts</strong> to Slack, Microsoft Teams or a signed webhook when a queue grows, messages arrive, a Replay rule pauses or a queue starts losing messages.</li>
+    <li><strong>Prometheus metrics</strong> on a port of their own, with a <code>ServiceMonitor</code> in the Helm chart.</li>
+    <li><strong>The Dead-letter Map</strong> shows where each queue's messages go when they die, and where they are lost for good.</li>
+  </ul>
+  <picture>
+    <source media="(max-width: 40rem) and (prefers-color-scheme: dark)" srcset="images/map-part-dark.png">
+    <source media="(max-width: 40rem)" srcset="images/map-part-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="images/map-dark.png">
+    <img class="shot" src="images/map-light.png" width="1440" height="900" loading="lazy" alt="The Dead-letter Map: queues, the exchanges they dead-letter through, and two paths where Messages are lost">
+  </picture>
+</section>
+
+<section class="wrap rail">
+  <h2>Built for teams</h2>
+  <ul class="plain">
+    <li><strong>Single sign-on</strong> through any OIDC provider, with Roles per Broker Profile.</li>
+    <li><strong>Protected Profiles</strong> frame production in red and ask for the queue name before anything changes.</li>
+    <li><strong>Four-eyes Approval</strong> makes a second Operator confirm a change on a Protected Profile.</li>
+    <li><strong>Signed releases:</strong> a cosign-signed image and Helm chart, with an SBOM and provenance.</li>
+    <li><strong>Tested against a real broker:</strong> every RabbitMQ behaviour Volverán relies on has a test, run weekly against the latest RabbitMQ 4.</li>
+  </ul>
+</section>
+
+<section class="wrap rail" id="start">
+  <h2>Try it on your laptop</h2>
+  <p>Write <code>profiles.yaml</code> from the <a href="https://github.com/volveran/volveran/blob/main/profiles.example.yaml">example</a>, then open <code>http://127.0.0.1:8080</code>. It listens on loopback only, with no sign-in. On Docker Desktop (macOS, Windows), first turn on host networking in Settings, Resources, Network (version 4.34 or later).</p>
+  <div class="command"><button type="button" class="copy" hidden>Copy command</button>
+  <pre tabindex="0"><code>export VOLVERAN_DEV_PASSWORD=guest
+docker run --rm --read-only --network host \
+  -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
+  -v volveran-data:/data \
+  -e VOLVERAN_OPERATOR="$USER" \
+  -e VOLVERAN_DEV_PASSWORD \
+  ghcr.io/volveran/volveran:0.5.1</code></pre></div>
+  <p>For a shared service, read the <a href="https://github.com/volveran/volveran/blob/main/docs/team-mode.md">Team Mode</a> and <a href="https://github.com/volveran/volveran/blob/main/docs/kubernetes.md">Kubernetes</a> guides.</p>
+</section>
+
+<section class="wrap rail">
+  <h2>Where it's going</h2>
+  <p>Not available yet: PostgreSQL as an audit store, several replicas, a security review and a stable configuration format. See the <a href="https://github.com/volveran/volveran/blob/main/ROADMAP.md">roadmap</a>.</p>
+</section>
+</main>
+
+<footer class="wrap">
+  <p>Apache License 2.0. RabbitMQ is a trademark of Broadcom Inc. Volverán is not affiliated with or endorsed by Broadcom.</p>
+</footer>
+<script>
+  const copy = document.querySelector('.copy');
+  if (navigator.clipboard) {
+    copy.hidden = false;
+    copy.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(document.querySelector('.command code').textContent);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy command'; }, 2000);
+    });
+  }
+</script>
+</body>
+</html>

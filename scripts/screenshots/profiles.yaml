@@ -1,3 +1,8 @@
+alertDestinations:
+  - name: ops-slack
+    type: webhook
+    urlEnv: VOLVERAN_SHOT_WEBHOOK_URL
+
 profiles:
   - name: staging
     managementUrl: http://127.0.0.1:MGMT_PORT
@@ -7,6 +12,14 @@ profiles:
     vhosts: all
     defaultQueueFilter: "*.dlq"
     protected: false
+    alerts:
+      - name: orders-backlog
+        destinations: [ops-slack]
+        when: { vhost: /, queue: orders.dlq, depthAbove: 5 }
+        repeatEvery: 1h
+      - name: losing-messages
+        destinations: [ops-slack]
+        when: { setupWarning: loses_messages }
     replayRules:
       - name: db-timeouts
         vhost: /

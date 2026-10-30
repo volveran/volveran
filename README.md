@@ -38,7 +38,10 @@ Peeking is not free either. Every peek requeues the message, and on quorum queue
 
 ## How it works
 
-![Checking out a queue, giving Messages their Decisions, and Applying them](docs/images/flow.gif)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/flow-dark.gif">
+  <img src="docs/images/flow-light.gif" alt="Checking out a queue, giving Messages their Decisions, and Applying them">
+</picture>
 
 1. **Checkout.** Volverán takes the Messages at the head of a dead-letter queue and holds them, unacknowledged. If Volverán or your browser dies, the broker returns every held Message to the queue.
 2. **Decide.** Filter and select Messages, then give each one a Decision: **Discard**, **Replay** (back to the queue it was dead-lettered from), **Move** (to another queue or exchange) or **Keep**. A Message that came back after you sent it out is flagged **Died Again**, so you don't Replay the same poison Message over and over. All of it works from the keyboard, and no key Applies.
@@ -82,6 +85,16 @@ Between visits, Volverán keeps watch. None of it needs a Checkout or reads a Me
 - **Alerts** go to Slack, Microsoft Teams or a signed webhook when a queue grows, Messages arrive, a Replay rule pauses or a queue starts losing Messages. Rules live in the profiles file, so a change goes through review.
 - **Prometheus metrics** on a port of their own, with a `ServiceMonitor` in the Helm chart. A scrape never contacts a broker.
 - **The Dead-letter Map** shows which queues dead-letter into which, with the losses, chains and cycles.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/map-dark.png">
+  <img src="docs/images/map-light.png" alt="The Dead-letter Map: queues, the exchanges they dead-letter through, and two paths where Messages are lost">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-dark.png">
+  <img src="docs/images/history-light.png" alt="The depth history of orders.dlq over 24 hours, with an incident building up and being triaged away">
+</picture>
 
 ## Built for teams
 
