@@ -33,12 +33,22 @@ brokerProfiles:
   # -- Broker Profiles, in the same shape as the profiles YAML (see profiles.example.yaml).
   # Rendered to a chart-managed ConfigMap. Required unless existingConfigMap is set.
   profiles: []
+  # -- Alert Destinations, in the same shape as the profiles YAML (see profiles.example.yaml):
+  # name, type (slack, teams or webhook), urlEnv, and signingSecretEnv on a webhook. URLs and
+  # secrets never go here: the variables they name are keys of alerts.existingSecret.
+  alertDestinations: []
   # -- An existing ConfigMap with a profiles.yaml key, used instead of profiles.
   # Its caFile paths point under /etc/volveran/ca (see caBundles).
   existingConfigMap: ""
   # -- An existing Secret whose keys become environment variables. Each profile's
   # passwordEnv names one of its keys.
   passwordsSecret: ""
+
+# Alerts.
+alerts:
+  # -- An existing Secret whose keys become environment variables: the destination
+  # URLs and signing secrets named by brokerProfiles.alertDestinations.
+  existingSecret: ""
 
 # Private CAs. Each bundle (an existing ConfigMap or Secret) is mounted read-only
 # at /etc/volveran/ca/<name>/, one file per key. A Broker Profile trusts one with
@@ -53,7 +63,8 @@ caBundles:
     bundle: ""
     key: ca.crt
 
-# The audit store (Audit Entries and Discarded Message bodies, SQLite).
+# The audit store (Audit Entries, Discarded Message bodies and depth history, SQLite).
+# See "Sizing the audit store" in README.md.
 persistence:
   # -- false uses an emptyDir: the audit trail is lost on every restart.
   enabled: true
@@ -66,6 +77,22 @@ persistence:
 
 service:
   port: 8080
+
+# Prometheus metrics, on a port of their own that no route references. They need
+# no session, so with a NetworkPolicy admit only the scraper (networkPolicy.metricsFrom).
+metrics:
+  # -- Sets VOLVERAN_METRICS_PORT and adds the container port and a metrics Service port.
+  enabled: false
+  port: 9464
+  serviceMonitor:
+    # -- A Prometheus Operator ServiceMonitor (needs its CRDs). Requires metrics.enabled.
+    enabled: false
+    # -- Added to the ServiceMonitor's labels, to match your Prometheus's serviceMonitorSelector.
+    labels: {}
+    # -- For example 30s. Empty uses your Prometheus's scrape_interval.
+    interval: ""
+    # -- For example 10s, at most interval. Empty uses your Prometheus's scrape_timeout.
+    scrapeTimeout: ""
 
 # Volverán's own settings, each mapped to its VOLVERAN_* variable. null leaves
 # the variable unset, so Volverán's own default (in the comment) applies.
@@ -84,6 +111,10 @@ settings:
   bodyRetentionMaxBytes: null
   # -- VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES (1-1440). Default 60.
   bodyRetentionIntervalMinutes: null
+  # -- VOLVERAN_HISTORY_INTERVAL_SECONDS (15-3600): how often dead-letter queues are sampled. Default 60.
+  historyIntervalSeconds: null
+  # -- VOLVERAN_HISTORY_RETENTION_DAYS (1-90): how long Samples are kept. Default 14.
+  historyRetentionDays: null
 
 # -- Extra container environment variables (name with value or valueFrom), for
 # settings the chart does not name yet. Variables the chart sets are refused.
@@ -146,6 +177,9 @@ networkPolicy:
   # -- NetworkPolicy peers (namespaceSelector, podSelector, ipBlock) admitted to the http port,
   # for example the Gateway or ingress controller. Empty admits nothing but the pod's node.
   ingressFrom: []
+  # -- NetworkPolicy peers admitted to the metrics port only, for example your Prometheus's
+  # pods, when metrics.enabled. They gain no access to the http port. Empty admits nobody.
+  metricsFrom: []
   # -- NetworkPolicy egress rules (to, ports), for example the brokers and the OIDC provider.
   # Empty leaves egress open; any rule restricts egress to these rules plus DNS (dnsTo).
   egress: []

@@ -24,6 +24,63 @@ describe('Broker Profiles', () => {
     expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [prod] });
   });
 
+  it('leaves alertDestinations out of profiles.yaml unless given, and writes them when given', () => {
+    const destinations = [
+      { name: 'ops-slack', type: 'slack', urlEnv: 'VOLVERAN_SLACK_URL' },
+      { name: 'pager', type: 'webhook', urlEnv: 'VOLVERAN_HOOK_URL', signingSecretEnv: 'VOLVERAN_HOOK_SECRET' },
+    ];
+    const configMap = render({ brokerProfiles: { alertDestinations: destinations } }).one('ConfigMap');
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ alertDestinations: destinations, profiles: [prod] });
+  });
+
+  it('refuses a malformed Alert Destination, and a URL written into one', () => {
+    const refuse = (destination: Record<string, unknown>) =>
+      renderRefusal({ brokerProfiles: { alertDestinations: [destination] } });
+    expect(refuse({ name: 'a', type: 'email', urlEnv: 'X' })).toContain('/brokerProfiles/alertDestinations/0/type');
+    expect(refuse({ name: 'a', type: 'slack' })).toContain('urlEnv');
+    expect(refuse({ name: 'a', type: 'slack', urlEnv: 'X', url: 'https://hooks.example' })).toMatch(/url/);
+    expect(refuse({ name: 'a', type: 'slack', urlEnv: 'X', signingSecretEnv: 'Y' })).toContain('signingSecretEnv');
+  });
+
+  describe('alerts', () => {
+    const rule = { name: 'deep', destinations: ['ops'], when: { vhost: '/', queuePattern: '*.dlq', depthAbove: 100 }, for: '5m', repeatEvery: '1h' };
+    const withRule = (alert: Record<string, unknown>) => ({ brokerProfiles: { profiles: [{ ...prod, alerts: [alert] }] } });
+
+    it('accepts Alert Rules in an inline Broker Profile and writes them to profiles.yaml', () => {
+      const configMap = render(withRule(rule)).one('ConfigMap');
+      expect(parse(configMap.data!['profiles.yaml']!).profiles[0].alerts).toEqual([rule]);
+    });
+
+    it('accepts each queue condition', () => {
+      for (const when of [{ arrivalsAbove: { count: 5, within: '10m' } }, { anyArrival: true }]) {
+        expect(() => render(withRule({ ...rule, when: { vhost: '/', queue: 'a.dlq', ...when } }))).not.toThrow();
+      }
+    });
+
+    it('accepts each condition on Volverán itself', () => {
+      for (const when of [{ replayRulePaused: true }, { replayRulePaused: true, rule: 'retry' }, { setupWarning: 'may_lose_messages' }, { samplingFailing: { for: '10m' } }]) {
+        expect(() => render(withRule({ name: 'deep', destinations: ['ops'], when }))).not.toThrow();
+      }
+    });
+
+    it('refuses a malformed condition on Volverán itself', () => {
+      const withWhen = (when: unknown) => withRule({ name: 'deep', destinations: ['ops'], when });
+      expect(renderRefusal(withWhen({ setupWarning: 'bad' }))).toContain('setupWarning');
+      expect(renderRefusal(withWhen({ samplingFailing: {} }))).toContain('samplingFailing');
+      expect(renderRefusal(withWhen({ replayRulePaused: false }))).toContain('replayRulePaused');
+      expect(renderRefusal(withWhen({ setupWarning: 'loses_messages', vhost: '/', queue: 'a' }))).toContain('when');
+    });
+
+    it('refuses a malformed Alert Rule', () => {
+      expect(renderRefusal(withRule({ ...rule, destinations: [] }))).toContain('destinations');
+      expect(renderRefusal(withRule({ ...rule, for: '5 minutes' }))).toContain('for');
+      expect(renderRefusal(withRule({ ...rule, when: { vhost: '/', depthAbove: 1 } }))).toContain('when');
+      expect(renderRefusal(withRule({ ...rule, when: { vhost: '/', queue: 'a', queuePattern: 'b', depthAbove: 1 } }))).toContain('when');
+      expect(renderRefusal(withRule({ ...rule, when: { vhost: '/', queue: 'a', depthAbove: -1 } }))).toContain('depthAbove');
+      expect(renderRefusal(withRule({ ...rule, unknown: 1 }))).toContain('unknown');
+    });
+  });
+
   it('mounts profiles.yaml read-only where Volverán reads it', () => {
     const chart = render();
     expect(env(chart, 'VOLVERAN_PROFILES_FILE').value).toBe('/config/profiles.yaml');

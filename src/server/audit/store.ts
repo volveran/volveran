@@ -16,6 +16,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import { HistoryStore } from './history.js';
+import { NotificationStore } from './notifications.js';
+import { AlertStore } from './alerts.js';
 import { RuleStateStore } from './rule-state.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
@@ -265,6 +268,98 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (rule_key, audit_entry_id)
    );
    ALTER TABLE replay_rule_passes ADD COLUMN cannot_replay INTEGER;`,
+  // v12 (#78): the outcome of each notification to an Alert Destination.
+  `CREATE TABLE notifications (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     alert_id TEXT NOT NULL,
+     destination TEXT NOT NULL,
+     destination_type TEXT NOT NULL,
+     status TEXT NOT NULL,
+     test INTEGER NOT NULL,
+     rule TEXT NOT NULL,
+     profile TEXT,
+     vhost TEXT,
+     queue TEXT,
+     outcome TEXT NOT NULL,
+     http_status INTEGER,
+     error TEXT,
+     attempts INTEGER NOT NULL
+   );
+   CREATE INDEX notifications_at ON notifications (at);`,
+  // v13 (#73): depth history (audit/history.ts), one Sample per dead-letter queue per sampling run, one
+  // run per Broker Profile; and an index for the Messages taken out of a queue between two Samples.
+  `CREATE TABLE history_samples (
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     depth INTEGER NOT NULL,
+     estimated_arrivals INTEGER,
+     PRIMARY KEY (profile, vhost, queue, at)
+   ) WITHOUT ROWID;
+   CREATE INDEX history_samples_at ON history_samples (at);
+   CREATE TABLE sampling_runs (
+     profile TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     ok INTEGER NOT NULL,
+     error_code TEXT,
+     PRIMARY KEY (profile, at)
+   ) WITHOUT ROWID;
+   CREATE INDEX sampling_runs_at ON sampling_runs (at);
+   CREATE INDEX audit_entries_profile_queue_time ON audit_entries (profile, vhost, queue, created_at);`,
+  // v14 (#79): Alerts (audit/alerts.ts), so a restart neither forgets nor re-sends a firing one; and what
+  // arrival conditions remember of each queue. '' stands for no vhost or queue, in the keys.
+  `CREATE TABLE alerts (
+     profile TEXT NOT NULL,
+     rule TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     alert_id TEXT NOT NULL,
+     status TEXT NOT NULL,
+     condition TEXT NOT NULL,
+     value REAL,
+     threshold REAL,
+     since INTEGER NOT NULL,
+     last_notified_at INTEGER,
+     false_since INTEGER,
+     PRIMARY KEY (profile, rule, vhost, queue)
+   ) WITHOUT ROWID;
+   CREATE TABLE alert_queue_arrivals (
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     unsettled INTEGER NOT NULL,
+     recent TEXT NOT NULL,
+     PRIMARY KEY (profile, vhost, queue)
+   ) WITHOUT ROWID;`,
+  // v15 (#80): Alert Rules on Volverán itself. A replayRulePaused rule has one Alert per Replay Rule, so
+  // that joins the key ('' for none), and an Alert keeps why its condition holds.
+  `CREATE TABLE alerts_v15 (
+     profile TEXT NOT NULL,
+     rule TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     replay_rule TEXT NOT NULL,
+     alert_id TEXT NOT NULL,
+     status TEXT NOT NULL,
+     condition TEXT NOT NULL,
+     value REAL,
+     threshold REAL,
+     since INTEGER NOT NULL,
+     last_notified_at INTEGER,
+     false_since INTEGER,
+     reason TEXT,
+     PRIMARY KEY (profile, rule, vhost, queue, replay_rule)
+   ) WITHOUT ROWID;
+   INSERT INTO alerts_v15 (profile, rule, vhost, queue, replay_rule, alert_id, status, condition, value, threshold, since, last_notified_at, false_since)
+     SELECT profile, rule, vhost, queue, '', alert_id, status, condition, value, threshold, since, last_notified_at, false_since FROM alerts;
+   DROP TABLE alerts;
+   ALTER TABLE alerts_v15 RENAME TO alerts;`,
+  // v16: the sampling interval each run ran at, so a later setting does not rewrite old history's gaps; and
+  // the Replay Rule of a notification. Rows from before stay NULL.
+  `ALTER TABLE sampling_runs ADD COLUMN interval_ms INTEGER;
+   ALTER TABLE notifications ADD COLUMN replay_rule TEXT;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -273,6 +368,12 @@ export class AuditStore {
   private readonly db: DatabaseSync;
   /** The state of the Replay Rules, in the same database. */
   readonly ruleState: RuleStateStore;
+  /** Depth history, in the same database. */
+  readonly history: HistoryStore;
+  /** The outcomes of notifications, in the same database. */
+  readonly notifications: NotificationStore;
+  /** Alerts, in the same database. */
+  readonly alerts: AlertStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -284,6 +385,9 @@ export class AuditStore {
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     this.migrate();
     this.ruleState = new RuleStateStore(this.db);
+    this.history = new HistoryStore(this.db);
+    this.notifications = new NotificationStore(this.db);
+    this.alerts = new AlertStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
