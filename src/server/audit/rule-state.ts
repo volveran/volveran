@@ -13,11 +13,9 @@
 //   stop. Only the stop's window is kept; a resume clears them.
 import type { DatabaseSync } from 'node:sqlite';
 import type { RulePass, RulePassStatus, RuleState } from '../../shared/replay-rules.js';
+import { FIRST_SEEN_LIMIT, PASS_HISTORY } from './audit-store.js';
 
-/** How many passes a rule keeps. */
-export const PASS_HISTORY = 20;
-/** How many first-seen times a rule keeps (the oldest go). */
-export const FIRST_SEEN_LIMIT = 10_000;
+export { FIRST_SEEN_LIMIT, PASS_HISTORY };
 
 export class RuleStateStore {
   constructor(private readonly db: DatabaseSync) {}

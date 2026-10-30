@@ -14,160 +14,27 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import type {
+  AuditEntry,
+  AuditQuery,
+  AuditStore as AsyncAuditStore,
+  BodyEviction,
+  MessageCopy,
+  NewAuditEntry,
+  ProfileScope,
+} from './audit-store.js';
 import { HistoryStore } from './history.js';
 import { NotificationStore } from './notifications.js';
 import { AlertStore } from './alerts.js';
 import { RuleStateStore } from './rule-state.js';
+import { SqliteAuditStore } from './sqlite-audit-store.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { Role } from '../../shared/roles.js';
 
 export type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome };
-
-/**
- * A copy of a Message as amqplib decoded it. Discard keeps the body (so it can
- * be Restored); Replay and Move keep only the original properties and headers
- * (ADR 0005), with `body: null`.
- */
-export interface MessageCopy {
-  body: Buffer | null;
-  /** AMQP properties except headers (amqplib names: contentType, messageId, ...). */
-  properties: Record<string, unknown>;
-  headers: Record<string, unknown>;
-}
-
-export interface NewAuditEntry {
-  at: Date;
-  /** Who acted: `id` is the stable identity, `displayName` what people see. */
-  operator: Pick<Operator, 'id' | 'displayName'>;
-  /** The Operator's Role on the Broker Profile when they acted (`admin` in Solo Mode). */
-  role?: Role | null;
-  /** The second Operator who approved the Apply (Protected Profile, Team Mode); null or left out otherwise. */
-  approver?: Pick<Operator, 'id' | 'displayName'> | null;
-  /** The Broker Profile's RabbitMQ user, often a shared service account. */
-  brokerUser: string;
-  profile: string;
-  vhost: string;
-  /** The queue the Message was taken from. */
-  queue: string;
-  messageId: string | null;
-  action: AuditAction;
-  /** Why (required for a Discard); null when the action takes none. */
-  reason: string | null;
-  destination: AuditDestination | null;
-  checkoutId: string | null;
-  message: MessageCopy | null;
-  /**
-   * The `x-volveran-replay-id` header a Replay, Move or Restore published the
-   * Message with, so a Message that dies again can be traced back here; null
-   * (or left out) for the other actions.
-   */
-  replayId?: string | null;
-  /** A Restore: the Audit Entry of the Discard whose Message it republished. */
-  restoreOf?: number | null;
-  /** An export: the filter its Messages matched; null (or left out) when it exported every held Message. */
-  filter?: Filter | null;
-  /** An export: how many Messages it holds. */
-  messageCount?: number | null;
-  /** An Apply: its Replay Rate in Messages per second; null (or left out) when there is none, and for the other actions. */
-  rate?: number | null;
-  /** A Rule Pass: the Replay Rule acting (its name; the Operator is the rule) and the pass; null (or left out) otherwise. */
-  rule?: string | null;
-  rulePassId?: string | null;
-  /** The Replay an Apply carried out alone as its Canary (its watch outcome is set later, setCanaryOutcome). */
-  canary?: boolean;
-}
-
-/** An Audit Entry as listed: the Message's properties and headers, but not its body (see AuditStore.body). */
-export interface AuditEntry
-  extends Omit<
-    NewAuditEntry,
-    | 'operator'
-    | 'role'
-    | 'approver'
-    | 'message'
-    | 'replayId'
-    | 'restoreOf'
-    | 'filter'
-    | 'messageCount'
-    | 'rate'
-    | 'rule'
-    | 'rulePassId'
-    | 'canary'
-  > {
-  id: number;
-  /** The Operator's Role when they acted; null on entries written before v0.3. */
-  role: Role | null;
-  /** Who approved the Apply that wrote the entry; null when it needed no Approval (and on entries before v0.3). */
-  approverId: string | null;
-  approverName: string | null;
-  replayId: string | null;
-  restoreOf: number | null;
-  filter: Filter | null;
-  messageCount: number | null;
-  /** The Replay Rate of the Apply that wrote the entry; null when there is none (and on entries before v0.4). */
-  rate: number | null;
-  /** The Replay Rule whose pass wrote the entry (its name), and the pass's id; null for an Operator's actions (and before v0.4). */
-  rule: string | null;
-  rulePassId: string | null;
-  /** Whether the entry is an Apply's Canary (false before v0.4). */
-  canary: boolean;
-  /** The Canary's watch outcome; null for other entries, and while it is watched. */
-  canaryOutcome: AuditCanaryOutcome | null;
-  /** When retention evicted the stored body ("body expired"); null while it is kept (or none was stored). */
-  bodyExpiredAt: Date | null;
-  operatorId: string;
-  operatorName: string;
-  outcome: AuditOutcome;
-  outcomeReason: string | null;
-  message: {
-    properties: Record<string, unknown>;
-    headers: Record<string, unknown>;
-    /** Size of the stored body; null when none was stored. */
-    bodyBytes: number | null;
-  } | null;
-}
-
-/** Broker Profiles by name: only the ones listed, or every one except those listed. */
-export type ProfileScope = { only: string[] } | { except: string[] };
-
-/** A search over Audit Entries; every given field must match. */
-export interface AuditQuery {
-  /** The queue a Message was taken from or sent to. */
-  queue?: string;
-  messageId?: string;
-  action?: AuditAction;
-  checkoutId?: string;
-  /** The replay id a Replay, Move or Restore published the Message with (its x-volveran-replay-id header). */
-  replayId?: string;
-  /** The Broker Profile. */
-  profile?: string;
-  /** The Operator: their stable id or their display name. */
-  operator?: string;
-  /** Keeps only the entries of these Broker Profiles (see ProfileScope). */
-  profiles?: ProfileScope;
-  /** Restores of this Audit Entry. */
-  restoreOf?: number;
-  /** The entries a Replay Rule of this name wrote (combine with `profile` for one profile's rule). */
-  rule?: string;
-  /** Entries at or after this time. */
-  from?: Date;
-  /** Entries at or before this time. */
-  to?: Date;
-  /** At most this many entries (the newest). */
-  limit?: number;
-}
-
-/** The limits retention applies to stored bodies (see audit/body-retention.ts). */
-export interface BodyEviction {
-  now: Date;
-  /** Bodies of entries older than this are evicted. */
-  maxAgeMs: number;
-  /** Once the stored bodies add up to more than this, the oldest are evicted until they fit. */
-  maxBodyBytes: number;
-}
+export type { AuditEntry, AuditQuery, BodyEviction, MessageCopy, NewAuditEntry, ProfileScope };
 
 /** Append-only: each entry runs once, in order, recorded in PRAGMA user_version. */
 const MIGRATIONS: string[] = [
@@ -374,6 +241,8 @@ export class AuditStore {
   readonly notifications: NotificationStore;
   /** Alerts, in the same database. */
   readonly alerts: AlertStore;
+  /** The asynchronous form of this store, on the same connection (ADR 0013). Callers move to it one by one. */
+  readonly async: AsyncAuditStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -388,6 +257,7 @@ export class AuditStore {
     this.history = new HistoryStore(this.db);
     this.notifications = new NotificationStore(this.db);
     this.alerts = new AlertStore(this.db);
+    this.async = new SqliteAuditStore(this);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
