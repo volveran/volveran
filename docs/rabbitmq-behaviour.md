@@ -74,6 +74,16 @@ Canary Replay watches for a Canary that dies again without consuming from the de
 - Management API counts lag a confirmed publish by roughly 4–9 seconds. The API can also show 0 consumers on a quorum queue that has one.
 - A passive `queue.declare` returns exact counts at once. Its `message_count` counts ready Messages only, not unacknowledged ones.
 
+## Publish counter
+
+Depth history cannot read arrivals from a dead-letter queue's `message_stats.publish`, because the broker does not count dead-lettered Messages there. So Volverán reports **estimated arrivals**: the positive depth change between Samples plus the Messages Volverán itself took out in between, from Audit Entries. If a RabbitMQ release starts counting them, the first fact below fails in the weekly latest-broker run, and this choice can be revisited. "Broker restart" below means `rabbitmqctl stop_app` then `start_app`, with the broker's statistics at their default 5 s interval.
+
+- Dead-lettering does not count in the receiving queue's `message_stats.publish`: on classic and quorum queues, for rejected and expired Messages, through the dead-letter exchange directly or through an exchange-to-exchange binding, the Message adds to the depth and the counter stays absent. Only a client's publish counts.
+- A client's publish shows in `message_stats.publish` within about 5 seconds of its confirm, one statistics interval.
+- A queue with no traffic yet reports no `message_stats` at all, rather than a zero count.
+- Deleting and re-declaring a queue resets its `message_stats.publish`, so a reading can be lower than the previous one.
+- A broker restart resets `message_stats.publish`, so a reading can be lower than the previous one. Durable Messages keep the queue's depth across it.
+
 ## Prefetch
 
 - A new prefetch (`basic.qos`, global or not) does not apply to a consumer that already exists, on classic or quorum queues.
