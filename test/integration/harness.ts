@@ -12,6 +12,7 @@ import tls from 'node:tls';
 import { stringify } from 'yaml';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { BodyRetention } from '../../src/server/audit/body-retention.js';
+import type { SamplerControl, SamplerTestHooks, SamplingRun } from '../../src/server/history/sampler.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
@@ -46,6 +47,8 @@ export interface ProfileFixture {
   replayRate?: { default?: unknown; max?: unknown };
   /** Replay Rules, as written in the profiles file. */
   replayRules?: Array<Record<string, unknown>>;
+  /** Alert Rules, as written in the profiles file. */
+  alerts?: Array<Record<string, unknown>>;
   /** Canary Replay: the Watch Window, a duration such as `30s`. */
   canary?: { watchWindow?: unknown; requiredAbove?: unknown };
 }
@@ -76,6 +79,8 @@ export interface TestResponse<T = any> {
 
 export interface TestApp {
   baseUrl: string;
+  /** Where the metrics are scraped, when VOLVERAN_METRICS_PORT is set. */
+  metricsUrl?: string;
   get<T = any>(urlPath: string): Promise<TestResponse<T>>;
   post<T = any>(urlPath: string, body?: unknown): Promise<TestResponse<T>>;
   delete<T = any>(urlPath: string): Promise<TestResponse<T>>;
@@ -84,6 +89,8 @@ export interface TestApp {
 
 export interface StartAppOptions {
   profiles?: ProfileFixture[];
+  /** The top-level `alertDestinations`, as written in the profiles file. */
+  alertDestinations?: Array<Record<string, unknown>>;
   /** Raw YAML to write as the profiles file instead of `profiles`. */
   rawYaml?: string;
   /**
@@ -101,6 +108,8 @@ export interface StartAppOptions {
   checkoutTiming?: Partial<CheckoutTiming>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
+  /** The queue sampler's clock and "sample now" (samplerHooks). */
+  samplerTestHooks?: SamplerTestHooks;
   /** The audit store's directory (kept by the caller); default in memory. */
   dataDir?: string;
   /** Overrides the body retention limits and interval (ms) from the environment. */
@@ -119,7 +128,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
   const profiles = options.profiles ?? [];
   const dir = await makeTempDir('app');
   const profilesFile = path.join(dir, 'profiles.yaml');
-  await writeFile(profilesFile, options.rawYaml ?? stringify({ profiles }));
+  await writeFile(profilesFile, options.rawYaml ?? stringify({ profiles, ...(options.alertDestinations && { alertDestinations: options.alertDestinations }) }));
 
   const env: Record<string, string | undefined> = { VOLVERAN_OPERATOR: testOperator };
   for (const p of profiles) {
@@ -138,6 +147,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTiming: options.checkoutTiming,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
+      samplerTestHooks: options.samplerTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
@@ -159,6 +169,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
 
   return {
     baseUrl: server.url,
+    metricsUrl: server.metricsUrl,
     get: (urlPath) => request('GET', urlPath),
     post: (urlPath, body) => request('POST', urlPath, body ?? {}),
     delete: (urlPath) => request('DELETE', urlPath),
@@ -279,6 +290,43 @@ export async function startTlsProxy(targetPort: number): Promise<{ port: number;
 }
 
 /** A localhost port with nothing listening on it. */
+/**
+ * The management port behind a proxy: closing it is the broker stopping, as far
+ * as Volverán can tell, and opening it again, on the same port, is the broker
+ * coming back, without touching the broker the other tests share.
+ */
+export async function closableManagementProxy(): Promise<{ url: string; close(): Promise<void>; open(): Promise<void> }> {
+  const sockets = new Set<net.Socket>();
+  let port = 0;
+  let server: net.Server;
+  const open = async () => {
+    server = net.createServer((client) => {
+      const upstream = net.connect(Number(new URL(testBroker.managementUrl).port), '127.0.0.1');
+      for (const socket of [client, upstream]) {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+        socket.on('error', () => {
+          client.destroy();
+          upstream.destroy();
+        });
+      }
+      client.pipe(upstream).pipe(client);
+    });
+    await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+    port = (server.address() as net.AddressInfo).port;
+  };
+  await open();
+  return {
+    url: `http://127.0.0.1:${port}`,
+    open,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
 export async function closedPort(): Promise<number> {
   const server = net.createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -370,5 +418,48 @@ export function ruleSchedulerHooks(start = new Date()) {
       if (!control) throw new Error('No app has started with these hooks');
       return control.runScheduledPass(profile, rule);
     },
+  };
+}
+
+/**
+ * A test clock for the queue sampler, and its "sample now" (`hooks`, for
+ * startApp's samplerTestHooks). The clock starts at `start` and moves only when
+ * told: `advance` moves it and fires the timers due by then. `sampleNow` runs
+ * every sampled profile at once, in the app started last with these hooks, and
+ * resolves when each run is recorded. Set the clock to the wall clock before a
+ * run that should see Audit Entries, which carry real time.
+ */
+export function samplerHooks(start = new Date()) {
+  let now = start.getTime();
+  let timers: Array<{ at: number; run: () => void }> = [];
+  let control: SamplerControl | undefined;
+  const clock: RuleClock = {
+    now: () => new Date(now),
+    setTimer(run, ms) {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return { cancel: () => void (timers = timers.filter((t) => t !== timer)) };
+    },
+  };
+  const started = (): SamplerControl => {
+    if (!control) throw new Error('No app has started with these hooks');
+    return control;
+  };
+  const hooks: SamplerTestHooks = { clock, sampler: (c) => (control = c) };
+  return {
+    hooks,
+    now: () => new Date(now),
+    set(at: Date) {
+      now = at.getTime();
+    },
+    advance(ms: number) {
+      now += ms;
+      const due = timers.filter((t) => t.at <= now);
+      timers = timers.filter((t) => t.at > now);
+      for (const t of due) t.run();
+    },
+    sampleNow: (): Promise<SamplingRun[]> => started().sampleNow(),
+    latest: () => started().latest(),
+    onRun: (listener: Parameters<SamplerControl['onRun']>[0]) => started().onRun(listener),
   };
 }

@@ -15,7 +15,7 @@ A factual snapshot of tools that work with RabbitMQ messages, taken from their p
 | Restore discarded Messages | Yes (7 days, size-capped) | No | No | Yes (30 days or 1 GiB by default) |
 | Production safeguards | Required reasons, roles, four-eyes (paid) | Colour per connection | Confirmation dialogs | Protected Profiles, required reasons, Roles, four-eyes Approval |
 | Single sign-on | OIDC (paid) | No | No (per-user broker login) | OIDC |
-| Monitoring and alerts | Yes | Partial (topology, forecasts) | Yes (dashboards) | Planned (v0.5) |
+| Monitoring and alerts | Yes | Partial (topology, forecasts) | Yes (dashboards) | Yes: depth history per dead-letter queue with estimated arrivals, Alerts to Slack, Microsoft Teams and webhooks, Prometheus metrics, a Dead-letter Map |
 
 **Why a Checkout instead of fetch-and-requeue.** On quorum queues, a requeued Message can count as a delivery attempt. Browsing a dead-letter queue a few times can push Messages past the queue's `delivery-limit` and get them dropped or dead-lettered again. A Checkout holds each Message until you decide its fate, so looking at a Message never changes it.
 

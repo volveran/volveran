@@ -153,9 +153,16 @@ names the missing value.
 
 | Value | Default | Description |
 |---|---|---|
-| `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `credentials` (`shared`, the default, or `operatorToken`: the Operator's own access token, without `username` and `passwordEnv`), `tokenUsernameClaim` (only with `operatorToken`; default `sub`), `vhosts`, `defaultQueueFilter`, `protected`, `requireApproval` (only with `protected: true`; default `true`: an Apply waits for a second Operator's Approval), `replayRate` (`default` and/or `max`, numbers of Messages per second from 0.1 to 1000: the Replay Rate an Apply runs at, and the most an Operator may choose; Volverán refuses `default` above `max`), `canary` (`watchWindow`, a duration from `5s` to `10m`, default `30s`: how long a Canary is watched for dying again; `requiredAbove`, a whole number: an Apply with more Replays must start with a Canary), `replayRules` (Replay rules, see `profiles.example.yaml`; the schema refuses a rule without `stopWhen` or with a `whenAttemptsUsedUp` other than `keep` or `{ moveTo: { queue } }`, and Volverán checks the ranges at startup), `roles` (any of `viewer`, `operator`, `admin`, each a non-empty list of groups; the schema refuses other role names). Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
+| `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `credentials` (`shared`, the default, or `operatorToken`: the Operator's own access token, without `username` and `passwordEnv`), `tokenUsernameClaim` (only with `operatorToken`; default `sub`), `vhosts`, `defaultQueueFilter`, `protected`, `requireApproval` (only with `protected: true`; default `true`: an Apply waits for a second Operator's Approval), `replayRate` (`default` and/or `max`, numbers of Messages per second from 0.1 to 1000: the Replay Rate an Apply runs at, and the most an Operator may choose; Volverán refuses `default` above `max`), `canary` (`watchWindow`, a duration from `5s` to `10m`, default `30s`: how long a Canary is watched for dying again; `requiredAbove`, a whole number: an Apply with more Replays must start with a Canary), `replayRules` (Replay rules, see `profiles.example.yaml`; the schema refuses a rule without `stopWhen` or with a `whenAttemptsUsedUp` other than `keep` or `{ moveTo: { queue } }`, and Volverán checks the ranges at startup), `alerts` (Alert Rules, see `profiles.example.yaml` and the [observability guide](../../docs/observability.md#alert-rules); Volverán checks them at startup), `roles` (any of `viewer`, `operator`, `admin`, each a non-empty list of groups; the schema refuses other role names). Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
+| `brokerProfiles.alertDestinations` | `[]` | Alert Destinations in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `type` (`slack`, `teams` or `webhook`), `urlEnv`, and `signingSecretEnv` on a `webhook`. URLs and signing secrets never go here: the variables they name are keys of `alerts.existingSecret`, and Volverán refuses to start when one is not set. With `brokerProfiles.existingConfigMap`, declare them in that file instead. |
 | `brokerProfiles.passwordsSecret` | `""` | An existing Secret whose keys become environment variables. Each profile's `passwordEnv` must name one of its keys. |
 | `brokerProfiles.existingConfigMap` | `""` | An existing ConfigMap with a `profiles.yaml` key, mounted at `/config` instead of the chart-managed one. Leave `brokerProfiles.profiles` empty when it is set. The chart cannot see its content, so a change to it does not roll the pod: restart the Deployment yourself. A `caFile` in it is an absolute path under `/etc/volveran/ca` (see CA bundles). |
+
+### Alerts
+
+| Value | Default | Description |
+|---|---|---|
+| `alerts.existingSecret` | `""` | An existing Secret whose keys become environment variables: the URLs and signing secrets named by each Alert Destination's `urlEnv` and `signingSecretEnv`. A webhook URL is a credential, so keep it in a Secret (SOPS, External Secrets). The chart cannot see its content, so a change to it does not roll the pod: restart the Deployment yourself. With `networkPolicy.egress` set, allow the destinations too. |
 
 ### CA bundles
 
@@ -192,17 +199,40 @@ brokerProfiles:
 
 | Value | Default | Description |
 |---|---|---|
-| `persistence.enabled` | `true` | `false` puts the audit store on an `emptyDir`: Audit Entries and Discarded Message bodies are lost on every restart, and the install notes warn about it. Only for trying the chart out. |
+| `persistence.enabled` | `true` | `false` puts the audit store on an `emptyDir`: Audit Entries, Discarded Message bodies, depth history and firing Alerts are lost on every restart, and the install notes warn about it. Only for trying the chart out. |
 | `persistence.existingClaim` | `""` | An existing PersistentVolumeClaim to mount instead of a chart-created one, for example to migrate a volume or restore from a backup. No claim is created, and `size`, `storageClass` and `accessMode` are ignored. |
-| `persistence.size` | `1Gi` | Size of the audit store PersistentVolumeClaim (Audit Entries and Discarded Message bodies, kept 30 days or 1 GiB by default). |
+| `persistence.size` | `1Gi` | Size of the audit store PersistentVolumeClaim: Audit Entries, Discarded Message bodies (kept 30 days or 1 GiB by default) and depth history (about 190 MiB for 100 dead-letter queues at the defaults). See [Sizing the audit store](#sizing-the-audit-store). |
 | `persistence.storageClass` | `""` (cluster default) | StorageClass of the claim. |
 | `persistence.accessMode` | `ReadWriteOnce` | `ReadWriteOnce`, `ReadWriteOncePod` or `ReadWriteMany`. |
+
+#### Sizing the audit store
+
+Add up what the claim must hold:
+
+- **Discarded bodies:** up to `settings.bodyRetentionMaxBytes`, 1 GiB by default, which is the whole default claim. Raise `persistence.size` or lower the limit.
+- **Depth history:** about 100 bytes per Sample, that is dead-letter queues × (86,400 / `settings.historyIntervalSeconds`) × `settings.historyRetentionDays` × 100 bytes. 100 queues at the defaults (60 s, 14 days) take about 190 MiB; at 15 s and 90 days, about 4.7 GiB. It grows for one retention period, then stays level.
+- **Audit Entries**, kept indefinitely, and some room to spare: a Discard needs a durable commit, so a full volume stops triage.
+
+See [sizing](../../docs/observability.md#sizing), which also covers the memory that very long or fine history takes.
 
 ### Service
 
 | Value | Default | Description |
 |---|---|---|
 | `service.port` | `8080` | Port of the ClusterIP Service. The container always listens on 8080. |
+
+### Metrics
+
+Prometheus metrics, off by default. See [Metrics](#metrics-1) below and the [metric reference](../../docs/observability.md#metrics).
+
+| Value | Default | Description |
+|---|---|---|
+| `metrics.enabled` | `false` | Sets `VOLVERAN_METRICS_PORT` and adds the container port and a `metrics` Service port. The HTTPRoute and Ingress never reference it. |
+| `metrics.port` | `9464` | The port of the metrics listener and of the Service. Must differ from 8080 and from `service.port`. |
+| `metrics.serviceMonitor.enabled` | `false` | Render a Prometheus Operator `ServiceMonitor` (needs its CRDs). Requires `metrics.enabled`. |
+| `metrics.serviceMonitor.labels` | `{}` | Added to the `ServiceMonitor`'s labels, to match your Prometheus's `serviceMonitorSelector`, for example `{release: prometheus}`. |
+| `metrics.serviceMonitor.interval` | `""` (Prometheus's `scrape_interval`) | How often to scrape, a Prometheus duration such as `30s`. |
+| `metrics.serviceMonitor.scrapeTimeout` | `""` (Prometheus's `scrape_timeout`) | Scrape timeout, a Prometheus duration such as `10s`, at most the interval. |
 
 ### Settings
 
@@ -219,6 +249,8 @@ refused at render time.
 | `settings.bodyRetentionDays` | `null` (30) | `VOLVERAN_BODY_RETENTION_DAYS`: most days a Discarded Message body is kept, 1 to 36500. |
 | `settings.bodyRetentionMaxBytes` | `null` (`1GiB`) | `VOLVERAN_BODY_RETENTION_MAX_BYTES`: most total size of kept Discarded Message bodies, in bytes or with `KiB`, `MiB`, `GiB` or `TiB`, for example `20GiB`. Size `persistence.size` above it. |
 | `settings.bodyRetentionIntervalMinutes` | `null` (60) | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`: how often old bodies are evicted, 1 to 1440. |
+| `settings.historyIntervalSeconds` | `null` (60) | `VOLVERAN_HISTORY_INTERVAL_SECONDS`: how often dead-letter queues are sampled, 15 to 3600. |
+| `settings.historyRetentionDays` | `null` (14) | `VOLVERAN_HISTORY_RETENTION_DAYS`: how long Samples and the outcomes of notifications are kept, 1 to 90. Size `persistence.size` for it. |
 
 ### Extra environment
 
@@ -265,8 +297,34 @@ refused at render time.
 |---|---|---|
 | `networkPolicy.enabled` | `false` | Renders a NetworkPolicy that selects only the Volverán pod. See [Network policy](#network-policy). |
 | `networkPolicy.ingressFrom` | `[]` | NetworkPolicy peers (`namespaceSelector`, `podSelector`, `ipBlock`) admitted to the http port, for example the Gateway or ingress controller. Empty admits no peer. |
+| `networkPolicy.metricsFrom` | `[]` | NetworkPolicy peers admitted to the metrics port only, when `metrics.enabled`, for example your Prometheus's pods. They gain no access to the http port. Empty admits no peer. |
 | `networkPolicy.egress` | `[]` (egress open) | NetworkPolicy egress rules (`to`, `ports`), for example the brokers and the OIDC provider. Any rule restricts egress to these rules plus DNS to `networkPolicy.dnsTo`. |
 | `networkPolicy.dnsTo` | namespace `kube-system`, pods `k8s-app: kube-dns` | The cluster DNS resolver as NetworkPolicy peers. Allowed on port 53, UDP and TCP, whenever egress is restricted. |
+
+## Metrics
+
+`metrics.enabled` serves Prometheus metrics at `/metrics` on a port of their own, with no session. Volverán binds it to the same address as the web app (`0.0.0.0` in the pod), so anything that can reach the pod can reach it unless a NetworkPolicy says otherwise. No route ever references that port. With the Prometheus Operator:
+
+```yaml
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus              # what your Prometheus's serviceMonitorSelector matches
+    interval: 30s
+    scrapeTimeout: 10s
+
+networkPolicy:
+  enabled: true
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+```
 
 ## Network policy
 
@@ -278,6 +336,9 @@ effect.
 else in the cluster reaches the sign-in or the API. Each entry is a standard NetworkPolicy peer. A peer with both
 `namespaceSelector` and `podSelector` matches those pods in those namespaces. Two separate entries match either one. With
 no peers, the policy admits nothing.
+
+**Metrics.** The peers in `networkPolicy.metricsFrom` reach only the metrics port, when `metrics.enabled`, and the peers
+in `networkPolicy.ingressFrom` do not reach it. With `metricsFrom` empty, nothing can scrape the pod.
 
 **Probes.** No peer is needed for the kubelet probes on `/healthz` and `/readyz`. Kubernetes defines that a pod
 isolated for ingress still accepts connections from its own node, and the kubelet runs its probes from that node.
