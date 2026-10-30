@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Volverán: dead-letter triage for RabbitMQ</title>
+<meta name="description" content="Open-source, self-hosted dead-letter triage for RabbitMQ. Hold the messages still, decide what happens to each one, and apply it all in one step.">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="hero">
+  <svg class="hero-swallow" viewBox="0 0 32 32" aria-hidden="true"><path transform="rotate(-24 16 16)" d="M16 6.5C17 6.5 17.8 7.4 17.9 8.8C20.6 10.6 25 12 31 11.6C27.2 14.6 22.6 16 18.4 16L17.7 19.4L22.2 28L16.9 22.6L16 24L15.1 22.6L9.8 28L14.3 19.4L13.6 16C9.4 16 4.8 14.6 1 11.6C7 12 11.4 10.6 14.1 8.8C14.2 7.4 15 6.5 16 6.5Z"/></svg>
+  <div class="wrap">
+    <p class="brand">Volverán</p>
+    <h1>Dead letters come back.</h1>
+    <p class="lede">Open-source, self-hosted triage for RabbitMQ dead-letter queues. Hold the messages still, decide what happens to each one, and apply it all in one step.</p>
+    <p class="actions">
+      <a class="button" href="#start">Run it in Docker</a>
+      <a class="button quiet" href="https://github.com/volveran/volveran">See the source on GitHub</a>
+    </p>
+    <p class="verse"><em>Volverán las oscuras golondrinas…</em> Gustavo Adolfo Bécquer</p>
+  </div>
+</header>
+
+<main>
+<div class="wrap shot-over">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/checkout-dark.png">
+    <img src="images/checkout-light.png" width="1440" height="900" alt="A Checkout of orders.dlq: each Message has a Decision, and two are flagged Died Again">
+  </picture>
+</div>
+
+<section class="wrap rail discard">
+  <h2>Looking at a dead letter can cost you the letter</h2>
+  <p>The management UI can peek at a queue, purge all of it, or shovel all of it somewhere else. Every peek requeues the message, and on a quorum queue a requeue can use up one of its delivery attempts.</p>
+  <p>Real dead-letter work is different: delete these 12, send these 40 back where they came from, move these 3 to a manual-handling queue, and keep a record of who did what.</p>
+</section>
+
+<section class="wrap rail replay">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><strong>Checkout.</strong> Volverán holds the messages at the head of the queue, unacknowledged. If Volverán or your browser dies, the broker returns every one.</li>
+    <li><strong>Decide.</strong> Give each message a Decision: Discard, Replay, Move or Keep. A message that came back after you sent it out is flagged Died Again.</li>
+    <li><strong>Apply.</strong> Everything is carried out in one step, and you see the outcome for every message. A failure can create a duplicate, but never loses a message.</li>
+    <li><strong>Audit and Restore.</strong> Every action is recorded with who did it. Discarded messages can be brought back.</li>
+  </ol>
+  <img class="shot" src="images/flow.gif" width="1000" height="625" loading="lazy" alt="Checking out a queue, giving Messages their Decisions, and Applying them">
+</section>
+
+<section class="wrap rail replay">
+  <h2>Don't cause the second incident</h2>
+  <p>The consumer has often only just recovered when the Replay starts. Set a Replay Rate, send one Canary first and watch whether it dies again, and stop part way if it does. Replay rules handle the routine cases on a schedule, and pause themselves when their Replays keep dying.</p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/canary-dark.png">
+    <img class="shot" src="images/canary-light.png" width="1440" height="900" loading="lazy" alt="A Canary being watched on a Protected Profile, with the Apply running at 5 Messages per second">
+  </picture>
+</section>
+
+<section class="wrap rail move">
+  <h2>Built for teams</h2>
+  <ul class="plain">
+    <li><strong>Single sign-on</strong> through any OIDC provider, with Roles per Broker Profile.</li>
+    <li><strong>Protected Profiles</strong> frame production in red and ask for the queue name before anything changes.</li>
+    <li><strong>Four-eyes Approval</strong> makes a second Operator confirm a change on a Protected Profile.</li>
+    <li><strong>Signed releases:</strong> a cosign-signed image and Helm chart, with an SBOM and provenance.</li>
+    <li><strong>Tested against a real broker:</strong> every RabbitMQ behaviour Volverán relies on has a test, run weekly against the latest RabbitMQ 4.</li>
+  </ul>
+</section>
+
+<section class="wrap rail" id="start">
+  <h2>Try it on your laptop</h2>
+  <p>Write <code>profiles.yaml</code> from the <a href="https://github.com/volveran/volveran/blob/main/profiles.example.yaml">example</a>, then open <code>http://127.0.0.1:8080</code>. It listens on loopback only, with no sign-in.</p>
+  <pre><code>export VOLVERAN_DEV_PASSWORD=guest
+docker run --rm --read-only --network host \
+  -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
+  -v volveran-data:/data \
+  -e VOLVERAN_OPERATOR="$USER" \
+  -e VOLVERAN_DEV_PASSWORD \
+  ghcr.io/volveran/volveran:0.4.1</code></pre>
+  <p>For a shared service, read the <a href="https://github.com/volveran/volveran/blob/main/docs/team-mode.md">Team Mode</a> and <a href="https://github.com/volveran/volveran/blob/main/docs/kubernetes.md">Kubernetes</a> guides.</p>
+</section>
+
+<section class="wrap rail">
+  <h2>Where it's going</h2>
+  <p>Not available yet: queue depth history, alerts and Prometheus metrics, then PostgreSQL as an audit store and several replicas. See the <a href="https://github.com/volveran/volveran/blob/main/ROADMAP.md">roadmap</a>.</p>
+</section>
+</main>
+
+<footer class="wrap">
+  <p>Apache License 2.0. RabbitMQ is a trademark of Broadcom Inc. Volverán is not affiliated with or endorsed by Broadcom.</p>
+</footer>
+</body>
+</html>

@@ -1,0 +1,124 @@
+/* The app's fonts and colour tokens (src/web/styles.css). */
+@font-face { font-family: "Atkinson Next"; src: url(fonts/atkinson-hyperlegible-next-latin-wght-normal.woff2) format("woff2"); font-weight: 200 800; font-display: swap; }
+@font-face { font-family: "Atkinson Mono"; src: url(fonts/atkinson-hyperlegible-mono-latin-wght-normal.woff2) format("woff2"); font-weight: 200 800; font-display: swap; }
+
+:root {
+  color-scheme: light dark;
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --text: #14202e;
+  --muted: #556273;
+  --border: #d5dbe3;
+  --link: #1f4fa3;
+  --rail-discard: #b3261e;
+  --rail-replay: #1f4fa3;
+  --rail-move: #0b7a75;
+  --rail-keep: #d5dbe3;
+  --hero: #1f4fa3;
+  --hero-bird: #16397a;
+  --hero-text: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101826;
+    --surface: #1a2433;
+    --text: #e6ebf2;
+    --muted: #a3afbf;
+    --border: #334155;
+    --link: #8fb1f5;
+    --rail-discard: #ef6a62;
+    --rail-replay: #6f9bee;
+    --rail-move: #3cc4bb;
+    --rail-keep: #334155;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 1.125rem/1.55 "Atkinson Next", system-ui, sans-serif;
+}
+.wrap { max-width: 68rem; margin-inline: auto; padding-inline: 1rem; }
+@media (min-width: 48rem) { .wrap { padding-inline: 2rem; } }
+a { color: var(--link); }
+a:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+code, pre { font-family: "Atkinson Mono", ui-monospace, monospace; font-size: .92em; }
+img { display: block; max-width: 100%; height: auto; }
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--hero);
+  color: var(--hero-text);
+  padding-block: 2rem 13rem;
+}
+.hero a { color: inherit; }
+.hero .wrap { position: relative; }
+.hero-swallow {
+  position: absolute;
+  right: -9vw;
+  top: -6rem;
+  width: min(70vw, 56rem);
+  fill: var(--hero-bird);
+}
+.brand { margin: 0 0 clamp(3rem, 10vw, 7rem); font-weight: 700; font-size: 1.25rem; }
+h1 {
+  margin: 0 0 1.5rem;
+  max-width: 11ch;
+  font-size: clamp(3.25rem, 11vw, 8rem);
+  font-weight: 800;
+  line-height: .98;
+  letter-spacing: -.025em;
+}
+.lede { max-width: 34rem; margin: 0 0 2rem; font-size: clamp(1.2rem, 2.4vw, 1.5rem); line-height: 1.4; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 0 0 2rem; }
+.button {
+  padding: .7rem 1.2rem;
+  border: 2px solid var(--hero-text);
+  border-radius: 5px;
+  background: var(--hero-text);
+  color: var(--hero) !important;
+  font-weight: 700;
+  text-decoration: none;
+}
+.button.quiet { background: transparent; color: var(--hero-text) !important; }
+.verse { margin: 0; }
+
+.shot-over { margin-top: -10rem; position: relative; }
+.shot-over img, .shot { border: 1px solid var(--border); border-radius: 8px; }
+.shot { margin-top: 1.5rem; }
+
+.rail {
+  margin-block: clamp(3.5rem, 8vw, 6rem);
+  --rail: var(--rail-keep);
+}
+.rail > * { border-left: 4px solid var(--rail); padding-left: clamp(1rem, 3vw, 2rem); margin-block: 0; padding-block: .6rem; }
+.rail > picture, .rail > .shot { display: block; border-left: 0; padding: 0; margin-top: 1.5rem; }
+.discard { --rail: var(--rail-discard); }
+.replay { --rail: var(--rail-replay); }
+.move { --rail: var(--rail-move); }
+
+h2 { font-size: clamp(1.75rem, 4vw, 2.75rem); font-weight: 800; line-height: 1.1; letter-spacing: -.015em; }
+.rail > p, .steps, .plain { max-width: 42rem; box-sizing: content-box; }
+.steps, .plain { padding-left: clamp(2.5rem, 5vw, 3.5rem); }
+.steps li, .plain li { margin-block: .6rem; }
+.plain { list-style: none; padding-left: clamp(1rem, 3vw, 2rem); }
+
+pre {
+  overflow-x: auto;
+  background: var(--surface);
+  border-block: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding-block: 1rem;
+  line-height: 1.5;
+}
+
+footer { padding-block: 2rem 3rem; color: var(--muted); font-size: .95rem; }
+
+@media (max-width: 40rem) {
+  .hero { padding-bottom: 7rem; }
+  .shot-over { margin-top: -4.5rem; }
+  .hero-swallow { top: 1rem; right: -22vw; width: 90vw; }
+}

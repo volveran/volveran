@@ -46,7 +46,7 @@ describe('release quick start', () => {
     expect(workflow).toContain(image);
   });
 
-  it.each(['README.md', 'docs/team-mode.md'])('%s pulls the version in package.json', (file) => {
+  it.each(['README.md', 'docs/team-mode.md', 'site/index.html'])('%s pulls the version in package.json', (file) => {
     const refs = imageRefs(read(file));
     expect(refs).toContain(`${image}:${version}`);
     for (const ref of refs) expect([image, `${image}:${version}`, `${image}:latest`]).toContain(ref);
