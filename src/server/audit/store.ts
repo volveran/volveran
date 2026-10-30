@@ -16,6 +16,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import { HistoryStore } from './history.js';
 import { RuleStateStore } from './rule-state.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
@@ -265,6 +266,27 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (rule_key, audit_entry_id)
    );
    ALTER TABLE replay_rule_passes ADD COLUMN cannot_replay INTEGER;`,
+  // v12 (#73): depth history (audit/history.ts), one Sample per dead-letter queue per sampling run, one
+  // run per Broker Profile; and an index for the Messages taken out of a queue between two Samples.
+  `CREATE TABLE history_samples (
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     depth INTEGER NOT NULL,
+     estimated_arrivals INTEGER,
+     PRIMARY KEY (profile, vhost, queue, at)
+   ) WITHOUT ROWID;
+   CREATE INDEX history_samples_at ON history_samples (at);
+   CREATE TABLE sampling_runs (
+     profile TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     ok INTEGER NOT NULL,
+     error_code TEXT,
+     PRIMARY KEY (profile, at)
+   ) WITHOUT ROWID;
+   CREATE INDEX sampling_runs_at ON sampling_runs (at);
+   CREATE INDEX audit_entries_profile_queue_time ON audit_entries (profile, vhost, queue, created_at);`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -273,6 +295,8 @@ export class AuditStore {
   private readonly db: DatabaseSync;
   /** The state of the Replay Rules, in the same database. */
   readonly ruleState: RuleStateStore;
+  /** Depth history, in the same database. */
+  readonly history: HistoryStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -284,6 +308,7 @@ export class AuditStore {
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     this.migrate();
     this.ruleState = new RuleStateStore(this.db);
+    this.history = new HistoryStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */

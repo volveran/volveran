@@ -11,8 +11,10 @@ import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { loadConfig } from './config.js';
 import { ConfigError } from './config-error.js';
+import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
 import { checkProfilesForRunMode, checkReplayRules, loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
 import type { CheckoutTiming } from './triage/checkout-timing.js';
@@ -23,6 +25,7 @@ import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
@@ -53,6 +56,8 @@ export interface ServerOptions {
   bodyRetention?: Partial<BodyRetention>;
   /** Test seams of the Checkout manager; unset in production. */
   checkoutTestHooks?: CheckoutTestHooks;
+  /** Test seams of the queue sampler; unset in production. */
+  samplerTestHooks?: SamplerTestHooks;
 }
 
 export interface RunningServer {
@@ -101,6 +106,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Called only once the app below is listening.
     onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
   });
+  const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
+  const sampler = new QueueSampler({
+    profiles,
+    history: audit.history,
+    intervalMs: config.historyIntervalMs,
+    testHooks: options.samplerTestHooks,
+    // Called only once the app below is listening.
+    onError: (profile, err) => app.log.error({ err, profile }, 'A sampling run failed unexpectedly'),
+  });
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
@@ -108,6 +122,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     checkouts,
     replayRules,
     audit: { audit, restore, usage },
+    history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
   });
@@ -157,8 +172,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       app.log.error(err, 'Retention could not evict Discarded Message bodies');
     }
   };
-  evict();
-  const retentionTimer = setInterval(evict, retention.intervalMs);
+  // The same job removes Samples and sampling runs past the history retention.
+  const removeOldHistory = () => {
+    try {
+      const { samples } = audit.history.removeOlderThan(Date.now() - config.historyRetentionMs);
+      if (samples > 0) app.log.info({ samples }, 'Retention removed old Samples');
+    } catch (err) {
+      app.log.error(err, 'Retention could not remove old Samples');
+    }
+  };
+  const runRetention = () => {
+    evict();
+    removeOldHistory();
+  };
+  runRetention();
+  const retentionTimer = setInterval(runRetention, retention.intervalMs);
   retentionTimer.unref();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
@@ -166,12 +194,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // finishes first) before the audit store closes and the process exits.
   app.addHook('onClose', async () => {
     clearInterval(retentionTimer);
+    await sampler.stop();
     await replayRules.stop();
     await checkouts.endAll();
     audit.close();
   });
   // Replay Rules: give each its state and schedule the running ones.
   replayRules.start();
+  sampler.start();
 
   // Listening comes last, so /readyz is only reachable once startup has finished.
   await app.listen({ host: options.host, port: options.port });
@@ -193,12 +223,13 @@ interface AppOptions {
   checkouts: CheckoutManager;
   replayRules: ReplayRules;
   audit: AuditRouteDeps;
+  history: HistoryRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, audit, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -234,6 +265,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, audit, webRo
   registerApprovalRoutes(app, checkoutDeps);
   registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
+  registerHistoryRoutes(app, history, profileAccess);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) {

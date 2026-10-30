@@ -54,6 +54,10 @@ _Avoid_: Test Message, probe, pilot
 How long Volverán watches for a Canary that dies again, through a queue of its own bound to the dead-letter exchange (it never reads the dead-letter queue). Set per Broker Profile.
 _Avoid_: Timeout, grace period
 
+**Sample**:
+One reading of a dead-letter queue's depth and estimated arrivals at one time, taken from the management API without a Checkout. Estimated arrivals are the rise in depth since the Sample before plus the Messages Volverán took out in between, because the broker does not count dead-lettered Messages; a consumer outside Volverán hides arrivals, and a queue's first Sample has none known.
+_Avoid_: Data point, reading, metric
+
 **Message**:
 A single RabbitMQ message, identified to the user by its `message_id`.
 _Avoid_: Event, item, record

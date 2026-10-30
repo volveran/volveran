@@ -84,6 +84,10 @@ settings:
   bodyRetentionMaxBytes: null
   # -- VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES (1-1440). Default 60.
   bodyRetentionIntervalMinutes: null
+  # -- VOLVERAN_HISTORY_INTERVAL_SECONDS (15-3600): how often dead-letter queues are sampled. Default 60.
+  historyIntervalSeconds: null
+  # -- VOLVERAN_HISTORY_RETENTION_DAYS (1-90): how long Samples are kept. Default 14.
+  historyRetentionDays: null
 
 # -- Extra container environment variables (name with value or valueFrom), for
 # settings the chart does not name yet. Variables the chart sets are refused.

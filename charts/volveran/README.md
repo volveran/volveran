@@ -219,6 +219,8 @@ refused at render time.
 | `settings.bodyRetentionDays` | `null` (30) | `VOLVERAN_BODY_RETENTION_DAYS`: most days a Discarded Message body is kept, 1 to 36500. |
 | `settings.bodyRetentionMaxBytes` | `null` (`1GiB`) | `VOLVERAN_BODY_RETENTION_MAX_BYTES`: most total size of kept Discarded Message bodies, in bytes or with `KiB`, `MiB`, `GiB` or `TiB`, for example `20GiB`. Size `persistence.size` above it. |
 | `settings.bodyRetentionIntervalMinutes` | `null` (60) | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`: how often old bodies are evicted, 1 to 1440. |
+| `settings.historyIntervalSeconds` | `null` (60) | `VOLVERAN_HISTORY_INTERVAL_SECONDS`: how often dead-letter queues are sampled, 15 to 3600. |
+| `settings.historyRetentionDays` | `null` (14) | `VOLVERAN_HISTORY_RETENTION_DAYS`: how long Samples are kept, 1 to 90. |
 
 ### Extra environment
 
