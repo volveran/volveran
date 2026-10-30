@@ -2,18 +2,12 @@
 // as long as the depth history (VOLVERAN_HISTORY_RETENTION_DAYS).
 import type { DatabaseSync } from 'node:sqlite';
 import type { NotificationDelivery } from '../../shared/alerts.js';
-import type { ProfileScope } from './store.js';
+import type { NewNotificationDelivery, NotificationScope } from './audit-store.js';
 
-export type NewNotificationDelivery = Omit<NotificationDelivery, 'id' | 'at'> & { at: Date };
+export type { NewNotificationDelivery, NotificationScope };
 
 /** How many outcomes `recent` answers with unless told otherwise. */
 const RECENT_LIMIT = 100;
-
-/** Which outcomes to keep: those of these Broker Profiles and, or not, test notifications (which belong to none). */
-export interface NotificationScope {
-  profiles: ProfileScope;
-  tests: boolean;
-}
 
 function scopeClause({ profiles, tests }: NotificationScope): { where: string; params: string[] } {
   const names = 'only' in profiles ? profiles.only : profiles.except;

@@ -21,7 +21,7 @@ import type { FastifyInstance } from 'fastify';
 import { toAmqpJson } from '../audit/amqp-json.js';
 import type { BodyStoreUsage } from '../audit/body-retention.js';
 import type { RestoreRequest, RestoreService } from '../audit/restore.js';
-import type { AuditEntry, AuditQuery, AuditStore } from '../audit/store.js';
+import type { AuditEntry, AuditQuery, AuditStore } from '../audit/audit-store.js';
 import { AUDIT_ACTIONS, type AuditAction, type AuditEntryJson } from '../../shared/audit.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
 import { operatorOf } from '../operator.js';
@@ -111,7 +111,7 @@ function parseDate(name: string, value: string): Date {
 export interface AuditRouteDeps {
   audit: AuditStore;
   restore: RestoreService;
-  usage: () => BodyStoreUsage;
+  usage: () => Promise<BodyStoreUsage>;
 }
 
 export function registerAuditRoutes(
@@ -119,9 +119,9 @@ export function registerAuditRoutes(
   { audit, restore, usage }: AuditRouteDeps,
   access: ProfileAccessCheck,
 ) {
-  const entryOf = (param: string): AuditEntry => {
+  const entryOf = async (param: string): Promise<AuditEntry> => {
     const id = Number(param);
-    const entry = Number.isSafeInteger(id) ? audit.get(id) : null;
+    const entry = Number.isSafeInteger(id) ? await audit.get(id) : null;
     if (!entry) throw new HttpError(404, 'audit_entry_not_found', `No Audit Entry ${param}.`);
     return entry;
   };
@@ -129,21 +129,21 @@ export function registerAuditRoutes(
   app.get<{ Querystring: AuditSearchParams }>('/api/audit-entries', async (req) => {
     const operator = operatorOf(req);
     // Left out in the query, so `limit` counts only the entries the Operator may read.
-    const entries = audit.list({ ...parseAuditSearch(req.query), profiles: access.auditScope(operator, 'read_audit_entries') });
+    const entries = await audit.list({ ...parseAuditSearch(req.query), profiles: access.auditScope(operator, 'read_audit_entries') });
     return { entries: entries.map((e) => auditEntryJson(e)) };
   });
 
   app.get<{ Params: { id: string } }>('/api/audit-entries/:id', async (req) => {
     const operator = operatorOf(req);
-    const entry = entryOf(req.params.id);
+    const entry = await entryOf(req.params.id);
     access.ofAuditEntry(operator, 'read_audit_entries', entry);
-    const body = access.holds(operator, 'read_discarded_bodies', entry.profile) ? audit.body(entry.id) : undefined;
+    const body = access.holds(operator, 'read_discarded_bodies', entry.profile) ? await audit.body(entry.id) : undefined;
     return { entry: auditEntryJson(entry, body) };
   });
 
   app.post<{ Params: { id: string }; Body: RestoreRequest | undefined }>('/api/audit-entries/:id/restore', async (req) => {
     const operator = operatorOf(req);
-    const entry = entryOf(req.params.id);
+    const entry = await entryOf(req.params.id);
     const target = access.ofAuditEntry(operator, 'restore', entry);
     return { entry: auditEntryJson(await restore.restore(entry.id, req.body ?? undefined, operator, target)) };
   });
