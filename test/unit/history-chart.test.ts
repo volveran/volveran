@@ -6,6 +6,7 @@ import {
   arrivalsSummary,
   chartSegments,
   depthSummary,
+  isDot,
   niceMax,
   placeMarks,
   rangeMs,
@@ -193,5 +194,18 @@ describe('a downsampled point that is partly unknown', () => {
     expect(arrivalsSummary(samples)).toBe('Estimated arrivals: 6 in this range, partly unknown for 1 of 3 points.');
     const unknown = { at: at(30), estimatedArrivals: null };
     expect(arrivalsSummary([...samples, unknown])).toBe('Estimated arrivals: 6 in this range, unknown for 1 of 4 points, partly unknown for 1 more.');
+  });
+});
+
+describe('a line too short to see', () => {
+  const scale = { from: at(0), to: at(24 * 60), width: 96 };
+
+  it('is a dot: a few Samples in a whole day span less than a pixel', () => {
+    expect(isDot([point(0), point(1), point(2)], scale)).toBe(true);
+  });
+
+  it('is a line once it spans enough to be seen, and a lone point is always a dot', () => {
+    expect(isDot([point(0), point(60)], scale)).toBe(false);
+    expect(isDot([point(5)], scale)).toBe(true);
   });
 });

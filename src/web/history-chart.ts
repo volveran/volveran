@@ -84,6 +84,18 @@ export function chartSegments<P extends ChartPoint>(points: readonly P[], gaps: 
   return segments;
 }
 
+/** The shortest line worth drawing as one, in the chart's units. */
+const SHORTEST_LINE = 2;
+
+/**
+ * Whether to draw a stretch as a dot: a lone point, or one so short across its
+ * range that a line would not show (a few Samples in a whole day are well under
+ * a pixel of the queue list's small chart).
+ */
+export function isDot(segment: ReadonlyArray<{ at: number }>, scale: TimeScale): boolean {
+  return timeX(segment.at(-1)!.at, scale) - timeX(segment[0]!.at, scale) < SHORTEST_LINE;
+}
+
 /** Messages per minute at each point; null when its arrivals are unknown, or there is no point before to measure from. */
 export function arrivalRates(samples: ReadonlyArray<{ at: number; estimatedArrivals: number | null }>): ChartPoint[] {
   return samples.map((s, i) => {

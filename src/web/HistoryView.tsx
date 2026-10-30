@@ -13,6 +13,7 @@ import {
   arrivalsSummary,
   chartSegments,
   depthSummary,
+  isDot,
   niceMax,
   placeMarks,
   rangeMs,
@@ -42,8 +43,8 @@ function Line({ points, gaps, scale, max, height, dot }: { points: readonly Char
   return (
     <>
       {chartSegments(points, gaps).map((segment) =>
-        segment.length === 1 ? (
-          <circle key={segment[0]!.at} className="chart-line-dot" cx={timeX(segment[0]!.at, scale)} cy={valueY(segment[0]!.value!, max, height)} r={dot} />
+        isDot(segment, scale) ? (
+          <circle key={segment[0]!.at} className="chart-line-dot" cx={timeX(segment.at(-1)!.at, scale)} cy={valueY(segment.at(-1)!.value!, max, height)} r={dot} />
         ) : (
           <path key={segment[0]!.at} className="chart-line" d={linePath(segment, scale, max, height)} />
         ),
@@ -293,10 +294,12 @@ export function HistoryView({ target, onBack }: { target: HistoryTarget; onBack(
 }
 
 const SPARK = { width: 96, height: 24, pad: 2 };
+const SPARK_PLOT_WIDTH = SPARK.width - 2 * SPARK.pad;
 
 /** The queue list's 24-hour chart, with its text summary for screen readers. */
 export function Sparkline({ series }: { series: DepthSeries }) {
-  const scale: TimeScale = { from: series.from, to: series.to, width: SPARK.width };
+  // Inset, so the latest Sample's dot at the right edge is not cut in half.
+  const scale: TimeScale = { from: series.from, to: series.to, width: SPARK_PLOT_WIDTH };
   const points = series.points.map(([at, depth]) => ({ at, value: depth }));
   const max = niceMax(series.points.map(([, depth]) => depth));
   const plot = SPARK.height - 2 * SPARK.pad;
@@ -304,7 +307,7 @@ export function Sparkline({ series }: { series: DepthSeries }) {
   return (
     <>
       <svg className="sparkline" viewBox={`0 0 ${SPARK.width} ${SPARK.height}`} width={SPARK.width} height={SPARK.height} aria-hidden="true">
-        <g transform={`translate(0 ${SPARK.pad})`}>
+        <g transform={`translate(${SPARK.pad} ${SPARK.pad})`}>
           <Bands bands={series.gaps} className="chart-gap" scale={scale} height={plot} />
           <Line points={points} gaps={series.gaps} scale={scale} max={max} height={plot} dot={1.5} />
         </g>
