@@ -1705,6 +1705,11 @@ dialog.prompt .confirm button.danger:disabled {
 }
 
 /* Depth history */
+.history button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
