@@ -20,15 +20,11 @@
 //   had one, its first failed run), and resolves at the next good run.
 // An evaluation with no run (a pause or resume) changes only replayRulePaused Alerts.
 //
-// Arrivals here are the ones the Sample's depth has borne out, not the Sample's
-// `estimatedArrivals`. Management depth lags Audit Entries, so depth 10 -> 10
-// with 10 taken out estimates 10 arrivals that never happened, and the drop shows
-// only in the next Sample. So a rise in depth counts at once, and a take-out is
-// held for one Sample: a drop in that Sample settles it, and what no drop settles
-// did hide arrivals, which count then, one Sample late. A consumer outside
-// Volverán can settle a take-out too, and so hide arrivals, as it does anyway.
+// Arrivals here are the ones the Sample's depth has borne out (bornOutArrivals),
+// not the Sample's `estimatedArrivals`.
 import { createHash } from 'node:crypto';
 import { historyPath } from '../../shared/history-link.js';
+import { bornOutArrivals } from '../history/estimated-arrivals.js';
 import { matchesQueueFilter } from '../triage/queue-list.js';
 import type { FinishedRun, LatestSample } from '../history/sampler.js';
 import type { Notification } from './payloads.js';
@@ -307,7 +303,7 @@ function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], 
     if (!watching.some((w) => w.vhost === sample.vhost && selects(w, sample.queue))) continue;
     const before = previous.find((a) => a.vhost === sample.vhost && a.queue === sample.queue);
     const carried = { unsettled: before?.unsettled ?? 0, recent: before?.recent ?? [] };
-    const { unsettled, arrived } = reckon(carried.unsettled, sample);
+    const { unsettled, arrived } = bornOutArrivals(carried.unsettled, sample);
     next.push({
       vhost: sample.vhost,
       queue: sample.queue,
@@ -316,17 +312,6 @@ function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], 
     });
   }
   return next;
-}
-
-/** One Sample: its drop in depth settles the take-outs held from before, then its own. */
-function reckon(held: number, { depth, previousDepth, takenOut }: LatestSample): { unsettled: number; arrived: number } {
-  if (previousDepth === null) return { unsettled: held, arrived: 0 };
-  const change = depth - previousDepth;
-  const drop = Math.max(0, -change);
-  return {
-    unsettled: Math.max(0, takenOut - Math.max(0, drop - held)),
-    arrived: Math.max(0, change) + Math.max(0, held - drop),
-  };
 }
 
 function alertKey({ rule, vhost, queue, replayRule }: Pick<AlertState, 'rule' | 'vhost' | 'queue' | 'replayRule'>): string {

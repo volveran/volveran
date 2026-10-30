@@ -24,7 +24,7 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 
 - A consumer outside Volverán hides arrivals: what it takes away is not seen arriving.
 - A queue's first Sample has unknown arrivals, shown as unknown rather than zero.
-- Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth. The history and the metrics then show a false spike. [Alert Rules](#alert-rules) correct for it.
+- Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth. The history then shows a false spike. [Alert Rules](#alert-rules) and the arrivals metric count arrivals only once the depth has borne them out, so they do not.
 
 **Depth** is the management API's count of the queue's Messages, which lags by a few seconds, and includes those a Checkout holds.
 
@@ -253,7 +253,7 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
 | `volveran_dead_letter_queue_messages` | gauge | `profile`, `vhost`, `queue` | Messages waiting in the dead-letter queue at its latest Sample. |
-| `volveran_dead_letter_queue_estimated_arrived_messages_total` | counter | `profile`, `vhost`, `queue` | Estimated Messages that arrived in the dead-letter queue. Absent while arrivals are unknown. |
+| `volveran_dead_letter_queue_estimated_arrived_messages_total` | counter | `profile`, `vhost`, `queue` | Estimated Messages that arrived in the dead-letter queue, counted once the depth has borne them out, as Alerts count them, so arrivals hidden by triage count one Sample late. Absent while arrivals are unknown. |
 | `volveran_dead_letter_queue_setup_warnings` | gauge | `profile`, `vhost`, `queue`, `code`, `severity` | Set-up warnings of the queue at its latest Sample. `severity` is `loses_messages` or `may_lose_messages`. A code the queue does not have has no series, rather than 0. |
 | `volveran_sampling_up` | gauge | `profile` | 1 if the Broker Profile's latest sampling run succeeded, 0 if it failed. Absent until it has ever run. |
 | `volveran_sampling_last_success_timestamp_seconds` | gauge | `profile` | When the Broker Profile was last sampled successfully, in seconds since the Unix epoch. Absent if it never was. |

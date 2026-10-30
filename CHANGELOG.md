@@ -42,6 +42,7 @@ A profiles file and chart values from 0.4 keep working unchanged. These are all 
 
 - `VOLVERAN_METRICS_PORT` serves Prometheus metrics at `/metrics` on a port of its own, at `VOLVERAN_HOST`'s address, with no session. A scrape never contacts a broker. (#75)
 - Families: `volveran_dead_letter_queue_messages`, `volveran_dead_letter_queue_estimated_arrived_messages_total`, `volveran_dead_letter_queue_setup_warnings`, `volveran_sampling_up`, `volveran_sampling_last_success_timestamp_seconds`, `volveran_replay_rule_paused`, `volveran_replay_rule_passes_total`, `volveran_apply_messages_total`, `volveran_checkouts_active`, `volveran_approvals_waiting`, `volveran_audit_store_body_bytes`, `volveran_alerts_firing`, `volveran_alert_notifications_total`, and the basics of `process_*` and `nodejs_*`. See the [metric reference](docs/observability.md#metric-reference). (#75, #77, #81)
+- `volveran_dead_letter_queue_estimated_arrived_messages_total` counts arrivals once the depth has borne them out, as Alert Rules do, so management lag's false spikes never reach it and arrivals hidden by triage count one Sample late. The history keeps its estimate.
 - The chart gains `metrics.enabled`, `metrics.port` (default 9464), `metrics.serviceMonitor` (`enabled`, `labels`, `interval`, `scrapeTimeout`) and `networkPolicy.metricsFrom`, which admits the scraper to the metrics port only. The `HTTPRoute` and `Ingress` never reference it. (#76)
 
 **Dead-letter Map**
