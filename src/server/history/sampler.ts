@@ -243,7 +243,7 @@ export class QueueSampler {
 
   private toSamples(profile: string, at: Date, readings: Awaited<ReturnType<QueueSampler['read']>>): LatestSample[] {
     const { history } = this.options;
-    const lastGoodRun = history.lastRuns(profile).lastOk?.at ?? null;
+    const lastGoodRun = history.lastGoodRunBefore(profile, at.getTime());
     return readings.flatMap(({ vhost, queues }) =>
       queues.filter((q) => !q.depthMissing).map((q): LatestSample => {
         const ref = { profile, vhost, queue: q.name };

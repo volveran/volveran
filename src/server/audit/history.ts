@@ -109,6 +109,12 @@ export class HistoryStore {
     return { last: read(''), lastOk: read('AND ok = 1') };
   }
 
+  /** When the profile's latest good run before `before` ran, or null. */
+  lastGoodRunBefore(profile: string, before: number): number | null {
+    const row = this.db.prepare('SELECT MAX(at) AS at FROM sampling_runs WHERE profile = ? AND ok = 1 AND at < ?').get(profile, before) as { at: number | null };
+    return row.at;
+  }
+
   /** How many Messages Volverán took out of the queue after `after`, up to and including `until`. */
   takenOut({ profile, vhost, queue }: SampledQueue, after: number, until: number): number {
     const row = this.db
