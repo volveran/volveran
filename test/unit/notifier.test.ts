@@ -104,6 +104,14 @@ describe('Notifier', () => {
     ]);
   });
 
+  it('keeps the Replay Rule of a notification, and none when it has no Replay Rule', async () => {
+    const url = await receiver((_req, res) => res.writeHead(204).end());
+    const { notifier, store } = notifierFor({ pager: url });
+    await notifier.send('pager', { ...testNotification(new Date(), 'a'), replayRule: 'retry' });
+    await notifier.send('pager', testNotification(new Date(), 'b'));
+    expect(store.notifications.recent().map((d) => [d.alertId, d.replayRule])).toEqual([['b', null], ['a', 'retry']]);
+  });
+
   it('on close, ends the deliveries in progress at once and records them', async () => {
     const hung = await receiver(() => {});
     const { notifier, store } = notifierFor({ hung });
@@ -133,7 +141,7 @@ describe('notifications table', () => {
       rule: 'r',
       profile: 'p',
       vhost: '/',
-      queue: 'q',
+      queue: 'q', replayRule: null,
       outcome: 'delivered' as const,
       httpStatus: 200,
       error: null,

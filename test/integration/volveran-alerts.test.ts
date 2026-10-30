@@ -82,6 +82,10 @@ describe('Alert Rules on Volverán itself', () => {
     await expectSent(2);
     expect(sent()[1]).toMatchObject({ status: 'resolved', alertId: sent()[0].alertId, replayRule: 'retry', reason: 'queue_not_found' });
     expect(sent()[1].endedAt).not.toBeNull();
+    await eventually(async () => {
+      const { notifications } = (await app.get('/api/alerts')).body;
+      expect(notifications.map((n: any) => n.replayRule)).toEqual(['retry', 'retry']);
+    });
   });
 
   it('tells of a pause by an Operator, says nothing of a rule deployed startPaused, and keeps a firing Alert across a restart', async () => {

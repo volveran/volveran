@@ -30,8 +30,8 @@ export class NotificationStore {
     const { lastInsertRowid } = this.db
       .prepare(
         `INSERT INTO notifications (at, alert_id, destination, destination_type, status, test, rule, profile, vhost, queue,
-           outcome, http_status, error, attempts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           outcome, http_status, error, attempts, replay_rule)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         d.at.getTime(),
@@ -48,6 +48,7 @@ export class NotificationStore {
         d.httpStatus,
         d.error,
         d.attempts,
+        d.replayRule,
       );
     return { ...d, id: Number(lastInsertRowid), at: d.at.toISOString() };
   }
@@ -74,6 +75,7 @@ export class NotificationStore {
       httpStatus: row.http_status,
       error: row.error,
       attempts: row.attempts,
+      replayRule: row.replay_rule,
     }));
   }
 
@@ -99,4 +101,5 @@ interface Row {
   http_status: number | null;
   error: string | null;
   attempts: number;
+  replay_rule: string | null;
 }

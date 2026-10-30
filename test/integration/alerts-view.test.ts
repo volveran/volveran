@@ -146,7 +146,7 @@ describe('seeing Alerts', () => {
     const store = new AuditStore(dataDir);
     const row = (profile: string, at: Date) => ({
       at, alertId: `${profile}-a`, destination: 'pager', destinationType: 'webhook' as const, status: 'firing' as const, test: false,
-      rule: 'deep', profile, vhost: '/', queue: dlq, outcome: 'delivered' as const, httpStatus: 200, error: null, attempts: 1,
+      rule: 'deep', profile, vhost: '/', queue: dlq, replayRule: null, outcome: 'delivered' as const, httpStatus: 200, error: null, attempts: 1,
     });
     const now = Date.now();
     store.notifications.record(row('prod', new Date(now - 10_000)));

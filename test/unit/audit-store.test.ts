@@ -216,6 +216,20 @@ describe('AuditStore', () => {
     expect(store.get(alone)).toMatchObject({ approverId: null, approverName: null });
   });
 
+  it('upgrades a v15 store: its sampling runs and notifications keep no interval or Replay Rule', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'audit-store-'));
+    new AuditStore(dir).close();
+    const db = new DatabaseSync(path.join(dir, AUDIT_DB_FILE));
+    db.exec(`ALTER TABLE sampling_runs DROP COLUMN interval_ms; ALTER TABLE notifications DROP COLUMN replay_rule; PRAGMA user_version = 15;
+             INSERT INTO sampling_runs (profile, at, ok, error_code) VALUES ('local', 5, 1, NULL);
+             INSERT INTO notifications (at, alert_id, destination, destination_type, status, test, rule, profile, outcome, attempts)
+             VALUES (5, 'a', 'pager', 'webhook', 'firing', 0, 'stopped', 'local', 'delivered', 1);`);
+    db.close();
+    store = new AuditStore(dir);
+    expect(store.history.lastRuns('local').last).toMatchObject({ at: 5, intervalMs: null });
+    expect(store.notifications.recent()[0]).toMatchObject({ alertId: 'a', replayRule: null });
+  });
+
   it('upgrades a store written before replay ids existed, keeping its entries', async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'audit-store-'));
     new AuditStore(dir).close();

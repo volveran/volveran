@@ -151,6 +151,7 @@ export class Notifier {
       profile: n.profile,
       vhost: n.vhost,
       queue: n.queue,
+      replayRule: n.replayRule ?? null,
       ...result,
       attempts,
     };

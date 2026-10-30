@@ -356,9 +356,10 @@ const MIGRATIONS: string[] = [
      SELECT profile, rule, vhost, queue, '', alert_id, status, condition, value, threshold, since, last_notified_at, false_since FROM alerts;
    DROP TABLE alerts;
    ALTER TABLE alerts_v15 RENAME TO alerts;`,
-  // v16: the sampling interval each run ran at, so a later setting does not rewrite old history's gaps.
-  // Rows from before stay NULL.
-  `ALTER TABLE sampling_runs ADD COLUMN interval_ms INTEGER;`,
+  // v16: the sampling interval each run ran at, so a later setting does not rewrite old history's gaps; and
+  // the Replay Rule of a notification. Rows from before stay NULL.
+  `ALTER TABLE sampling_runs ADD COLUMN interval_ms INTEGER;
+   ALTER TABLE notifications ADD COLUMN replay_rule TEXT;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';

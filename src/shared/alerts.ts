@@ -22,6 +22,8 @@ export interface NotificationDelivery {
   profile: string | null;
   vhost: string | null;
   queue: string | null;
+  /** The Replay Rule a `replayRulePaused` notification is about; null otherwise. */
+  replayRule: string | null;
   outcome: DeliveryOutcome;
   /** The receiver's last HTTP status; null when it never answered. */
   httpStatus: number | null;
