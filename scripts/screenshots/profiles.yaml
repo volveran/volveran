@@ -1,0 +1,39 @@
+profiles:
+  - name: staging
+    managementUrl: http://127.0.0.1:MGMT_PORT
+    amqpUrl: amqp://127.0.0.1:AMQP_PORT
+    username: volveran-admin
+    passwordEnv: VOLVERAN_TEST_PASSWORD
+    vhosts: all
+    defaultQueueFilter: "*.dlq"
+    protected: false
+    replayRules:
+      - name: db-timeouts
+        vhost: /
+        queue: orders.dlq
+        filter: { kind: failure, value: SQLTimeoutException }
+        every: 5m
+        maxAttempts: 5
+        backoff: { initial: 1m, multiplier: 2, max: 1h }
+        whenAttemptsUsedUp: { moveTo: { queue: orders.parked } }
+        stopWhen: { diedAgain: 10, within: 15m }
+      - name: payment-gateway-503
+        vhost: /
+        queue: payments.dlq
+        filter: { kind: x-death-reason, value: rejected }
+        every: 1m
+        maxAttempts: 3
+        backoff: { initial: 30s, multiplier: 2, max: 10m }
+        whenAttemptsUsedUp: keep
+        stopWhen: { diedAgain: 5, within: 10m }
+        startPaused: true
+  - name: production
+    managementUrl: http://127.0.0.1:MGMT_PORT
+    amqpUrl: amqp://127.0.0.1:AMQP_PORT
+    username: volveran-admin
+    passwordEnv: VOLVERAN_TEST_PASSWORD
+    vhosts: all
+    defaultQueueFilter: "*.dlq"
+    protected: true
+    replayRate: { default: 5, max: 50 }
+    canary: { watchWindow: 10m, requiredAbove: 3 }

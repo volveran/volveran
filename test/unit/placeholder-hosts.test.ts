@@ -26,10 +26,13 @@ const publicHosts = [
   'monitoring.coreos.com',
   // Tools compared in docs/comparison.md.
   'warrenops.io', 'rabbitgui.com',
+  // The SVG namespace of docs/images/logo.svg.
+  'w3.org',
 ];
 
 function files(entry: string): string[] {
   const full = path.join(root, entry);
+  if (/\.(png|gif)$/.test(entry)) return [];
   if (!statSync(full).isDirectory()) return [entry];
   return readdirSync(full).flatMap((child) => files(path.join(entry, child)));
 }
