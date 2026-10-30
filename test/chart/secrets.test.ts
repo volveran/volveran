@@ -1,7 +1,7 @@
 // Credentials only ever come from Secrets the platform engineer names. The
 // chart references them and never renders a Secret of its own.
 import { describe, expect, it } from 'vitest';
-import { container, env, render } from './render.js';
+import { container, env, render, renderRefusal } from './render.js';
 
 describe('secrets', () => {
   it('reads the OIDC client secret and the session secret from oidc.existingSecret', () => {
@@ -24,6 +24,28 @@ describe('secrets', () => {
 
   it("turns every key of the broker passwords Secret into an environment variable, matching each profile's passwordEnv", () => {
     expect(container(render()).envFrom).toEqual([{ secretRef: { name: 'volveran-broker-passwords' } }]);
+  });
+
+  it('turns every key of alerts.existingSecret into an environment variable too', () => {
+    expect(container(render({ alerts: { existingSecret: 'volveran-alerts' } })).envFrom).toEqual([
+      { secretRef: { name: 'volveran-broker-passwords' } },
+      { secretRef: { name: 'volveran-alerts' } },
+    ]);
+  });
+
+  it('loads alerts.existingSecret without a passwords Secret', () => {
+    const chart = render({ brokerProfiles: { passwordsSecret: '' }, alerts: { existingSecret: 'volveran-alerts' } });
+    expect(container(chart).envFrom).toEqual([{ secretRef: { name: 'volveran-alerts' } }]);
+  });
+
+  it('adds no Secret reference by default', () => {
+    expect(container(render({ brokerProfiles: { passwordsSecret: '' } })).envFrom).toBeUndefined();
+  });
+
+  it('refuses a bad alerts section', () => {
+    expect(renderRefusal({ alerts: { existingSecret: 7 } })).toContain('/alerts/existingSecret');
+    expect(renderRefusal({ alerts: { existingSecret: 'Not A Secret Name' } })).toContain('/alerts/existingSecret');
+    expect(renderRefusal({ alerts: { webhookUrl: 'https://hooks.example' } })).toMatch(/webhookUrl/);
   });
 
   it('renders no Secret object, and no credential anywhere in the manifests', () => {
