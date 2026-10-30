@@ -2,22 +2,30 @@
 // never from a broker. The gauges are read at each scrape from its latest
 // snapshot, so they keep their last values while a broker is down. The arrivals
 // counter adds up each run's Samples, not the snapshot: the snapshot keeps its
-// Samples after a failed run and would count them twice.
+// Samples after a failed run and would count them twice. It counts borne-out
+// arrivals, as Alerts do: a counter cannot take back management lag's false spike.
+import { bornOutArrivals } from '../history/estimated-arrivals.js';
 import type { FinishedRun, LatestSample, LatestSnapshot } from '../history/sampler.js';
 import { MetricCounter, type MetricFamily, type MetricSeries } from './exposition.js';
 
 export class QueueMetrics {
   private readonly arrivals = new MetricCounter(
     'volveran_dead_letter_queue_estimated_arrived_messages_total',
-    'Estimated Messages that arrived in a dead-letter queue since the process started: rises in depth plus the Messages Volverán took out. Consumers outside Volverán hide arrivals. No series while arrivals are unknown.',
+    'Estimated Messages that arrived in a dead-letter queue since the process started: changes in depth plus the Messages Volverán took out, never below zero, counted once the depth has borne them out. Consumers outside Volverán hide arrivals. No series while arrivals are unknown.',
   );
+  /** Per queue, the take-outs whose drop in depth has not shown yet. */
+  private readonly unsettled = new Map<string, number>();
 
   constructor(private readonly latest: () => LatestSnapshot) {}
 
   /** One sampling run was recorded. */
   runFinished({ samples }: FinishedRun): void {
-    for (const { profile, vhost, queue, estimatedArrivals } of samples) {
-      if (estimatedArrivals !== null) this.arrivals.inc({ profile, vhost, queue }, estimatedArrivals);
+    for (const sample of samples) {
+      const { profile, vhost, queue, previousDepth } = sample;
+      const key = JSON.stringify([profile, vhost, queue]);
+      const { unsettled, arrived } = bornOutArrivals(this.unsettled.get(key) ?? 0, sample);
+      this.unsettled.set(key, unsettled);
+      if (previousDepth !== null) this.arrivals.inc({ profile, vhost, queue }, arrived);
     }
   }
 

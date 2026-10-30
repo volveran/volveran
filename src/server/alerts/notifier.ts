@@ -4,7 +4,7 @@
 //
 // `send` resolves with the outcome, delivered or failed, and rejects only for
 // a destination the profiles file does not declare. Neither a destination's
-// URL nor anything a receiver answers is kept: failures record a status or an
+// URL nor anything an Alert Destination answers is kept: failures record a status or an
 // error code, because a network error's text can name the URL.
 import { randomUUID } from 'node:crypto';
 import { HttpError } from '../http-error.js';
@@ -151,6 +151,7 @@ export class Notifier {
       profile: n.profile,
       vhost: n.vhost,
       queue: n.queue,
+      replayRule: n.replayRule ?? null,
       ...result,
       attempts,
     };

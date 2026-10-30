@@ -6,6 +6,7 @@ import {
   arrivalsSummary,
   chartSegments,
   depthSummary,
+  isDot,
   niceMax,
   placeMarks,
   rangeMs,
@@ -167,12 +168,44 @@ describe('text summaries', () => {
       'Estimated arrivals: 7 in this range.',
     );
     expect(arrivalsSummary([{ estimatedArrivals: null }, { estimatedArrivals: 4 }])).toBe(
-      'Estimated arrivals: 4 in this range, unknown for 1 of 2 points.',
+      'Estimated arrivals: 4 in this range, unknown for 1 of 2 Samples shown.',
     );
   });
 
   it('says unknown, never zero, when no arrivals are known', () => {
     expect(arrivalsSummary([{ estimatedArrivals: null }, { estimatedArrivals: null }])).toBe('Estimated arrivals: unknown.');
     expect(arrivalsSummary([])).toBe('Estimated arrivals: unknown.');
+  });
+});
+
+describe('a downsampled point that is partly unknown', () => {
+  const samples = [
+    { at: at(0), estimatedArrivals: 1 },
+    { at: at(10), estimatedArrivals: 2, arrivalsPartlyUnknown: true },
+    { at: at(20), estimatedArrivals: 3 },
+  ];
+
+  it('is hatched as unknown, though its point keeps what is known', () => {
+    expect(unknownArrivalBands(samples)).toEqual([{ from: at(0), to: at(10) }]);
+    expect(arrivalRates(samples).map((p) => p.value)).toEqual([null, 0.2, 0.3]);
+  });
+
+  it('is said in the summary, not added up as complete', () => {
+    expect(arrivalsSummary(samples)).toBe('Estimated arrivals: 6 in this range, partly unknown for 1 of 3 Samples shown.');
+    const unknown = { at: at(30), estimatedArrivals: null };
+    expect(arrivalsSummary([...samples, unknown])).toBe('Estimated arrivals: 6 in this range, unknown for 1 of 4 Samples shown, partly unknown for 1 more.');
+  });
+});
+
+describe('a line too short to see', () => {
+  const scale = { from: at(0), to: at(24 * 60), width: 96 };
+
+  it('is a dot: a few Samples in a whole day span less than a pixel', () => {
+    expect(isDot([point(0), point(1), point(2)], scale)).toBe(true);
+  });
+
+  it('is a line once it spans enough to be seen, and a lone point is always a dot', () => {
+    expect(isDot([point(0), point(60)], scale)).toBe(false);
+    expect(isDot([point(5)], scale)).toBe(true);
   });
 });

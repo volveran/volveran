@@ -55,7 +55,7 @@ How long Volverán watches for a Canary that dies again, through a queue of its 
 _Avoid_: Timeout, grace period
 
 **Sample**:
-One reading of a dead-letter queue's depth and estimated arrivals at one time, taken from the management API without a Checkout. Estimated arrivals are the rise in depth since the Sample before plus the Messages Volverán took out in between, because the broker does not count dead-lettered Messages; a consumer outside Volverán hides arrivals, and a queue's first Sample has none known.
+One reading of a dead-letter queue's depth and estimated arrivals at one time, taken from the management API without a Checkout. Estimated arrivals are the change in depth since the Sample before plus the Messages Volverán took out in between, never below zero, because the broker does not count dead-lettered Messages; a consumer outside Volverán hides arrivals, and a queue's first Sample has none known, nor has its first after a sampling run that had no depth for it. With no depth reported there is no Sample.
 _Avoid_: Data point, reading, metric
 
 **Message**:
@@ -115,11 +115,11 @@ Where notifications go: a Slack incoming webhook, a Microsoft Teams workflow web
 _Avoid_: Channel, receiver, sink, notifier
 
 **Alert Rule**:
-A condition on dead-letter queues or on Volverán itself, declared under a Broker Profile in the profiles file: the depth stays above a threshold, Messages arrive faster than a rate, or any Message arrives at all; a Replay rule paused, a dead-letter queue has a set-up warning, or the profile has not been sampled for a while. It names its Alert Destinations, how long the condition must hold (`for`) and how often to send it again (`repeatEvery`). A rule with a name pattern covers every matching dead-letter queue. Arrivals here are estimated arrivals that the depth has borne out: a take-out counts only once the next Sample shows it did not explain a drop in depth, so arrivals hidden by triage alert one Sample late.
+A condition on dead-letter queues or on Volverán itself, declared under a Broker Profile in the profiles file: the depth stays above a threshold, Messages arrive faster than a rate, or any Message arrives at all; a Replay Rule paused, a dead-letter queue has a set-up warning, or the profile has not been sampled for a while. It names its Alert Destinations, how long the condition must hold (`for`) and how often to send it again (`repeatEvery`). A rule with a name pattern covers every matching dead-letter queue. Arrivals here are estimated arrivals that the depth has borne out: a take-out counts only once the next Sample shows it did not explain a drop in depth, so arrivals hidden by triage alert one Sample late.
 _Avoid_: Alarm, trigger, monitor
 
 **Alert**:
-One Alert Rule firing for one queue (or one paused Replay rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay rule resumes or sampling succeeds. A firing Alert survives a restart without being sent again; removing its rule from the file drops it quietly.
+One Alert Rule firing for one queue (or one paused Replay Rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay Rule resumes or sampling succeeds. A firing Alert survives a restart without being sent again; removing its rule from the file drops it quietly.
 _Avoid_: Incident, event, page
 
 ## Running

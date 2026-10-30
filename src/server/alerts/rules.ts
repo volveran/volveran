@@ -174,6 +174,9 @@ function parseSamplingFailing(value: unknown, fail: (message: string) => never):
   return { kind: 'samplingFailing', forMs: durationWithin(value.for, SECOND, WEEK) ?? fail('.when.samplingFailing.for must be a duration from 1s to 7d') };
 }
 
+/** The glob has only `*` and `?`; these would match themselves, which is never what such a pattern means. */
+const REGEX_LOOKING = /[\^$\\()+|[\]]/;
+
 function parseSelection(value: Record<string, unknown>, context: AlertRuleContext, fail: (message: string) => never): QueueSelection {
   const { vhost, queue, queuePattern } = value;
   if (typeof vhost !== 'string' || vhost === '') return fail('.when.vhost is required and must be a non-empty string');
@@ -182,6 +185,9 @@ function parseSelection(value: Record<string, unknown>, context: AlertRuleContex
   if (queue !== undefined && (typeof queue !== 'string' || queue === '')) fail('.when.queue must be a non-empty string');
   if (queuePattern !== undefined && (typeof queuePattern !== 'string' || queuePattern.trim() === '')) {
     fail('.when.queuePattern must be a non-empty glob (`*` and `?` wildcards)');
+  }
+  if (typeof queuePattern === 'string' && REGEX_LOOKING.test(queuePattern)) {
+    fail(`.when.queuePattern "${queuePattern}" looks like a regular expression; it is a glob: \`*\` and \`?\` are its only wildcards`);
   }
   return { vhost, queue: (queue as string | undefined) ?? null, queuePattern: (queuePattern as string | undefined) ?? null };
 }

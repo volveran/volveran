@@ -9,9 +9,8 @@ import { alertPlaceText, alertReasonText, alertValueText, deliveryText, ruleCond
 import { historyPath } from '../shared/history-link.js';
 import { durationText } from '../shared/replay-rules.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
+import { time } from './time.js';
 import { api, ApiError } from './api.js';
-
-const time = (iso: string) => <span title={iso}>{new Date(iso).toLocaleString()}</span>;
 
 const Failure = ({ title, error }: { title: string; error: ApiError }) => (
   <div className="error" role="alert">

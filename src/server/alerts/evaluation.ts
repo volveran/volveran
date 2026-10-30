@@ -9,7 +9,8 @@
 //
 // A resolved Alert is forgotten: the next firing is a new Alert with a new id. A
 // failed run says nothing about any queue, so it changes no Alert (it may repeat
-// one). So does a Sample whose arrivals are unknown, for an arrival condition.
+// one). So does a Sample whose arrivals are unknown, for an arrival condition, and
+// a good run with no depth for a queue, for that queue.
 //
 // Conditions on Volverán itself:
 // - replayRulePaused holds while a Replay Rule is paused, each its own Alert, from
@@ -20,23 +21,17 @@
 //   had one, its first failed run), and resolves at the next good run.
 // An evaluation with no run (a pause or resume) changes only replayRulePaused Alerts.
 //
-// Arrivals here are the ones the Sample's depth has borne out, not the Sample's
-// `estimatedArrivals`. Management depth lags Audit Entries, so depth 10 -> 10
-// with 10 taken out estimates 10 arrivals that never happened, and the drop shows
-// only in the next Sample. So a rise in depth counts at once, and a take-out is
-// held for one Sample: a drop in that Sample settles it, and what no drop settles
-// did hide arrivals, which count then, one Sample late. A consumer outside
-// Volverán can settle a take-out too, and so hide arrivals, as it does anyway.
+// Arrivals here are the ones the Sample's depth has borne out (bornOutArrivals),
+// not the Sample's `estimatedArrivals`.
 import { createHash } from 'node:crypto';
 import { historyPath } from '../../shared/history-link.js';
+import { bornOutArrivals } from '../history/estimated-arrivals.js';
 import { matchesQueueFilter } from '../triage/queue-list.js';
 import type { FinishedRun, LatestSample } from '../history/sampler.js';
 import type { Notification } from './payloads.js';
 import type { SetupWarningSeverity } from '../../shared/queues.js';
+import { PAUSE_REASON_LIMIT } from '../../shared/replay-rules.js';
 import type { AlertCondition, AlertRule, QueueCondition } from './rules.js';
-
-/** Chat tools refuse a long field, and the whole notification with it; an Operator's pause reason can be any length. */
-const REASON_LIMIT = 500;
 
 /** One Alert: one Alert Rule on one queue, from when its condition held until it resolves. */
 export interface AlertState {
@@ -122,8 +117,9 @@ interface Reading {
 export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRules, lastSuccessAt }: EvaluationInput): EvaluationResult {
   const now = at.getTime();
   const notifications: AlertNotification[] = [];
-  const samples = run?.run.ok ? run.samples : null;
-  const arrivals = samples ? reckonArrivals(rules, memory.arrivals, samples, now) : null;
+  const samples = run?.samplingRun.ok ? run.samples : null;
+  const unknownDepth = new Set((run?.unknownDepth ?? []).map((q) => JSON.stringify([q.vhost, q.queue])));
+  const arrivals = samples ? reckonArrivals(rules, memory.arrivals, samples, unknownDepth, now) : null;
   const previous = new Map(memory.alerts.map((a) => [alertKey(a), a]));
   const alerts: AlertState[] = [];
 
@@ -174,7 +170,7 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
     if (when.kind === 'replayRulePaused') {
       const paused = pausedReplayRules.filter((r) => when.rule === null || r.name === when.rule);
       for (const replayRule of paused) {
-        const reason = replayRule.reason?.slice(0, REASON_LIMIT) ?? null;
+        const reason = replayRule.reason?.slice(0, PAUSE_REASON_LIMIT) ?? null;
         const alert = ours.find((a) => a.replayRule === replayRule.name);
         const since = Math.min(replayRule.pausedAt, now);
         const base = alert ? { ...alert, reason } : newAlert(profile, rule, { replayRule: replayRule.name, reason }, { holds: true, value: null, threshold: null }, since);
@@ -193,11 +189,11 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
     }
 
     if (when.kind === 'samplingFailing') {
-      if (run.run.ok) {
+      if (run.samplingRun.ok) {
         for (const alert of ours) endAtOnce(rule, alert, 0);
         continue;
       }
-      const reason = run.run.errorCode;
+      const reason = run.samplingRun.errorCode;
       const alert = ours[0];
       const since = alert?.since ?? lastSuccessAt?.getTime() ?? now;
       const reading = { holds: true, value: Math.round((now - since) / 1000), threshold: Math.round(when.forMs / 1000) };
@@ -232,7 +228,12 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
     // Alerts of queues gone from a good run: their condition cannot hold.
     const present = new Set(matching.map((s) => JSON.stringify([s.vhost, s.queue])));
     for (const alert of ours) {
-      if (alert.queue !== null && present.has(JSON.stringify([alert.vhost, alert.queue]))) continue;
+      const place = JSON.stringify([alert.vhost, alert.queue]);
+      if (alert.queue !== null && present.has(place)) continue;
+      if (unknownDepth.has(place)) {
+        alerts.push(alert.status === 'firing' ? fireOrRepeat(rule, alert) : alert);
+        continue;
+      }
       const after = settleFalse(alert, alert.value, now, (ended) => notify(rule, ended, 'resolved'));
       if (after) alerts.push(after);
     }
@@ -301,15 +302,16 @@ function read(when: QueueCondition, sample: LatestSample, arrivals: QueueArrival
 }
 
 /** Carries each queue an arrival condition watches forward by its Sample; other queues are not remembered. */
-function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], samples: LatestSample[], now: number): QueueArrivals[] {
+function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], samples: LatestSample[], unknownDepth: ReadonlySet<string>, now: number): QueueArrivals[] {
   const watching = rules.flatMap((r) => (r.when.kind === 'arrivalsAbove' || r.when.kind === 'anyArrival' ? [r.when] : []));
   const keepMs = Math.max(0, ...watching.map((w) => (w.kind === 'arrivalsAbove' ? w.withinMs : 0)));
-  const next: QueueArrivals[] = [];
+  // A queue with no depth this run has no Sample, but keeps what it had.
+  const next = previous.filter((a) => unknownDepth.has(JSON.stringify([a.vhost, a.queue])));
   for (const sample of samples) {
     if (!watching.some((w) => w.vhost === sample.vhost && selects(w, sample.queue))) continue;
     const before = previous.find((a) => a.vhost === sample.vhost && a.queue === sample.queue);
     const carried = { unsettled: before?.unsettled ?? 0, recent: before?.recent ?? [] };
-    const { unsettled, arrived } = reckon(carried.unsettled, sample);
+    const { unsettled, arrived } = bornOutArrivals(carried.unsettled, sample);
     next.push({
       vhost: sample.vhost,
       queue: sample.queue,
@@ -318,17 +320,6 @@ function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], 
     });
   }
   return next;
-}
-
-/** One Sample: its drop in depth settles the take-outs held from before, then its own. */
-function reckon(held: number, { depth, previousDepth, takenOut }: LatestSample): { unsettled: number; arrived: number } {
-  if (previousDepth === null) return { unsettled: held, arrived: 0 };
-  const change = depth - previousDepth;
-  const drop = Math.max(0, -change);
-  return {
-    unsettled: Math.max(0, takenOut - Math.max(0, drop - held)),
-    arrived: Math.max(0, change) + Math.max(0, held - drop),
-  };
 }
 
 function alertKey({ rule, vhost, queue, replayRule }: Pick<AlertState, 'rule' | 'vhost' | 'queue' | 'replayRule'>): string {

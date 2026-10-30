@@ -89,6 +89,9 @@ export const AUTOMATIC_PAUSE_REASONS = {
   publish_failed: 'a Replay or Move of its last pass failed to publish',
 } as const;
 
+/** How much of a pause's reason leaves Volverán: an Operator's can be any length, and chat tools refuse a long field, and the whole notification with it. */
+export const PAUSE_REASON_LIMIT = 500;
+
 /** A pause reason as people read it: the automatic stop's reasons in words, an Operator's as written. */
 export function pauseReasonText(reason: string): string {
   return (AUTOMATIC_PAUSE_REASONS as Record<string, string>)[reason] ?? reason;

@@ -76,13 +76,20 @@ Canary Replay watches for a Canary that dies again without consuming from the de
 
 ## Publish counter
 
-Depth history cannot read arrivals from a dead-letter queue's `message_stats.publish`, because the broker does not count dead-lettered Messages there. So Volverán reports **estimated arrivals**: the positive depth change between Samples plus the Messages Volverán itself took out in between, from Audit Entries. If a RabbitMQ release starts counting them, the first fact below fails in the weekly latest-broker run, and this choice can be revisited. "Broker restart" below means `rabbitmqctl stop_app` then `start_app`, with the broker's statistics at their default 5 s interval.
+Depth history cannot read arrivals from a dead-letter queue's `message_stats.publish`, because the broker does not count dead-lettered Messages there. So Volverán reports **estimated arrivals**: the change in depth between Samples plus the Messages Volverán itself took out in between, from Audit Entries, never below zero. If a RabbitMQ release starts counting them, the first fact below fails in the weekly latest-broker run, and this choice can be revisited. "Broker restart" here and under [Missing depth](#missing-depth) means `rabbitmqctl stop_app` then `start_app`, with the broker's statistics at their default 5 s interval.
 
 - Dead-lettering does not count in the receiving queue's `message_stats.publish`: on classic and quorum queues, for rejected and expired Messages, through the dead-letter exchange directly or through an exchange-to-exchange binding, the Message adds to the depth and the counter stays absent. Only a client's publish counts.
 - A client's publish shows in `message_stats.publish` within about 5 seconds of its confirm, one statistics interval.
 - A queue with no traffic yet reports no `message_stats` at all, rather than a zero count.
 - Deleting and re-declaring a queue resets its `message_stats.publish`, so a reading can be lower than the previous one.
 - A broker restart resets `message_stats.publish`, so a reading can be lower than the previous one. Durable Messages keep the queue's depth across it.
+
+## Missing depth
+
+The queue list's `messages` is left out, not zero, when the broker has no statistics for a queue, so Volverán never reads a missing depth as an empty queue: the sampler records no Sample for that queue in that run, and its next Sample has unknown arrivals. With `collect_statistics = none` the list still has `messages`. With `management_agent.disable_metrics_collector = true` it never does, so no queue is ever sampled (checked by hand on RabbitMQ 4.4.0, because it needs a broker of its own).
+
+- A queue just declared is listed with no `messages` or `consumers` fields, rather than zero, until the next statistics emission.
+- Just after a broker restart the management API lists a queue with no `messages` or `consumers` fields, rather than zero, for some seconds. The depth then comes back unchanged.
 
 ## Prefetch
 

@@ -1,4 +1,4 @@
-// A fake HTTP receiver for notifications, started by a test as the test OIDC
+// A fake HTTP destination for notifications, started by a test as the test OIDC
 // provider is: it records each request and answers with the statuses it is told.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -11,7 +11,7 @@ export interface ReceivedRequest {
   json: any;
 }
 
-export interface FakeReceiver {
+export interface FakeDestination {
   url: string;
   received: ReceivedRequest[];
   /** The statuses of the next requests, in order; after them, 200. */
@@ -19,7 +19,7 @@ export interface FakeReceiver {
   close(): Promise<void>;
 }
 
-export async function startFakeReceiver(): Promise<FakeReceiver> {
+export async function startFakeDestination(): Promise<FakeDestination> {
   const received: ReceivedRequest[] = [];
   let statuses: number[] = [];
   const server = http.createServer((req, res) => {

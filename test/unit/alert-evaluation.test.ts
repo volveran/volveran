@@ -38,7 +38,7 @@ function run(rules: AlertRule[], memory: AlertMemory = emptyAlertMemory()) {
   const step = (samples: LatestSample[], minutes: number, ok = true) => {
     const result = evaluateAlerts({
       profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
-      run: { run: { profile: 'prod', at: at(minutes), ok, errorCode: ok ? null : 'x' }, samples },
+      run: { samplingRun: { profile: 'prod', at: at(minutes), ok, errorCode: ok ? null : 'x' }, samples, unknownDepth: [] },
     });
     memory = result.memory;
     return result.notifications;
@@ -135,6 +135,28 @@ describe('depthAbove', () => {
     expect(resolved!.notification).toMatchObject({ status: 'resolved', queue: 'orders.dlq', value: 20 });
   });
 
+  it('does not resolve on a good run with no depth for the queue: no depth is not depth 0', () => {
+    const rules = [rule({ when: depthAbove(10) })];
+    let memory = emptyAlertMemory();
+    const good = (minutes: number, samples: LatestSample[], unknownDepth: Array<{ vhost: string; queue: string }> = []) => {
+      const result = evaluateAlerts({
+        profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
+        run: { samplingRun: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth },
+      });
+      memory = result.memory;
+      return result.notifications;
+    };
+    good(0, [sample(0, 20, 10)]);
+    const firing = memory.alerts;
+    expect(good(1, [], [{ vhost: '/', queue: 'orders.dlq' }])).toEqual([]);
+    expect(good(2, [], [{ vhost: '/', queue: 'orders.dlq' }])).toEqual([]);
+    expect(good(3, [], [{ vhost: '/', queue: 'orders.dlq' }])).toEqual([]);
+    expect(memory.alerts).toEqual(firing);
+    // Gone from a good run with no such word: it still resolves.
+    good(4, []);
+    expect(good(5, [])).toHaveLength(1);
+  });
+
   it('changes nothing on a failed run: no data is not a false condition', () => {
     const { step, memory } = run([rule({ when: depthAbove(10), forMs: 5 * MINUTE }), rule({ name: 'now', when: depthAbove(10) })]);
     step([sample(0, 20, 0)], 0);
@@ -225,6 +247,23 @@ describe('anyArrival', () => {
     expect(sent!.notification.value).toBe(5);
   });
 
+  it('keeps an unsettled take-out and its recent arrivals across a run with no depth for the queue', () => {
+    const rules = [rule({ when: anyArrival })];
+    let memory = emptyAlertMemory();
+    const step = (minutes: number, samples: LatestSample[], unknownDepth: Array<{ vhost: string; queue: string }> = []) => {
+      const result = evaluateAlerts({
+        profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
+        run: { samplingRun: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth },
+      });
+      memory = result.memory;
+      return result.notifications;
+    };
+    step(0, [sample(0, 10, 10, 10)]);
+    const held = memory.arrivals;
+    step(1, [], [{ vhost: '/', queue: 'orders.dlq' }]);
+    expect(memory.arrivals).toEqual(held);
+  });
+
   it('keeps an unsettled take-out across a failed run', () => {
     const { step } = run([rule({ when: anyArrival })]);
     step([sample(0, 10, 10, 10)], 0);
@@ -291,8 +330,8 @@ describe('memory', () => {
 
 describe('conditions on Volverán itself', () => {
   const paused = (name: string, reason: string | null, minutes = 0) => ({ name, reason, pausedAt: at(minutes).getTime() });
-  const goodRun = (minutes: number, samples: LatestSample[] = []) => ({ run: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples });
-  const failedRun = (minutes: number) => ({ run: { profile: 'prod', at: at(minutes), ok: false, errorCode: 'broker_unreachable' }, samples: [] });
+  const goodRun = (minutes: number, samples: LatestSample[] = []) => ({ samplingRun: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth: [] });
+  const failedRun = (minutes: number) => ({ samplingRun: { profile: 'prod', at: at(minutes), ok: false, errorCode: 'broker_unreachable' }, samples: [], unknownDepth: [] });
   const warning = (severity: 'loses_messages' | 'may_lose_messages') =>
     severity === 'loses_messages'
       ? ({ severity, code: 'dead_letter_exchange_missing', deadLetterExchange: 'x', message: 'lost' } as const)

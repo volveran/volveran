@@ -1,5 +1,5 @@
 // What Operators and scrapers see of Alerts, against the real broker with the
-// sampler's test clock and a fake receiver: the alerts API by Role, the Alert Rules,
+// sampler's test clock and a fake Alert Destination: the alerts API by Role, the Alert Rules,
 // the firing Alerts in the queue list, and the two alert metric families.
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -18,7 +18,7 @@ import {
   testProfile,
   type TestApp,
 } from './harness.js';
-import { startFakeReceiver, type FakeReceiver } from './fake-receiver.js';
+import { startFakeDestination, type FakeDestination } from './fake-destination.js';
 import { teamModeEnv, TestBrowser } from './oidc-provider.js';
 
 const route = deadLetterRoutes.classic;
@@ -29,21 +29,21 @@ const messages = (prefix: string, count: number) =>
 const queueList = '/api/profiles/prod/vhosts/%2F/queues';
 
 describe('seeing Alerts', () => {
-  let receiver: FakeReceiver;
-  let failing: FakeReceiver;
+  let destination: FakeDestination;
+  let failing: FakeDestination;
   const apps: TestApp[] = [];
   const dirs: string[] = [];
 
   beforeAll(async () => {
-    receiver = await startFakeReceiver();
-    failing = await startFakeReceiver();
+    destination = await startFakeDestination();
+    failing = await startFakeDestination();
   });
   afterAll(async () => {
-    await receiver.close();
+    await destination.close();
     await failing.close();
   });
   beforeEach(() => {
-    receiver.received.length = 0;
+    destination.received.length = 0;
     failing.received.length = 0;
   });
   afterEach(async () => {
@@ -57,7 +57,7 @@ describe('seeing Alerts', () => {
     { name: 'pager', type: 'webhook', urlEnv: 'HOOK_URL', signingSecretEnv: 'HOOK_SECRET' },
     { name: 'ops-slack', type: 'slack', urlEnv: 'SLACK_URL' },
   ];
-  const secrets = () => ({ HOOK_URL: receiver.url, HOOK_SECRET: 'whsec-not-for-browsers', SLACK_URL: failing.url });
+  const secrets = () => ({ HOOK_URL: destination.url, HOOK_SECRET: 'whsec-not-for-browsers', SLACK_URL: failing.url });
   const deep = { name: 'deep', destinations: ['pager'], when: { vhost: '/', queue: dlq, depthAbove: 1 }, repeatEvery: '10m' };
   const slow = { name: 'slow', destinations: ['pager', 'ops-slack'], when: { vhost: '/', queue: dlq, depthAbove: 1 }, for: '1h' };
 
@@ -99,7 +99,7 @@ describe('seeing Alerts', () => {
     const viewer = await as('vera', ['support']);
     await fillQueue(viewer, 3);
     await sampler.sampleNow();
-    await eventually(async () => expect(receiver.received).toHaveLength(1), 10_000, 50);
+    await eventually(async () => expect(destination.received).toHaveLength(1), 10_000, 50);
 
     await eventually(async () => {
       const res = await viewer.get('/api/alerts');
@@ -146,7 +146,7 @@ describe('seeing Alerts', () => {
     const store = new AuditStore(dataDir);
     const row = (profile: string, at: Date) => ({
       at, alertId: `${profile}-a`, destination: 'pager', destinationType: 'webhook' as const, status: 'firing' as const, test: false,
-      rule: 'deep', profile, vhost: '/', queue: dlq, outcome: 'delivered' as const, httpStatus: 200, error: null, attempts: 1,
+      rule: 'deep', profile, vhost: '/', queue: dlq, replayRule: null, outcome: 'delivered' as const, httpStatus: 200, error: null, attempts: 1,
     });
     const now = Date.now();
     store.notifications.record(row('prod', new Date(now - 10_000)));

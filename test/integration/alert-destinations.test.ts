@@ -1,12 +1,12 @@
 // Alert Destinations and test notifications: an admin checks that a destination
-// works before any Alert Rule exists. What a receiver gets, what the API
+// works before any Alert Rule exists. What an Alert Destination gets, what the API
 // answers, and what the audit store keeps.
 import { createHmac } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AuditStore } from '../../src/server/audit/store.js';
 import { closedPort, makeTempDir, startApp, testProfile, type TestApp } from './harness.js';
-import { startFakeReceiver, type FakeReceiver } from './fake-receiver.js';
+import { startFakeDestination, type FakeDestination } from './fake-destination.js';
 import { teamModeEnv, TestBrowser } from './oidc-provider.js';
 
 const destinations = [
@@ -17,33 +17,33 @@ const destinations = [
 const SECRET = 'whsec-test';
 
 describe('test notifications', () => {
-  let receiver: FakeReceiver;
+  let destination: FakeDestination;
   let app: TestApp;
   let dataDir: string;
 
   beforeAll(async () => {
-    receiver = await startFakeReceiver();
+    destination = await startFakeDestination();
     dataDir = await makeTempDir('alert-destinations');
     app = await startApp({
       profiles: [testProfile({ name: 'local' })],
       alertDestinations: destinations,
       dataDir,
       env: {
-        SLACK_URL: `${receiver.url}/slack`,
-        TEAMS_URL: `${receiver.url}/teams`,
-        HOOK_URL: `${receiver.url}/webhook`,
+        SLACK_URL: `${destination.url}/slack`,
+        TEAMS_URL: `${destination.url}/teams`,
+        HOOK_URL: `${destination.url}/webhook`,
         HOOK_SECRET: SECRET,
         VOLVERAN_PUBLIC_URL: 'https://volveran.example.com',
       },
     });
   });
   afterEach(() => {
-    receiver.received.length = 0;
-    receiver.answerWith();
+    destination.received.length = 0;
+    destination.answerWith();
   });
   afterAll(async () => {
     await app.close();
-    await receiver.close();
+    await destination.close();
     await rm(dataDir, { recursive: true, force: true });
   });
 
@@ -53,8 +53,8 @@ describe('test notifications', () => {
     const res = await test('ops-slack');
     expect(res.status).toBe(200);
     expect(res.body.delivery).toMatchObject({ destination: 'ops-slack', destinationType: 'slack', test: true, outcome: 'delivered', httpStatus: 200, attempts: 1 });
-    expect(receiver.received).toHaveLength(1);
-    const [request] = receiver.received;
+    expect(destination.received).toHaveLength(1);
+    const [request] = destination.received;
     expect(request!.path).toMatch(/\/slack$/);
     expect(request!.headers['content-type']).toBe('application/json');
     expect(request!.json.text).toContain('Test notification');
@@ -64,7 +64,7 @@ describe('test notifications', () => {
 
   it('reaches a Teams destination as a labelled Adaptive Card', async () => {
     expect((await test('ops-teams')).body.delivery).toMatchObject({ destinationType: 'teams', outcome: 'delivered' });
-    const { json } = receiver.received[0]!;
+    const { json } = destination.received[0]!;
     expect(json.type).toBe('message');
     expect(json.attachments[0].contentType).toBe('application/vnd.microsoft.card.adaptive');
     expect(json.attachments[0].content.body[0].text).toBe('Test notification from Volverán');
@@ -75,7 +75,7 @@ describe('test notifications', () => {
     const before = Math.floor(Date.now() / 1000);
     const res = await test('pager');
     expect(res.body.delivery).toMatchObject({ destinationType: 'webhook', outcome: 'delivered' });
-    const { json, headers, text } = receiver.received[0]!;
+    const { json, headers, text } = destination.received[0]!;
     expect(json).toEqual({
       version: 1,
       test: true,
@@ -99,24 +99,24 @@ describe('test notifications', () => {
     expect(headers['x-volveran-signature']).toBe(`sha256=${createHmac('sha256', SECRET).update(`${timestamp}.${text}`).digest('hex')}`);
   });
 
-  it('retries a receiver answering 500 twice, and records the delivery on the third attempt', async () => {
-    receiver.answerWith(500, 500, 200);
+  it('retries a destination answering 500 twice, and records the delivery on the third attempt', async () => {
+    destination.answerWith(500, 500, 200);
     const started = Date.now();
     const res = await test('pager');
     expect(res.body.delivery).toMatchObject({ outcome: 'delivered', httpStatus: 200, attempts: 3 });
-    expect(receiver.received).toHaveLength(3);
+    expect(destination.received).toHaveLength(3);
     // Back-off: 1 s, then 2 s.
     expect(Date.now() - started).toBeGreaterThanOrEqual(2900);
-    const ids = new Set(receiver.received.map((r) => r.json.alertId));
+    const ids = new Set(destination.received.map((r) => r.json.alertId));
     expect(ids.size).toBe(1);
   });
 
   it('records one that keeps failing as failed, with its status', async () => {
-    receiver.answerWith(503, 503, 503);
+    destination.answerWith(503, 503, 503);
     const res = await test('ops-slack');
     expect(res.status).toBe(200);
     expect(res.body.delivery).toMatchObject({ outcome: 'failed', httpStatus: 503, error: null, attempts: 3 });
-    expect(receiver.received).toHaveLength(3);
+    expect(destination.received).toHaveLength(3);
   });
 
   it('answers 404 for a destination the file does not declare', async () => {
@@ -145,7 +145,7 @@ describe('test notifications', () => {
   });
 });
 
-describe('a receiver that cannot be reached', () => {
+describe('a destination that cannot be reached', () => {
   it('is recorded as failed with the error code, and no URL', async () => {
     const port = await closedPort();
     const app = await startApp({
@@ -181,12 +181,12 @@ describe('startup', () => {
 });
 
 describe('test notifications in Team Mode', () => {
-  let receiver: FakeReceiver;
+  let destination: FakeDestination;
   let app: TestApp;
   let baseUrl: string;
 
   beforeAll(async () => {
-    receiver = await startFakeReceiver();
+    destination = await startFakeDestination();
     const port = await closedPort();
     baseUrl = `http://127.0.0.1:${port}`;
     app = await startApp({
@@ -196,12 +196,12 @@ describe('test notifications in Team Mode', () => {
         testProfile({ name: 'staging', roles: { admin: ['staging-admins'] } }),
       ],
       alertDestinations: [{ name: 'pager', type: 'webhook', urlEnv: 'HOOK_URL' }],
-      env: { ...teamModeEnv(baseUrl), HOOK_URL: receiver.url },
+      env: { ...teamModeEnv(baseUrl), HOOK_URL: destination.url },
     });
   });
   afterAll(async () => {
     await app.close();
-    await receiver.close();
+    await destination.close();
   });
 
   async function as(sub: string, groups: string[]) {
@@ -219,7 +219,7 @@ describe('test notifications in Team Mode', () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toMatchObject({ code: 'role_required', required: 'admin' });
     expect(JSON.stringify(res.body)).not.toContain('secret-token');
-    expect(receiver.received).toHaveLength(0);
+    expect(destination.received).toHaveLength(0);
   });
 
   it('refuses without saying whether the destination exists', async () => {
@@ -235,6 +235,6 @@ describe('test notifications in Team Mode', () => {
     const res = await (await as('ada', ['staging-admins'])).post('/api/alert-destinations/pager/test');
     expect(res.status).toBe(200);
     expect(res.body.delivery.outcome).toBe('delivered');
-    expect(receiver.received.at(-1)!.json.url).toBe(`${baseUrl}/`);
+    expect(destination.received.at(-1)!.json.url).toBe(`${baseUrl}/`);
   });
 });

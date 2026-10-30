@@ -23,8 +23,9 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 **Estimated arrivals.** The broker does not count dead-lettered Messages ([RabbitMQ behaviour](rabbitmq-behaviour.md#publish-counter)), so each Sample's arrivals are estimated: the rise in depth since the Sample before, plus the Messages Volverán took out in between, from its Audit Entries.
 
 - A consumer outside Volverán hides arrivals: what it takes away is not seen arriving.
-- A queue's first Sample has unknown arrivals, shown as unknown rather than zero.
-- Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth. The history and the metrics then show a false spike. [Alert Rules](#alert-rules) correct for it.
+- A queue's first Sample has unknown arrivals, shown as unknown rather than zero. So has its first Sample after a run with no depth for it.
+- The management API lists a queue with no depth for some seconds after a broker restart. Volverán takes no Sample of it in that run, rather than a depth of 0, which holds its Alerts as they are. A broker with `management_agent.disable_metrics_collector = true` never reports depth, so its queues get no Samples at all, though its sampling runs succeed ([RabbitMQ behaviour](rabbitmq-behaviour.md#missing-depth)).
+- Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth. The history then shows a false spike. [Alert Rules](#alert-rules) and the arrivals metric count arrivals only once the depth has borne them out, so they do not.
 
 **Depth** is the management API's count of the queue's Messages, which lags by a few seconds, and includes those a Checkout holds.
 
@@ -34,12 +35,12 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 
 The queue list shows a 24-hour depth chart next to each dead-letter queue. A queue's history view (the link on the chart, or `h` on the focused queue) shows depth and estimated arrivals over the last hour, 24 hours, 7 days or the whole retention, the time of the latest Sample, gaps, and marks for the Applies and Rule Passes that took Messages out, linked to their Audit Entries. Any Role on the profile may read it, as with the queue list. Link to one with `#/history/<profile>/<vhost>/<queue>`.
 
-`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 points, each with its bucket's last depth and summed arrivals.
+`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 buckets of Samples, each with its last depth and summed arrivals; `arrivalsPartlyUnknown` says some of its Samples, not all, had unknown arrivals, and the view hatches it like an unknown stretch.
 
 ```json
 { "from": "2026-10-29T10:00:00.000Z", "to": "2026-10-30T10:00:00.000Z", "retentionDays": 14,
   "latestSampleAt": "2026-10-30T09:59:30.000Z",
-  "samples": [{ "at": "2026-10-30T09:59:30.000Z", "depth": 400, "estimatedArrivals": 12 }],
+  "samples": [{ "at": "2026-10-30T09:59:30.000Z", "depth": 400, "estimatedArrivals": 12, "arrivalsPartlyUnknown": false }],
   "gaps": [{ "from": "2026-10-30T03:00:00.000Z", "to": "2026-10-30T03:20:00.000Z", "errorCode": "…" }],
   "marks": [{ "at": "2026-10-30T08:00:00.000Z", "kind": "apply", "operator": "ana", "rule": null, "checkoutId": "…",
               "counts": { "discard": 2, "replay": 40, "move": 0 }, "auditUrl": "/api/audit-entries?…" }] }
@@ -72,7 +73,7 @@ Worked example: 100 dead-letter queues at one-minute Samples, for the default 14
 
 Each vhost has a **Dead-letter Map**: which queues dead-letter into which, through which exchange and routing key. It shows the broker's set-up, not the Messages that took a path, and it is read-only. Queues that take no part in dead-lettering are left off.
 
-The Dead-letter Map view (`#/dead-letter-map/<profile>/<vhost>`) draws queues with their depth and set-up warnings, losses, chains and cycles, searches for one queue and shows the part connected to it, opens a queue's history or a Checkout, and lists the same graph as text to read or copy. Any Role on the profile may see it. During a Canary, its watch queue `volveran.canary.<checkout id>` can appear on the map, because it is bound to the dead-letter exchange.
+The Dead-letter Map view (`#/dead-letter-map/<profile>/<vhost>`) draws queues with their depth and set-up warnings, losses, chains and cycles, searches for one queue and shows the part connected to it, opens a queue's history or a Checkout, and lists the same graph as text to read or copy. Any Role on the profile may see it.
 
 `GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map` answers `{ nodes, edges, cycles }`:
 
@@ -162,31 +163,31 @@ profiles:
 | `vhost` and `queue` or `queuePattern`, with `depthAbove: n` | The depth is above `n` (0 or more). | The depth; `n`. |
 | The same, with `arrivalsAbove: { count, within }` | More than `count` estimated arrivals within `within` (1s to 7d). | The arrivals in the window; `count`. |
 | The same, with `anyArrival: true` | Any Message arrives. | The arrivals at this Sample; none. |
-| `replayRulePaused: true`, optionally `rule: <name>` | A Replay rule of the profile is paused; each rule is its own Alert. The reason is in the notification. | None. |
+| `replayRulePaused: true`, optionally `rule: <name>` | A Replay Rule of the profile is paused; each rule is its own Alert. The reason is in the notification. | None. |
 | `setupWarning: loses_messages` or `may_lose_messages` | A dead-letter queue has a set-up warning at least this bad (`may_lose_messages` includes `loses_messages`); each queue is its own Alert. The codes are in the notification. | How many warnings; none. |
 | `samplingFailing: { for }` | The profile has had no good sampling run for `for` (1s to 7d), counted from its last good run. The error code is in the notification. | Seconds since then; `for` in seconds. |
 
-- `queuePattern` is the same glob as `defaultQueueFilter` (`*` and `?`). Each matching dead-letter queue is its own Alert.
+- `queuePattern` is the same glob as `defaultQueueFilter` (`*` and `?`). Startup refuses a pattern that looks like a regular expression (one with `^`, `$`, `\`, `(`, `)`, `+`, `|`, `[` or `]`). Each matching dead-letter queue is its own Alert.
 - `for` (1s to 7d) is how long the condition must hold before the Alert fires. `samplingFailing` takes its own `for` and no other.
 - `repeatEvery` (1m to 7d) sends a firing Alert again. By default it is sent once.
 - Durations are written `30s`, `5m`, `1h30m`, `7d`.
 
 **A `queue:` must name a dead-letter queue.** Only those are sampled, so a rule naming another queue never fires, and startup does not refuse it because it does not ask the broker.
 
-**How an Alert moves.** It is pending while the condition has not held for `for`, and is forgotten quietly if the condition goes false. Once it has held, it is firing and a notification goes out. It resolves, with another notification, when the condition is false at two Samples in a row, a full Sample apart, or at once when a Replay rule resumes or sampling succeeds. The next firing is a new Alert with a new id. Evaluation runs after each sampling run and on each Replay rule pause and resume.
+**How an Alert moves.** It is pending while the condition has not held for `for`, and is forgotten quietly if the condition goes false. Once it has held, it is firing and a notification goes out. It resolves, with another notification, when the condition is false at two Samples in a row, a full Sample apart, or at once when a Replay Rule resumes or sampling succeeds. The next firing is a new Alert with a new id. Evaluation runs after each sampling run and on each Replay Rule pause and resume.
 
-- A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is.
+- A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is, and a run with no depth for a queue holds that queue's Alerts.
 - **Arrival conditions count only what the depth has borne out**: a take-out counts once the next Sample shows it did not explain a drop in depth. So false spikes do not fire them, and arrivals hidden by triage alert one Sample late. The history and the metrics are not corrected in this way, and can show a spike with no Alert.
 - A firing Alert survives a restart without being sent again. A crash between storing an Alert and sending it loses that notification rather than sending it twice.
 - Removing an Alert Rule from the file drops its Alerts at the next restart, with no resolved notification.
-- A Replay rule already paused, or a queue already warned, fires at the next evaluation, also when the Alert Rule has just been deployed. A Replay rule deployed with `startPaused` never fires. Removing a paused Replay rule from the file sends a resolved notification.
+- A Replay Rule already paused, or a queue already warned, fires at the next evaluation, also when the Alert Rule has just been deployed. A Replay Rule deployed with `startPaused` never fires. Removing a paused Replay Rule from the file sends a resolved notification.
 
 **Startup refuses**, with a message naming the place in the file:
 
 - An Alert Destination with an unknown `type`, an unset `urlEnv` or `signingSecretEnv`, a URL that is not `http` or `https`, `signingSecretEnv` on a type other than `webhook`, a malformed or duplicate name. This holds even for a destination no rule uses.
 - An Alert Rule naming an undeclared destination or one twice, with a duplicate name, a malformed pattern or duration, a vhost outside the profile's `vhosts`, or anything but exactly one condition.
 - A queue condition, `setupWarning` or `samplingFailing` on an `operatorToken` profile, which is not sampled.
-- `replayRulePaused` on a profile with no Replay rules, or with `rule:` naming a Replay rule it does not have.
+- `replayRulePaused` on a profile with no Replay Rules, or with `rule:` naming a Replay Rule it does not have.
 - A rule-level `for` on `samplingFailing`.
 
 ### Webhook schema
@@ -202,14 +203,14 @@ A generic webhook receives this JSON, in version 1. `version` changes if its sha
 | Field | Meaning |
 | --- | --- |
 | `version` | `1`. |
-| `test` | `true` only on a test notification, which also has `status: firing`, `condition: test`, a new `alertId` and null `profile`. Receivers should ignore these, so a test never pages anyone. |
-| `alertId` | The same from an Alert's firing, through its repeats, to its resolved, so a receiver can deduplicate and pair them. |
+| `test` | `true` only on a test notification, which also has `status: firing`, `condition: test`, a new `alertId` and null `profile`. Your service should ignore these, so a test never pages anyone. |
+| `alertId` | The same from an Alert's firing, through its repeats, to its resolved, so your service can deduplicate and pair them. |
 | `status` | `firing` or `resolved`. A repeat is another `firing`. |
 | `rule`, `profile` | The Alert Rule and its Broker Profile. |
 | `vhost`, `queue` | Null when the condition is not about a queue. |
 | `condition` | `depthAbove`, `arrivalsAbove`, `anyArrival`, `replayRulePaused`, `setupWarning` or `samplingFailing`. |
 | `value`, `threshold` | As in the [Alert Rules table](#alert-rules), null where it says none. |
-| `replayRule` | The Replay rule of a `replayRulePaused` Alert, otherwise null. |
+| `replayRule` | The Replay Rule of a `replayRulePaused` Alert, otherwise null. |
 | `reason` | Why a condition on Volverán itself holds: the pause's reason (at most 500 characters), the set-up warning codes or the sampling error code. Otherwise null. |
 | `startedAt`, `endedAt` | ISO 8601. `endedAt` is null until `resolved`. |
 | `url` | Where to look in Volverán; null with no `VOLVERAN_PUBLIC_URL`. |
@@ -253,11 +254,11 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
 | `volveran_dead_letter_queue_messages` | gauge | `profile`, `vhost`, `queue` | Messages waiting in the dead-letter queue at its latest Sample. |
-| `volveran_dead_letter_queue_estimated_arrived_messages_total` | counter | `profile`, `vhost`, `queue` | Estimated Messages that arrived in the dead-letter queue. Absent while arrivals are unknown. |
+| `volveran_dead_letter_queue_estimated_arrived_messages_total` | counter | `profile`, `vhost`, `queue` | Estimated Messages that arrived in the dead-letter queue, counted once the depth has borne them out, as Alerts count them, so arrivals hidden by triage count one Sample late. Absent while arrivals are unknown. |
 | `volveran_dead_letter_queue_setup_warnings` | gauge | `profile`, `vhost`, `queue`, `code`, `severity` | Set-up warnings of the queue at its latest Sample. `severity` is `loses_messages` or `may_lose_messages`. A code the queue does not have has no series, rather than 0. |
 | `volveran_sampling_up` | gauge | `profile` | 1 if the Broker Profile's latest sampling run succeeded, 0 if it failed. Absent until it has ever run. |
 | `volveran_sampling_last_success_timestamp_seconds` | gauge | `profile` | When the Broker Profile was last sampled successfully, in seconds since the Unix epoch. Absent if it never was. |
-| `volveran_replay_rule_paused` | gauge | `profile`, `rule`, `reason` | 1 while the Replay rule is paused, 0 while it runs. `reason` says why it is paused, in the words of whoever paused it or an automatic stop's code (such as `died_again`), and is empty otherwise. |
+| `volveran_replay_rule_paused` | gauge | `profile`, `rule`, `reason` | 1 while the Replay Rule is paused, 0 while it runs. `reason` says why it is paused, in the words of whoever paused it or an automatic stop's code (such as `died_again`), and is empty otherwise. |
 | `volveran_replay_rule_passes_total` | counter | `profile`, `rule`, `result` | Rule Passes, by `result`: `ran`, `skipped` or `failed`. |
 | `volveran_apply_messages_total` | counter | `profile`, `decision`, `outcome` | Messages an Apply acted on, Rule Passes included. `decision` is `discard`, `replay` or `move`; `outcome` is `done`, `failed` or `not-attempted`. Kept Messages are not counted. |
 | `volveran_checkouts_active` | gauge | | Active Checkouts. |
@@ -272,7 +273,7 @@ Dead-letter queue metrics come from the latest Samples, so they move once per sa
 
 - **While a broker is down** the queue metrics keep their last values and `volveran_sampling_up` is 0, so read a depth together with it. After a restart they are absent until the first good run; the two sampling metrics still show the last known run.
 - **A deleted queue's** depth and warnings leave at the next good run. Its counter stays until the process restarts, and simply stops rising.
-- **Arrivals are estimated**, because the broker does not count dead-lettered Messages: the rise in depth since the Sample before, plus the Messages Volverán took out in between. A consumer outside Volverán hides arrivals. Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth and briefly overstate the count. A queue's first Sample has unknown arrivals, so its counter has no series until the second.
+- **Arrivals are estimated**, because the broker does not count dead-lettered Messages: the change in depth since the Sample before, plus the Messages Volverán took out in between, never below zero. A consumer outside Volverán hides arrivals. Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth and briefly overstate the count. A queue's first Sample has unknown arrivals, so its counter has no series until the second.
 - **`operatorToken` profiles are absent** from all of these. Such a profile connects with the signed-in Operator's token, and with nobody signed in there is no credential to sample with. A missing series for one is expected.
 
 ### Example alerts
@@ -321,7 +322,7 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: 'Replay rule {{ $labels.rule }} on {{ $labels.profile }} is paused: see the Replay rules view for why'
+            summary: 'Replay Rule {{ $labels.rule }} on {{ $labels.profile }} is paused: see the Replay rules view for why'
         - alert: DeadLetterQueueLosesMessages
           expr: volveran_dead_letter_queue_setup_warnings{severity="loses_messages"} > 0
           labels:

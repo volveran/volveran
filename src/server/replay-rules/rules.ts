@@ -132,6 +132,13 @@ export class ReplayRules {
     );
   }
 
+  /** The rules of the profile paused now; `pausedAt` is null until something paused one, so one deployed `startPaused` is left out. */
+  pausedRules(profile: string): Array<{ name: string; reason: string | null; pausedAt: number }> {
+    return this.states().flatMap(({ profile: p, rule, state }) =>
+      p === profile && state.paused && state.pausedAt !== null ? [{ name: rule, reason: state.pausedReason, pausedAt: Date.parse(state.pausedAt) }] : [],
+    );
+  }
+
   /** The rule named `name` of `profile`; throws 404 `replay_rule_not_found`. */
   find(profile: BrokerProfile, name: string): ReplayRule {
     const rule = profile.replayRules.find((r) => r.name === name);

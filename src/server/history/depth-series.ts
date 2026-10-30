@@ -3,16 +3,23 @@
 // are the profile's, read once for the whole list.
 import { downsample } from './downsample.js';
 import { historyGaps } from './gaps.js';
-import type { HistoryRouteDeps } from '../routes/history.js';
+import type { HistoryStore } from '../audit/history.js';
+import type { RuleClock } from '../replay-rules/rule-clock.js';
 import type { DepthSeries } from '../../shared/history.js';
 import type { QueueRow } from '../../shared/queues.js';
 
 /** A small chart cannot show more, and every listed queue sends this many. */
-const MAX_POINTS = 96;
+const MAX_SAMPLES = 96;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export interface DepthSeriesDeps {
+  history: Pick<HistoryStore, 'runsAround' | 'samples'>;
+  clock: Pick<RuleClock, 'now'>;
+  intervalMs: number;
+}
+
 export function depthSeriesOf(
-  { history, clock, intervalMs }: HistoryRouteDeps,
+  { history, clock, intervalMs }: DepthSeriesDeps,
   profile: string,
   vhost: string,
   queues: readonly QueueRow[],
@@ -24,7 +31,7 @@ export function depthSeriesOf(
   );
   return queues.map((queue) => {
     if (!queue.deadLetterQueue) return queue;
-    const samples = downsample(history.samples({ profile, vhost, queue: queue.name }, from, to), MAX_POINTS);
+    const samples = downsample(history.samples({ profile, vhost, queue: queue.name }, from, to), MAX_SAMPLES);
     return { ...queue, depthSeries: { from, to, points: samples.map((s) => [s.at, s.depth]), gaps } };
   });
 }

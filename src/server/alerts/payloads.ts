@@ -7,7 +7,7 @@ import type { AlertDestinationType, NotificationStatus } from '../../shared/aler
 
 /** One thing to tell an Alert Destination: an Alert firing or resolved, or a test. */
 export interface Notification {
-  /** Stable across an Alert's firing, repeats and resolved, so a receiver can deduplicate and pair them. */
+  /** Stable across an Alert's firing, repeats and resolved, so your service can deduplicate and pair them. */
   alertId: string;
   status: NotificationStatus;
   rule: string;
@@ -48,7 +48,7 @@ const LINK_TEXT = 'Open in Volverán';
 /** Slack refuses a longer header block, and with it the whole notification. */
 const SLACK_HEADER_LIMIT = 150;
 
-/** A clearly labelled test notification; `alertId` is new each time, so a receiver never takes it for a repeat. */
+/** A clearly labelled test notification; `alertId` is new each time, so nothing takes it for a repeat. */
 export function testNotification(at: Date, alertId: string): Notification {
   return {
     alertId,
@@ -126,7 +126,7 @@ function factsOf(n: Notification): Array<{ title: string; value: string }> {
     ['Vhost', n.vhost],
     ['Queue', n.queue],
     ['Condition', n.test ? null : n.condition],
-    ['Replay rule', n.replayRule ?? null],
+    ['Replay Rule', n.replayRule ?? null],
     ['Reason', n.reason ?? null],
     ['Value', n.value],
     ['Threshold', n.threshold],

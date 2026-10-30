@@ -17,8 +17,8 @@ import type { ProfileAccessCheck } from '../profile-access.js';
 import type { RuleClock } from '../replay-rules/rule-clock.js';
 import type { HistoryMark, QueueHistory } from '../../shared/history.js';
 
-/** The most points a history answers with. */
-export const MAX_HISTORY_POINTS = 500;
+/** The most Samples, or buckets of them, a history answers with. */
+export const MAX_HISTORY_SAMPLES = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface HistoryRouteDeps {
@@ -56,7 +56,7 @@ export function registerHistoryRoutes(app: FastifyInstance, { history, clock, in
 
     const ref = { profile: profile.name, vhost, queue };
     const latest = history.latestSample(ref);
-    const samples = downsample(history.samples(ref, from.getTime(), to.getTime()), MAX_HISTORY_POINTS);
+    const samples = downsample(history.samples(ref, from.getTime(), to.getTime()), MAX_HISTORY_SAMPLES);
     const gaps = historyGaps(history.runsAround(profile.name, from.getTime(), to.getTime()), {
       from: from.getTime(),
       to: to.getTime(),
@@ -77,7 +77,7 @@ export function registerHistoryRoutes(app: FastifyInstance, { history, clock, in
       to: to.toISOString(),
       retentionDays: Math.round(retentionMs / DAY_MS),
       latestSampleAt: latest && new Date(latest.at).toISOString(),
-      samples: samples.map((s) => ({ at: new Date(s.at).toISOString(), depth: s.depth, estimatedArrivals: s.estimatedArrivals })),
+      samples: samples.map((s) => ({ at: new Date(s.at).toISOString(), depth: s.depth, estimatedArrivals: s.estimatedArrivals, arrivalsPartlyUnknown: s.arrivalsPartlyUnknown === true })),
       gaps: gaps.map((g) => ({ from: new Date(g.from).toISOString(), to: new Date(g.to).toISOString(), errorCode: g.errorCode })),
       marks,
     };

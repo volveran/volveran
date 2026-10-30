@@ -6,6 +6,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   appliedCheckout,
+  closedPort,
   deadLetter,
   deadLetterRoutes,
   eventually,
@@ -14,6 +15,7 @@ import {
   purgeQueues,
   readyCount,
   readyMessageIds,
+  samplerHooks,
   startApp,
   testProfile,
   withChannel,
@@ -333,6 +335,38 @@ describe('Canary Replay', () => {
     expect(canaryEntry).toMatchObject({ id: done.canary.auditEntryId, canary: true, canaryOutcome: 'died_again' });
     expect(entries.find((e) => e.messageId === 'canary-1')).toMatchObject({ canary: false, canaryOutcome: null });
   });
+
+  it('leaves the watch queue out of the queue list, the Dead-letter Map, sampling and the metrics during a Canary', async () => {
+    const sampler = samplerHooks();
+    const watched = await startApp({ profiles: [testProfile({ name: 'local' })], checkoutTiming: { timeLimitMs: 120_000 }, samplerTestHooks: sampler.hooks, env: { VOLVERAN_METRICS_PORT: String(await closedPort()) } });
+    try {
+      await deadLettered(2);
+      const { id, handles } = await startCheckout(route.dlq, 'local', watched);
+      await decide(id, handles, REPLAY, watched);
+      expect((await watched.post(`/api/checkouts/${id}/apply`, { confirm: true, canary: true })).status).toBe(202);
+      await waitingIn(id, 'canary_watch', watched);
+      const watch = `volveran.canary.${id}`;
+      await eventually(async () => {
+        const listed = await management('/queues/%2F?columns=name');
+        expect(listed.body.map((q: any) => q.name)).toContain(watch);
+      });
+
+      const { queues } = (await watched.get('/api/profiles/local/vhosts/%2F/queues')).body;
+      expect(queues.map((q: any) => q.name)).not.toContain(watch);
+      expect(queues.find((q: any) => q.name === route.dlq).deadLetteredFrom).toEqual([route.workQueue]);
+      const map = (await watched.get('/api/profiles/local/vhosts/%2F/dead-letter-map')).body;
+      expect(JSON.stringify(map)).not.toContain(watch);
+
+      await sampler.sampleNow();
+      expect(sampler.latest().profiles[0]!.queues.map((q) => q.queue)).not.toContain(watch);
+      expect(await (await fetch(watched.metricsUrl!)).text()).not.toContain(watch);
+
+      expect((await watched.post(`/api/checkouts/${id}/apply/stop`)).status).toBe(200);
+      await appliedCheckout(watched, id);
+    } finally {
+      await watched.close();
+    }
+  }, 40_000);
 
   it('the Checkout timing out during the wait reports the rest not attempted, and the watch queue is gone', async () => {
     const short = await startApp({ profiles: [testProfile({ name: 'local' })], checkoutTiming: { timeLimitMs: 8_000 } });

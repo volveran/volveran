@@ -1,17 +1,19 @@
 // A queue's depth history as the API sends it (src/server/routes/history.ts).
 // Types only, shared by the server and the web app.
 
-/** One point of a queue's history: a Sample, or a bucket of them when the range is long. */
+/** A queue's history is Samples, or buckets of them when the range is long; each is one of these. */
 export interface HistorySample {
   /** ISO 8601. */
   at: string;
   depth: number;
   /**
-   * Messages that arrived since the point before: the rise in depth plus the
-   * Messages Volverán took out. Null means unknown (a queue's first Sample),
+   * Messages that arrived since the Sample or bucket before: the change in depth
+   * plus the Messages Volverán took out, never below zero. Null means unknown (a queue's first Sample),
    * never zero. Consumers outside Volverán hide arrivals.
    */
   estimatedArrivals: number | null;
+  /** A bucket where some Samples, not all, have unknown arrivals: `estimatedArrivals` adds up the rest. */
+  arrivalsPartlyUnknown: boolean;
 }
 
 /** A stretch with no Samples because sampling failed, or Volverán was not running. */

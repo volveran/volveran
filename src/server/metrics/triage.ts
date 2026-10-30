@@ -5,7 +5,7 @@
 // body sizes, never from a broker.
 import type { MessageOutcome } from '../apply/types.js';
 import { MetricCounter, type MetricFamily } from './exposition.js';
-import type { RulePassStatus, RuleState } from '../../shared/replay-rules.js';
+import { PAUSE_REASON_LIMIT, type RulePassStatus, type RuleState } from '../../shared/replay-rules.js';
 
 export interface TriageReadings {
   ruleStates(): Array<{ profile: string; rule: string; state: RuleState }>;
@@ -39,10 +39,10 @@ export class TriageMetrics {
     return [
       {
         name: 'volveran_replay_rule_paused',
-        help: 'Whether a Replay rule is paused (1) or running (0), with the reason it is paused.',
+        help: 'Whether a Replay Rule is paused (1) or running (0), with the reason it is paused.',
         type: 'gauge',
         series: this.readings.ruleStates().map(({ profile, rule, state }) => ({
-          labels: { profile, rule, reason: state.pausedReason ?? '' },
+          labels: { profile, rule, reason: state.pausedReason?.slice(0, PAUSE_REASON_LIMIT) ?? '' },
           value: state.paused ? 1 : 0,
         })),
       },

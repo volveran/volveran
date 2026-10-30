@@ -7,18 +7,21 @@
 import type { ManagementClient } from '../management.js';
 import type { BrokerProfile } from '../profiles.js';
 import type { QueueRow, SetupWarningCounts } from '../../shared/queues.js';
+import { isCanaryWatchQueue } from './canary-watch.js';
 import { checkoutHolders, isLockQueue } from './checkout-lock.js';
 import { deadLetterEdges, type DeadLetterEdge } from './dead-letter-edges.js';
 import { arrangeQueues, checkoutAvailability, sourcesFromEdges } from './queue-list.js';
 import { countSetupWarnings, setupWarnings, type VhostTopology } from './setup-checks.js';
 
 export interface VhostReading {
-  /** Every queue of the vhost, Checkout lock queues left out, in the queue list's order. */
+  /** Every queue of the vhost, Volverán's own (Checkout lock and Canary watch) left out, in the queue list's order. */
   queues: QueueRow[];
   /** Keep the `routes` edges to follow the Messages. */
   edges: DeadLetterEdge[];
   /** Every queue of the vhost counts. */
   setupWarningCounts: SetupWarningCounts;
+  /** The queues the management API listed with no depth: their rows' 0 is not a reading, so the sampler leaves them out. */
+  depthMissing: ReadonlySet<string>;
 }
 
 /** The management API calls a reading makes. */
@@ -33,8 +36,12 @@ export async function readVhost(source: { profile: Pick<BrokerProfile, 'defaultQ
   ]);
   // Checkout lock queues are Volverán's own: not listed, but they say who holds which queue.
   const holders = checkoutHolders(allQueues);
-  const queues = allQueues.filter((q) => !isLockQueue(q.name));
-  const topology: VhostTopology = { exchanges: new Map(exchanges.map((e) => [e.name, e])), bindings };
+  // A Canary's watch queue is bound to the dead-letter exchange, but it is no destination of the set-up.
+  const queues = allQueues.filter((q) => !isLockQueue(q.name) && !isCanaryWatchQueue(q.name));
+  const topology: VhostTopology = {
+    exchanges: new Map(exchanges.map((e) => [e.name, e])),
+    bindings: bindings.filter((b) => b.destinationType !== 'queue' || !isCanaryWatchQueue(b.destination)),
+  };
   const edges = deadLetterEdges(queues, topology);
   const arrangeOptions = { defaultQueueFilter: profile.defaultQueueFilter, deadLetterSources: sourcesFromEdges(edges) };
 
@@ -51,5 +58,6 @@ export async function readVhost(source: { profile: Pick<BrokerProfile, 'defaultQ
     queues: arrangeQueues(rows, arrangeOptions).map((row): QueueRow => ({ ...row, setupWarnings: warningsByName.get(row.name)! })),
     edges,
     setupWarningCounts: countSetupWarnings(warningsByName.values()),
+    depthMissing: new Set(queues.filter((q) => q.depthMissing).map((q) => q.name)),
   };
 }

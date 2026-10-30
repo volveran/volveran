@@ -1,4 +1,4 @@
-// A queue's history is served at no more than about 500 points: each bucket's
+// A queue's history is served at no more than about 500 buckets of Samples: each bucket's
 // last depth and summed estimated arrivals.
 import { describe, expect, it } from 'vitest';
 import { downsample } from '../../src/server/history/downsample.js';
@@ -18,7 +18,17 @@ describe('downsample', () => {
 
   it('keeps unknown arrivals unknown only when the whole bucket is unknown', () => {
     const samples = [sample(0, 1, null), sample(10, 2, null), sample(20, 3, null), sample(30, 4, 4)];
-    expect(downsample(samples, 2)).toEqual([sample(10, 2, null), sample(30, 4, 4)]);
+    expect(downsample(samples, 2)).toEqual([sample(10, 2, null), { ...sample(30, 4, 4), arrivalsPartlyUnknown: true }]);
+  });
+
+  it('marks a bucket with any unknown Sample as partly unknown, so a short unknown stretch does not vanish', () => {
+    const samples = [sample(0, 1, 2), sample(10, 2, null), sample(20, 3, 3), sample(30, 4, 4)];
+    expect(downsample(samples, 2)).toEqual([{ ...sample(10, 2, 2), arrivalsPartlyUnknown: true }, sample(30, 4, 7)]);
+  });
+
+  it('marks it whichever Sample of the bucket was unknown', () => {
+    const samples = [sample(0, 1, null), sample(10, 2, 2), sample(20, 3, 3), sample(30, 4, 4)];
+    expect(downsample(samples, 2)[0]).toEqual({ ...sample(10, 2, 2), arrivalsPartlyUnknown: true });
   });
 
   it('leaves no points where there were no Samples, so a gap stays a gap', () => {
@@ -37,6 +47,6 @@ describe('downsample', () => {
 
   it('copes with no Samples, and with Samples all at one time', () => {
     expect(downsample([], 500)).toEqual([]);
-    expect(downsample([sample(5, 1, 1), sample(5, 2, 1), sample(5, 3, null)], 2)).toEqual([sample(5, 3, 2)]);
+    expect(downsample([sample(5, 1, 1), sample(5, 2, 1), sample(5, 3, null)], 2)).toEqual([{ ...sample(5, 3, 2), arrivalsPartlyUnknown: true }]);
   });
 });

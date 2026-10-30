@@ -156,11 +156,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     store: audit.alerts,
     notifier,
     clock: samplerClock,
-    // A rule's `pausedAt` is null until something paused it, so one deployed `startPaused` does not count.
-    pausedReplayRules: (profile) =>
-      replayRules.states().flatMap(({ profile: p, rule, state }) =>
-        p === profile && state.paused && state.pausedAt !== null ? [{ name: rule, reason: state.pausedReason, pausedAt: Date.parse(state.pausedAt) }] : [],
-      ),
+    pausedReplayRules: (profile) => replayRules.pausedRules(profile),
     lastSuccessAt: (profile) => sampler.latest().profiles.find((p) => p.profile === profile)?.lastSuccessAt ?? null,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
