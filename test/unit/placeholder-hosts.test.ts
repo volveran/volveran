@@ -26,6 +26,8 @@ const publicHosts = [
   'monitoring.coreos.com',
   // Tools compared in docs/comparison.md.
   'warrenops.io', 'rabbitgui.com',
+  // The badges in the README.
+  'shields.io',
   // The SVG namespace of docs/images/logo.svg.
   'w3.org',
 ];
