@@ -2,6 +2,7 @@
 # /config/profiles.yaml (or point VOLVERAN_PROFILES_FILE at it).
 # Passwords and webhook URLs never go in this file: each names the environment
 # variable that holds it.
+version: 1                     # the format of this file.
 alertDestinations:             # optional; where notifications go (ADR 0012).
   - name: ops-slack            #   letters, digits, - and _; an admin can send it a test notification
     type: slack                #   slack (incoming webhook), teams (workflow webhook) or webhook

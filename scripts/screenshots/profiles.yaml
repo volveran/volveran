@@ -3,6 +3,7 @@ alertDestinations:
     type: webhook
     urlEnv: VOLVERAN_SHOT_WEBHOOK_URL
 
+version: 1
 profiles:
   - name: staging
     managementUrl: http://127.0.0.1:MGMT_PORT
