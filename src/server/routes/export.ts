@@ -30,7 +30,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: CheckoutRouteDe
       if (!parsed.ok) throw new InvalidRequestError(parsed.error);
       filter = parsed.filter;
     }
-    const { filename, count, lines } = checkouts.exportMessages(req.params.id, filter, role);
+    const { filename, count, lines } = await checkouts.exportMessages(req.params.id, filter, role);
     return reply
       .header('content-type', 'application/x-ndjson; charset=utf-8')
       .header('content-disposition', `attachment; filename="${filename}"`)

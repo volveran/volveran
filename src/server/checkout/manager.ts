@@ -253,7 +253,7 @@ export class CheckoutManager {
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
-    this.findDiedAgain(checkout, options.auditScope);
+    await this.findDiedAgain(checkout, options.auditScope);
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return this.view(checkout);
@@ -315,10 +315,10 @@ export class CheckoutManager {
   }
 
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
-  private findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): void {
-    const trail = replayTrail(this.options.audit, auditScope);
+  private async findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): Promise<void> {
+    const trail = replayTrail(this.options.audit.async, auditScope);
     for (const [handle, m] of checkout.held) {
-      const found = diedAgain(m.properties.headers, trail);
+      const found = await diedAgain(m.properties.headers, trail);
       if (found) checkout.diedAgain.set(handle, found);
     }
   }
@@ -631,8 +631,8 @@ export class CheckoutManager {
    * on the broker. Throws `checkout_not_active` on a Checkout that is over
    * or lost. `role` is the exporting Operator's Role, recorded in the Audit Entry.
    */
-  exportMessages(id: string, filter: Filter | null, role: Role): CheckoutExport {
-    return startExport(this.find(id), filter, { audit: this.options.audit, role, beforeLine: this.hooks.beforeExportLine });
+  async exportMessages(id: string, filter: Filter | null, role: Role): Promise<CheckoutExport> {
+    return startExport(this.find(id), filter, { audit: this.options.audit.async, role, beforeLine: this.hooks.beforeExportLine });
   }
 
   /** Ends the Checkout: every held Message goes back to the queue untouched, in its original order. */
