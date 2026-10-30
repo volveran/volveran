@@ -29,10 +29,17 @@
 //                           retention of Discarded Message bodies (default
 //                           30 days or 1 GiB in total, checked hourly; see
 //                           audit/body-retention.ts)
+//   VOLVERAN_PUBLIC_URL     the base of the links in notifications (default in
+//                           Team Mode: the origin of VOLVERAN_OIDC_REDIRECT_URL;
+//                           otherwise notifications carry no link)
+//   VOLVERAN_HISTORY_RETENTION_DAYS
+//                           how long notification outcomes are kept (1 to 90,
+//                           default 14)
 //   VOLVERAN_METRICS_PORT   serves Prometheus metrics at /metrics on this port,
 //                           at VOLVERAN_HOST's address (default off; see
 //                           metrics/listener.ts)
-// plus each Broker Profile's password variable (its `passwordEnv`).
+// plus each Broker Profile's password variable (its `passwordEnv`) and each
+// Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
 import path from 'node:path';
 import { product } from '../shared/product.js';
 import { ConfigError } from './config-error.js';

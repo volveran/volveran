@@ -33,12 +33,22 @@ brokerProfiles:
   # -- Broker Profiles, in the same shape as the profiles YAML (see profiles.example.yaml).
   # Rendered to a chart-managed ConfigMap. Required unless existingConfigMap is set.
   profiles: []
+  # -- Alert Destinations, in the same shape as the profiles YAML (see profiles.example.yaml):
+  # name, type (slack, teams or webhook), urlEnv, and signingSecretEnv on a webhook. URLs and
+  # secrets never go here: the variables they name are keys of alerts.existingSecret.
+  alertDestinations: []
   # -- An existing ConfigMap with a profiles.yaml key, used instead of profiles.
   # Its caFile paths point under /etc/volveran/ca (see caBundles).
   existingConfigMap: ""
   # -- An existing Secret whose keys become environment variables. Each profile's
   # passwordEnv names one of its keys.
   passwordsSecret: ""
+
+# Alerts.
+alerts:
+  # -- An existing Secret whose keys become environment variables: the destination
+  # URLs and signing secrets named by brokerProfiles.alertDestinations.
+  existingSecret: ""
 
 # Private CAs. Each bundle (an existing ConfigMap or Secret) is mounted read-only
 # at /etc/volveran/ca/<name>/, one file per key. A Broker Profile trusts one with

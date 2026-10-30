@@ -96,12 +96,30 @@
             "$ref": "#/definitions/brokerProfile"
           }
         },
+        "alertDestinations": {
+          "description": "Alert Destinations in the same shape as the profiles YAML. URLs and signing secrets are never written here: urlEnv and signingSecretEnv name keys of alerts.existingSecret.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/alertDestination"
+          }
+        },
         "passwordsSecret": {
           "type": "string"
         },
         "existingConfigMap": {
           "description": "An existing ConfigMap with a profiles.yaml key, used instead of profiles.",
           "type": "string"
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "description": "An existing Secret whose keys become environment variables: the Alert Destinations' URLs and signing secrets.",
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
         }
       }
     },
@@ -886,6 +904,50 @@
         },
         "ipBlock": {
           "type": "object"
+        }
+      }
+    },
+    "alertDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "urlEnv"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "type": {
+          "enum": [
+            "slack",
+            "teams",
+            "webhook"
+          ]
+        },
+        "urlEnv": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signingSecretEnv": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "const": "webhook"
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "signingSecretEnv"
+          ]
         }
       }
     }

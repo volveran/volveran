@@ -3,6 +3,8 @@
 // a message naming the variable. The profiles file is read separately
 // (profiles.ts).
 import { parseBodyRetention, type BodyRetention } from './audit/body-retention.js';
+import { parseHistoryRetention } from './history-retention.js';
+import { resolvePublicUrl } from './public-url.js';
 import { parseMetricsPort } from './metrics/config.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
@@ -13,6 +15,10 @@ export interface Config {
   checkoutLimits: CheckoutLimits;
   checkoutTiming: CheckoutTiming;
   bodyRetention: BodyRetention;
+  /** The base of the links in notifications; null: they carry none. */
+  publicUrl: string | null;
+  /** How long notification outcomes are kept, in milliseconds (VOLVERAN_HISTORY_RETENTION_DAYS). */
+  historyRetentionMs: number;
   /** The metrics listener's port; null keeps it off. */
   metricsPort: number | null;
 }
@@ -30,6 +36,10 @@ export function loadConfig(
   if (!timing.ok) return timing;
   const retention = parseBodyRetention(env);
   if (!retention.ok) return retention;
+  const publicUrl = resolvePublicUrl(env, mode.mode);
+  if (!publicUrl.ok) return publicUrl;
+  const historyRetention = parseHistoryRetention(env);
+  if (!historyRetention.ok) return historyRetention;
   const metricsPort = parseMetricsPort(env);
   if (!metricsPort.ok) return metricsPort;
   return {
@@ -39,6 +49,8 @@ export function loadConfig(
       checkoutLimits: limits.limits,
       checkoutTiming: timing.timing,
       bodyRetention: retention.retention,
+      publicUrl: publicUrl.url,
+      historyRetentionMs: historyRetention.retentionMs,
       metricsPort: metricsPort.port,
     },
   };
