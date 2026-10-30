@@ -43,18 +43,35 @@
 //                           metrics/listener.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`) and each
 // Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
+//
+// `main.js check-config` checks all of this and exits, without listening (see
+// check-config.ts).
 import path from 'node:path';
 import { product } from '../shared/product.js';
+import { checkConfig } from './check-config.js';
 import { ConfigError } from './config-error.js';
 import { startServer } from './server.js';
 import { defaultWebRoot } from './web-root.js';
 
 async function main() {
-  const server = await startServer({
+  const settings = {
     profilesFile: path.resolve(process.env.VOLVERAN_PROFILES_FILE ?? 'profiles.yaml'),
     env: process.env,
     host: process.env.VOLVERAN_HOST ?? '127.0.0.1',
     port: Number(process.env.VOLVERAN_PORT ?? 8080),
+  };
+  const [command, ...args] = process.argv.slice(2);
+  if (command === 'check-config') {
+    if (args.length > 0) {
+      throw new ConfigError('check-config takes no arguments: it checks the file named by VOLVERAN_PROFILES_FILE');
+    }
+    const { exitCode, lines } = await checkConfig(settings);
+    for (const line of lines) console.log(line);
+    process.exitCode = exitCode;
+    return;
+  }
+  const server = await startServer({
+    ...settings,
     webRoot: process.env.VOLVERAN_WEB_ROOT ?? defaultWebRoot(import.meta.url),
     dataDir: path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'),
     logger: true,

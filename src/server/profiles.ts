@@ -103,7 +103,37 @@ export interface ProfilesFile {
   profiles: BrokerProfile[];
   /** Where notifications go (ADR 0012); empty when it declares none. */
   alertDestinations: AlertDestination[];
+  /** Whether the file says `version: 1`; a file without it is read as version 1, with a startup warning. */
+  versionDeclared: boolean;
+  /** Where the file has a top-level or profile-level key that this release ignores and 1.0 will refuse. */
+  unknownKeys: string[];
 }
+
+/** The startup warning for a file without a version, which check-config repeats. */
+export const NO_VERSION_WARNING = `The profiles file has no version; it is read as version 1. Add "version: 1" at its top`;
+
+/** Every key of the file's top level; 1.0 refuses any other. */
+const TOP_LEVEL_KEYS = ['version', 'profiles', 'alertDestinations'];
+/** Every key of a Broker Profile; 1.0 refuses any other. */
+const PROFILE_KEYS = [
+  'name',
+  'managementUrl',
+  'amqpUrl',
+  'caFile',
+  'credentials',
+  'username',
+  'passwordEnv',
+  'tokenUsernameClaim',
+  'vhosts',
+  'defaultQueueFilter',
+  'protected',
+  'requireApproval',
+  'roles',
+  'replayRate',
+  'replayRules',
+  'alerts',
+  'canary',
+];
 
 /** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
 export function profileHasVhost(profile: BrokerProfile, vhost: string): boolean {
@@ -169,6 +199,10 @@ export function parseProfilesFile(
   } catch (err) {
     throw new ProfilesConfigError(`${source} is not valid YAML: ${(err as Error).message}`);
   }
+  // First: a file of another version may differ in anything checked below.
+  if (isRecord(doc) && 'version' in doc && doc.version !== 1) {
+    throw new ProfilesConfigError(`${source}: version must be 1, the only version of the profiles file this release reads`);
+  }
   const list = isRecord(doc) ? doc.profiles : undefined;
   if (!Array.isArray(list) || list.length === 0) {
     throw new ProfilesConfigError(`${source} must contain a non-empty "profiles" list`);
@@ -176,6 +210,7 @@ export function parseProfilesFile(
 
   const alertDestinations = parseAlertDestinations(isRecord(doc) ? doc.alertDestinations : undefined, env, source);
 
+  const unknownKeys = isRecord(doc) ? Object.keys(doc).filter((key) => !TOP_LEVEL_KEYS.includes(key)) : [];
   const seen = new Set<string>();
   const profiles = list.map((raw, i): BrokerProfile => {
     const where = `${source}: profiles[${i}]`;
@@ -188,6 +223,9 @@ export function parseProfilesFile(
     const name = requireString(raw, 'name', where);
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
+    for (const key of Object.keys(raw)) {
+      if (!PROFILE_KEYS.includes(key)) unknownKeys.push(`profiles[${i}] ("${name}").${key}`);
+    }
     const isProtected = parseProtected(raw.protected, where);
     const credentials = parseCredentials(raw, env, where, `${where} ("${name}")`);
     const vhosts = parseVhosts(raw.vhosts, where);
@@ -219,7 +257,7 @@ export function parseProfilesFile(
       canary: parseCanary(raw.canary, `${where} ("${name}").canary`),
     };
   });
-  return { profiles, alertDestinations };
+  return { profiles, alertDestinations, versionDeclared: isRecord(doc) && 'version' in doc, unknownKeys };
 }
 
 function parseCredentials(
