@@ -41,7 +41,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 
 {{/* The profiles.yaml file rendered from brokerProfiles.profiles. */}}
 {{- define "volveran.profilesYaml" -}}
-{{- $file := dict "profiles" .Values.brokerProfiles.profiles -}}
+{{- $file := dict "version" 1 "profiles" .Values.brokerProfiles.profiles -}}
 {{- with .Values.brokerProfiles.alertDestinations -}}
 {{- $_ := set $file "alertDestinations" . -}}
 {{- end -}}

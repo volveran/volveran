@@ -13,16 +13,15 @@ import type { AuditStore as AsyncAuditStore } from './audit/audit-store.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
-import { loadConfig } from './config.js';
 import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
 import { QueueMetrics } from './metrics/queues.js';
 import { startRuntimeMetrics } from './metrics/runtime.js';
 import { TriageMetrics } from './metrics/triage.js';
-import { ConfigError } from './config-error.js';
 import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
-import { checkProfilesForRunMode, checkReplayRules, loadProfilesFile, type BrokerProfile } from './profiles.js';
+import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
+import { readStartupConfig } from './startup-config.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
@@ -82,17 +81,12 @@ export interface RunningServer {
 
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
-  const loaded = loadConfig(options.env, options.host);
-  if (!loaded.ok) throw new ConfigError(loaded.error);
-  const { config } = loaded;
+  const {
+    config,
+    limits,
+    file: { profiles, alertDestinations, versionDeclared },
+  } = await readStartupConfig(options);
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const { profiles, alertDestinations } = await loadProfilesFile(options.profilesFile, options.env);
-  checkProfilesForRunMode(profiles, config.mode.kind);
-  const limits = { ...config.checkoutLimits, ...options.checkoutLimits };
-  checkReplayRules(profiles, limits);
-  if (config.metricsPort !== null && config.metricsPort === options.port) {
-    throw new ConfigError(`VOLVERAN_METRICS_PORT must differ from the web app's port (${options.port}): metrics are never served on it.`);
-  }
   const audit = new AuditStore(options.dataDir);
   const asyncAudit = options.wrapAuditStore?.(audit.async) ?? audit.async;
   // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
@@ -206,6 +200,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
   }
+
+  if (!versionDeclared) app.log.warn(NO_VERSION_WARNING);
 
   // Replay Rules on a Protected Profile run without Approval (ADR 0011): say so once per rule.
   for (const p of profiles.filter((p) => p.protected)) {
