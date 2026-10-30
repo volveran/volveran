@@ -66,6 +66,10 @@ export interface ReplayRulesOptions {
   testHooks?: RuleSchedulerTestHooks;
   /** A scheduled pass broke unexpectedly (not a skip or a refused Checkout, which are recorded). */
   onError?(ruleKey: string, err: unknown): void;
+  /** A pass was recorded, scheduled or Run now. */
+  onPassRecorded?(profile: string, rule: string, pass: RulePass): void;
+  /** A rule was paused or resumed, automatically or by an Operator. Must not throw. */
+  onPauseChanged?(profile: string): void;
 }
 
 export class ReplayRules {
@@ -116,6 +120,23 @@ export class ReplayRules {
         nextPassAt: this.timers.get(key)?.at.toISOString() ?? null,
       };
     });
+  }
+
+  /** The state of every declared rule; a rule start() has not seen yet has none and is left out. */
+  states(): Array<{ profile: string; rule: string; state: RuleState }> {
+    return this.options.profiles.flatMap((profile) =>
+      profile.replayRules.flatMap((rule) => {
+        const state = this.options.state.state(ruleKey(profile.name, rule.name));
+        return state ? [{ profile: profile.name, rule: rule.name, state }] : [];
+      }),
+    );
+  }
+
+  /** The rules of the profile paused now; `pausedAt` is null until something paused one, so one deployed `startPaused` is left out. */
+  pausedRules(profile: string): Array<{ name: string; reason: string | null; pausedAt: number }> {
+    return this.states().flatMap(({ profile: p, rule, state }) =>
+      p === profile && state.paused && state.pausedAt !== null ? [{ name: rule, reason: state.pausedReason, pausedAt: Date.parse(state.pausedAt) }] : [],
+    );
   }
 
   /** The rule named `name` of `profile`; throws 404 `replay_rule_not_found`. */
@@ -229,6 +250,7 @@ export class ReplayRules {
     });
     const recorded = running.then(({ pass, findings }) => {
       this.options.state.recordPass(key, pass);
+      this.options.onPassRecorded?.(profile.name, rule.name, pass);
       this.afterPass(profile, rule, now, findings, error);
       return pass;
     });
@@ -273,6 +295,7 @@ export class ReplayRules {
     this.options.state.setPaused(ruleKey(profile.name, rule.name), { reason, by: by.operator.displayName, at });
     this.recordPauseOrResume(profile, rule, by, at, { action: 'rule_pause', reason });
     this.reschedule(profile, rule);
+    this.options.onPauseChanged?.(profile.name);
   }
 
   /** Resumes the rule for `by`, clearing the automatic stop's count; records it as an Audit Entry and schedules its next pass. */
@@ -283,6 +306,7 @@ export class ReplayRules {
     this.options.state.clearDiedAgain(key);
     this.recordPauseOrResume(profile, rule, by, at, { action: 'rule_resume', reason: null });
     this.reschedule(profile, rule);
+    this.options.onPauseChanged?.(profile.name);
   }
 
   /** The Audit Entry of a pause or resume: no Message, the rule named, done at once. */

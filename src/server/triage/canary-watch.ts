@@ -20,6 +20,16 @@ export type CanaryWatchBindings =
   | { watchable: true; exchange: string; routingKeys: string[] }
   | { watchable: false; reason: string };
 
+const WATCH_QUEUE_PREFIX = 'volveran.canary.';
+
+export function canaryQueueName(checkoutId: string): string {
+  return WATCH_QUEUE_PREFIX + checkoutId;
+}
+
+export function isCanaryWatchQueue(name: string): boolean {
+  return name.startsWith(WATCH_QUEUE_PREFIX);
+}
+
 const WATCHABLE_TYPES = new Set(['direct', 'fanout', 'topic']);
 
 /**

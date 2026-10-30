@@ -11,6 +11,8 @@ import { ProfilesConfigError } from './config-error.js';
 import { isRecord } from './is-record.js';
 import type { RunMode } from './run-mode.js';
 import { durationWithin } from './duration.js';
+import { parseAlertDestinations, type AlertDestination } from './alerts/destinations.js';
+import { parseAlertRules, type AlertRule } from './alerts/rules.js';
 import { parseReplayRules, type ReplayRule } from './replay-rules/config.js';
 import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../shared/replay-rate.js';
 import { ROLES, type Role } from '../shared/roles.js';
@@ -76,6 +78,8 @@ export interface BrokerProfile {
   replayRate: ReplayRateLimits;
   /** The profile's Replay Rules (replay-rules/config.ts); empty when it declares none. */
   replayRules: ReplayRule[];
+  /** The profile's Alert Rules (alerts/rules.ts); empty when it declares none. */
+  alerts: AlertRule[];
   /** Canary Replay on this profile: how long a Canary is watched (the Watch Window), and when one is required. */
   canary: CanarySettings;
 }
@@ -92,6 +96,13 @@ export interface CanarySettings {
 export interface ReplayRateLimits {
   default: number | null;
   max: number | null;
+}
+
+/** What the profiles file declares. */
+export interface ProfilesFile {
+  profiles: BrokerProfile[];
+  /** Where notifications go (ADR 0012); empty when it declares none. */
+  alertDestinations: AlertDestination[];
 }
 
 /** Whether the profile is configured for `vhost` (all vhosts, or it is listed). */
@@ -115,15 +126,15 @@ export { ProfilesConfigError };
 export { checkReplayRules } from './replay-rules/config.js';
 
 /** Loads and checks the profiles file; a relative `caFile` is relative to the file's directory. */
-export async function loadProfilesFile(file: string, env: Record<string, string | undefined>): Promise<BrokerProfile[]> {
+export async function loadProfilesFile(file: string, env: Record<string, string | undefined>): Promise<ProfilesFile> {
   let text: string;
   try {
     text = await readFile(file, 'utf8');
   } catch (err) {
     throw new ProfilesConfigError(`Cannot read the Broker Profiles file ${file}: ${(err as Error).message}`);
   }
-  const profiles = parseProfiles(text, env, file);
-  for (const p of profiles) {
+  const parsed = parseProfilesFile(text, env, file);
+  for (const p of parsed.profiles) {
     if (p.caFile === undefined) continue;
     p.caFile = path.resolve(path.dirname(file), p.caFile);
     try {
@@ -134,15 +145,24 @@ export async function loadProfilesFile(file: string, env: Record<string, string 
       );
     }
   }
-  return profiles;
+  return parsed;
 }
 
-/** Parses the YAML text; `caFile` is kept as written and not read. */
+/** Parses the YAML text's Broker Profiles only; `caFile` is kept as written and not read. */
 export function parseProfiles(
   text: string,
   env: Record<string, string | undefined>,
   source = 'profiles file',
 ): BrokerProfile[] {
+  return parseProfilesFile(text, env, source).profiles;
+}
+
+/** Parses the YAML text; `caFile` is kept as written and not read. */
+export function parseProfilesFile(
+  text: string,
+  env: Record<string, string | undefined>,
+  source = 'profiles file',
+): ProfilesFile {
   let doc: unknown;
   try {
     doc = parse(text);
@@ -154,8 +174,10 @@ export function parseProfiles(
     throw new ProfilesConfigError(`${source} must contain a non-empty "profiles" list`);
   }
 
+  const alertDestinations = parseAlertDestinations(isRecord(doc) ? doc.alertDestinations : undefined, env, source);
+
   const seen = new Set<string>();
-  return list.map((raw, i) => {
+  const profiles = list.map((raw, i): BrokerProfile => {
     const where = `${source}: profiles[${i}]`;
     if (!isRecord(raw)) throw new ProfilesConfigError(`${where} must be a mapping`);
     if ('password' in raw) {
@@ -170,6 +192,11 @@ export function parseProfiles(
     const credentials = parseCredentials(raw, env, where, `${where} ("${name}")`);
     const vhosts = parseVhosts(raw.vhosts, where);
     const replayRate = parseReplayRate(raw.replayRate, `${where} ("${name}").replayRate`);
+    const replayRules = parseReplayRules(
+      raw.replayRules,
+      { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
+      `${where} ("${name}")`,
+    );
     return {
       name,
       managementUrl: requireUrl(raw, 'managementUrl', ['http:', 'https:'], where).replace(/\/+$/, ''),
@@ -183,14 +210,16 @@ export function parseProfiles(
       requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
       replayRate,
-      replayRules: parseReplayRules(
-        raw.replayRules,
-        { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
+      replayRules,
+      alerts: parseAlertRules(
+        raw.alerts,
+        { credentials: credentials.kind, vhosts, destinations: alertDestinations.map((d) => d.name), replayRules: replayRules.map((r) => r.name) },
         `${where} ("${name}")`,
       ),
       canary: parseCanary(raw.canary, `${where} ("${name}").canary`),
     };
   });
+  return { profiles, alertDestinations };
 }
 
 function parseCredentials(
