@@ -82,6 +82,10 @@ _Avoid_: Skip, requeue, ignore
 Said of a Message that Volverán Replayed, Moved or Restored and that has been dead-lettered again, recognised by the replay id (`x-volveran-replay-id`) it carries. How many times it has died again comes from following the replay ids back through the Audit Entries.
 _Avoid_: Repeat offender, recurring, boomerang
 
+**Dead-letter Map**:
+The graph of where a vhost's dead-lettered Messages go: the queues that dead-letter or are dead-lettered into, the exchanges and bindings between them, losses (a missing exchange, or one that routes nowhere), cycles, and MassTransit `_error` queues linked to their input queue by convention. It shows the broker's set-up, not the Messages that took a path.
+_Avoid_: Topology, flow diagram
+
 **Failure Details**:
 The exception and context a client framework (Spring AMQP, MassTransit) writes into a Message's headers when it gives up on it: the exception type and message, the stack trace, the consumer, the time and the original queue or exchange.
 _Avoid_: Error info, fault (except in MassTransit's own header names)
