@@ -6,6 +6,15 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `check-config`, a mode of the image that checks a profiles file and the environment with the parser and checks startup uses, contacts no broker and exits 0, 1 (startup would refuse this) or 2 (1.0 will refuse a key in this file) ([guide](docs/configuration.md#checking-the-configuration)).
+- The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders, which changes the ConfigMap and so rolls the pod once on upgrade.
+
+### Deprecated
+
+- 1.0 will refuse unknown keys at the top level of the profiles file and in a Broker Profile, which are ignored today. `check-config` lists them.
+
 ## [0.5.1] - 2026-10-30
 
 A visual design for the web app. Behaviour, labels and keyboard shortcuts are unchanged. Releases now also publish their changelog entry as a GitHub Release.
