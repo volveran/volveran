@@ -35,6 +35,7 @@ const EMPTY_SEARCH: AuditSearch = {
   messageId: '',
   action: '',
   operator: '',
+  checkoutId: '',
   replayId: '',
   rule: '',
   from: '',
@@ -52,9 +53,18 @@ function formatBytes(bytes: number): string {
   return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Record<string, Role> }) {
-  const [form, setForm] = useState<AuditSearch>(EMPTY_SEARCH);
-  const [search, setSearch] = useState<AuditSearch>(EMPTY_SEARCH);
+export function AuditView({
+  profiles,
+  roles,
+  initialSearch,
+}: {
+  profiles: Profile[];
+  roles: Record<string, Role>;
+  /** Where a link (a history mark) opened the view. Remount with a `key` to search again. */
+  initialSearch?: AuditSearch | null;
+}) {
+  const [form, setForm] = useState<AuditSearch>({ ...EMPTY_SEARCH, ...initialSearch });
+  const [search, setSearch] = useState<AuditSearch>({ ...EMPTY_SEARCH, ...initialSearch });
   const [entries, setEntries] = useState<AuditEntry[]>();
   const [usage, setUsage] = useState<AuditStoreUsage>();
   const [error, setError] = useState<ApiError>();
@@ -125,6 +135,7 @@ export function AuditView({ profiles, roles }: { profiles: Profile[]; roles: Rec
           ))}
         </select>
         <input type="search" placeholder="Operator" aria-label="Operator" {...field('operator')} />
+        <input type="search" placeholder="Checkout id" aria-label="Checkout id" {...field('checkoutId')} />
         <input
           type="search"
           placeholder="Replay id (x-volveran-replay-id)"

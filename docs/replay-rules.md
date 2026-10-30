@@ -102,3 +102,7 @@ The payments consumer was redeployed with a bug, so every Message it gets is dea
 - 12:02: it sees 25 more from the 12:01 pass: 50 in the window. The rule pauses with reason `died_again`, records a `rule_pause` Audit Entry with `Replay rule payment-retries` as the Operator, and runs no more passes.
 
 Messages someone Replayed by hand, or another rule Replayed, do not count towards this rule's stop. Once the consumer is fixed, an `admin` can Run now once to check, then Resume, which starts the count again from zero. Pick `diedAgain` below what one or two passes can Replay (`maxPerPass`), so a broken consumer stops the rule within a pass or two.
+
+## Being told when a rule pauses
+
+An Alert Rule with `replayRulePaused: true` sends a notification, with the reason, when a Replay Rule pauses, and another when it resumes, and the metric `volveran_replay_rule_paused` shows the same to Prometheus. See [Observability](observability.md#alert-rules).

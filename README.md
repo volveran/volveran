@@ -111,7 +111,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.4.1
+  ghcr.io/volveran/volveran:0.5.0
 ```
 
 Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audit trail and every Discarded Message. On Docker Desktop, turn on host networking first ([details](docs/configuration.md#why-solo-mode-uses-the-host-network)). With Compose, use [`docker-compose.example.yml`](docker-compose.example.yml).
@@ -121,7 +121,7 @@ Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audi
 **Kubernetes:** a signed Helm chart, also with a [Flux CD example](examples/flux/). See the [Kubernetes guide](docs/kubernetes.md).
 
 ```sh
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.4.1 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.5.0 \
   --namespace volveran -f values.yaml
 ```
 

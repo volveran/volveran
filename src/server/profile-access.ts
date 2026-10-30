@@ -51,6 +51,8 @@ export const CAPABILITIES = [
   'pause_replay_rule',
   /** Resume one of the profile's paused Replay Rules. */
   'resume_replay_rule',
+  /** Send a test notification to an Alert Destination (held on any profile: destinations belong to none). */
+  'send_test_notification',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -66,6 +68,7 @@ export const REQUIRED_ROLE: Record<Capability, Role> = {
   run_replay_rule: 'admin',
   pause_replay_rule: 'operator',
   resume_replay_rule: 'admin',
+  send_test_notification: 'admin',
 };
 
 /**
@@ -157,6 +160,13 @@ export class ProfileAccessCheck {
   /** Whether `operator` holds `capability` on the profile named `profileName` (configured or not). */
   holds(operator: Operator, capability: Capability, profileName: string): boolean {
     return this.denial(operator, capability, profileName) === null;
+  }
+
+  /** For what belongs to no profile: throws 403 `role_required` unless `operator` holds `capability` on some configured profile. */
+  requireOnAnyProfile(operator: Operator, capability: Capability): void {
+    if (this.list(operator, capability).length > 0) return;
+    const required = REQUIRED_ROLE[capability];
+    throw new HttpError(403, 'role_required', `This needs the role "${required}" on at least one Broker Profile.`, { required });
   }
 
   /** The configured Broker Profiles on which `operator` holds `capability`, in file order. */

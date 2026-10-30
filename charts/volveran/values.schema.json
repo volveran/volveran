@@ -96,12 +96,30 @@
             "$ref": "#/definitions/brokerProfile"
           }
         },
+        "alertDestinations": {
+          "description": "Alert Destinations in the same shape as the profiles YAML. URLs and signing secrets are never written here: urlEnv and signingSecretEnv name keys of alerts.existingSecret.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/alertDestination"
+          }
+        },
         "passwordsSecret": {
           "type": "string"
         },
         "existingConfigMap": {
           "description": "An existing ConfigMap with a profiles.yaml key, used instead of profiles.",
           "type": "string"
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "description": "An existing Secret whose keys become environment variables: the Alert Destinations' URLs and signing secrets.",
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
         }
       }
     },
@@ -296,6 +314,47 @@
         }
       }
     },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Sets VOLVERAN_METRICS_PORT and adds the container port and a metrics Service port.",
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "description": "A Prometheus Operator ServiceMonitor. Requires metrics.enabled, checked in templates/_helpers.tpl.",
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "interval": {
+              "description": "A Prometheus duration such as 30s; empty uses Prometheus's scrape_interval.",
+              "type": "string",
+              "pattern": "^(([0-9]+(ms|s|m|h|d|w|y))+)?$"
+            },
+            "scrapeTimeout": {
+              "description": "A Prometheus duration such as 10s; empty uses Prometheus's scrape_timeout.",
+              "type": "string",
+              "pattern": "^(([0-9]+(ms|s|m|h|d|w|y))+)?$"
+            }
+          }
+        }
+      }
+    },
     "settings": {
       "type": "object",
       "additionalProperties": false,
@@ -369,6 +428,24 @@
           ],
           "minimum": 1,
           "maximum": 1440
+        },
+        "historyIntervalSeconds": {
+          "description": "VOLVERAN_HISTORY_INTERVAL_SECONDS; null leaves Volverán's default (60).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 15,
+          "maximum": 3600
+        },
+        "historyRetentionDays": {
+          "description": "VOLVERAN_HISTORY_RETENTION_DAYS; null leaves Volverán's default (14).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 90
         }
       }
     },
@@ -456,6 +533,13 @@
             "$ref": "#/definitions/networkPolicyPeer"
           }
         },
+        "metricsFrom": {
+          "description": "NetworkPolicy peers admitted to the metrics port only, when metrics.enabled.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/networkPolicyPeer"
+          }
+        },
         "egress": {
           "description": "NetworkPolicy egress rules. Any rule restricts egress to these rules plus DNS to dnsTo.",
           "type": "array",
@@ -509,6 +593,11 @@
     }
   },
   "definitions": {
+    "alertDuration": {
+      "type": "string",
+      "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+      "minLength": 2
+    },
     "brokerProfile": {
       "type": "object",
       "additionalProperties": false,
@@ -681,6 +770,58 @@
             }
           }
         },
+        "alerts": {
+          "description": "Alert Rules: tell an Alert Destination when a dead-letter queue is too deep, fills too fast or receives anything, when a Replay rule pauses, when a dead-letter queue has a set-up warning, or when sampling fails. Not allowed with credentials: operatorToken. Durations are a whole number and a unit (d, h, m, s). Volverán checks the ranges and destination names at startup.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "destinations", "when"],
+            "properties": {
+              "name": { "description": "Unique within the profile.", "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+              "destinations": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+              "for": { "$ref": "#/definitions/alertDuration" },
+              "repeatEvery": { "$ref": "#/definitions/alertDuration" },
+              "when": {
+                "type": "object",
+                "additionalProperties": false,
+                "oneOf": [
+                  { "required": ["vhost", "queue"] },
+                  { "required": ["vhost", "queuePattern"] },
+                  { "required": ["replayRulePaused"] },
+                  { "required": ["setupWarning"] },
+                  { "required": ["samplingFailing"] }
+                ],
+                "properties": {
+                  "vhost": { "type": "string", "minLength": 1 },
+                  "queue": { "type": "string", "minLength": 1 },
+                  "queuePattern": { "description": "Glob on queue names (*, ?); each matching dead-letter queue is its own Alert.", "type": "string", "minLength": 1 },
+                  "depthAbove": { "type": "integer", "minimum": 0 },
+                  "arrivalsAbove": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["count", "within"],
+                    "properties": {
+                      "count": { "type": "integer", "minimum": 0 },
+                      "within": { "$ref": "#/definitions/alertDuration" }
+                    }
+                  },
+                  "anyArrival": { "const": true },
+                  "replayRulePaused": { "description": "A Replay rule paused: any of the profile's, or the one named by rule.", "const": true },
+                  "rule": { "description": "With replayRulePaused: the Replay rule to watch.", "type": "string", "minLength": 1 },
+                  "setupWarning": { "description": "A dead-letter queue has a set-up warning at least this bad; each queue is its own Alert.", "enum": ["loses_messages", "may_lose_messages"] },
+                  "samplingFailing": {
+                    "description": "The profile has not been sampled well for this long.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["for"],
+                    "properties": { "for": { "$ref": "#/definitions/alertDuration" } }
+                  }
+                }
+              }
+            }
+          }
+        },
         "replayRules": {
           "description": "Replay rules: which Messages of one dead-letter queue Volverán Replays automatically, how often and how many times. Not allowed with credentials: operatorToken. Durations are a whole number and a unit (d, h, m, s), e.g. 30s, 5m, 1h30m. Volverán checks the ranges at startup.",
           "type": "array",
@@ -838,6 +979,50 @@
         },
         "ipBlock": {
           "type": "object"
+        }
+      }
+    },
+    "alertDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "urlEnv"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "type": {
+          "enum": [
+            "slack",
+            "teams",
+            "webhook"
+          ]
+        },
+        "urlEnv": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signingSecretEnv": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "const": "webhook"
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "signingSecretEnv"
+          ]
         }
       }
     }

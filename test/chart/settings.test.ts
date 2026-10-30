@@ -14,13 +14,15 @@ describe('settings', () => {
     ['bodyRetentionMaxBytes', '20GiB', 'VOLVERAN_BODY_RETENTION_MAX_BYTES', '20GiB'],
     ['bodyRetentionMaxBytes', 5368709120, 'VOLVERAN_BODY_RETENTION_MAX_BYTES', '5368709120'],
     ['bodyRetentionIntervalMinutes', 15, 'VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES', '15'],
+    ['historyIntervalSeconds', 300, 'VOLVERAN_HISTORY_INTERVAL_SECONDS', '300'],
+    ['historyRetentionDays', 30, 'VOLVERAN_HISTORY_RETENTION_DAYS', '30'],
   ])('settings.%s: %s becomes %s=%s', (setting, value, variable, expected) => {
     expect(env(render({ settings: { [setting]: value } }), variable)).toEqual({ name: variable, value: expected });
   });
 
   it("sets none of them by default, so Volverán's own defaults apply", () => {
     const names = container(render()).env.map((e: { name: string }) => e.name);
-    expect(names.filter((name: string) => /CHECKOUT|RETENTION/.test(name))).toEqual([]);
+    expect(names.filter((name: string) => /CHECKOUT|RETENTION|HISTORY/.test(name))).toEqual([]);
   });
 
   it('refuses a setting outside the range Volverán accepts', () => {
@@ -28,6 +30,10 @@ describe('settings', () => {
     expect(renderRefusal({ settings: { bodyRetentionMaxBytes: '1 gigabyte' } })).toContain(
       '/settings/bodyRetentionMaxBytes',
     );
+    expect(renderRefusal({ settings: { historyIntervalSeconds: 14 } })).toContain('/settings/historyIntervalSeconds');
+    expect(renderRefusal({ settings: { historyIntervalSeconds: 3601 } })).toContain('/settings/historyIntervalSeconds');
+    expect(renderRefusal({ settings: { historyRetentionDays: 0 } })).toContain('/settings/historyRetentionDays');
+    expect(renderRefusal({ settings: { historyRetentionDays: 91 } })).toContain('/settings/historyRetentionDays');
   });
 });
 

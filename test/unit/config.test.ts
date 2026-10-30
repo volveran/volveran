@@ -25,3 +25,22 @@ describe('loadConfig', () => {
     expect(loadConfig({}, '0.0.0.0')).toEqual({ ok: false, error: expect.stringContaining('loopback') });
   });
 });
+
+describe('VOLVERAN_METRICS_PORT', () => {
+  const load = (value?: string) => loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_METRICS_PORT: value }, '127.0.0.1');
+
+  it('leaves the metrics listener off when unset or empty', () => {
+    expect(load()).toMatchObject({ ok: true, config: { metricsPort: null } });
+    expect(load('')).toMatchObject({ ok: true, config: { metricsPort: null } });
+  });
+
+  it('reads the port', () => {
+    expect(load('9464')).toMatchObject({ ok: true, config: { metricsPort: 9464 } });
+  });
+
+  it.each(['0', '65536', '-1', '94.64', 'metrics', '9464 '])('refuses %j, naming the variable', (value) => {
+    const result = load(value);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('VOLVERAN_METRICS_PORT');
+  });
+});

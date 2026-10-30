@@ -11,9 +11,8 @@ import { useEffect, useState } from 'react';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import { durationText, pauseReasonText } from '../shared/replay-rules.js';
 import { rateText } from '../shared/replay-rate.js';
+import { time } from './time.js';
 import { api, ApiError, type ReplayRuleView, type RulePass } from './api.js';
-
-const time = (iso: string) => <span title={iso}>{new Date(iso).toLocaleString()}</span>;
 
 export function ReplayRulesView({ profile, role }: { profile: string; role: Role | undefined }) {
   const [rules, setRules] = useState<ReplayRuleView[]>();

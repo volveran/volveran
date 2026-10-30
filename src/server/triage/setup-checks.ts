@@ -247,7 +247,7 @@ export const deadLetterUnroutableCheck: SetupCheck = (q, vhost) => {
  * known: a binding from an exchange that ignores keys (fanout, headers, a
  * plugin's type) or a topic binding with a wildcard.
  */
-function receivedKeys(name: string, vhost: VhostTopology): string[] | null {
+export function receivedKeys(name: string, vhost: VhostTopology): string[] | null {
   const keys = new Set([name]);
   for (const b of vhost.bindings) {
     if (b.destinationType !== 'queue' || b.destination !== name || b.source === '') continue;
@@ -275,13 +275,13 @@ function routes(exchange: string, routingKey: string, vhost: VhostTopology, seen
   return vhost.bindings.some(
     (b) =>
       b.source === exchange &&
-      matches(x.type, b.routingKey, routingKey) &&
+      keyMatchesBinding(x.type, b.routingKey, routingKey) &&
       (b.destinationType === 'queue' || routes(b.destination, routingKey, vhost, seen)),
   );
 }
 
 /** Whether a binding with key `bindingKey` on an exchange of `type` matches `routingKey`. */
-function matches(type: string, bindingKey: string, routingKey: string): boolean {
+export function keyMatchesBinding(type: string, bindingKey: string, routingKey: string): boolean {
   if (type === 'fanout') return true;
   if (type === 'topic') return topicMatches(bindingKey.split('.'), routingKey.split('.'));
   return bindingKey === routingKey;
