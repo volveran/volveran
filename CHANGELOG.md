@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-30
+
+A visual design for the web app. Behaviour, labels and keyboard shortcuts are unchanged.
+
 ### Changed
 
 - The web app has a visual design. Labels are set in Atkinson Hyperlegible Next and data (queue names, `message_id`s, routing keys, headers, bodies) in Atkinson Hyperlegible Mono, both bundled, so nothing is fetched from another host. Every notice, panel and tag takes one level of a severity scale (info, warning, danger): Discard, typed confirmations, Reject, Stop, a Lost Checkout, Died Again, the last Delivery Budget attempt and set-up warnings that lose Messages are danger. A Protected Profile frames the whole window in red, over open prompts too. Each Message row carries a bar in its Decision's colour, and ComparisonView marks differences in a colour of their own. Light and dark themes meet WCAG AA contrast. No label, shortcut or focus behaviour changes.
@@ -142,7 +146,8 @@ First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/volveran/volveran/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/volveran/volveran/releases/tag/v0.4.1
 [0.4.0]: https://github.com/volveran/volveran/releases/tag/v0.4.0
 [0.3.0]: https://github.com/volveran/volveran/releases/tag/v0.3.0
 [0.2.0]: https://github.com/volveran/volveran/releases/tag/v0.2.0
