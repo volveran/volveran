@@ -926,6 +926,48 @@ dialog.prompt .confirm {
   font-size: 0.8125rem;
 }
 
+/* Alerts view and firing Alerts on the queue list */
+.alerts h2 {
+  margin-top: 24px;
+}
+
+table.alert-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.alert-list th,
+table.alert-list td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.alert-destinations li {
+  margin-bottom: 6px;
+}
+
+.badge.alert-firing,
+.badge.delivery-failed {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.badge.alert-pending {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.queues .firing-alert {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 /* The Dead-letter Map. The diagram keeps its size and scrolls: a wide map stays legible. */
 .dead-letter-map h2 {
   margin-bottom: 0.25rem;

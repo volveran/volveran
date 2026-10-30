@@ -31,6 +31,8 @@ export interface NotifierOptions {
   publicUrl: string | null;
   /** Called when an outcome could not be recorded. */
   onError?: (err: unknown) => void;
+  /** Called with each delivery's outcome, recorded or not. */
+  onDelivered?: (delivery: NotificationDelivery) => void;
   timing?: DeliveryTiming;
 }
 
@@ -85,7 +87,9 @@ export class Notifier {
       result = await this.attempt(destination, notification);
       if (result.outcome === 'delivered') break;
     }
-    return this.record(destination, notification, result, attempts);
+    const delivery = this.record(destination, notification, result, attempts);
+    this.options.onDelivered?.(delivery);
+    return delivery;
   }
 
   private async attempt(destination: AlertDestination, notification: Notification): Promise<AttemptResult> {

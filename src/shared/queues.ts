@@ -1,6 +1,7 @@
 // The session, Broker Profiles and queue list as the API sends them
 // (src/server/routes/session.ts, routes/profiles.ts). Types only, shared by
 // the server and the web app.
+import type { AlertView } from './alerts.js';
 import type { DepthSeries } from './history.js';
 import type { CheckoutHolder } from './checkout.js';
 import type { Role } from './roles.js';
@@ -96,6 +97,8 @@ export interface QueueRow {
   checkedOutBy: CheckoutHolder | null;
   /** The last 24 hours of depth. Only on the dead-letter queues of a sampled Broker Profile. */
   depthSeries?: DepthSeries;
+  /** The Alerts firing on this queue. On every dead-letter queue, and on any other queue that has one. */
+  firingAlerts?: AlertView[];
 }
 
 /** The queue list of a vhost. */

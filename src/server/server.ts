@@ -7,11 +7,13 @@ import fastifyStatic from '@fastify/static';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
+import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { loadConfig } from './config.js';
+import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
 import { QueueMetrics } from './metrics/queues.js';
 import { startRuntimeMetrics } from './metrics/runtime.js';
@@ -28,6 +30,7 @@ import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
 import { registerAlertDestinationRoutes } from './routes/alert-destinations.js';
+import { registerAlertRoutes } from './routes/alerts.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerAuditRoutes, type AuditRouteDeps } from './routes/audit.js';
@@ -139,7 +142,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const queueMetrics = new QueueMetrics(() => sampler.latest());
   sampler.onRun((finished) => queueMetrics.runFinished(finished));
+  const alertMetrics = new AlertMetrics({ profiles, store: audit.alerts });
   const notifier = new Notifier({
+    onDelivered: (delivery) => alertMetrics.delivered(delivery),
     destinations: alertDestinations,
     store: audit.notifications,
     publicUrl: config.publicUrl,
@@ -168,6 +173,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     checkouts,
     replayRules,
     notifier,
+    alertDestinations,
     audit: { audit, restore, usage },
     history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
@@ -268,7 +274,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       metricsListener = await startMetricsListener({
         host: options.host,
         port: config.metricsPort,
-        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...runtimeMetrics.families()],
+        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
     } catch (err) {
@@ -298,6 +304,7 @@ interface AppOptions {
   checkouts: CheckoutManager;
   replayRules: ReplayRules;
   notifier: Notifier;
+  alertDestinations: AlertDestination[];
   audit: AuditRouteDeps;
   history: HistoryRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
@@ -305,7 +312,7 @@ interface AppOptions {
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -333,9 +340,11 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, au
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
   const checkoutDeps = { checkouts, access: profileAccess };
   registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
-  registerProfileRoutes(app, profileAccess, history);
+  const alertReadings = { alerts: audit.audit.alerts, notifications: audit.audit.notifications, destinations: alertDestinations };
+  registerProfileRoutes(app, profileAccess, history, alertReadings);
   registerReplayRuleRoutes(app, replayRules, profileAccess);
   registerAlertDestinationRoutes(app, notifier, profileAccess);
+  registerAlertRoutes(app, alertReadings, profileAccess);
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);

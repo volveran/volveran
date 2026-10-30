@@ -8,6 +8,7 @@
 //   GET /api/profiles/:profile/vhosts/:vhost/move-destinations → { queues, exchanges }
 //   GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map   → { nodes, edges, cycles }
 import type { FastifyInstance } from 'fastify';
+import { firingAlertsOn, type AlertReadings } from '../alerts/views.js';
 import { credentialsSummary } from '../broker-credentials.js';
 import { depthSeriesOf } from '../history/depth-series.js';
 import { isSampled } from '../history/sampler.js';
@@ -21,7 +22,7 @@ import type { HistoryRouteDeps } from './history.js';
 import type { DeadLetterMap } from '../../shared/dead-letter-map.js';
 import type { MoveDestinations, ProfileSummary, QueueList } from '../../shared/queues.js';
 
-export function registerProfileRoutes(app: FastifyInstance, access: ProfileAccessCheck, history: HistoryRouteDeps) {
+export function registerProfileRoutes(app: FastifyInstance, access: ProfileAccessCheck, history: HistoryRouteDeps, alerts: AlertReadings) {
   app.get('/api/profiles', async (req): Promise<{ profiles: ProfileSummary[] }> => ({
     profiles: access.list(operatorOf(req), 'see_profile').map((p) => ({
       name: p.name,
@@ -67,7 +68,7 @@ export function registerProfileRoutes(app: FastifyInstance, access: ProfileAcces
     const queues = narrowQueues(reading.queues, { onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true', search: req.query.search });
     return {
       defaultQueueFilter: profile.defaultQueueFilter ?? null,
-      queues: isSampled(profile) ? depthSeriesOf(history, profile.name, vhost, queues) : queues,
+      queues: firingAlertsOn(alerts, profile.name, vhost, isSampled(profile) ? depthSeriesOf(history, profile.name, vhost, queues) : queues),
       setupWarningCounts: reading.setupWarningCounts,
     };
   });

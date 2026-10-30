@@ -25,6 +25,8 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 | `volveran_checkouts_active` | gauge | | Active Checkouts. |
 | `volveran_approvals_waiting` | gauge | | Checkouts waiting for Approval. |
 | `volveran_audit_store_body_bytes` | gauge | | Bytes of Discarded Message bodies kept in the audit store. |
+| `volveran_alerts_firing` | gauge | `profile`, `rule` | Alerts of the Alert Rule firing now; 0 for a rule with none. Pending Alerts are not counted. |
+| `volveran_alert_notifications_total` | counter | `destination`, `outcome` | Notifications of Alerts, by Alert Destination and `outcome`: `delivered` or `failed` once its attempts are over. Test notifications are not counted. |
 
 A paused rule's `reason` can be free text typed by an Operator, so a pause and resume with new words starts a new series. Alert on `max by (profile, rule) (volveran_replay_rule_paused) == 1`, not on one reason.
 
@@ -37,7 +39,7 @@ Dead-letter queue metrics come from the latest Samples, so they move once per sa
 
 ### Example alerts
 
-Prometheus Operator rules for a deep dead-letter queue, a fast arrival rate and a lost broker. Adjust the thresholds and labels to your queues and your Prometheus's `ruleSelector`.
+Prometheus Operator rules for a deep dead-letter queue, a fast arrival rate, a lost broker and failed notifications. Adjust the thresholds and labels to your queues and your Prometheus's `ruleSelector`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -70,6 +72,12 @@ spec:
             severity: critical
           annotations:
             summary: 'Volverán cannot sample {{ $labels.profile }}: its queue metrics are out of date'
+        - alert: VolveranNotificationsFailing
+          expr: increase(volveran_alert_notifications_total{outcome="failed"}[15m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: 'Volverán could not deliver a notification to {{ $labels.destination }}: see the Alerts view for why'
 ```
 
 Process metrics:
