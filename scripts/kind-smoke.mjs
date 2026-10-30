@@ -2,7 +2,7 @@
 // loads it into a fresh kind cluster with RabbitMQ and the mock OIDC provider
 // (test/smoke/deps.yaml, their images loaded from the host's Docker), installs the chart into a namespace that enforces
 // the restricted Pod Security Standard, then runs test/smoke/operator.test.ts.
-// Needs docker, kind, kubectl and helm on PATH. See README "Development".
+// Needs docker, kind, kubectl and helm on PATH. See CONTRIBUTING.md.
 //
 // When a step fails it prints the pods, events and logs of both namespaces.
 // The cluster is deleted at the end unless VOLVERAN_SMOKE_KEEP_CLUSTER=1,

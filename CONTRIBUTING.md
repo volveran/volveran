@@ -1,0 +1,55 @@
+# Contributing
+
+Requirements: Node.js 24 and Docker with Compose v2.
+
+```sh
+npm ci
+npm run dev            # server and web app with reload (Vite on :5173; it proxies /api and /auth)
+npm run lint           # typecheck server, web app and tests
+npm test               # unit tests (no broker)
+npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
+npm run test:integration  # same for test/integration/
+npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
+scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
+npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator (needs kind, kubectl, Helm)
+npm run build          # dist/server and dist/web
+docker build -t volveran .   # the image, as the release workflow builds it
+```
+
+`npm run dev` needs a `profiles.yaml` in the checkout (ignored by git) and the password variables it names. Open the web app on `http://localhost:5173`: in development the server on `:8080` serves only the API (it serves the web app that `npm run build` makes). Integration tests start the app in-process through `startApp` in `test/integration/harness.ts`, on a random loopback port with a generated profiles file; `testProfile` points a Broker Profile at the checkout's test broker. TLS tests put `startTlsProxy` (certificates in `test/fixtures/tls/`) in front of a broker port.
+
+**Releases.** Pushing a tag `v<version>` that matches `package.json` and `charts/volveran/Chart.yaml` (checked by `scripts/check-release-version.mjs` before anything is pushed) runs `.github/workflows/release.yml`: lint, unit tests and chart checks, then a multi-arch image (amd64, arm64) pushed to `ghcr.io/volveran/volveran:<version>` and `:latest` with an SBOM and provenance attestations, then the chart pushed to `oci://ghcr.io/volveran/charts/volveran`, and both signed with keyless cosign. A pre-release tag (`v0.2.0-rc.1`) gets no `latest` and publishes a pre-release chart version. The workflow's header comment has the `cosign verify` commands and the identity a Flux `OCIRepository` should match. Before tagging:
+
+1. Move the `Unreleased` entries in [`CHANGELOG.md`](CHANGELOG.md) under the new version, with its compare and tag links at the bottom.
+2. Bump the version in every file that names it. `npm run test:unit` and `npm run test:chart` fail on any that disagree with `package.json`, except the prose marked below.
+   - `package.json` and (not checked) `package-lock.json`: `npm version <version> --no-git-tag-version` updates both.
+   - `src/shared/product.ts` (the version the app reports; the server build compiles only `src/`, so it cannot import `package.json`).
+   - `charts/volveran/Chart.yaml`: `version` and `appVersion`.
+   - `README.md`: the image tags and the `helm install --version` of the quick start, and (not checked) the status line and the example tag in the quick start's introduction.
+   - `docs/team-mode.md` (the image tag) and `docs/kubernetes.md` (`helm install --version`).
+   - `docker-compose.example.yml` (the image tag).
+   - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `0.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
+   - On a release that finishes a roadmap version: `ROADMAP.md` (not checked).
+
+**Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
+
+**Test broker.** `test/broker/` holds the compose file, `rabbitmq.conf` (15 s global `consumer_timeout`) and `definitions.json` (users, vhosts, origin queues and dead-letter queues). The compose file also runs a mock OIDC provider ([mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), issuer `http://127.0.0.1:<port>/default`) for the Team Mode tests; `TestBrowser` in `test/integration/oidc-provider.ts` signs in through it as any `sub`, email and name. A second RabbitMQ, `rabbitmq-oauth` (`rabbitmq-oauth.conf`), has the OAuth 2.0 backend only and trusts the mock provider's signing key, which `oidc.json` pins (`oidc-signing-key.pem` is its public half), because RabbitMQ fetches signing keys over https only; the OAuth 2.0 broker facts connect to it with tokens from `test/broker/oauth.ts`. Every checkout gets its own broker: the compose project is named after the checkout's directory and path (`volveran-test-<dir>-<hash>`), and the host ports are random free ports on 127.0.0.1, so several worktrees can run tests at once. `npm run test:broker` and `test:integration` always tear their broker down. To iterate against a running broker:
+
+```sh
+npm run broker:up      # prints the project name and ports
+npx vitest run --config vitest.broker-facts.config.ts test/broker-facts/publishing.test.ts
+npm run broker:down
+```
+
+The test helpers find the running broker of the checkout on their own. Environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VOLVERAN_TEST_PROJECT` | derived from the checkout path | compose project name |
+| `VOLVERAN_TEST_AMQP_PORT`, `VOLVERAN_TEST_MGMT_PORT` | random free ports | host ports of the broker |
+| `VOLVERAN_TEST_OIDC_PORT` | random free port | host port of the mock OIDC provider |
+| `VOLVERAN_TEST_OAUTH_AMQP_PORT`, `VOLVERAN_TEST_OAUTH_MGMT_PORT` | random free ports | host ports of the OAuth 2.0 broker |
+| `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
+| `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against (both brokers) |
+
+**kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard, with the chart's NetworkPolicy on (kindnet enforces it, so the pod becoming ready shows the probes get through). `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), checks that the paused Replay rule in the values loaded, Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod and keeps the rule paused. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).

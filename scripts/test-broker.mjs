@@ -1,5 +1,5 @@
 // Brings this checkout's docker-compose test broker and mock OIDC provider up
-// or down (see README "Development"). The compose project name and host ports
+// or down (see CONTRIBUTING.md). The compose project name and host ports
 // come from scripts/test-broker-env.mjs: one broker per checkout, on random
 // free ports unless VOLVERAN_TEST_AMQP_PORT / VOLVERAN_TEST_MGMT_PORT /
 // VOLVERAN_TEST_OIDC_PORT / VOLVERAN_TEST_OAUTH_AMQP_PORT /

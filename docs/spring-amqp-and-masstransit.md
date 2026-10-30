@@ -10,7 +10,7 @@ Volverán calls what the framework wrote the **Failure Details** of a Message ([
 - **Message view.** A Failure Details section shows every field the framework wrote, with the stack trace collapsed. A MassTransit Message that was skipped rather than faulted is marked **skipped**.
 - **Filter.** The **Failure** filter (`{ "kind": "failure", "value": "..." }`) selects the Messages whose exception type or message contains the text, in any case, so Select all matching can pick every Message that failed with the same exception.
 - **Queue list.** A queue whose name ends in `_error` (MassTransit's error queues) is listed with the dead-letter queues, without configuring a filter. `_skipped` queues are not.
-- **Export.** Each NDJSON line carries `failureDetails` (README, [Exporting Messages](../README.md#exporting-messages)).
+- **Export.** Each NDJSON line carries `failureDetails` ([Exporting Messages](exporting.md)).
 - **API.** Message summaries and the Message view carry `failureDetails`, or `null` when no framework wrote any.
 
 ## Replay and Move
