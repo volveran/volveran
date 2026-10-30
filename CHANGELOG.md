@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- A queue can be Checked Out again straight after its Checkout ends. The start could be refused with `checkout_in_progress`, naming no one, while the broker was still deleting the old lock queue.
+
 ## [0.5.1] - 2026-10-30
 
 A visual design for the web app. Behaviour, labels and keyboard shortcuts are unchanged. Releases now also publish their changelog entry as a GitHub Release.

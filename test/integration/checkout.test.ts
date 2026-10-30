@@ -4,7 +4,9 @@
 // independently over AMQP.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as amqp from 'amqplib';
+import { lockQueueName } from '../../src/server/triage/checkout-lock.js';
 import {
+  connect,
   drain,
   purgeQueues,
   readyCount,
@@ -269,6 +271,24 @@ describe('Checkout', () => {
         await other.close();
       }
     });
+
+    it('has freed the broker lock by the time ending a Checkout answers', async () => {
+      // An open connection, so the declare follows the end with no handshake in between.
+      const raw = await connect();
+      const lockQueue = lockQueueName('orders.dlq');
+      try {
+        for (let i = 0; i < 40; i++) {
+          const { checkout } = (await startCheckout('orders.dlq')).body;
+          await endCheckout(checkout.id);
+          const ch = await raw.createChannel();
+          await ch.assertQueue(lockQueue, { exclusive: true, autoDelete: true, durable: false });
+          await ch.deleteQueue(lockQueue);
+          await ch.close();
+        }
+      } finally {
+        await raw.close();
+      }
+    }, 60_000);
 
     it('refuses a Checkout of a queue held by another Volverán instance, through the broker lock', async () => {
       await seedMessages('/', 'payments.dlq', 1);

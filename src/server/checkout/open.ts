@@ -249,3 +249,23 @@ async function takeLock(checkout: Checkout, connection: amqp.ChannelModel, manag
   }
   await channel.close().catch(() => {});
 }
+
+/**
+ * Closes the Checkout's connection, deleting its lock queue first. The broker
+ * deletes an exclusive queue only some time after answering the connection's
+ * close (docs/rabbitmq-behaviour.md, "Watch queue lifetime"), so a close alone
+ * would leave the queue refusing the next Checkout. A connection that does not
+ * own the lock is refused the delete, and it stays with its holder.
+ */
+export async function closeCheckoutConnection(checkout: Checkout): Promise<void> {
+  const { connection } = checkout;
+  if (!connection) return;
+  try {
+    const channel = await connection.createChannel();
+    channel.on('error', () => {});
+    await channel.deleteQueue(lockQueueName(checkout.queue));
+  } catch {
+    // The connection is going anyway: the broker deletes the lock queue with it.
+  }
+  await connection.close().catch(() => {});
+}
