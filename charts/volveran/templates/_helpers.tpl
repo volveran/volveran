@@ -148,6 +148,22 @@ extraEnv, persistence, pod scheduling). Included next to volveran.validate.
 {{- if hasKey (.Values.pod.annotations | default dict) "checksum/broker-profiles" -}}
 {{- fail "pod.annotations.checksum/broker-profiles is set by the chart: it rolls the pod when the Broker Profiles change" -}}
 {{- end -}}
+{{- if and .Values.metrics.serviceMonitor.enabled (not .Values.metrics.enabled) -}}
+{{- fail "metrics.serviceMonitor.enabled needs metrics.enabled: without the metrics port the ServiceMonitor has nothing to scrape" -}}
+{{- end -}}
+{{- if .Values.metrics.enabled -}}
+{{- if eq (int .Values.metrics.port) 8080 -}}
+{{- fail "metrics.port must differ from 8080, the web app's container port: metrics are never served on it" -}}
+{{- end -}}
+{{- if eq (int .Values.metrics.port) (int .Values.service.port) -}}
+{{- fail (printf "metrics.port must differ from service.port (both are %d): the Service gives each of them a port of its own" (int .Values.service.port)) -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if eq .name "VOLVERAN_METRICS_PORT" -}}
+{{- fail "extraEnv sets VOLVERAN_METRICS_PORT: use metrics.enabled and metrics.port instead, which also add the container and Service ports" -}}
+{{- end -}}
+{{- end -}}
 {{- $fixed := include "volveran.fixedVariables" . | fromJsonArray -}}
 {{- $settings := include "volveran.settingsVariables" . | fromYaml -}}
 {{- range .Values.extraEnv -}}

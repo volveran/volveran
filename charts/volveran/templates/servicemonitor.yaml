@@ -1,0 +1,26 @@
+{{- /*
+An optional Prometheus Operator ServiceMonitor for the metrics port of this
+release's Service. The labels let a Prometheus's serviceMonitorSelector pick it
+up; without an interval or timeout, that Prometheus's own defaults apply.
+*/ -}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "volveran.fullname" . }}
+  labels:
+    {{- mergeOverwrite (include "volveran.labels" . | fromYaml) .Values.metrics.serviceMonitor.labels | toYaml | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "volveran.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      {{- with .Values.metrics.serviceMonitor.interval }}
+      interval: {{ . }}
+      {{- end }}
+      {{- with .Values.metrics.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+{{- end }}
