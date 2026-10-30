@@ -3,7 +3,8 @@
 // are the profile's, read once for the whole list.
 import { downsample } from './downsample.js';
 import { historyGaps } from './gaps.js';
-import type { HistoryRouteDeps } from '../routes/history.js';
+import type { HistoryStore } from '../audit/history.js';
+import type { RuleClock } from '../replay-rules/rule-clock.js';
 import type { DepthSeries } from '../../shared/history.js';
 import type { QueueRow } from '../../shared/queues.js';
 
@@ -11,8 +12,14 @@ import type { QueueRow } from '../../shared/queues.js';
 const MAX_SAMPLES = 96;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export interface DepthSeriesDeps {
+  history: Pick<HistoryStore, 'runsAround' | 'samples'>;
+  clock: Pick<RuleClock, 'now'>;
+  intervalMs: number;
+}
+
 export function depthSeriesOf(
-  { history, clock, intervalMs }: HistoryRouteDeps,
+  { history, clock, intervalMs }: DepthSeriesDeps,
   profile: string,
   vhost: string,
   queues: readonly QueueRow[],
