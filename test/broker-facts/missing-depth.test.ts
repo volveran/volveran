@@ -4,8 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { composeFile, repoRoot, testBrokerSettings } from '../../scripts/test-broker-env.mjs';
-import { eventually, management, sleep } from '../broker/client.js';
-import { queueTypes, scratchFor } from './support.js';
+import { eventually, management, sleep, uniqueName } from '../broker/client.js';
+import { queueTypes, scratch, scratchFor } from './support.js';
 
 /** The queue's row in the list the sampler reads, or null while the API cannot answer. */
 async function listed(q: string): Promise<Record<string, unknown> | null> {
@@ -39,9 +39,11 @@ describe('Missing depth', () => {
   });
 
   describe('Just after a broker restart the management API lists a queue with no `messages` or `consumers` fields, rather than zero, for some seconds. The depth then comes back unchanged.', () => {
-    it.for(queueTypes)('a durable %s queue', async (type, ctx) => {
-      const s = await scratchFor(ctx);
-      const q = await s.queue(`md-${type}`, { 'x-queue-type': type });
+    it.for(queueTypes)('a durable %s queue', { timeout: 90_000 }, async (type) => {
+      // Not `s.queue`: closing the Scratch before the restart would delete it.
+      const s = await scratch();
+      const q = uniqueName(`md-${type}`);
+      await s.ch.assertQueue(q, { durable: true, arguments: { 'x-queue-type': type } });
       await s.publish(q, ['a', 'b', 'c'], { persistent: true });
       await eventually(async () => expect((await listed(q))?.messages).toBe(3), 30_000, 250);
       await s.close();
@@ -58,6 +60,6 @@ describe('Missing depth', () => {
       await eventually(async () => expect((await listed(q))?.messages).toBe(3), 30_000, 250);
 
       await management(`/queues/%2F/${encodeURIComponent(q)}`, { method: 'DELETE' });
-    }, 90_000);
+    });
   });
 });
