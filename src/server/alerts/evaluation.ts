@@ -18,7 +18,7 @@
 // did hide arrivals, which count then, one Sample late. A consumer outside
 // Volverán can settle a take-out too, and so hide arrivals, as it does anyway.
 import { createHash } from 'node:crypto';
-import { queueHistoryPath } from '../../shared/history.js';
+import { historyPath } from '../../shared/history-link.js';
 import { matchesQueueFilter } from '../triage/queue-list.js';
 import type { FinishedRun, LatestSample } from '../history/sampler.js';
 import type { Notification } from './payloads.js';
@@ -109,7 +109,7 @@ export function evaluateAlerts({ profile, rules, memory, run: { run, samples } }
         threshold: alert.threshold,
         startedAt: new Date(alert.since).toISOString(),
         endedAt: status === 'resolved' ? new Date(now).toISOString() : null,
-        path: alert.vhost !== null && alert.queue !== null ? queueHistoryPath(profile, alert.vhost, alert.queue) : null,
+        path: alert.vhost !== null && alert.queue !== null ? historyPath({ profile, vhost: alert.vhost, queue: alert.queue }) : null,
       },
     });
   };

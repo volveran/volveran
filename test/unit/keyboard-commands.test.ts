@@ -20,6 +20,17 @@ function press(written: string): KeyPress {
 const queueList: KeyboardState = { view: 'queue-list', focus: 'other', prompt: false, selection: 0, focusedItem: true };
 const checkout: KeyboardState = { view: 'checkout', focus: 'other', prompt: false, selection: 0, focusedItem: true };
 
+describe('opening a queue history from the queue list', () => {
+  it('opens the history of the focused queue with h', () => {
+    expect(commandFor({ key: 'h', shiftKey: false }, queueList)).toEqual({ kind: 'open-history' });
+  });
+
+  it('needs a focused queue, and leaves a text field alone', () => {
+    expect(commandFor({ key: 'h', shiftKey: false }, { ...queueList, focusedItem: false })).toBeNull();
+    expect(commandFor({ key: 'h', shiftKey: false }, { ...queueList, focus: 'text-field' })).toBeNull();
+  });
+});
+
 describe('Keyboard commands in the queue list', () => {
   it('moves with j/k or the arrow keys', () => {
     expect(commandFor(press('j'), queueList)).toEqual({ kind: 'move', by: 1, extendSelection: false });
@@ -196,6 +207,7 @@ describe('Keyboard commands everywhere', () => {
       'compare',
       'focus-filter',
       'move',
+      'open-history',
       'show-shortcuts',
       'start-checkout',
       'toggle-selection',

@@ -160,7 +160,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     replayRules,
     notifier,
     audit: { audit, restore, usage },
-    history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs },
+    history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
   });
@@ -323,7 +323,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, au
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
   const checkoutDeps = { checkouts, access: profileAccess };
   registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
-  registerProfileRoutes(app, profileAccess);
+  registerProfileRoutes(app, profileAccess, history);
   registerReplayRuleRoutes(app, replayRules, profileAccess);
   registerAlertDestinationRoutes(app, notifier, profileAccess);
   registerCheckoutRoutes(app, checkoutDeps);
