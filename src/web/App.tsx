@@ -3,7 +3,8 @@
 // Checkout on one, which replaces the queue list until it is over. The Audit
 // view (AuditView.tsx) browses Audit Entries and Restores Discarded Messages.
 // The Replay rules view (ReplayRulesView.tsx) shows the selected profile's
-// Replay Rules and runs a pass on demand.
+// Replay Rules and runs a pass on demand. The Alerts view (AlertsView.tsx) shows
+// what is firing and the notifications sent; a firing Alert also shows on its queue.
 // In Team Mode the Approvals view (ApprovalsView.tsx) lists other Operators'
 // Applies waiting for an Approval this Operator may give; a requester's link
 // (#/approvals/<checkout id>, approval-link.ts) opens it on their Checkout.
@@ -15,9 +16,15 @@
 // filters them), and actions their Role does not allow are shown as
 // unavailable, naming the role they need.
 // In the queue list j/k or the arrow keys move and Enter starts a Checkout
-// (keys mapped in keyboard-commands.ts).
+// (keys mapped in keyboard-commands.ts), and h opens a dead-letter queue's depth
+// history (HistoryView.tsx), also reachable by link (#/history/..., history-link.ts).
+// The Dead-letter Map view (DeadLetterMapView.tsx) follows the top bar's profile
+// and vhost, by link too (#/dead-letter-map/...), so Back from a queue's history
+// returns to it. A Checkout started there replaces it until the Checkout is over.
 import { useEffect, useRef, useState } from 'react';
+import { alertReasonText, alertValueText } from '../shared/alerts.js';
 import { waitingCheckoutIn } from '../shared/approval-link.js';
+import { auditSearchIn, deadLetterMapPath, deadLetterMapTargetIn, historyPath, historyTargetIn, type MapTarget } from '../shared/history-link.js';
 import { product } from '../shared/product.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import {
@@ -32,10 +39,14 @@ import {
   type SetupWarningSeverity,
 } from './api.js';
 import { ApprovalsView } from './ApprovalsView.js';
+import { AlertsView } from './AlertsView.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
+import { DeadLetterMapView } from './DeadLetterMapView.js';
+import { HistoryView, Sparkline } from './HistoryView.js';
 import { ReplayRulesView } from './ReplayRulesView.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
+import { CheckoutCell, SetupWarnings, severityLabel } from './queue-cells.js';
 import { SignInAgain } from './SignInAgain.js';
 import type { KeyboardCommand } from './keyboard-commands.js';
 
@@ -81,7 +92,16 @@ export function App() {
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
   /** The waiting Checkout a requester's link points at (the URL fragment), until it is left. */
   const [linkedApproval, setLinkedApproval] = useState(() => waitingCheckoutIn(window.location.hash));
-  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules'>(linkedApproval ? 'approvals' : 'queues');
+  /** The queue whose history a link or the queue list opened. */
+  const [historyTarget, setHistoryTarget] = useState(() => historyTargetIn(window.location.hash));
+  /** The search a history mark's link opens the Audit view on, and which link it was, to search again. */
+  const [auditLink, setAuditLink] = useState(() => ({ hash: window.location.hash, search: auditSearchIn(window.location.hash) }));
+  const [mapTarget] = useState(() => deadLetterMapTargetIn(window.location.hash));
+  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules' | 'alerts' | 'history' | 'map'>(() =>
+    linkedApproval ? 'approvals' : historyTarget ? 'history' : mapTarget ? 'map' : auditLink.search ? 'audit' : 'queues',
+  );
+  /** Kept while the map is left for a queue's history, so Back finds it as it was. */
+  const [mapSearch, setMapSearch] = useState('');
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
@@ -94,13 +114,46 @@ export function App() {
   /** Team Mode, signed in with no role on any Broker Profile: NoRolePage instead of the app. */
   const noRoleAnywhere = session?.mode === 'team' && Object.keys(session.roles).length === 0;
 
+  /** The top bar follows a history link, so going back shows that queue's list. */
+  const showProfileOf = ({ profile, vhost }: MapTarget) => {
+    saveLocation({ profile, vhost });
+    setProfileName(profile);
+    setVhost(vhost);
+  };
+
+  /** Leaves whichever view a link opened: the fragment goes, so the same link works again. */
+  const clearLink = () => window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  const switchView = (next: typeof view) => {
+    clearLink();
+    setAuditLink({ hash: '', search: null });
+    setView(next);
+  };
+
   // A link pasted into a tab already showing the app.
   useEffect(() => {
     const follow = () => {
-      const linked = waitingCheckoutIn(window.location.hash);
-      if (!linked) return;
-      setLinkedApproval(linked);
-      setView('approvals');
+      const { hash } = window.location;
+      const linked = waitingCheckoutIn(hash);
+      const history = historyTargetIn(hash);
+      const map = deadLetterMapTargetIn(hash);
+      const search = auditSearchIn(hash);
+      if (linked) {
+        setLinkedApproval(linked);
+        setView('approvals');
+      } else if (history) {
+        showProfileOf(history);
+        setHistoryTarget(history);
+        setView('history');
+      } else if (map) {
+        showProfileOf(map);
+        setView('map');
+      } else if (search) {
+        setAuditLink({ hash, search });
+        setView('audit');
+      } else {
+        // The browser's Back, out of a history opened from the queue list.
+        setView((current) => (current === 'history' ? 'queues' : current));
+      }
     };
     window.addEventListener('hashchange', follow);
     return () => window.removeEventListener('hashchange', follow);
@@ -112,6 +165,8 @@ export function App() {
   }, [profile?.name, profile?.protected]);
 
   useEffect(() => {
+    const linkedLocation = historyTarget ?? mapTarget;
+    if (linkedLocation) saveLocation({ profile: linkedLocation.profile, vhost: linkedLocation.vhost });
     api
       .session()
       .then((s) => {
@@ -150,9 +205,17 @@ export function App() {
     };
   }, [profileName]);
 
+  // The map's link names what the top bar shows, and its search starts over elsewhere.
+  useEffect(() => {
+    if (view === 'map' && profileName && vhost) window.history.replaceState(null, '', deadLetterMapPath({ profile: profileName, vhost }));
+  }, [view, profileName, vhost]);
+  useEffect(() => setMapSearch(''), [profileName, vhost]);
+
+  const queueListShown = view !== 'map';
   useEffect(() => {
     if (!profileName || !vhost) return;
     saveLocation({ profile: profileName, vhost });
+    if (!queueListShown) return;
     let cancelled = false;
     setLoading(true);
     api
@@ -171,7 +234,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [profileName, vhost, debouncedSearch, onlyDeadLetterQueues, refreshTick]);
+  }, [profileName, vhost, debouncedSearch, onlyDeadLetterQueues, refreshTick, queueListShown]);
 
   const startCheckout = async (queue: string, overrideConsumers = false) => {
     if (!profileName || !vhost) return;
@@ -201,6 +264,11 @@ export function App() {
         if (q && mayCheckout && q.checkout.available && !q.checkedOutBy) void startCheckout(q.name);
         return;
       }
+      case 'open-history': {
+        const q = queues.find((q) => q.name === focusedQueue);
+        if (q?.deadLetterQueue && profileName && vhost) window.location.hash = historyPath({ profile: profileName, vhost, queue: q.name }).slice(1);
+        return;
+      }
       case 'show-shortcuts':
         return setShortcutsOpen(true);
       case 'close-prompt':
@@ -220,6 +288,34 @@ export function App() {
     run,
   );
 
+  /** Why a start from the queue list or the map did not go through. */
+  const startProblems = (
+    <>
+      {error && (
+        <div className="error" role="alert">
+          <strong>{errorTitle(error)}</strong>
+          <p>{error.message}</p>
+          <code>{error.code}</code>
+          <SignInAgain error={error} />
+        </div>
+      )}
+
+      {consumersWarning && !checkoutId && (
+        <div className="warning" role="alert">
+          <strong>
+            {consumersWarning.error.details.consumers === 1
+              ? '1 consumer is'
+              : `${String(consumersWarning.error.details.consumers)} consumers are`}{' '}
+            reading {consumersWarning.queue}
+          </strong>
+          <p>{consumersWarning.error.message}</p>
+          <button onClick={() => startCheckout(consumersWarning.queue, true)}>Check out anyway</button>{' '}
+          <button onClick={() => setConsumersWarning(undefined)}>Cancel</button>
+        </div>
+      )}
+    </>
+  );
+
   if (noRoleAnywhere) {
     return <NoRolePage operator={session.operator} operatorId={session.operatorId} groups={session.groups} />;
   }
@@ -229,17 +325,23 @@ export function App() {
       <header className="topbar">
         <h1>{product.name}</h1>
         <nav className="view-switch" aria-label="View">
-          <button type="button" aria-pressed={view === 'queues'} onClick={() => setView('queues')}>
+          <button type="button" aria-pressed={view === 'queues'} onClick={() => switchView('queues')}>
             Queues
           </button>
-          <button type="button" aria-pressed={view === 'audit'} onClick={() => setView('audit')}>
+          <button type="button" aria-pressed={view === 'audit'} onClick={() => switchView('audit')}>
             Audit
           </button>
-          <button type="button" aria-pressed={view === 'rules'} onClick={() => setView('rules')}>
+          <button type="button" aria-pressed={view === 'rules'} onClick={() => switchView('rules')}>
             Replay rules
           </button>
+          <button type="button" aria-pressed={view === 'alerts'} onClick={() => switchView('alerts')}>
+            Alerts
+          </button>
+          <button type="button" aria-pressed={view === 'map'} onClick={() => switchView('map')}>
+            Dead-letter Map
+          </button>
           {session?.mode === 'team' && (
-            <button type="button" aria-pressed={view === 'approvals'} onClick={() => setView('approvals')}>
+            <button type="button" aria-pressed={view === 'approvals'} onClick={() => switchView('approvals')}>
               Approvals
             </button>
           )}
@@ -249,7 +351,10 @@ export function App() {
           <select
             className={profile?.protected ? 'protected-select' : undefined}
             value={profileName ?? ''}
-            onChange={(e) => setProfileName(e.target.value)}
+            onChange={(e) => {
+              if (view === 'history') switchView('queues');
+              setProfileName(e.target.value);
+            }}
           >
             {profiles.map((p) => (
               <option key={p.name} value={p.name}>
@@ -261,7 +366,13 @@ export function App() {
         </label>
         <label>
           Vhost
-          <select value={vhost ?? ''} onChange={(e) => setVhost(e.target.value)} disabled={vhosts.length === 0}>
+          <select
+            value={vhost ?? ''}
+            onChange={(e) => {
+              if (view === 'history') switchView('queues');
+              setVhost(e.target.value);
+            }}
+            disabled={vhosts.length === 0}>
             {vhosts.map((v) => (
               <option key={v} value={v}>
                 {v}
@@ -323,9 +434,28 @@ export function App() {
           </>
         )}
         {view === 'audit' && !checkoutId ? (
-          <AuditView profiles={profiles} roles={session?.roles ?? {}} />
+          <AuditView key={auditLink.hash} initialSearch={auditLink.search} profiles={profiles} roles={session?.roles ?? {}} />
+        ) : view === 'history' && historyTarget && !checkoutId ? (
+          <HistoryView target={historyTarget} onBack={() => switchView('queues')} />
+        ) : view === 'map' && !checkoutId ? (
+          <>
+            {startProblems}
+            {profileName && vhost && (
+              <DeadLetterMapView
+                key={`${profileName}/${vhost}`}
+                profile={profileName}
+                vhost={vhost}
+                role={role}
+                search={mapSearch}
+                onSearch={setMapSearch}
+                onCheckout={(queue) => void startCheckout(queue)}
+              />
+            )}
+          </>
         ) : view === 'rules' && !checkoutId ? (
           profileName && <ReplayRulesView profile={profileName} role={role} />
+        ) : view === 'alerts' && !checkoutId ? (
+          <AlertsView profile={profileName} roles={session?.roles ?? {}} />
         ) : (
           // Hidden, not removed, under Approvals: the Operator's own Checkout keeps its heartbeat.
           <div hidden={view === 'approvals'}>
@@ -350,28 +480,7 @@ export function App() {
               </button>
             </div>
 
-            {error && (
-              <div className="error" role="alert">
-                <strong>{errorTitle(error)}</strong>
-                <p>{error.message}</p>
-                <code>{error.code}</code>
-                <SignInAgain error={error} />
-              </div>
-            )}
-
-            {consumersWarning && !checkoutId && (
-              <div className="warning" role="alert">
-                <strong>
-                  {consumersWarning.error.details.consumers === 1
-                    ? '1 consumer is'
-                    : `${String(consumersWarning.error.details.consumers)} consumers are`}{' '}
-                  reading {consumersWarning.queue}
-                </strong>
-                <p>{consumersWarning.error.message}</p>
-                <button onClick={() => startCheckout(consumersWarning.queue, true)}>Check out anyway</button>{' '}
-                <button onClick={() => setConsumersWarning(undefined)}>Cancel</button>
-              </div>
-            )}
+            {startProblems}
 
             {checkoutId ? (
               <CheckoutView
@@ -395,6 +504,8 @@ export function App() {
                   <VhostWarningCounts counts={queueList.setupWarningCounts} vhost={vhost} />
                   <QueueTable
                     queues={queueList.queues}
+                    profile={profileName}
+                    vhost={vhost}
                     role={role}
                     focused={focusedQueue}
                     onFocus={setFocusedQueue}
@@ -495,11 +606,6 @@ function errorTitle(error: ApiError): string {
   }
 }
 
-const severityLabel: Record<SetupWarningSeverity, string> = {
-  loses_messages: 'Loses Messages',
-  may_lose_messages: 'May lose Messages',
-};
-
 /** The vhost's set-up warnings by severity, above the queue list (whatever the search leaves listed). */
 function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vhost: string | undefined }) {
   const parts = (Object.keys(severityLabel) as SetupWarningSeverity[]).filter((s) => counts[s] > 0);
@@ -519,12 +625,16 @@ function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vho
 /** The queue list. The keyboard's queue row takes the DOM focus, so it is visible and announced. */
 function QueueTable({
   queues,
+  profile,
+  vhost,
   role,
   focused,
   onFocus,
   onCheckout,
 }: {
   queues: Queue[];
+  profile: string | undefined;
+  vhost: string | undefined;
   role: Role | undefined;
   focused: string | undefined;
   onFocus(queue: string): void;
@@ -534,7 +644,6 @@ function QueueTable({
   useEffect(() => {
     if (focused !== undefined) rows.current.get(focused)?.focus();
   }, [focused]);
-  const mayCheckout = role !== undefined && roleIncludes(role, 'operator');
   if (queues.length === 0) return <p className="empty">No queues match.</p>;
   return (
     <table className="queues">
@@ -546,6 +655,7 @@ function QueueTable({
             Messages <small>(approx.)</small>
           </th>
           <th className="num">Consumers</th>
+          <th>Last 24 hours</th>
           <th>Checkout</th>
         </tr>
       </thead>
@@ -567,12 +677,15 @@ function QueueTable({
               {q.deadLetteredFrom.length > 0 && (
                 <span className="dlq-source">dead-lettered from {q.deadLetteredFrom.join(', ')}</span>
               )}
-              {q.setupWarnings.map((w) => (
-                <span key={w.code} className="setup-warning" role="note">
-                  <span className={`badge severity-${w.severity}`}>{severityLabel[w.severity]}</span>
-                  <small>{w.message}</small>
+              {q.firingAlerts?.map((a) => (
+                <span key={a.alertId} className="firing-alert" role="note">
+                  <span className="badge alert-firing">Alert firing</span>
+                  <small>
+                    {a.rule}: {alertReasonText(a) || alertValueText(a)}
+                  </small>
                 </span>
               ))}
+              <SetupWarnings warnings={q.setupWarnings} />
             </td>
             <td>
               <span className={`badge type-${q.type}`}>{q.type}</span>
@@ -580,26 +693,14 @@ function QueueTable({
             <td className="num">≈ {q.approximateMessages}</td>
             <td className="num">{q.consumers}</td>
             <td>
-              {q.checkedOutBy ? (
-                <span className="unavailable">
-                  Checked out
-                  <small>
-                    by {q.checkedOutBy.operator} since {new Date(q.checkedOutBy.since).toLocaleTimeString()}
-                  </small>
-                </span>
-              ) : !mayCheckout ? (
-                <span className="unavailable">
-                  Needs the role <code>operator</code>
-                  <small>your role here is {role ?? 'none'}</small>
-                </span>
-              ) : q.checkout.available ? (
-                <button onClick={() => onCheckout(q.name)}>Check out</button>
-              ) : (
-                <span className="unavailable" title={q.checkout.reason}>
-                  Not available
-                  <small>{q.checkout.reason}</small>
-                </span>
+              {q.deadLetterQueue && profile && vhost && (
+                <a className="history-link" href={historyPath({ profile, vhost, queue: q.name })} aria-label={`Depth history of ${q.name}`}>
+                  {q.depthSeries ? <Sparkline series={q.depthSeries} /> : 'History'}
+                </a>
               )}
+            </td>
+            <td>
+              <CheckoutCell queue={q.name} checkout={q.checkout} checkedOutBy={q.checkedOutBy} role={role} onCheckout={onCheckout} />
             </td>
           </tr>
         ))}

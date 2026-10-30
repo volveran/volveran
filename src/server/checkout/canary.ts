@@ -24,7 +24,7 @@ import { canaryNeedsReplay, canaryRequired } from '../apply/errors.js';
 import type { CanaryHooks } from '../apply/types.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
-import type { CanaryWatchBindings } from '../triage/canary-watch.js';
+import { canaryQueueName, type CanaryWatchBindings } from '../triage/canary-watch.js';
 import { messageIdOf, messageSummary } from '../triage/message-view.js';
 import type { CanaryStatus, CanaryView } from '../../shared/checkout.js';
 import type { Checkout } from './state.js';
@@ -32,10 +32,6 @@ import { queueInfo } from './view.js';
 
 /** The header a Replay is published with (republish.ts), by which the watch recognises the Canary. */
 const REPLAY_ID_HEADER = 'x-volveran-replay-id';
-
-export function canaryQueueName(checkoutId: string): string {
-  return `volveran.canary.${checkoutId}`;
-}
 
 /** The Canary as the manager keeps it on the Checkout. */
 export interface CanaryState extends Omit<CanaryView, 'watchEndsAt'> {

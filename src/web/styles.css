@@ -69,6 +69,10 @@
   --danger-solid: #b3261e;
   --on-danger: #ffffff;
 
+  /* The severity colours the observability views draw charts and tags with. */
+  --danger: var(--danger-line);
+  --warning: var(--warning-line);
+
   /* Differences in ComparisonView: a hue of their own, never a severity. */
   --diff-fg: #5b2ba8;
   --diff-bg: #f1eafe;
@@ -1698,4 +1702,287 @@ dialog.prompt .confirm button.danger:disabled {
     grid-template-columns: 1fr;
     gap: 0;
   }
+}
+
+/* Depth history */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.history h2:focus {
+  outline: none;
+}
+
+.history-chart {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.history-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chart-summary {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.chart-line-dot {
+  fill: var(--accent);
+}
+
+.chart-axis {
+  stroke: var(--border);
+}
+
+.chart-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+/* A gap in sampling is solid, unknown arrivals are hatched: neither reads as a value. */
+.chart-gap {
+  fill: var(--danger);
+  opacity: 0.15;
+}
+
+.chart-unknown-stroke {
+  stroke: var(--muted);
+  stroke-width: 2;
+  opacity: 0.5;
+}
+
+.chart-mark {
+  stroke: var(--text);
+  stroke-dasharray: 3 2;
+}
+
+.chart-mark-head {
+  fill: var(--text);
+}
+
+.sparkline {
+  display: block;
+}
+
+.queues .history-link {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/* Alerts view and firing Alerts on the queue list */
+.alerts h2 {
+  margin-top: 24px;
+}
+
+table.alert-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.alert-list th,
+table.alert-list td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.alert-destinations li {
+  margin-bottom: 6px;
+}
+
+.badge.alert-firing,
+.badge.delivery-failed {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.badge.alert-pending {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
+.queues .firing-alert {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* The Dead-letter Map. The diagram keeps its size and scrolls: a wide map stays legible. */
+.dead-letter-map h2 {
+  margin-bottom: 0.25rem;
+}
+
+.map-diagram {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.map-diagram svg {
+  display: block;
+}
+
+.map-node rect {
+  fill: var(--surface);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.map-queue rect {
+  stroke: var(--muted);
+}
+
+.map-node.in-cycle rect {
+  stroke: var(--warning);
+}
+
+.map-exchange rect {
+  fill: var(--bg);
+}
+
+.map-exchange.missing rect,
+.map-loss rect {
+  fill: var(--danger-bg);
+  stroke: var(--danger);
+  stroke-dasharray: 4 3;
+}
+
+.map-unresolved rect {
+  fill: var(--bg);
+  stroke-dasharray: 2 3;
+}
+
+.map-name {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.map-exchange .map-name,
+.map-unresolved .map-name {
+  font-weight: 400;
+}
+
+.map-loss .map-name,
+.map-exchange.missing .map-name {
+  fill: var(--danger);
+}
+
+.map-detail {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.map-cycle-flag {
+  fill: var(--warning);
+}
+
+.map-warning {
+  font-size: 12px;
+}
+
+.map-warning.severity-loses_messages {
+  fill: var(--danger);
+}
+
+.map-warning.severity-may_lose_messages {
+  fill: var(--warning);
+}
+
+.map-action,
+.map-action text {
+  fill: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.map-edge path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.25;
+}
+
+.map-edge text {
+  fill: var(--muted);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+}
+
+.map-edge.in-cycle path {
+  stroke: var(--warning);
+}
+
+.map-edge-convention path {
+  stroke-dasharray: 2 4;
+}
+
+.map-edge-unresolved path {
+  stroke-dasharray: 6 4;
+}
+
+.map-edge-drop path {
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+}
+
+.map-edge-drop text {
+  fill: var(--danger);
+}
+
+.map-arrowhead path {
+  fill: var(--muted);
+}
+
+.map-arrowhead-loss path {
+  fill: var(--danger);
+}
+
+.map-arrowhead-cycle path {
+  fill: var(--warning);
+}
+
+.map-cycle-note {
+  margin: 0 0 0.5rem;
+}
+
+.map-listing {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.dead-letter-map .setup-warning {
+  display: flex;
 }

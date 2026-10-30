@@ -1,7 +1,19 @@
 # Volverán Broker Profiles. Mount this file into the container at
 # /config/profiles.yaml (or point VOLVERAN_PROFILES_FILE at it).
-# Passwords never go in this file: each profile names the environment
-# variable that holds its password.
+# Passwords and webhook URLs never go in this file: each names the environment
+# variable that holds it.
+alertDestinations:             # optional; where notifications go (ADR 0012).
+  - name: ops-slack            #   letters, digits, - and _; an admin can send it a test notification
+    type: slack                #   slack (incoming webhook), teams (workflow webhook) or webhook
+    urlEnv: VOLVERAN_OPS_SLACK_URL  # the variable holding the URL: it is a credential, and startup refuses it unset
+  - name: ops-teams
+    type: teams
+    urlEnv: VOLVERAN_OPS_TEAMS_URL
+  - name: pager
+    type: webhook
+    urlEnv: VOLVERAN_PAGER_URL
+    signingSecretEnv: VOLVERAN_PAGER_SECRET  # optional, webhook only: signs each body with HMAC-SHA256
+
 profiles:
   - name: dev
     managementUrl: http://localhost:15672   # http or https
@@ -24,6 +36,33 @@ profiles:
         whenAttemptsUsedUp: keep #   or { moveTo: { queue: orders.parked } }
         stopWhen: { diedAgain: 10, within: 15m }  # required: pause once 10 Replayed Messages die again within 15m
         startPaused: true        #   deploy paused, resume from the Replay rules view
+    alerts:                      # optional; tell an Alert Destination about a dead-letter queue (ADR 0012).
+      - name: orders-deep        #   unique in this profile: letters, digits, - and _
+        destinations: [ops-slack, pager]  # names from alertDestinations above
+        when:                    #   vhost, queue or queuePattern, and one condition
+          vhost: /
+          queue: orders.dlq
+          depthAbove: 100        #   the depth is above this
+        for: 5m                  #   optional; the condition must hold this long before it fires (1s to 7d)
+        repeatEvery: 1h          #   optional; send it again while it fires (1m to 7d); default never
+      - name: any-dlq-burst
+        destinations: [ops-teams]
+        when:
+          vhost: /
+          queuePattern: "*.dlq"  #   the profile filter's glob; each matching dead-letter queue is its own Alert
+          arrivalsAbove: { count: 50, within: 10m }  # more than 50 estimated arrivals within 10m
+      - name: payments-silent
+        destinations: [pager]
+        when: { vhost: /, queue: payments.dlq, anyArrival: true }  # any Message arrives at all
+      - name: replay-stopped
+        destinations: [pager]
+        when: { replayRulePaused: true }  # a Replay rule paused, with why; or add rule: <name> for just that one. Resolves at its resume
+      - name: losing-messages
+        destinations: [ops-slack]
+        when: { setupWarning: loses_messages }  # a dead-letter queue has this set-up warning (may_lose_messages: that or worse); each queue is its own Alert
+      - name: broker-unsampled
+        destinations: [pager]
+        when: { samplingFailing: { for: 10m } }  # not sampled well for this long; resolves at the next good run. Takes no other `for`
 
   - name: prod
     managementUrl: https://rabbit.prod.example.com:15671
