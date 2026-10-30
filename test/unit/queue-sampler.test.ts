@@ -70,7 +70,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     await sample(minute(1));
     state.messages = undefined;
     const run = await sample(minute(2));
-    expect(run.run.ok).toBe(true);
+    expect(run.samplingRun.ok).toBe(true);
     expect(run.samples).toEqual([]);
     expect(run.unknownDepth).toEqual([{ vhost: '/', queue: 'a.dlq' }]);
     expect(stored(store)).toEqual([[5, null]]);

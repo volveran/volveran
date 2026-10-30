@@ -75,7 +75,7 @@ export interface LatestSnapshot {
 
 /** A run that has been recorded, as subscribers get it. */
 export interface FinishedRun {
-  run: SamplingRun;
+  samplingRun: SamplingRun;
   /** This run's Samples, each once; empty when the run failed. */
   samples: LatestSample[];
   /** The dead-letter queues this run read but had no depth for, so no Sample: nothing is known of them, not that they emptied. */
@@ -221,7 +221,7 @@ export class QueueSampler {
       queues: run.ok ? [...samples, ...(previous?.queues ?? []).filter((q) => unknownDepth.some((u) => u.vhost === q.vhost && u.queue === q.queue))] : (previous?.queues ?? []),
     });
 
-    const settled = await Promise.allSettled([...this.listeners].map(async (listener) => listener({ run, samples, unknownDepth })));
+    const settled = await Promise.allSettled([...this.listeners].map(async (listener) => listener({ samplingRun: run, samples, unknownDepth })));
     for (const result of settled) {
       if (result.status === 'rejected') this.options.onError?.(profile.name, result.reason);
     }

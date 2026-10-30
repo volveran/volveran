@@ -35,7 +35,7 @@ export class Alerting {
 
   /** After a sampling run. */
   evaluate(run: FinishedRun): void {
-    this.run(run.run.profile, run.run.at, run);
+    this.run(run.samplingRun.profile, run.samplingRun.at, run);
   }
 
   /** On a Replay Rule's pause or resume, in the middle of what caused it: never throws. */

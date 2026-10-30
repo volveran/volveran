@@ -18,7 +18,7 @@ const sample = (previousDepth: number | null, depth: number, takenOut = 0): Late
 
 function counterAfter(...samples: LatestSample[]): number | undefined {
   const metrics = new QueueMetrics(() => ({ profiles: [] }));
-  for (const s of samples) metrics.runFinished({ run: { profile: 'p', at: s.at, ok: true, errorCode: null }, samples: [s], unknownDepth: [] });
+  for (const s of samples) metrics.runFinished({ samplingRun: { profile: 'p', at: s.at, ok: true, errorCode: null }, samples: [s], unknownDepth: [] });
   return metrics.families().find((f) => f.name === 'volveran_dead_letter_queue_estimated_arrived_messages_total')!.series[0]?.value ?? undefined;
 }
 
@@ -43,10 +43,10 @@ describe('volveran_dead_letter_queue_estimated_arrived_messages_total', () => {
   it('keeps what is held across a failed run', () => {
     const metrics = new QueueMetrics(() => ({ profiles: [] }));
     const run = { profile: 'p', at: new Date(), ok: true, errorCode: null };
-    metrics.runFinished({ run, samples: [sample(null, 10)], unknownDepth: [] });
-    metrics.runFinished({ run, samples: [sample(10, 10, 10)], unknownDepth: [] });
-    metrics.runFinished({ run: { ...run, ok: false, errorCode: 'x' }, samples: [], unknownDepth: [] });
-    metrics.runFinished({ run, samples: [sample(10, 0)], unknownDepth: [] });
+    metrics.runFinished({ samplingRun: run, samples: [sample(null, 10)], unknownDepth: [] });
+    metrics.runFinished({ samplingRun: run, samples: [sample(10, 10, 10)], unknownDepth: [] });
+    metrics.runFinished({ samplingRun: { ...run, ok: false, errorCode: 'x' }, samples: [], unknownDepth: [] });
+    metrics.runFinished({ samplingRun: run, samples: [sample(10, 0)], unknownDepth: [] });
     expect(metrics.families().find((f) => f.name.endsWith('_arrived_messages_total'))!.series[0]!.value).toBe(0);
   });
 });

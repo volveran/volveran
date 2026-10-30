@@ -38,7 +38,7 @@ function run(rules: AlertRule[], memory: AlertMemory = emptyAlertMemory()) {
   const step = (samples: LatestSample[], minutes: number, ok = true) => {
     const result = evaluateAlerts({
       profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
-      run: { run: { profile: 'prod', at: at(minutes), ok, errorCode: ok ? null : 'x' }, samples, unknownDepth: [] },
+      run: { samplingRun: { profile: 'prod', at: at(minutes), ok, errorCode: ok ? null : 'x' }, samples, unknownDepth: [] },
     });
     memory = result.memory;
     return result.notifications;
@@ -141,7 +141,7 @@ describe('depthAbove', () => {
     const good = (minutes: number, samples: LatestSample[], unknownDepth: Array<{ vhost: string; queue: string }> = []) => {
       const result = evaluateAlerts({
         profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
-        run: { run: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth },
+        run: { samplingRun: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth },
       });
       memory = result.memory;
       return result.notifications;
@@ -253,7 +253,7 @@ describe('anyArrival', () => {
     const step = (minutes: number, samples: LatestSample[], unknownDepth: Array<{ vhost: string; queue: string }> = []) => {
       const result = evaluateAlerts({
         profile: 'prod', rules, memory, at: at(minutes), pausedReplayRules: [], lastSuccessAt: null,
-        run: { run: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth },
+        run: { samplingRun: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth },
       });
       memory = result.memory;
       return result.notifications;
@@ -330,8 +330,8 @@ describe('memory', () => {
 
 describe('conditions on Volverán itself', () => {
   const paused = (name: string, reason: string | null, minutes = 0) => ({ name, reason, pausedAt: at(minutes).getTime() });
-  const goodRun = (minutes: number, samples: LatestSample[] = []) => ({ run: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth: [] });
-  const failedRun = (minutes: number) => ({ run: { profile: 'prod', at: at(minutes), ok: false, errorCode: 'broker_unreachable' }, samples: [], unknownDepth: [] });
+  const goodRun = (minutes: number, samples: LatestSample[] = []) => ({ samplingRun: { profile: 'prod', at: at(minutes), ok: true, errorCode: null }, samples, unknownDepth: [] });
+  const failedRun = (minutes: number) => ({ samplingRun: { profile: 'prod', at: at(minutes), ok: false, errorCode: 'broker_unreachable' }, samples: [], unknownDepth: [] });
   const warning = (severity: 'loses_messages' | 'may_lose_messages') =>
     severity === 'loses_messages'
       ? ({ severity, code: 'dead_letter_exchange_missing', deadLetterExchange: 'x', message: 'lost' } as const)

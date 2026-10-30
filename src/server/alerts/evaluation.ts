@@ -117,7 +117,7 @@ interface Reading {
 export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRules, lastSuccessAt }: EvaluationInput): EvaluationResult {
   const now = at.getTime();
   const notifications: AlertNotification[] = [];
-  const samples = run?.run.ok ? run.samples : null;
+  const samples = run?.samplingRun.ok ? run.samples : null;
   const unknownDepth = new Set((run?.unknownDepth ?? []).map((q) => JSON.stringify([q.vhost, q.queue])));
   const arrivals = samples ? reckonArrivals(rules, memory.arrivals, samples, unknownDepth, now) : null;
   const previous = new Map(memory.alerts.map((a) => [alertKey(a), a]));
@@ -189,11 +189,11 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
     }
 
     if (when.kind === 'samplingFailing') {
-      if (run.run.ok) {
+      if (run.samplingRun.ok) {
         for (const alert of ours) endAtOnce(rule, alert, 0);
         continue;
       }
-      const reason = run.run.errorCode;
+      const reason = run.samplingRun.errorCode;
       const alert = ours[0];
       const since = alert?.since ?? lastSuccessAt?.getTime() ?? now;
       const reading = { holds: true, value: Math.round((now - since) / 1000), threshold: Math.round(when.forMs / 1000) };

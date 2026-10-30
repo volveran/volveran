@@ -114,7 +114,7 @@ describe('depth history', () => {
     const sampler = samplerHooks();
     const app = await start({ profiles: [testProfile({ name: 'local' })], samplerTestHooks: sampler.hooks });
     const runs: string[] = [];
-    sampler.onRun(({ run }) => void runs.push(run.profile));
+    sampler.onRun(({ samplingRun }) => void runs.push(samplingRun.profile));
 
     sampler.advance(MINUTE - 1);
     expect(runs).toEqual([]);
@@ -314,8 +314,8 @@ describe('depth history', () => {
     await sampler.sampleNow();
     const local = finished.find((f) => f.run.profile === 'local');
     const down = finished.find((f) => f.run.profile === 'down');
-    expect(down).toMatchObject({ run: { ok: false }, samples: [] });
-    expect(local.run.ok).toBe(true);
+    expect(down).toMatchObject({ samplingRun: { ok: false }, samples: [] });
+    expect(local.samplingRun.ok).toBe(true);
     expect(local.samples.map((s: any) => s.queue)).toContain(dlq);
 
     const [localSnapshot, downSnapshot] = sampler.latest().profiles;
