@@ -203,7 +203,7 @@ export class QueueSampler {
     if (this.stopped) return null;
 
     const samples = run.ok ? this.toSamples(profile.name, at, readings) : [];
-    this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode }, samples.map(toStored));
+    this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode, intervalMs: this.options.intervalMs }, samples.map(toStored));
 
     const previous = this.snapshots.get(profile.name);
     this.snapshots.set(profile.name, {

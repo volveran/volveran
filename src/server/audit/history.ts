@@ -19,6 +19,8 @@ export interface SamplingRunRow {
   ok: boolean;
   /** Why it failed; null on a good run. */
   errorCode: string | null;
+  /** The sampling interval it ran at; null on a run from before migration v16. */
+  intervalMs: number | null;
 }
 
 export interface QueueSample extends StoredSample {
@@ -52,8 +54,8 @@ export class HistoryStore {
     this.db.exec('BEGIN');
     try {
       this.db
-        .prepare('INSERT OR REPLACE INTO sampling_runs (profile, at, ok, error_code) VALUES (?, ?, ?, ?)')
-        .run(profile, run.at, run.ok ? 1 : 0, run.errorCode);
+        .prepare('INSERT OR REPLACE INTO sampling_runs (profile, at, ok, error_code, interval_ms) VALUES (?, ?, ?, ?, ?)')
+        .run(profile, run.at, run.ok ? 1 : 0, run.errorCode, run.intervalMs);
       const insert = this.db.prepare(
         'INSERT OR REPLACE INTO history_samples (profile, vhost, queue, at, depth, estimated_arrivals) VALUES (?, ?, ?, ?, ?, ?)',
       );
@@ -93,7 +95,7 @@ export class HistoryStore {
     const start = edge('SELECT MAX(at) AS at FROM sampling_runs WHERE profile = ? AND ok = 1 AND at <= ?', from);
     const end = edge('SELECT MIN(at) AS at FROM sampling_runs WHERE profile = ? AND ok = 1 AND at >= ?', to);
     return this.db
-      .prepare('SELECT at, ok, error_code FROM sampling_runs WHERE profile = ? AND at >= ? AND at <= ? ORDER BY at')
+      .prepare('SELECT at, ok, error_code, interval_ms FROM sampling_runs WHERE profile = ? AND at >= ? AND at <= ? ORDER BY at')
       .all(profile, start ?? Number.MIN_SAFE_INTEGER, end ?? Number.MAX_SAFE_INTEGER)
       .map((row) => toRun(row as unknown as RunRow));
   }
@@ -101,7 +103,7 @@ export class HistoryStore {
   /** The profile's latest run and latest good run, for the latest snapshot after a restart. */
   lastRuns(profile: string): { last: SamplingRunRow | null; lastOk: SamplingRunRow | null } {
     const read = (where: string) => {
-      const row = this.db.prepare(`SELECT at, ok, error_code FROM sampling_runs WHERE profile = ? ${where} ORDER BY at DESC LIMIT 1`).get(profile);
+      const row = this.db.prepare(`SELECT at, ok, error_code, interval_ms FROM sampling_runs WHERE profile = ? ${where} ORDER BY at DESC LIMIT 1`).get(profile);
       return row ? toRun(row as unknown as RunRow) : null;
     };
     return { last: read(''), lastOk: read('AND ok = 1') };
@@ -169,6 +171,7 @@ interface RunRow {
   at: number;
   ok: number;
   error_code: string | null;
+  interval_ms: number | null;
 }
 
 function toSample(row: SampleRow): StoredSample {
@@ -176,5 +179,5 @@ function toSample(row: SampleRow): StoredSample {
 }
 
 function toRun(row: RunRow): SamplingRunRow {
-  return { at: row.at, ok: row.ok === 1, errorCode: row.error_code };
+  return { at: row.at, ok: row.ok === 1, errorCode: row.error_code, intervalMs: row.interval_ms };
 }
