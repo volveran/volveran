@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { AuditStore } from '../../src/server/audit/store.js';
 import {
   closedPort,
+  ruleSchedulerHooks,
   deadLetter,
   deadLetterRoutes,
   eventually,
@@ -164,7 +165,7 @@ describe('seeing Alerts', () => {
     const since = Date.UTC(2026, 9, 30, 3, 0);
     store.alerts.save('prod', {
       arrivals: [],
-      alerts: [{ alertId: 'whole-profile', rule: 'deep', vhost: null, queue: null, status: 'firing', condition: 'depthAbove', value: null, threshold: null, since, lastNotifiedAt: since, falseSince: null }],
+      alerts: [{ alertId: 'whole-profile', rule: 'deep', vhost: null, queue: null, replayRule: null, reason: null, status: 'firing', condition: 'depthAbove', value: null, threshold: null, since, lastNotifiedAt: since, falseSince: null }],
     });
     store.close();
 
@@ -203,6 +204,48 @@ describe('seeing Alerts', () => {
     ]);
     const others = (await viewer.get(queueList)).body.queues.filter((q: any) => q.name !== dlq);
     expect(others.flatMap((q: any) => q.firingAlerts ?? [])).toEqual([]);
+  });
+
+  it('shows Alerts on Volverán itself: a paused Replay Rule, a set-up warning and a broker out of reach', async () => {
+    const sampler = samplerHooks();
+    const scheduler = ruleSchedulerHooks();
+    const replayRule = { name: 'retry', vhost: '/', queue: 'payments.gone', every: '5m', backoff: { initial: '10m', multiplier: 1, max: '10m' }, maxAttempts: 10, stopWhen: { diedAgain: 3, within: '1h' } };
+    const when = (name: string, condition: unknown) => ({ name, destinations: ['pager'], when: condition });
+    const deadPort = await closedPort();
+    const app = await startApp({
+      profiles: [
+        testProfile({ name: 'prod', replayRules: [replayRule], alerts: [when('stopped', { replayRulePaused: true }), when('stopped-retry', { replayRulePaused: true, rule: 'retry' }), when('losing', { setupWarning: 'loses_messages' })] }),
+        testProfile({ name: 'gone', managementUrl: `http://127.0.0.1:${deadPort}`, amqpUrl: `amqp://127.0.0.1:${deadPort}`, vhosts: ['/'], alerts: [when('blind', { samplingFailing: { for: '1m' } })] }),
+      ],
+      alertDestinations: destinations,
+      samplerTestHooks: sampler.hooks,
+      checkoutTestHooks: scheduler.hooks,
+      env: secrets(),
+    });
+    apps.push(app);
+
+    await scheduler.runPass('prod', 'retry');
+    await sampler.sampleNow();
+    sampler.advance(2 * MINUTE);
+    await sampler.sampleNow();
+
+    const { alerts } = (await app.get('/api/alerts')).body;
+    const named = (rule: string) => alerts.filter((a: any) => a.rule === rule);
+    expect(named('stopped')).toEqual([expect.objectContaining({ profile: 'prod', status: 'firing', condition: 'replayRulePaused', replayRule: 'retry', reason: 'queue_not_found', vhost: null, queue: null })]);
+    expect(named('losing')).toContainEqual(expect.objectContaining({ condition: 'setupWarning', vhost: '/', queue: 'orders.dlq.quorum', replayRule: null, reason: expect.stringContaining('messages_dropped_at_delivery_limit') }));
+    expect(named('blind')).toEqual([expect.objectContaining({ profile: 'gone', status: 'firing', condition: 'samplingFailing', vhost: null, queue: null, replayRule: null, threshold: 60, reason: expect.any(String) })]);
+
+    const rows = (await app.get(queueList)).body.queues;
+    const firingOn = (name: string) => rows.find((q: any) => q.name === name).firingAlerts.map((a: any) => a.rule);
+    expect(firingOn('orders.dlq.quorum')).toEqual(['losing']);
+    expect(firingOn(dlq)).toEqual([]);
+
+    expect((await app.get('/api/profiles/prod/alert-rules')).body.rules.map((r: any) => r.when)).toEqual([
+      { kind: 'replayRulePaused', rule: null },
+      { kind: 'replayRulePaused', rule: 'retry' },
+      { kind: 'setupWarning', severity: 'loses_messages' },
+    ]);
+    expect((await app.get('/api/profiles/gone/alert-rules')).body.rules[0].when).toEqual({ kind: 'samplingFailing', forMs: MINUTE });
   });
 
   it('scrapes firing Alerts by rule, and notification outcomes by destination', async () => {

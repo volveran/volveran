@@ -1,5 +1,5 @@
 // Pure values shared by the server and the web app (no Node or DOM APIs).
-import { durationText } from './replay-rules.js';
+import { durationText, pauseReasonText } from './replay-rules.js';
 
 export const ALERT_DESTINATION_TYPES = ['slack', 'teams', 'webhook'] as const;
 export type AlertDestinationType = (typeof ALERT_DESTINATION_TYPES)[number];
@@ -37,6 +37,10 @@ export interface AlertView {
   rule: string;
   vhost: string | null;
   queue: string | null;
+  /** The Replay Rule a `replayRulePaused` Alert is about; null otherwise. */
+  replayRule: string | null;
+  /** Why the condition holds: a pause's reason, set-up warning codes or a sampling error code; null for queue conditions. */
+  reason: string | null;
   status: 'pending' | 'firing';
   /** The kind of condition, such as `depthAbove`. */
   condition: string;
@@ -77,12 +81,17 @@ export interface AlertRuleView {
   repeatEveryMs: number | null;
 }
 
-export function alertPlaceText({ vhost, queue }: { vhost: string | null; queue: string | null }): string {
+export function alertPlaceText({ vhost, queue, replayRule }: { vhost: string | null; queue: string | null; replayRule?: string | null }): string {
+  if (replayRule) return `Replay rule ${replayRule}`;
   if (queue !== null) return vhost === null ? queue : `${queue} (vhost ${vhost})`;
-  return vhost === null ? 'The whole Broker Profile' : `Vhost ${vhost}`;
+  return vhost === null ? 'The Broker Profile' : `Vhost ${vhost}`;
 }
 
-export function alertValueText({ value, threshold }: { value: number | null; threshold: number | null }): string {
+export function alertValueText({ condition, value: rawValue, threshold: rawThreshold }: { condition?: string; value: number | null; threshold: number | null }): string {
+  // samplingFailing counts seconds.
+  const shown = (n: number | null) => (n !== null && condition === 'samplingFailing' ? durationText(n * 1000) : n);
+  const value = shown(rawValue);
+  const threshold = shown(rawThreshold);
   if (value === null) return threshold === null ? '—' : `threshold ${threshold}`;
   return threshold === null ? String(value) : `${value} (threshold ${threshold})`;
 }
@@ -99,9 +108,23 @@ export function ruleConditionText(when: AlertRuleCondition): string {
       return `More than ${String(when.count)} estimated arrivals within ${durationText(Number(when.withinMs))}${on}`;
     case 'anyArrival':
       return `Any Message arrives${on}`;
+    case 'replayRulePaused':
+      return typeof when.rule === 'string' ? `Replay rule ${when.rule} is paused` : 'Any Replay rule of the profile is paused';
+    case 'setupWarning':
+      return when.severity === 'loses_messages'
+        ? 'A dead-letter queue has a set-up warning that loses Messages'
+        : 'A dead-letter queue has a set-up warning that may lose Messages, or worse';
+    case 'samplingFailing':
+      return `Not sampled successfully for ${durationText(Number(when.forMs))}`;
     default:
       return kind;
   }
+}
+
+/** Why an Alert's condition holds, in words where it has some. */
+export function alertReasonText({ condition, reason }: { condition: string; reason: string | null }): string {
+  if (reason === null) return '';
+  return condition === 'replayRulePaused' ? pauseReasonText(reason) : reason;
 }
 
 /** Whether a delivery got through and, when not, why. */

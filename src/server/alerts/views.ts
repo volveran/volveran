@@ -17,12 +17,14 @@ export const destinationView = ({ name, type }: AlertDestination): AlertDestinat
 /** The profile's pending and firing Alerts, firing first. */
 export function alertsOf(store: Pick<AlertStore, 'load'>, profile: string): AlertView[] {
   const views = store.load(profile).alerts.map(
-    ({ alertId, rule, vhost, queue, status, condition, value, threshold, since }): AlertView => ({
+    ({ alertId, rule, vhost, queue, replayRule, reason, status, condition, value, threshold, since }): AlertView => ({
       alertId,
       profile,
       rule,
       vhost,
       queue,
+      replayRule,
+      reason,
       status,
       condition,
       value,

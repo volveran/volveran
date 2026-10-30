@@ -22,7 +22,7 @@
 // and vhost, by link too (#/dead-letter-map/...), so Back from a queue's history
 // returns to it. A Checkout started there replaces it until the Checkout is over.
 import { useEffect, useRef, useState } from 'react';
-import { alertValueText } from '../shared/alerts.js';
+import { alertReasonText, alertValueText } from '../shared/alerts.js';
 import { waitingCheckoutIn } from '../shared/approval-link.js';
 import { auditSearchIn, deadLetterMapPath, deadLetterMapTargetIn, historyPath, historyTargetIn, type MapTarget } from '../shared/history-link.js';
 import { product } from '../shared/product.js';
@@ -681,7 +681,7 @@ function QueueTable({
                 <span key={a.alertId} className="firing-alert" role="note">
                   <span className="badge alert-firing">Alert firing</span>
                   <small>
-                    {a.rule}: {alertValueText(a)}
+                    {a.rule}: {alertReasonText(a) || alertValueText(a)}
                   </small>
                 </span>
               ))}

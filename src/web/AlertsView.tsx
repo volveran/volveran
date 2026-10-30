@@ -5,7 +5,7 @@
 // Alerts are not acknowledged or silenced here. An Alert about no queue (a Replay
 // rule that paused itself, sampling that fails) says so, and has no history link.
 import { useEffect, useState } from 'react';
-import { alertPlaceText, alertValueText, deliveryText, ruleConditionText, type AlertRuleView, type AlertsOverview, type NotificationDelivery } from '../shared/alerts.js';
+import { alertPlaceText, alertReasonText, alertValueText, deliveryText, ruleConditionText, type AlertRuleView, type AlertsOverview, type NotificationDelivery } from '../shared/alerts.js';
 import { historyPath } from '../shared/history-link.js';
 import { durationText } from '../shared/replay-rules.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
@@ -84,6 +84,7 @@ export function AlertsView({ profile, roles }: { profile: string | undefined; ro
                 <th>On</th>
                 <th>Condition</th>
                 <th>Value</th>
+                <th>Why</th>
                 <th>Since</th>
               </tr>
             </thead>
@@ -106,6 +107,7 @@ export function AlertsView({ profile, roles }: { profile: string | undefined; ro
                     <code>{a.condition}</code>
                   </td>
                   <td>{alertValueText(a)}</td>
+                  <td>{alertReasonText(a)}</td>
                   <td>{time(a.since)}</td>
                 </tr>
               ))}
