@@ -29,6 +29,9 @@
 //                           retention of Discarded Message bodies (default
 //                           30 days or 1 GiB in total, checked hourly; see
 //                           audit/body-retention.ts)
+//   VOLVERAN_METRICS_PORT   serves Prometheus metrics at /metrics on this port,
+//                           at VOLVERAN_HOST's address (default off; see
+//                           metrics/listener.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`).
 import path from 'node:path';
 import { product } from '../shared/product.js';

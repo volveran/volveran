@@ -76,6 +76,8 @@ export interface TestResponse<T = any> {
 
 export interface TestApp {
   baseUrl: string;
+  /** Where the metrics are scraped, when VOLVERAN_METRICS_PORT is set. */
+  metricsUrl?: string;
   get<T = any>(urlPath: string): Promise<TestResponse<T>>;
   post<T = any>(urlPath: string, body?: unknown): Promise<TestResponse<T>>;
   delete<T = any>(urlPath: string): Promise<TestResponse<T>>;
@@ -159,6 +161,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
 
   return {
     baseUrl: server.url,
+    metricsUrl: server.metricsUrl,
     get: (urlPath) => request('GET', urlPath),
     post: (urlPath, body) => request('POST', urlPath, body ?? {}),
     delete: (urlPath) => request('DELETE', urlPath),

@@ -66,6 +66,8 @@ export interface ReplayRulesOptions {
   testHooks?: RuleSchedulerTestHooks;
   /** A scheduled pass broke unexpectedly (not a skip or a refused Checkout, which are recorded). */
   onError?(ruleKey: string, err: unknown): void;
+  /** A pass was recorded, scheduled or Run now. */
+  onPassRecorded?(profile: string, rule: string, pass: RulePass): void;
 }
 
 export class ReplayRules {
@@ -116,6 +118,16 @@ export class ReplayRules {
         nextPassAt: this.timers.get(key)?.at.toISOString() ?? null,
       };
     });
+  }
+
+  /** The state of every declared rule; a rule start() has not seen yet has none and is left out. */
+  states(): Array<{ profile: string; rule: string; state: RuleState }> {
+    return this.options.profiles.flatMap((profile) =>
+      profile.replayRules.flatMap((rule) => {
+        const state = this.options.state.state(ruleKey(profile.name, rule.name));
+        return state ? [{ profile: profile.name, rule: rule.name, state }] : [];
+      }),
+    );
   }
 
   /** The rule named `name` of `profile`; throws 404 `replay_rule_not_found`. */
@@ -229,6 +241,7 @@ export class ReplayRules {
     });
     const recorded = running.then(({ pass, findings }) => {
       this.options.state.recordPass(key, pass);
+      this.options.onPassRecorded?.(profile.name, rule.name, pass);
       this.afterPass(profile, rule, now, findings, error);
       return pass;
     });
