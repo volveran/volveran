@@ -220,18 +220,23 @@ describe('Metrics', () => {
       await sample();
       expect(await scrape(app)).toContain(`${arrivalsOf(dlq)} 0\n`);
 
+      // The management API lags, and one read of it can be older than the one before.
+      const sampleUntilDepth = (depth: number) =>
+        eventually(async () => {
+          await sample();
+          const text = await scrape(app);
+          expect(text).toContain(`${depthOf(dlq)} ${depth}\n`);
+          return text;
+        }, 30_000, 250);
+
       // The counter adds up across Samples.
       await deadLetter(route, messages('first', 3));
-      await waitForDepth(app, 3);
-      await sample();
-      const second = await scrape(app);
+      const second = await sampleUntilDepth(3);
       expect(second).toContain(`${depthOf(dlq)} 3\n`);
       expect(second).toContain(`${arrivalsOf(dlq)} 3\n`);
 
       await deadLetter(route, messages('second', 2));
-      await waitForDepth(app, 5);
-      await sample();
-      const third = await scrape(app);
+      const third = await sampleUntilDepth(5);
       expect(third).toContain(`${depthOf(dlq)} 5\n`);
       expect(third).toContain(`${arrivalsOf(dlq)} 5\n`);
     }, 90_000);
