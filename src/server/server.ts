@@ -10,6 +10,9 @@ import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { loadConfig } from './config.js';
+import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
+import { startRuntimeMetrics } from './metrics/runtime.js';
+import { TriageMetrics } from './metrics/triage.js';
 import { ConfigError } from './config-error.js';
 import { HttpError } from './http-error.js';
 import { checkProfilesForRunMode, checkReplayRules, loadProfilesFile, type BrokerProfile } from './profiles.js';
@@ -57,6 +60,8 @@ export interface ServerOptions {
 
 export interface RunningServer {
   url: string;
+  /** Where the metrics are scraped, when VOLVERAN_METRICS_PORT is set. */
+  metricsUrl?: string;
   close(): Promise<void>;
 }
 
@@ -70,7 +75,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   checkProfilesForRunMode(profiles, config.mode.kind);
   const limits = { ...config.checkoutLimits, ...options.checkoutLimits };
   checkReplayRules(profiles, limits);
+  if (config.metricsPort !== null && config.metricsPort === options.port) {
+    throw new ConfigError(`VOLVERAN_METRICS_PORT must differ from the web app's port (${options.port}): metrics are never served on it.`);
+  }
   const audit = new AuditStore(options.dataDir);
+  // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
+  const triageMetrics = new TriageMetrics({
+    ruleStates: () => replayRules.states(),
+    checkoutCounts: () => checkouts.counts(),
+    storedBodyBytes: () => audit.storedBodyBytes(),
+  });
   const checkouts = new CheckoutManager({
     audit,
     limits,
@@ -82,6 +96,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ruleBadge: (c, delivery, diedAgainCount) => replayRules.badge(c.profile, c.vhost, c.queue, delivery, diedAgainCount),
     // Called only once the app below is listening.
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
+    onApplyEnded: (checkout, outcomes) => triageMetrics.applyEnded(checkout.profile.name, outcomes),
   });
   const access: Access =
     config.mode.kind === 'solo'
@@ -100,6 +115,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     testHooks: options.checkoutTestHooks?.ruleScheduler,
     // Called only once the app below is listening.
     onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
+    onPassRecorded: (profile, rule, pass) => triageMetrics.passRecorded(profile, rule, pass.status),
   });
   const usage = () => bodyStoreUsage(audit.storedBodyBytes(), retention);
   const app = await buildApp({
@@ -164,7 +180,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // No new Rule Pass starts and the ones in progress end (and are recorded);
   // then every held Message goes back to its queue (an Apply in progress
   // finishes first) before the audit store closes and the process exits.
+  let metricsListener: MetricsListener | undefined;
   app.addHook('onClose', async () => {
+    // First: a scrape reads the audit store.
+    await metricsListener?.close();
     clearInterval(retentionTimer);
     await replayRules.stop();
     await checkouts.endAll();
@@ -173,6 +192,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // Replay Rules: give each its state and schedule the running ones.
   replayRules.start();
 
+  // Metrics: on a port of their own, at the same address, so loopback in Solo Mode.
+  if (config.metricsPort !== null) {
+    const runtimeMetrics = startRuntimeMetrics();
+    app.addHook('onClose', async () => runtimeMetrics.stop());
+    try {
+      metricsListener = await startMetricsListener({
+        host: options.host,
+        port: config.metricsPort,
+        families: () => [...triageMetrics.families(), ...runtimeMetrics.families()],
+        onError: (err) => app.log.error(err, 'A metrics scrape failed'),
+      });
+    } catch (err) {
+      await app.close();
+      throw err;
+    }
+  }
+
   // Listening comes last, so /readyz is only reachable once startup has finished.
   await app.listen({ host: options.host, port: options.port });
   const address = app.server.address();
@@ -180,6 +216,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const host = options.host.includes(':') ? `[${options.host}]` : options.host;
   return {
     url: `http://${host}:${port}`,
+    metricsUrl: metricsListener && `http://${host}:${metricsListener.port}/metrics`,
     close: () => app.close(),
   };
 }
