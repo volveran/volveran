@@ -135,6 +135,7 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_DAYS` | `30` | Discarded Message bodies older than this are evicted (1 to 36500); Audit Entries are kept indefinitely, marked "body expired", and can no longer be Restored |
 | `VOLVERAN_BODY_RETENTION_MAX_BYTES` | `1GiB` | most bytes of Discarded bodies kept in total, in bytes or with `KiB`, `MiB`, `GiB`, `TiB`; beyond it the oldest bodies are evicted first. The Audit view warns at 90 % |
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
+| `VOLVERAN_METRICS_PORT` | off | serves Prometheus metrics at `/metrics` on this port, at `VOLVERAN_HOST`'s address, with no session; never on the web app's port ([metric reference](docs/observability.md#metrics)) |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
 
