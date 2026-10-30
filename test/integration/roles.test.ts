@@ -104,6 +104,7 @@ describe('Roles per Broker Profile', () => {
       ['GET', '/api/profiles/prod/vhosts'],
       ['GET', queuesPath('prod')],
       ['GET', '/api/profiles/prod/vhosts/%2F/move-destinations'],
+      ['GET', '/api/profiles/prod/vhosts/%2F/dead-letter-map'],
       ['POST', checkoutPath('prod'), {}],
     ])('answers %s %s with 403 no_role_on_profile', async (method, path, body) => {
       const browser = await signedIn(nora);

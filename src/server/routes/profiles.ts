@@ -6,13 +6,16 @@
 //   GET /api/profiles/:profile/vhosts/:vhost/queues            → { defaultQueueFilter, queues, setupWarningCounts }
 //       ?search=&onlyDeadLetterQueues=true
 //   GET /api/profiles/:profile/vhosts/:vhost/move-destinations → { queues, exchanges }
+//   GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map   → { nodes, edges, cycles }
 import type { FastifyInstance } from 'fastify';
 import { credentialsSummary } from '../broker-credentials.js';
 import { operatorOf } from '../operator.js';
 import type { ProfileAccessCheck } from '../profile-access.js';
 import { isLockQueue } from '../triage/checkout-lock.js';
+import { deadLetterMap } from '../triage/dead-letter-map.js';
 import { compareNames, narrowQueues } from '../triage/queue-list.js';
 import { readVhost } from '../triage/vhost-reading.js';
+import type { DeadLetterMap } from '../../shared/dead-letter-map.js';
 import type { MoveDestinations, ProfileSummary, QueueList } from '../../shared/queues.js';
 
 export function registerProfileRoutes(app: FastifyInstance, access: ProfileAccessCheck) {
@@ -63,5 +66,11 @@ export function registerProfileRoutes(app: FastifyInstance, access: ProfileAcces
       queues: narrowQueues(reading.queues, { onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true', search: req.query.search }),
       setupWarningCounts: reading.setupWarningCounts,
     };
+  });
+
+  app.get<{ Params: { profile: string; vhost: string } }>('/api/profiles/:profile/vhosts/:vhost/dead-letter-map', async (req): Promise<DeadLetterMap> => {
+    const { vhost } = req.params;
+    const { profile, management } = access.vhost(operatorOf(req), 'see_profile', req.params.profile, vhost);
+    return deadLetterMap(await readVhost({ profile, management }, vhost));
   });
 }

@@ -137,6 +137,7 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 | `VOLVERAN_HISTORY_INTERVAL_SECONDS` | `60` | how often Volverán samples the dead-letter queues of every Broker Profile with shared credentials, reading only the management API (15 to 3600) |
 | `VOLVERAN_HISTORY_RETENTION_DAYS` | `14` | how long Samples are kept (1 to 90); the retention job removes older ones |
+| `VOLVERAN_METRICS_PORT` | off | serves Prometheus metrics at `/metrics` on this port, at `VOLVERAN_HOST`'s address, with no session; never on the web app's port ([metric reference](docs/observability.md#metrics)) |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
 

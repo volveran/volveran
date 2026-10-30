@@ -34,6 +34,9 @@
 //                           (default 60, 15 to 3600)
 //   VOLVERAN_HISTORY_RETENTION_DAYS
 //                           how long Samples are kept (default 14, 1 to 90)
+//   VOLVERAN_METRICS_PORT   serves Prometheus metrics at /metrics on this port,
+//                           at VOLVERAN_HOST's address (default off; see
+//                           metrics/listener.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`).
 import path from 'node:path';
 import { product } from '../shared/product.js';
