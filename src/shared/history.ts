@@ -12,6 +12,8 @@ export interface HistorySample {
    * never zero. Consumers outside Volverán hide arrivals.
    */
   estimatedArrivals: number | null;
+  /** A bucket where some Samples, not all, have unknown arrivals: `estimatedArrivals` adds up the rest. */
+  arrivalsPartlyUnknown: boolean;
 }
 
 /** A stretch with no Samples because sampling failed, or Volverán was not running. */

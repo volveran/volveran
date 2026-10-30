@@ -176,3 +176,22 @@ describe('text summaries', () => {
     expect(arrivalsSummary([])).toBe('Estimated arrivals: unknown.');
   });
 });
+
+describe('a downsampled point that is partly unknown', () => {
+  const samples = [
+    { at: at(0), estimatedArrivals: 1 },
+    { at: at(10), estimatedArrivals: 2, arrivalsPartlyUnknown: true },
+    { at: at(20), estimatedArrivals: 3 },
+  ];
+
+  it('is hatched as unknown, though its point keeps what is known', () => {
+    expect(unknownArrivalBands(samples)).toEqual([{ from: at(0), to: at(10) }]);
+    expect(arrivalRates(samples).map((p) => p.value)).toEqual([null, 0.2, 0.3]);
+  });
+
+  it('is said in the summary, not added up as complete', () => {
+    expect(arrivalsSummary(samples)).toBe('Estimated arrivals: 6 in this range, partly unknown for 1 of 3 points.');
+    const unknown = { at: at(30), estimatedArrivals: null };
+    expect(arrivalsSummary([...samples, unknown])).toBe('Estimated arrivals: 6 in this range, unknown for 1 of 4 points, partly unknown for 1 more.');
+  });
+});

@@ -77,7 +77,7 @@ export function registerHistoryRoutes(app: FastifyInstance, { history, clock, in
       to: to.toISOString(),
       retentionDays: Math.round(retentionMs / DAY_MS),
       latestSampleAt: latest && new Date(latest.at).toISOString(),
-      samples: samples.map((s) => ({ at: new Date(s.at).toISOString(), depth: s.depth, estimatedArrivals: s.estimatedArrivals })),
+      samples: samples.map((s) => ({ at: new Date(s.at).toISOString(), depth: s.depth, estimatedArrivals: s.estimatedArrivals, arrivalsPartlyUnknown: s.arrivalsPartlyUnknown === true })),
       gaps: gaps.map((g) => ({ from: new Date(g.from).toISOString(), to: new Date(g.to).toISOString(), errorCode: g.errorCode })),
       marks,
     };

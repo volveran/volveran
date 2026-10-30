@@ -34,12 +34,12 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 
 The queue list shows a 24-hour depth chart next to each dead-letter queue. A queue's history view (the link on the chart, or `h` on the focused queue) shows depth and estimated arrivals over the last hour, 24 hours, 7 days or the whole retention, the time of the latest Sample, gaps, and marks for the Applies and Rule Passes that took Messages out, linked to their Audit Entries. Any Role on the profile may read it, as with the queue list. Link to one with `#/history/<profile>/<vhost>/<queue>`.
 
-`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 points, each with its bucket's last depth and summed arrivals.
+`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 points, each with its bucket's last depth and summed arrivals; `arrivalsPartlyUnknown` says some of its Samples, not all, had unknown arrivals, and the view hatches it like an unknown stretch.
 
 ```json
 { "from": "2026-10-29T10:00:00.000Z", "to": "2026-10-30T10:00:00.000Z", "retentionDays": 14,
   "latestSampleAt": "2026-10-30T09:59:30.000Z",
-  "samples": [{ "at": "2026-10-30T09:59:30.000Z", "depth": 400, "estimatedArrivals": 12 }],
+  "samples": [{ "at": "2026-10-30T09:59:30.000Z", "depth": 400, "estimatedArrivals": 12, "arrivalsPartlyUnknown": false }],
   "gaps": [{ "from": "2026-10-30T03:00:00.000Z", "to": "2026-10-30T03:20:00.000Z", "errorCode": "…" }],
   "marks": [{ "at": "2026-10-30T08:00:00.000Z", "kind": "apply", "operator": "ana", "rule": null, "checkoutId": "…",
               "counts": { "discard": 2, "replay": 40, "move": 0 }, "auditUrl": "/api/audit-entries?…" }] }

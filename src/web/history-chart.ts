@@ -93,11 +93,11 @@ export function arrivalRates(samples: ReadonlyArray<{ at: number; estimatedArriv
   });
 }
 
-/** The stretches whose arrivals are unknown; a first point has no stretch, only its time. */
-export function unknownArrivalBands(samples: ReadonlyArray<{ at: number; estimatedArrivals: number | null }>): Array<{ from: number; to: number }> {
+/** The stretches whose arrivals are unknown, wholly or in part; a first point has no stretch, only its time. */
+export function unknownArrivalBands(samples: ReadonlyArray<{ at: number; estimatedArrivals: number | null; arrivalsPartlyUnknown?: boolean }>): Array<{ from: number; to: number }> {
   const bands: Array<{ from: number; to: number }> = [];
   samples.forEach((s, i) => {
-    if (s.estimatedArrivals !== null) return;
+    if (s.estimatedArrivals !== null && !s.arrivalsPartlyUnknown) return;
     const from = samples[i - 1]?.at ?? s.at;
     const last = bands.at(-1);
     if (last && last.to === from) last.to = s.at;
@@ -122,10 +122,15 @@ export function depthSummary(depths: readonly number[], latestSampleAt: number |
 }
 
 /** The text a screen reader gets for an arrival chart. Unknown is never added up as zero. */
-export function arrivalsSummary(samples: ReadonlyArray<{ estimatedArrivals: number | null }>): string {
+export function arrivalsSummary(samples: ReadonlyArray<{ estimatedArrivals: number | null; arrivalsPartlyUnknown?: boolean }>): string {
   const known = samples.flatMap((s) => (s.estimatedArrivals === null ? [] : [s.estimatedArrivals]));
   if (known.length === 0) return 'Estimated arrivals: unknown.';
   const total = known.reduce((sum, n) => sum + n, 0);
   const unknown = samples.length - known.length;
-  return `Estimated arrivals: ${total} in this range${unknown > 0 ? `, unknown for ${unknown} of ${samples.length} points` : ''}.`;
+  const partly = samples.filter((s) => s.arrivalsPartlyUnknown).length;
+  const notes = [
+    unknown > 0 && `unknown for ${unknown} of ${samples.length} points`,
+    partly > 0 && (unknown > 0 ? `partly unknown for ${partly} more` : `partly unknown for ${partly} of ${samples.length} points`),
+  ].filter(Boolean);
+  return `Estimated arrivals: ${total} in this range${notes.map((note) => `, ${note}`).join('')}.`;
 }

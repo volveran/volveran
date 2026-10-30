@@ -258,7 +258,7 @@ export function HistoryView({ target, onBack }: { target: HistoryTarget; onBack(
           />
           <p className="muted">
             Estimated: the rise in depth plus the Messages Volverán took out, because the broker does not count dead-lettered Messages. Consumers outside Volverán hide arrivals, and
-            hatched stretches are unknown, not zero. Management statistics lag by a few seconds, so a take-out can show as a brief false rise.
+            hatched stretches are unknown, wholly or in part, not zero. Management statistics lag by a few seconds, so a take-out can show as a brief false rise.
           </p>
 
           <h3>Taken out by triage</h3>
