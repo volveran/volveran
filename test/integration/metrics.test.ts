@@ -1,6 +1,7 @@
 // Prometheus metrics, scraped over HTTP on their own port as Prometheus does:
 // off unless VOLVERAN_METRICS_PORT is set, no session, nothing on the web
 // app's port, loopback in Solo Mode, and each family after the triage it counts.
+import net from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -12,8 +13,10 @@ import {
   fixtureQueues,
   purgeQueues,
   ruleSchedulerHooks,
+  samplerHooks,
   seedMessages,
   startApp,
+  testBroker,
   testProfile,
   withChannel,
   type TestApp,
@@ -38,6 +41,33 @@ async function scrape(app: TestApp): Promise<string> {
   expect(res.status).toBe(200);
   expect(res.headers.get('content-type')).toBe('text/plain; version=0.0.4; charset=utf-8');
   return res.text();
+}
+
+/** The management port behind a proxy: closing it is the broker stopping, as far as Volverán can tell, without stopping the broker the other tests share. */
+async function stoppableManagementUrl(): Promise<{ url: string; stop(): Promise<void> }> {
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((client) => {
+    const upstream = net.connect(Number(new URL(testBroker.managementUrl).port), '127.0.0.1');
+    for (const socket of [client, upstream]) {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.on('error', () => {
+        client.destroy();
+        upstream.destroy();
+      });
+    }
+    client.pipe(upstream).pipe(client);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    stop: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
 }
 
 describe('Metrics', () => {
@@ -166,5 +196,133 @@ describe('Metrics', () => {
 
     await rita.request('DELETE', `/api/checkouts/${id}`);
     expect(await scrape(app)).toContain('volveran_approvals_waiting 0\n');
+  });
+
+  describe('of dead-letter queues', () => {
+    const dlq = route.dlq;
+    const depthOf = (queue: string) => `volveran_dead_letter_queue_messages{profile="local",vhost="/",queue="${queue}"}`;
+    const arrivalsOf = (queue: string) => `volveran_dead_letter_queue_estimated_arrived_messages_total{profile="local",queue="${queue}",vhost="/"}`;
+    const messages = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, i) => ({ body: `${prefix}-${i}`, options: { messageId: `${prefix}-${i}` } }));
+
+    /** Management statistics lag: waits until they show the depth, as the sampler would read it. */
+    async function waitForDepth(app: TestApp, depth: number) {
+      await eventually(async () => {
+        const { body } = await app.get('/api/profiles/local/vhosts/%2F/queues');
+        expect(body.queues.find((q: any) => q.name === dlq)?.approximateMessages).toBe(depth);
+      }, 30_000, 250);
+    }
+
+    it('shows depth, estimated arrivals and set-up warnings per queue, and the sampling state per profile', async () => {
+      const sampler = samplerHooks();
+      const app = await start({ profiles: [testProfile({ name: 'local' })], samplerTestHooks: sampler.hooks, env: await withMetrics() });
+      const sample = async () => {
+        sampler.set(new Date());
+        await sampler.sampleNow();
+      };
+
+      // Nothing sampled yet: the families are there, with no series.
+      const before = await scrape(app);
+      expect(before).toContain('# TYPE volveran_dead_letter_queue_messages gauge\n');
+      expect(before).toContain('# TYPE volveran_dead_letter_queue_estimated_arrived_messages_total counter\n');
+      expect(before).not.toContain('volveran_sampling_up{');
+      expect(before).not.toContain('volveran_sampling_last_success_timestamp_seconds{');
+
+      // A queue's first Sample has unknown arrivals: no series, not 0.
+      await waitForDepth(app, 0);
+      await sample();
+      const first = await scrape(app);
+      expect(first).toContain(`${depthOf(dlq)} 0\n`);
+      expect(first).not.toContain(arrivalsOf(dlq));
+      expect(first).toContain('volveran_sampling_up{profile="local"} 1\n');
+      expect(first).toContain(`volveran_sampling_last_success_timestamp_seconds{profile="local"} ${sampler.now().getTime() / 1000}\n`);
+      expect(first).toContain(
+        'volveran_dead_letter_queue_setup_warnings{profile="local",vhost="/",queue="orders.dlq.quorum",code="messages_dropped_at_delivery_limit",severity="loses_messages"} 1\n',
+      );
+      expect(first).not.toContain('volveran_dead_letter_queue_setup_warnings{profile="local",vhost="/",queue="orders.dlq",');
+      // Only dead-letter queues.
+      expect(first).not.toContain(`queue="${route.workQueue}"`);
+
+      // Known and nothing arrived: a series at 0, so rate() sees the first arrival.
+      await sample();
+      expect(await scrape(app)).toContain(`${arrivalsOf(dlq)} 0\n`);
+
+      // The counter adds up across Samples.
+      await deadLetter(route, messages('first', 3));
+      await waitForDepth(app, 3);
+      await sample();
+      const second = await scrape(app);
+      expect(second).toContain(`${depthOf(dlq)} 3\n`);
+      expect(second).toContain(`${arrivalsOf(dlq)} 3\n`);
+
+      await deadLetter(route, messages('second', 2));
+      await waitForDepth(app, 5);
+      await sample();
+      const third = await scrape(app);
+      expect(third).toContain(`${depthOf(dlq)} 5\n`);
+      expect(third).toContain(`${arrivalsOf(dlq)} 5\n`);
+    }, 90_000);
+
+    it('answers at once with the last values when the broker stops, and sampling_up turns 0 after the next failed run', async () => {
+      const broker = await stoppableManagementUrl();
+      const sampler = samplerHooks();
+      const app = await start({
+        profiles: [testProfile({ name: 'local', managementUrl: broker.url, vhosts: ['/'] })],
+        samplerTestHooks: sampler.hooks,
+        env: await withMetrics(),
+      });
+      const sample = async () => {
+        sampler.set(new Date());
+        return sampler.sampleNow();
+      };
+      try {
+        await waitForDepth(app, 0);
+        await sample();
+        await deadLetter(route, messages('kept', 3));
+        await waitForDepth(app, 3);
+        await sample();
+        const lastGood = sampler.now().getTime() / 1000;
+
+        await broker.stop();
+
+        // Stopped, and no run has noticed yet: a scrape does not contact the broker.
+        const startedAt = Date.now();
+        const stale = await scrape(app);
+        expect(Date.now() - startedAt).toBeLessThan(1_000);
+        expect(stale).toContain('volveran_sampling_up{profile="local"} 1\n');
+        expect(stale).toContain(`${depthOf(dlq)} 3\n`);
+
+        // The failed run changes the state, keeps the values and counts nothing twice.
+        expect(await sample()).toEqual([expect.objectContaining({ ok: false })]);
+        await sample();
+        const down = await scrape(app);
+        expect(down).toContain('volveran_sampling_up{profile="local"} 0\n');
+        expect(down).toContain(`volveran_sampling_last_success_timestamp_seconds{profile="local"} ${lastGood}\n`);
+        expect(down).toContain(`${depthOf(dlq)} 3\n`);
+        expect(down).toContain(`${arrivalsOf(dlq)} 3\n`);
+        expect(down).toContain('volveran_dead_letter_queue_setup_warnings{profile="local",vhost="/",queue="orders.dlq.quorum",');
+      } finally {
+        await broker.stop();
+      }
+    }, 90_000);
+
+    it('leaves out an operatorToken profile', async () => {
+      const sampler = samplerHooks();
+      const port = await closedPort();
+      const app = await start({
+        profiles: [
+          testProfile({ name: 'local' }),
+          { name: 'tokens', managementUrl: testBroker.managementUrl, amqpUrl: testBroker.amqpUrl, credentials: 'operatorToken', vhosts: ['/'] },
+        ],
+        port,
+        samplerTestHooks: sampler.hooks,
+        env: { ...teamModeEnv(`http://127.0.0.1:${port}`), ...(await withMetrics()) },
+      });
+      await sampler.sampleNow();
+      const text = await scrape(app);
+      expect(text).toContain(`${depthOf(dlq)} `);
+      expect(text).toContain('volveran_sampling_up{profile="local"} 1\n');
+      expect(text).not.toContain('profile="tokens"');
+    });
   });
 });

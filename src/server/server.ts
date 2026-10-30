@@ -13,6 +13,7 @@ import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { loadConfig } from './config.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
+import { QueueMetrics } from './metrics/queues.js';
 import { startRuntimeMetrics } from './metrics/runtime.js';
 import { TriageMetrics } from './metrics/triage.js';
 import { ConfigError } from './config-error.js';
@@ -134,6 +135,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Called only once the app below is listening.
     onError: (profile, err) => app.log.error({ err, profile }, 'A sampling run failed unexpectedly'),
   });
+  const queueMetrics = new QueueMetrics(() => sampler.latest());
+  sampler.onRun((finished) => queueMetrics.runFinished(finished));
   const notifier = new Notifier({
     destinations: alertDestinations,
     store: audit.notifications,
@@ -255,7 +258,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       metricsListener = await startMetricsListener({
         host: options.host,
         port: config.metricsPort,
-        families: () => [...triageMetrics.families(), ...runtimeMetrics.families()],
+        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...runtimeMetrics.families()],
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
     } catch (err) {
