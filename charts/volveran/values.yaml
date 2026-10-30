@@ -63,7 +63,8 @@ caBundles:
     bundle: ""
     key: ca.crt
 
-# The audit store (Audit Entries and Discarded Message bodies, SQLite).
+# The audit store (Audit Entries, Discarded Message bodies and depth history, SQLite).
+# See "Sizing the audit store" in README.md.
 persistence:
   # -- false uses an emptyDir: the audit trail is lost on every restart.
   enabled: true

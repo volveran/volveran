@@ -153,7 +153,7 @@ names the missing value.
 
 | Value | Default | Description |
 |---|---|---|
-| `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `credentials` (`shared`, the default, or `operatorToken`: the Operator's own access token, without `username` and `passwordEnv`), `tokenUsernameClaim` (only with `operatorToken`; default `sub`), `vhosts`, `defaultQueueFilter`, `protected`, `requireApproval` (only with `protected: true`; default `true`: an Apply waits for a second Operator's Approval), `replayRate` (`default` and/or `max`, numbers of Messages per second from 0.1 to 1000: the Replay Rate an Apply runs at, and the most an Operator may choose; Volverán refuses `default` above `max`), `canary` (`watchWindow`, a duration from `5s` to `10m`, default `30s`: how long a Canary is watched for dying again; `requiredAbove`, a whole number: an Apply with more Replays must start with a Canary), `replayRules` (Replay rules, see `profiles.example.yaml`; the schema refuses a rule without `stopWhen` or with a `whenAttemptsUsedUp` other than `keep` or `{ moveTo: { queue } }`, and Volverán checks the ranges at startup), `roles` (any of `viewer`, `operator`, `admin`, each a non-empty list of groups; the schema refuses other role names). Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
+| `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `credentials` (`shared`, the default, or `operatorToken`: the Operator's own access token, without `username` and `passwordEnv`), `tokenUsernameClaim` (only with `operatorToken`; default `sub`), `vhosts`, `defaultQueueFilter`, `protected`, `requireApproval` (only with `protected: true`; default `true`: an Apply waits for a second Operator's Approval), `replayRate` (`default` and/or `max`, numbers of Messages per second from 0.1 to 1000: the Replay Rate an Apply runs at, and the most an Operator may choose; Volverán refuses `default` above `max`), `canary` (`watchWindow`, a duration from `5s` to `10m`, default `30s`: how long a Canary is watched for dying again; `requiredAbove`, a whole number: an Apply with more Replays must start with a Canary), `replayRules` (Replay rules, see `profiles.example.yaml`; the schema refuses a rule without `stopWhen` or with a `whenAttemptsUsedUp` other than `keep` or `{ moveTo: { queue } }`, and Volverán checks the ranges at startup), `alerts` (Alert Rules, see `profiles.example.yaml` and the [observability guide](../../docs/observability.md#alert-rules); Volverán checks them at startup), `roles` (any of `viewer`, `operator`, `admin`, each a non-empty list of groups; the schema refuses other role names). Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
 | `brokerProfiles.alertDestinations` | `[]` | Alert Destinations in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `type` (`slack`, `teams` or `webhook`), `urlEnv`, and `signingSecretEnv` on a `webhook`. URLs and signing secrets never go here: the variables they name are keys of `alerts.existingSecret`, and Volverán refuses to start when one is not set. With `brokerProfiles.existingConfigMap`, declare them in that file instead. |
 | `brokerProfiles.passwordsSecret` | `""` | An existing Secret whose keys become environment variables. Each profile's `passwordEnv` must name one of its keys. |
 | `brokerProfiles.existingConfigMap` | `""` | An existing ConfigMap with a `profiles.yaml` key, mounted at `/config` instead of the chart-managed one. Leave `brokerProfiles.profiles` empty when it is set. The chart cannot see its content, so a change to it does not roll the pod: restart the Deployment yourself. A `caFile` in it is an absolute path under `/etc/volveran/ca` (see CA bundles). |
@@ -199,11 +199,21 @@ brokerProfiles:
 
 | Value | Default | Description |
 |---|---|---|
-| `persistence.enabled` | `true` | `false` puts the audit store on an `emptyDir`: Audit Entries and Discarded Message bodies are lost on every restart, and the install notes warn about it. Only for trying the chart out. |
+| `persistence.enabled` | `true` | `false` puts the audit store on an `emptyDir`: Audit Entries, Discarded Message bodies, depth history and firing Alerts are lost on every restart, and the install notes warn about it. Only for trying the chart out. |
 | `persistence.existingClaim` | `""` | An existing PersistentVolumeClaim to mount instead of a chart-created one, for example to migrate a volume or restore from a backup. No claim is created, and `size`, `storageClass` and `accessMode` are ignored. |
-| `persistence.size` | `1Gi` | Size of the audit store PersistentVolumeClaim (Audit Entries and Discarded Message bodies, kept 30 days or 1 GiB by default). |
+| `persistence.size` | `1Gi` | Size of the audit store PersistentVolumeClaim: Audit Entries, Discarded Message bodies (kept 30 days or 1 GiB by default) and depth history (about 190 MiB for 100 dead-letter queues at the defaults). See [Sizing the audit store](#sizing-the-audit-store). |
 | `persistence.storageClass` | `""` (cluster default) | StorageClass of the claim. |
 | `persistence.accessMode` | `ReadWriteOnce` | `ReadWriteOnce`, `ReadWriteOncePod` or `ReadWriteMany`. |
+
+#### Sizing the audit store
+
+Add up what the claim must hold:
+
+- **Discarded bodies:** up to `settings.bodyRetentionMaxBytes`, 1 GiB by default, which is the whole default claim. Raise `persistence.size` or lower the limit.
+- **Depth history:** about 100 bytes per Sample, that is dead-letter queues × (86,400 / `settings.historyIntervalSeconds`) × `settings.historyRetentionDays` × 100 bytes. 100 queues at the defaults (60 s, 14 days) take about 190 MiB; at 15 s and 90 days, about 4.7 GiB. It grows for one retention period, then stays level.
+- **Audit Entries**, kept indefinitely, and some room to spare: a Discard needs a durable commit, so a full volume stops triage.
+
+See [sizing](../../docs/observability.md#sizing), which also covers the memory that very long or fine history takes.
 
 ### Service
 
@@ -240,7 +250,7 @@ refused at render time.
 | `settings.bodyRetentionMaxBytes` | `null` (`1GiB`) | `VOLVERAN_BODY_RETENTION_MAX_BYTES`: most total size of kept Discarded Message bodies, in bytes or with `KiB`, `MiB`, `GiB` or `TiB`, for example `20GiB`. Size `persistence.size` above it. |
 | `settings.bodyRetentionIntervalMinutes` | `null` (60) | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`: how often old bodies are evicted, 1 to 1440. |
 | `settings.historyIntervalSeconds` | `null` (60) | `VOLVERAN_HISTORY_INTERVAL_SECONDS`: how often dead-letter queues are sampled, 15 to 3600. |
-| `settings.historyRetentionDays` | `null` (14) | `VOLVERAN_HISTORY_RETENTION_DAYS`: how long Samples are kept, 1 to 90. |
+| `settings.historyRetentionDays` | `null` (14) | `VOLVERAN_HISTORY_RETENTION_DAYS`: how long Samples and the outcomes of notifications are kept, 1 to 90. Size `persistence.size` for it. |
 
 ### Extra environment
 

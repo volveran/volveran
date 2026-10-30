@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.4.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.4.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v0.5.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.5.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -76,12 +76,31 @@ Everything planned for v0.4 shipped. Upgrading from 0.3: Apply runs in the backg
 - Spring AMQP and MassTransit: their Failure Details in the Message list, the Message view, a filter and the export; `_error` queues listed as dead-letter queues; MassTransit Messages Replayed to their input queue and Spring AMQP Messages offered a prefilled Move ([ADR 0010](docs/adr/0010-replay-origin-from-framework-headers.md), [guide](docs/spring-amqp-and-masstransit.md)).
 - Replay rules declared in the profiles file ([ADR 0011](docs/adr/0011-replay-rules-declared-in-the-profiles-file.md)): scheduled Rule Passes over ordinary Checkouts, back-off and attempt limits counted from Died Again, Keep or Move for used-up Messages, a required automatic stop, pause by an `operator` and resume by an `admin`, state kept in the audit store, and a Replay rules view ([guide](docs/replay-rules.md)).
 
-## v0.5: Observability
+## v0.5: Observability (released in 0.5.0)
 
-- Dead-letter queue depth and rate history.
-- Alerts to Slack, Microsoft Teams and webhooks.
-- Prometheus metrics endpoint, and a Prometheus Operator ServiceMonitor in the Helm chart.
-- Dead-letter topology map: which queues dead-letter into which.
+Everything planned for v0.5 shipped. Upgrading from 0.4 changes no behaviour you did not ask for, apart from sampling and the audit store's growth (see the [changelog](CHANGELOG.md)). These things differ from the plan:
+
+- **Estimated arrivals.** The plan read arrivals from the broker's `message_stats.publish`, if a broker-facts gate proved that dead-lettered Messages count there. They do not, on classic or quorum queues, for rejected or expired Messages, directly or through exchange-to-exchange bindings ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#publish-counter)). So the planned fallback applies: **estimated arrivals**, the rise in depth between Samples plus the Messages Volverán took out in between, named so in the web app, the API (`estimatedArrivals`) and the metrics. A consumer outside Volverán hides arrivals, which the plan's counter would not have done. Depth survives a broker restart, so there is no reset to handle, and only a queue's first Sample has unknown arrivals.
+- **The metric name.** `volveran_dead_letter_queue_arrived_messages_total` became `volveran_dead_letter_queue_estimated_arrived_messages_total`.
+- **False spikes are corrected for Alerts only.** Management statistics lag, so a take-out can land in an earlier interval than its drop in depth, which reports arrivals that never happened. `anyArrival` and `arrivalsAbove` count an arrival only once the depth has borne it out, so arrivals hidden by triage alert one Sample late. The history and the metrics still show such a spike.
+- **More labels on metrics.** `volveran_alerts_firing`, `volveran_replay_rule_paused`, `volveran_replay_rule_passes_total` and `volveran_apply_messages_total` also carry `profile`, and the rule metrics `rule`, so that two profiles' rules with one name stay apart. Test notifications are not counted in `volveran_alert_notifications_total`.
+- **Extra fields in the generic webhook's body**, still `version: 1`: `test` (`true` on a test notification, which receivers should ignore), `replayRule` and `reason` (null when they do not apply).
+- **Extra refusals at startup.** Besides those planned, startup refuses `replayRulePaused` on a profile with no Replay rules, `setupWarning` and `samplingFailing` on an `operatorToken` profile, as well as queue conditions, and a rule-level `for` on `samplingFailing`, which has its own.
+- **A `queue:` is not checked against the broker.** An Alert Rule naming a queue that is not a dead-letter queue is not refused, but that queue is never sampled, so the rule never fires.
+- **What `setupWarning` and `replayRulePaused` fire on.** The plan said a queue "gains" a warning. A queue already warned, or a rule already paused, fires at the next evaluation, including right after the Alert Rule is deployed, while a Replay rule deployed with `startPaused` never fires. Removing a paused Replay rule from the file sends a resolved notification; only removing the Alert Rule is quiet. `samplingFailing`'s `for` counts from the profile's last good run, and its value and threshold are seconds. Alerts about no queue link to Volverán's root. A pause's reason is cut at 500 characters in notifications.
+- **More on the Dead-letter Map.** Queue nodes also carry `deadLetterQueue`, `checkout` and `checkedOutBy`, so the map can start a Checkout. Edges carry `sources`, and gain the kinds `alternate_exchange`, `default_exchange` and `unresolved`: where Messages go next cannot be told from the set-up, which is not drawn as a loss. Only cycles Messages can really travel are flagged.
+- **Audit migrations** are split per feature (v12 notifications, v13 history, v14 and v15 Alerts), not one migration.
+- **A sampling run covers a whole profile**, so one failing vhost fails the profile's run.
+- **Long ranges are not bounded.** A history range reads all its Samples before downsampling, so the largest settings (90 days at 15 seconds, about 518,000 Samples for one queue) take about 250 MiB of memory for that request. The [observability guide](docs/observability.md#sizing) says so; it is not limited in 0.5.
+
+What shipped:
+
+- Depth history: a Sample of every dead-letter queue of each shared-credentials Broker Profile once a minute, from the management API only, kept 14 days (both configurable), a history API, a 24-hour depth chart in the queue list, and a history view with estimated arrivals, gaps and marks linking to the Audit Entries of Applies and Rule Passes.
+- Alerts to Slack, Microsoft Teams and webhooks: Alert Destinations and Alert Rules declared in the profiles file ([ADR 0012](docs/adr/0012-alerting-declared-in-the-profiles-file.md)), on depth, arrivals, a paused Replay rule, a set-up warning or failed sampling, with `for`, `repeatEvery`, retried and recorded deliveries, a signed webhook, an Alerts view and test notifications. Notifications never hold Message content.
+- Prometheus metrics on a separate port, off by default, and a `metrics` section in the Helm chart with a Prometheus Operator ServiceMonitor and a NetworkPolicy peer list for the scraper. A scrape never contacts a broker.
+- Dead-letter Map: which queues dead-letter into which in a vhost, through which exchange and routing key, with losses, chains, cycles and MassTransit `_error` queues, in the web app (with search and a text listing to copy) and the API.
+
+See the [observability guide](docs/observability.md).
 
 ## v1.0: Production hardening
 
