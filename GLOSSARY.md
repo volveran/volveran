@@ -55,7 +55,7 @@ How long Volverán watches for a Canary that dies again, through a queue of its 
 _Avoid_: Timeout, grace period
 
 **Sample**:
-One reading of a dead-letter queue's depth and estimated arrivals at one time, taken from the management API without a Checkout. Estimated arrivals are the rise in depth since the Sample before plus the Messages Volverán took out in between, because the broker does not count dead-lettered Messages; a consumer outside Volverán hides arrivals, and a queue's first Sample has none known.
+One reading of a dead-letter queue's depth and estimated arrivals at one time, taken from the management API without a Checkout. Estimated arrivals are the change in depth since the Sample before plus the Messages Volverán took out in between, never below zero, because the broker does not count dead-lettered Messages; a consumer outside Volverán hides arrivals, and a queue's first Sample has none known, nor has its first after a sampling run that had no depth for it. With no depth reported there is no Sample.
 _Avoid_: Data point, reading, metric
 
 **Message**:

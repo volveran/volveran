@@ -20,6 +20,8 @@ export interface VhostReading {
   edges: DeadLetterEdge[];
   /** Every queue of the vhost counts. */
   setupWarningCounts: SetupWarningCounts;
+  /** The queues the management API listed with no depth: their rows' 0 is not a reading, so the sampler leaves them out. */
+  depthMissing: ReadonlySet<string>;
 }
 
 /** The management API calls a reading makes. */
@@ -56,5 +58,6 @@ export async function readVhost(source: { profile: Pick<BrokerProfile, 'defaultQ
     queues: arrangeQueues(rows, arrangeOptions).map((row): QueueRow => ({ ...row, setupWarnings: warningsByName.get(row.name)! })),
     edges,
     setupWarningCounts: countSetupWarnings(warningsByName.values()),
+    depthMissing: new Set(queues.filter((q) => q.depthMissing).map((q) => q.name)),
   };
 }

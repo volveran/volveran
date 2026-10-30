@@ -7,6 +7,10 @@
 //   still going is left out of the next tick, and never delays the others.
 // - A run is all or nothing per profile: if any of its vhosts cannot be read,
 //   the run is recorded as failed with the error's code and no Samples.
+// - A queue the management API lists with no depth (just after a broker restart,
+//   docs/rabbitmq-behaviour.md) gets no Sample in that run: its depth is unknown,
+//   not 0. A queue a good run did not sample has unknown arrivals at its next
+//   Sample, so its depth coming back is no spike.
 // - `operatorToken` profiles are not sampled: nobody is signed in to lend a
 //   token (ADR 0008).
 // - The first run comes one interval after start().
@@ -39,11 +43,11 @@ export interface LatestSample {
   queue: string;
   at: Date;
   depth: number;
-  /** The depth of the Sample before; null on the queue's first Sample. */
+  /** The depth of the Sample before; null on the queue's first Sample, or when the latest good run did not sample it. */
   previousDepth: number | null;
   /** The Messages Volverán took out since the Sample before, by their Audit Entries. */
   takenOut: number;
-  /** Since the Sample before; null when unknown (the queue's first Sample). */
+  /** Since the Sample before; null when unknown (the queue's first Sample, or the first after a good run missed it). */
   estimatedArrivals: number | null;
   setupWarnings: SetupWarning[];
 }
@@ -57,7 +61,8 @@ export interface ProfileSnapshot {
   lastSuccessAt: Date | null;
   /**
    * The queues of its latest good run: after a failed run they stay, with their
-   * old `at`, and a deleted queue leaves at the next good run. Empty after a
+   * old `at`, as does a queue a good run had no depth for, and a deleted queue
+   * leaves at the next good run. Empty after a
    * restart until the first good run, since set-up warnings are not stored.
    */
   queues: LatestSample[];
@@ -73,6 +78,8 @@ export interface FinishedRun {
   run: SamplingRun;
   /** This run's Samples, each once; empty when the run failed. */
   samples: LatestSample[];
+  /** The dead-letter queues this run read but had no depth for, so no Sample: nothing is known of them, not that they emptied. */
+  unknownDepth: Array<{ vhost: string; queue: string }>;
 }
 
 /** May return a promise: "sample now" resolves after it settles, and the profile's next run waits for it. */
@@ -203,6 +210,7 @@ export class QueueSampler {
     if (this.stopped) return null;
 
     const samples = run.ok ? this.toSamples(profile.name, at, readings) : [];
+    const unknownDepth = readings.flatMap(({ vhost, queues }) => queues.filter((q) => q.depthMissing).map((q) => ({ vhost, queue: q.name })));
     this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode, intervalMs: this.options.intervalMs }, samples.map(toStored));
 
     const previous = this.snapshots.get(profile.name);
@@ -210,10 +218,10 @@ export class QueueSampler {
       profile: profile.name,
       lastRun: run,
       lastSuccessAt: run.ok ? at : (previous?.lastSuccessAt ?? null),
-      queues: run.ok ? samples : (previous?.queues ?? []),
+      queues: run.ok ? [...samples, ...(previous?.queues ?? []).filter((q) => unknownDepth.some((u) => u.vhost === q.vhost && u.queue === q.queue))] : (previous?.queues ?? []),
     });
 
-    const settled = await Promise.allSettled([...this.listeners].map(async (listener) => listener({ run, samples })));
+    const settled = await Promise.allSettled([...this.listeners].map(async (listener) => listener({ run, samples, unknownDepth })));
     for (const result of settled) {
       if (result.status === 'rejected') this.options.onError?.(profile.name, result.reason);
     }
@@ -227,17 +235,21 @@ export class QueueSampler {
     return Promise.all(
       vhosts.map(async (vhost) => {
         const reading = await readVhost({ profile, management }, vhost);
-        return { vhost, queues: reading.queues.filter((q) => q.deadLetterQueue) };
+        const queues = reading.queues.filter((q) => q.deadLetterQueue).map((q) => ({ ...q, depthMissing: reading.depthMissing.has(q.name) }));
+        return { vhost, queues };
       }),
     );
   }
 
   private toSamples(profile: string, at: Date, readings: Awaited<ReturnType<QueueSampler['read']>>): LatestSample[] {
     const { history } = this.options;
+    const lastGoodRun = history.lastRuns(profile).lastOk?.at ?? null;
     return readings.flatMap(({ vhost, queues }) =>
-      queues.map((q): LatestSample => {
+      queues.filter((q) => !q.depthMissing).map((q): LatestSample => {
         const ref = { profile, vhost, queue: q.name };
-        const previous = history.latestSample(ref, at.getTime());
+        const latest = history.latestSample(ref, at.getTime());
+        // A good run since this queue's latest Sample did not sample it: what happened in between is unknown.
+        const previous = latest && lastGoodRun !== null && lastGoodRun > latest.at ? null : latest;
         const takenOut = previous ? history.takenOut(ref, previous.at, at.getTime()) : 0;
         return {
           ...ref,

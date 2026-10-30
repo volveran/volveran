@@ -9,7 +9,8 @@
 //
 // A resolved Alert is forgotten: the next firing is a new Alert with a new id. A
 // failed run says nothing about any queue, so it changes no Alert (it may repeat
-// one). So does a Sample whose arrivals are unknown, for an arrival condition.
+// one). So does a Sample whose arrivals are unknown, for an arrival condition, and
+// a good run with no depth for a queue, for that queue.
 //
 // Conditions on Volverán itself:
 // - replayRulePaused holds while a Replay Rule is paused, each its own Alert, from
@@ -117,7 +118,8 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
   const now = at.getTime();
   const notifications: AlertNotification[] = [];
   const samples = run?.run.ok ? run.samples : null;
-  const arrivals = samples ? reckonArrivals(rules, memory.arrivals, samples, now) : null;
+  const unknownDepth = new Set((run?.unknownDepth ?? []).map((q) => JSON.stringify([q.vhost, q.queue])));
+  const arrivals = samples ? reckonArrivals(rules, memory.arrivals, samples, unknownDepth, now) : null;
   const previous = new Map(memory.alerts.map((a) => [alertKey(a), a]));
   const alerts: AlertState[] = [];
 
@@ -226,7 +228,12 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
     // Alerts of queues gone from a good run: their condition cannot hold.
     const present = new Set(matching.map((s) => JSON.stringify([s.vhost, s.queue])));
     for (const alert of ours) {
-      if (alert.queue !== null && present.has(JSON.stringify([alert.vhost, alert.queue]))) continue;
+      const place = JSON.stringify([alert.vhost, alert.queue]);
+      if (alert.queue !== null && present.has(place)) continue;
+      if (unknownDepth.has(place)) {
+        alerts.push(alert.status === 'firing' ? fireOrRepeat(rule, alert) : alert);
+        continue;
+      }
       const after = settleFalse(alert, alert.value, now, (ended) => notify(rule, ended, 'resolved'));
       if (after) alerts.push(after);
     }
@@ -295,10 +302,11 @@ function read(when: QueueCondition, sample: LatestSample, arrivals: QueueArrival
 }
 
 /** Carries each queue an arrival condition watches forward by its Sample; other queues are not remembered. */
-function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], samples: LatestSample[], now: number): QueueArrivals[] {
+function reckonArrivals(rules: readonly AlertRule[], previous: QueueArrivals[], samples: LatestSample[], unknownDepth: ReadonlySet<string>, now: number): QueueArrivals[] {
   const watching = rules.flatMap((r) => (r.when.kind === 'arrivalsAbove' || r.when.kind === 'anyArrival' ? [r.when] : []));
   const keepMs = Math.max(0, ...watching.map((w) => (w.kind === 'arrivalsAbove' ? w.withinMs : 0)));
-  const next: QueueArrivals[] = [];
+  // A queue with no depth this run has no Sample, but keeps what it had.
+  const next = previous.filter((a) => unknownDepth.has(JSON.stringify([a.vhost, a.queue])));
   for (const sample of samples) {
     if (!watching.some((w) => w.vhost === sample.vhost && selects(w, sample.queue))) continue;
     const before = previous.find((a) => a.vhost === sample.vhost && a.queue === sample.queue);

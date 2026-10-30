@@ -23,7 +23,8 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 **Estimated arrivals.** The broker does not count dead-lettered Messages ([RabbitMQ behaviour](rabbitmq-behaviour.md#publish-counter)), so each Sample's arrivals are estimated: the rise in depth since the Sample before, plus the Messages Volverán took out in between, from its Audit Entries.
 
 - A consumer outside Volverán hides arrivals: what it takes away is not seen arriving.
-- A queue's first Sample has unknown arrivals, shown as unknown rather than zero.
+- A queue's first Sample has unknown arrivals, shown as unknown rather than zero. So has its first Sample after a run with no depth for it.
+- The management API lists a queue with no depth for some seconds after a broker restart. Volverán takes no Sample of it in that run, rather than a depth of 0, which holds its Alerts as they are. A broker with `management_agent.disable_metrics_collector = true` never reports depth, so its queues get no Samples at all, though its sampling runs succeed ([RabbitMQ behaviour](rabbitmq-behaviour.md#missing-depth)).
 - Management statistics lag by a few seconds, so a take-out can land in an earlier interval than its drop in depth. The history then shows a false spike. [Alert Rules](#alert-rules) and the arrivals metric count arrivals only once the depth has borne them out, so they do not.
 
 **Depth** is the management API's count of the queue's Messages, which lags by a few seconds, and includes those a Checkout holds.
@@ -175,7 +176,7 @@ profiles:
 
 **How an Alert moves.** It is pending while the condition has not held for `for`, and is forgotten quietly if the condition goes false. Once it has held, it is firing and a notification goes out. It resolves, with another notification, when the condition is false at two Samples in a row, a full Sample apart, or at once when a Replay rule resumes or sampling succeeds. The next firing is a new Alert with a new id. Evaluation runs after each sampling run and on each Replay rule pause and resume.
 
-- A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is.
+- A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is, and a run with no depth for a queue holds that queue's Alerts.
 - **Arrival conditions count only what the depth has borne out**: a take-out counts once the next Sample shows it did not explain a drop in depth. So false spikes do not fire them, and arrivals hidden by triage alert one Sample late. The history and the metrics are not corrected in this way, and can show a spike with no Alert.
 - A firing Alert survives a restart without being sent again. A crash between storing an Alert and sending it loses that notification rather than sending it twice.
 - Removing an Alert Rule from the file drops its Alerts at the next restart, with no resolved notification.
