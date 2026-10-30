@@ -73,6 +73,8 @@ describe('depth history', () => {
       await sampler.sampleNow();
     };
 
+    // Statistics may still show Messages purged by an earlier test.
+    await waitForDepth(app, 0);
     await sample();
     await deadLetter(route, messages('first', 3));
     await waitForDepth(app, 3);
@@ -106,7 +108,7 @@ describe('depth history', () => {
       ['discard', checkoutId, dlq],
       ['discard', checkoutId, dlq],
     ]);
-  });
+  }, 90_000);
 
   it('samples on its timer, only the dead-letter queues', async () => {
     const sampler = samplerHooks();
@@ -269,6 +271,7 @@ describe('depth history', () => {
     await sampler.sampleNow();
     const old = sampler.now().toISOString();
     expect((await first.get(historyPath('local', dlq, everything()))).body.samples.map((s: any) => s.at)).toEqual([old]);
+    await waitForDepth(first, 0);
     sampler.set(new Date());
     await sampler.sampleNow();
     await deadLetter(route, messages('later', 2));
@@ -293,7 +296,7 @@ describe('depth history', () => {
       [0, 0],
       [2, 2],
     ]);
-  });
+  }, 90_000);
 
   it('offers later consumers the latest snapshot and each finished run', async () => {
     const sampler = samplerHooks();
