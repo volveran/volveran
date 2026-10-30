@@ -771,7 +771,7 @@
           }
         },
         "alerts": {
-          "description": "Alert Rules: tell an Alert Destination when a dead-letter queue is too deep, fills too fast or receives anything. Not allowed with credentials: operatorToken. Durations are a whole number and a unit (d, h, m, s). Volverán checks the ranges and destination names at startup.",
+          "description": "Alert Rules: tell an Alert Destination when a dead-letter queue is too deep, fills too fast or receives anything, when a Replay rule pauses, when a dead-letter queue has a set-up warning, or when sampling fails. Not allowed with credentials: operatorToken. Durations are a whole number and a unit (d, h, m, s). Volverán checks the ranges and destination names at startup.",
           "type": "array",
           "items": {
             "type": "object",
@@ -785,10 +785,12 @@
               "when": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["vhost"],
                 "oneOf": [
-                  { "required": ["queue"] },
-                  { "required": ["queuePattern"] }
+                  { "required": ["vhost", "queue"] },
+                  { "required": ["vhost", "queuePattern"] },
+                  { "required": ["replayRulePaused"] },
+                  { "required": ["setupWarning"] },
+                  { "required": ["samplingFailing"] }
                 ],
                 "properties": {
                   "vhost": { "type": "string", "minLength": 1 },
@@ -804,7 +806,17 @@
                       "within": { "$ref": "#/definitions/alertDuration" }
                     }
                   },
-                  "anyArrival": { "const": true }
+                  "anyArrival": { "const": true },
+                  "replayRulePaused": { "description": "A Replay rule paused: any of the profile's, or the one named by rule.", "const": true },
+                  "rule": { "description": "With replayRulePaused: the Replay rule to watch.", "type": "string", "minLength": 1 },
+                  "setupWarning": { "description": "A dead-letter queue has a set-up warning at least this bad; each queue is its own Alert.", "enum": ["loses_messages", "may_lose_messages"] },
+                  "samplingFailing": {
+                    "description": "The profile has not been sampled well for this long.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["for"],
+                    "properties": { "for": { "$ref": "#/definitions/alertDuration" } }
+                  }
                 }
               }
             }

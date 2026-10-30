@@ -54,6 +54,15 @@ profiles:
       - name: payments-silent
         destinations: [pager]
         when: { vhost: /, queue: payments.dlq, anyArrival: true }  # any Message arrives at all
+      - name: replay-stopped
+        destinations: [pager]
+        when: { replayRulePaused: true }  # a Replay rule paused, with why; or add rule: <name> for just that one. Resolves at its resume
+      - name: losing-messages
+        destinations: [ops-slack]
+        when: { setupWarning: loses_messages }  # a dead-letter queue has this set-up warning (may_lose_messages: that or worse); each queue is its own Alert
+      - name: broker-unsampled
+        destinations: [pager]
+        when: { samplingFailing: { for: 10m } }  # not sampled well for this long; resolves at the next good run. Takes no other `for`
 
   - name: prod
     managementUrl: https://rabbit.prod.example.com:15671

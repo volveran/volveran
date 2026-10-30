@@ -57,6 +57,20 @@ describe('Broker Profiles', () => {
       }
     });
 
+    it('accepts each condition on Volverán itself', () => {
+      for (const when of [{ replayRulePaused: true }, { replayRulePaused: true, rule: 'retry' }, { setupWarning: 'may_lose_messages' }, { samplingFailing: { for: '10m' } }]) {
+        expect(() => render(withRule({ name: 'deep', destinations: ['ops'], when }))).not.toThrow();
+      }
+    });
+
+    it('refuses a malformed condition on Volverán itself', () => {
+      const withWhen = (when: unknown) => withRule({ name: 'deep', destinations: ['ops'], when });
+      expect(renderRefusal(withWhen({ setupWarning: 'bad' }))).toContain('setupWarning');
+      expect(renderRefusal(withWhen({ samplingFailing: {} }))).toContain('samplingFailing');
+      expect(renderRefusal(withWhen({ replayRulePaused: false }))).toContain('replayRulePaused');
+      expect(renderRefusal(withWhen({ setupWarning: 'loses_messages', vhost: '/', queue: 'a' }))).toContain('when');
+    });
+
     it('refuses a malformed Alert Rule', () => {
       expect(renderRefusal(withRule({ ...rule, destinations: [] }))).toContain('destinations');
       expect(renderRefusal(withRule({ ...rule, for: '5 minutes' }))).toContain('for');

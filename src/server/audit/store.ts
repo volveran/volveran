@@ -333,6 +333,29 @@ const MIGRATIONS: string[] = [
      recent TEXT NOT NULL,
      PRIMARY KEY (profile, vhost, queue)
    ) WITHOUT ROWID;`,
+  // v15 (#80): Alert Rules on Volverán itself. A replayRulePaused rule has one Alert per Replay Rule, so
+  // that joins the key ('' for none), and an Alert keeps why its condition holds.
+  `CREATE TABLE alerts_v15 (
+     profile TEXT NOT NULL,
+     rule TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     replay_rule TEXT NOT NULL,
+     alert_id TEXT NOT NULL,
+     status TEXT NOT NULL,
+     condition TEXT NOT NULL,
+     value REAL,
+     threshold REAL,
+     since INTEGER NOT NULL,
+     last_notified_at INTEGER,
+     false_since INTEGER,
+     reason TEXT,
+     PRIMARY KEY (profile, rule, vhost, queue, replay_rule)
+   ) WITHOUT ROWID;
+   INSERT INTO alerts_v15 (profile, rule, vhost, queue, replay_rule, alert_id, status, condition, value, threshold, since, last_notified_at, false_since)
+     SELECT profile, rule, vhost, queue, '', alert_id, status, condition, value, threshold, since, last_notified_at, false_since FROM alerts;
+   DROP TABLE alerts;
+   ALTER TABLE alerts_v15 RENAME TO alerts;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
