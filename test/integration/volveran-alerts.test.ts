@@ -158,8 +158,7 @@ describe('Alert Rules on Volverán itself', () => {
 
     const put = await management(POLICY, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pattern: `^${dlq.replace(/\./g, '\\.')}$`, definition: { 'message-ttl': 60_000 }, 'apply-to': 'queues' }),
+      body: { pattern: `^${dlq.replace(/\./g, '\\.')}$`, definition: { 'message-ttl': 60_000 }, 'apply-to': 'queues' },
     });
     expect(put.status).toBeLessThan(300);
     await hasWarning(true);
