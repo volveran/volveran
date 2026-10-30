@@ -42,6 +42,8 @@ export interface HistoryMark {
 export interface QueueHistory {
   from: string;
   to: string;
+  /** How long Samples are kept (VOLVERAN_HISTORY_RETENTION_DAYS): the longest range worth asking for. */
+  retentionDays: number;
   /** The time of the queue's latest Sample, in range or not; null when it has none. */
   latestSampleAt: string | null;
   samples: HistorySample[];
@@ -49,3 +51,15 @@ export interface QueueHistory {
   marks: HistoryMark[];
 }
 
+/**
+ * A dead-letter queue's last 24 hours in the queue list, small enough to send
+ * for every listed queue: times are epoch milliseconds, and `points` holds at
+ * most ~100 `[at, depth]` pairs, oldest first.
+ */
+export interface DepthSeries {
+  from: number;
+  to: number;
+  points: Array<[at: number, depth: number]>;
+  /** Stretches when the profile could not be sampled. */
+  gaps: Array<{ from: number; to: number }>;
+}

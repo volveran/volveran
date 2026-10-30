@@ -343,6 +343,63 @@ describe('depth history', () => {
   });
 
   describe('access (Team Mode)', () => {
+    it('gives the queue list a 24-hour depth series for dead-letter queues only', async () => {
+      const sampler = samplerHooks();
+      const app = await start({ profiles: [testProfile({ name: 'local' })], samplerTestHooks: sampler.hooks });
+      const queuesPath = '/api/profiles/local/vhosts/%2F/queues';
+
+      await waitForDepth(app, 0);
+      // A Sample older than 24 hours stays out of the series.
+      const nowMs = Date.now();
+      sampler.set(new Date(nowMs - 2 * DAY));
+      await sampler.sampleNow();
+      await deadLetter(route, messages('series', 2));
+      await waitForDepth(app, 2);
+      sampler.set(new Date(nowMs - 60 * MINUTE));
+      await sampler.sampleNow();
+      sampler.set(new Date(nowMs));
+      await sampler.sampleNow();
+
+      const { body } = await app.get(queuesPath);
+      const row = body.queues.find((q: any) => q.name === dlq);
+      expect(row.depthSeries.from).toBe(nowMs - DAY);
+      expect(row.depthSeries.to).toBe(nowMs);
+      expect(row.depthSeries.points).toEqual([
+        [nowMs - 60 * MINUTE, 2],
+        [nowMs, 2],
+      ]);
+      // No runs from two days ago to an hour ago, nor since: both show, clipped to the 24 hours.
+      expect(row.depthSeries.gaps).toEqual([
+        { from: nowMs - DAY, to: nowMs - 60 * MINUTE },
+        { from: nowMs - 60 * MINUTE, to: nowMs },
+      ]);
+
+      const others = body.queues.filter((q: any) => !q.deadLetterQueue);
+      expect(others.length).toBeGreaterThan(0);
+      for (const queue of others) expect(queue).not.toHaveProperty('depthSeries');
+      for (const queue of body.queues.filter((q: any) => q.deadLetterQueue)) expect(queue).toHaveProperty('depthSeries');
+    });
+
+    it('caps the depth series, so a long list stays small', async () => {
+      const sampler = samplerHooks();
+      const app = await start({ profiles: [testProfile({ name: 'local' })], samplerTestHooks: sampler.hooks });
+      const nowMs = Date.now();
+      for (let i = 150; i >= 0; i--) {
+        sampler.set(new Date(nowMs - i * MINUTE));
+        await sampler.sampleNow();
+      }
+      const { body } = await app.get('/api/profiles/local/vhosts/%2F/queues');
+      const { points } = body.queues.find((q: any) => q.name === dlq).depthSeries;
+      expect(points.length).toBeLessThanOrEqual(96);
+      expect(points.at(-1)[0]).toBe(nowMs);
+    });
+
+    it('says how long history is kept, for the whole-retention range', async () => {
+      const sampler = samplerHooks();
+      const app = await start({ profiles: [testProfile({ name: 'local' })], samplerTestHooks: sampler.hooks, env: { VOLVERAN_HISTORY_RETENTION_DAYS: '30' } });
+      expect((await app.get(historyPath('local'))).body.retentionDays).toBe(30);
+    });
+
     it('lets any Role read, refuses no Role, and does not sample an operatorToken profile', async () => {
       const port = await closedPort();
       const baseUrl = `http://127.0.0.1:${port}`;

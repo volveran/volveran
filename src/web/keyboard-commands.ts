@@ -32,6 +32,8 @@ export type KeyboardCommand =
   /** Focus the next (1) or previous (-1) queue or Message; in a Checkout, extendSelection adds both to the Selection. */
   | { kind: 'move'; by: 1 | -1; extendSelection: boolean }
   | { kind: 'start-checkout' }
+  /** Open the depth history of the focused queue. */
+  | { kind: 'open-history' }
   | { kind: 'toggle-selection' }
   | { kind: 'assign'; decision: DecisionKind; to: 'selection' | 'focused-message' }
   | { kind: 'focus-filter' }
@@ -69,6 +71,7 @@ export function commandFor(press: KeyPress, state: KeyboardState): KeyboardComma
 
   if (state.view === 'queue-list') {
     // On a focused button Enter presses the button instead.
+    if (key === 'h' && !shiftKey) return state.focusedItem ? { kind: 'open-history' } : null;
     return key === 'Enter' && !shiftKey && state.focusedItem && state.focus !== 'control' ? { kind: 'start-checkout' } : null;
   }
 
@@ -123,6 +126,7 @@ export const SHORTCUTS: Array<{ view: KeyboardState['view']; title: string; shor
       { keys: ['j', 'ArrowDown'], does: 'Focus the next queue' },
       { keys: ['k', 'ArrowUp'], does: 'Focus the previous queue' },
       { keys: ['Enter'], does: 'Start a Checkout on the focused queue' },
+      { keys: ['h'], does: 'Open the depth history of the focused dead-letter queue' },
       { keys: ['?'], does: 'Open this list' },
       { keys: ['Escape'], does: 'Close this list' },
     ],

@@ -661,7 +661,8 @@ dialog.prompt .confirm {
   display: flex;
   gap: 4px;
 }
-.view-switch button[aria-pressed='true'] {
+.view-switch button[aria-pressed='true'],
+.history button[aria-pressed='true'] {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -840,4 +841,87 @@ dialog.prompt .confirm {
 .pass-history td {
   padding: 0.15rem 0.6rem 0.15rem 0;
   text-align: left;
+}
+
+/* Depth history */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.history h2:focus {
+  outline: none;
+}
+
+.history-chart {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.history-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chart-summary {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.chart-line-dot {
+  fill: var(--accent);
+}
+
+.chart-axis {
+  stroke: var(--border);
+}
+
+.chart-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+/* A gap in sampling is solid, unknown arrivals are hatched: neither reads as a value. */
+.chart-gap {
+  fill: var(--danger);
+  opacity: 0.15;
+}
+
+.chart-unknown-stroke {
+  stroke: var(--muted);
+  stroke-width: 2;
+  opacity: 0.5;
+}
+
+.chart-mark {
+  stroke: var(--text);
+  stroke-dasharray: 3 2;
+}
+
+.chart-mark-head {
+  fill: var(--text);
+}
+
+.sparkline {
+  display: block;
+}
+
+.queues .history-link {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 0.8125rem;
 }

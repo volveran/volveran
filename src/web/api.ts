@@ -4,6 +4,7 @@ import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audi
 import type { ApprovalSummary, CheckoutView, MessageDetail } from '../shared/checkout.js';
 import type { Decision } from '../shared/decisions.js';
 import type { FilterClause } from '../shared/filters.js';
+import type { QueueHistory } from '../shared/history.js';
 import type { MessageComparison } from '../shared/message-diff.js';
 import { product } from '../shared/product.js';
 import type { MoveDestinations, ProfileSummary, QueueList, QueueRow, Session } from '../shared/queues.js';
@@ -29,6 +30,7 @@ export type {
   XDeathEntry,
 } from '../shared/checkout.js';
 export type { FilterClause } from '../shared/filters.js';
+export type { DepthSeries, HistoryMark, HistorySample, QueueHistory } from '../shared/history.js';
 export type { ReplayRule, ReplayRuleView, RuleBadge, RulePass, RulePassSummary, RuleState } from '../shared/replay-rules.js';
 export type {
   CheckoutAvailability,
@@ -59,6 +61,8 @@ export interface AuditSearch {
   messageId?: string;
   action?: AuditAction | '';
   operator?: string;
+  /** The Checkout whose Apply or Rule Pass wrote the entries. */
+  checkoutId?: string;
   /** The `x-volveran-replay-id` header of a Message that came back. */
   replayId?: string;
   /** The name of the Replay Rule whose passes wrote the entries. */
@@ -137,6 +141,11 @@ export const api = {
     const qs = params.size > 0 ? `?${params}` : '';
     return getJson<QueueList>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`);
   },
+  /** A queue's depth history from `from` to `to` (ISO 8601); `history_not_sampled` on an `operatorToken` profile. */
+  queueHistory: (profile: string, vhost: string, queue: string, range: { from: string; to: string }) =>
+    getJson<QueueHistory>(
+      `/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/history?${new URLSearchParams(range)}`,
+    ),
   moveDestinations: (profile: string, vhost: string) =>
     getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
   /** `overrideConsumers` starts it even though other consumers read the queue (error `queue_has_consumers` otherwise). */

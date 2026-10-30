@@ -25,6 +25,7 @@ export interface HistoryRouteDeps {
   history: HistoryStore;
   clock: Pick<RuleClock, 'now'>;
   intervalMs: number;
+  retentionMs: number;
 }
 
 function parseTime(name: string, value: string | undefined): Date | null {
@@ -34,7 +35,7 @@ function parseTime(name: string, value: string | undefined): Date | null {
   return date;
 }
 
-export function registerHistoryRoutes(app: FastifyInstance, { history, clock, intervalMs }: HistoryRouteDeps, access: ProfileAccessCheck) {
+export function registerHistoryRoutes(app: FastifyInstance, { history, clock, intervalMs, retentionMs }: HistoryRouteDeps, access: ProfileAccessCheck) {
   app.get<{
     Params: { profile: string; vhost: string; queue: string };
     Querystring: { from?: string; to?: string };
@@ -74,6 +75,7 @@ export function registerHistoryRoutes(app: FastifyInstance, { history, clock, in
     return {
       from: from.toISOString(),
       to: to.toISOString(),
+      retentionDays: Math.round(retentionMs / DAY_MS),
       latestSampleAt: latest && new Date(latest.at).toISOString(),
       samples: samples.map((s) => ({ at: new Date(s.at).toISOString(), depth: s.depth, estimatedArrivals: s.estimatedArrivals })),
       gaps: gaps.map((g) => ({ from: new Date(g.from).toISOString(), to: new Date(g.to).toISOString(), errorCode: g.errorCode })),

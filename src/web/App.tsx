@@ -15,9 +15,11 @@
 // filters them), and actions their Role does not allow are shown as
 // unavailable, naming the role they need.
 // In the queue list j/k or the arrow keys move and Enter starts a Checkout
-// (keys mapped in keyboard-commands.ts).
+// (keys mapped in keyboard-commands.ts), and h opens a dead-letter queue's depth
+// history (HistoryView.tsx), also reachable by link (#/history/..., history-link.ts).
 import { useEffect, useRef, useState } from 'react';
 import { waitingCheckoutIn } from '../shared/approval-link.js';
+import { auditSearchIn, historyPath, historyTargetIn, type HistoryTarget } from '../shared/history-link.js';
 import { product } from '../shared/product.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import {
@@ -34,6 +36,7 @@ import {
 import { ApprovalsView } from './ApprovalsView.js';
 import { AuditView } from './AuditView.js';
 import { CheckoutView } from './CheckoutView.js';
+import { HistoryView, Sparkline } from './HistoryView.js';
 import { ReplayRulesView } from './ReplayRulesView.js';
 import { ShortcutList, useKeyboardCommands } from './keyboard.js';
 import { SignInAgain } from './SignInAgain.js';
@@ -81,7 +84,13 @@ export function App() {
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
   /** The waiting Checkout a requester's link points at (the URL fragment), until it is left. */
   const [linkedApproval, setLinkedApproval] = useState(() => waitingCheckoutIn(window.location.hash));
-  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules'>(linkedApproval ? 'approvals' : 'queues');
+  /** The queue whose history a link or the queue list opened. */
+  const [historyTarget, setHistoryTarget] = useState(() => historyTargetIn(window.location.hash));
+  /** The search a history mark's link opens the Audit view on, and which link it was, to search again. */
+  const [auditLink, setAuditLink] = useState(() => ({ hash: window.location.hash, search: auditSearchIn(window.location.hash) }));
+  const [view, setView] = useState<'queues' | 'audit' | 'approvals' | 'rules' | 'history'>(() =>
+    linkedApproval ? 'approvals' : historyTarget ? 'history' : auditLink.search ? 'audit' : 'queues',
+  );
   /** A start refused because other consumers read the queue, awaiting the Operator's override. */
   const [consumersWarning, setConsumersWarning] = useState<{ queue: string; error: ApiError }>();
   const debouncedSearch = useDebounced(search, 200);
@@ -94,13 +103,42 @@ export function App() {
   /** Team Mode, signed in with no role on any Broker Profile: NoRolePage instead of the app. */
   const noRoleAnywhere = session?.mode === 'team' && Object.keys(session.roles).length === 0;
 
+  /** The top bar follows a history link, so going back shows that queue's list. */
+  const showProfileOf = ({ profile, vhost }: HistoryTarget) => {
+    saveLocation({ profile, vhost });
+    setProfileName(profile);
+    setVhost(vhost);
+  };
+
+  /** Leaves whichever view a link opened: the fragment goes, so the same link works again. */
+  const clearLink = () => window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  const switchView = (next: typeof view) => {
+    clearLink();
+    setAuditLink({ hash: '', search: null });
+    setView(next);
+  };
+
   // A link pasted into a tab already showing the app.
   useEffect(() => {
     const follow = () => {
-      const linked = waitingCheckoutIn(window.location.hash);
-      if (!linked) return;
-      setLinkedApproval(linked);
-      setView('approvals');
+      const { hash } = window.location;
+      const linked = waitingCheckoutIn(hash);
+      const history = historyTargetIn(hash);
+      const search = auditSearchIn(hash);
+      if (linked) {
+        setLinkedApproval(linked);
+        setView('approvals');
+      } else if (history) {
+        showProfileOf(history);
+        setHistoryTarget(history);
+        setView('history');
+      } else if (search) {
+        setAuditLink({ hash, search });
+        setView('audit');
+      } else {
+        // The browser's Back, out of a history opened from the queue list.
+        setView((current) => (current === 'history' ? 'queues' : current));
+      }
     };
     window.addEventListener('hashchange', follow);
     return () => window.removeEventListener('hashchange', follow);
@@ -112,6 +150,7 @@ export function App() {
   }, [profile?.name, profile?.protected]);
 
   useEffect(() => {
+    if (historyTarget) saveLocation({ profile: historyTarget.profile, vhost: historyTarget.vhost });
     api
       .session()
       .then((s) => {
@@ -201,6 +240,11 @@ export function App() {
         if (q && mayCheckout && q.checkout.available && !q.checkedOutBy) void startCheckout(q.name);
         return;
       }
+      case 'open-history': {
+        const q = queues.find((q) => q.name === focusedQueue);
+        if (q?.deadLetterQueue && profileName && vhost) window.location.hash = historyPath({ profile: profileName, vhost, queue: q.name }).slice(1);
+        return;
+      }
       case 'show-shortcuts':
         return setShortcutsOpen(true);
       case 'close-prompt':
@@ -229,17 +273,17 @@ export function App() {
       <header className="topbar">
         <h1>{product.name}</h1>
         <nav className="view-switch" aria-label="View">
-          <button type="button" aria-pressed={view === 'queues'} onClick={() => setView('queues')}>
+          <button type="button" aria-pressed={view === 'queues'} onClick={() => switchView('queues')}>
             Queues
           </button>
-          <button type="button" aria-pressed={view === 'audit'} onClick={() => setView('audit')}>
+          <button type="button" aria-pressed={view === 'audit'} onClick={() => switchView('audit')}>
             Audit
           </button>
-          <button type="button" aria-pressed={view === 'rules'} onClick={() => setView('rules')}>
+          <button type="button" aria-pressed={view === 'rules'} onClick={() => switchView('rules')}>
             Replay rules
           </button>
           {session?.mode === 'team' && (
-            <button type="button" aria-pressed={view === 'approvals'} onClick={() => setView('approvals')}>
+            <button type="button" aria-pressed={view === 'approvals'} onClick={() => switchView('approvals')}>
               Approvals
             </button>
           )}
@@ -249,7 +293,10 @@ export function App() {
           <select
             className={profile?.protected ? 'protected-select' : undefined}
             value={profileName ?? ''}
-            onChange={(e) => setProfileName(e.target.value)}
+            onChange={(e) => {
+              if (view === 'history') switchView('queues');
+              setProfileName(e.target.value);
+            }}
           >
             {profiles.map((p) => (
               <option key={p.name} value={p.name}>
@@ -261,7 +308,13 @@ export function App() {
         </label>
         <label>
           Vhost
-          <select value={vhost ?? ''} onChange={(e) => setVhost(e.target.value)} disabled={vhosts.length === 0}>
+          <select
+            value={vhost ?? ''}
+            onChange={(e) => {
+              if (view === 'history') switchView('queues');
+              setVhost(e.target.value);
+            }}
+            disabled={vhosts.length === 0}>
             {vhosts.map((v) => (
               <option key={v} value={v}>
                 {v}
@@ -323,7 +376,9 @@ export function App() {
           </>
         )}
         {view === 'audit' && !checkoutId ? (
-          <AuditView profiles={profiles} roles={session?.roles ?? {}} />
+          <AuditView key={auditLink.hash} initialSearch={auditLink.search} profiles={profiles} roles={session?.roles ?? {}} />
+        ) : view === 'history' && historyTarget && !checkoutId ? (
+          <HistoryView target={historyTarget} onBack={() => switchView('queues')} />
         ) : view === 'rules' && !checkoutId ? (
           profileName && <ReplayRulesView profile={profileName} role={role} />
         ) : (
@@ -395,6 +450,8 @@ export function App() {
                   <VhostWarningCounts counts={queueList.setupWarningCounts} vhost={vhost} />
                   <QueueTable
                     queues={queueList.queues}
+                    profile={profileName}
+                    vhost={vhost}
                     role={role}
                     focused={focusedQueue}
                     onFocus={setFocusedQueue}
@@ -519,12 +576,16 @@ function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vho
 /** The queue list. The keyboard's queue row takes the DOM focus, so it is visible and announced. */
 function QueueTable({
   queues,
+  profile,
+  vhost,
   role,
   focused,
   onFocus,
   onCheckout,
 }: {
   queues: Queue[];
+  profile: string | undefined;
+  vhost: string | undefined;
   role: Role | undefined;
   focused: string | undefined;
   onFocus(queue: string): void;
@@ -546,6 +607,7 @@ function QueueTable({
             Messages <small>(approx.)</small>
           </th>
           <th className="num">Consumers</th>
+          <th>Last 24 hours</th>
           <th>Checkout</th>
         </tr>
       </thead>
@@ -579,6 +641,13 @@ function QueueTable({
             </td>
             <td className="num">≈ {q.approximateMessages}</td>
             <td className="num">{q.consumers}</td>
+            <td>
+              {q.deadLetterQueue && profile && vhost && (
+                <a className="history-link" href={historyPath({ profile, vhost, queue: q.name })} aria-label={`Depth history of ${q.name}`}>
+                  {q.depthSeries ? <Sparkline series={q.depthSeries} /> : 'History'}
+                </a>
+              )}
+            </td>
             <td>
               {q.checkedOutBy ? (
                 <span className="unavailable">
