@@ -163,7 +163,7 @@ profiles:
 | `vhost` and `queue` or `queuePattern`, with `depthAbove: n` | The depth is above `n` (0 or more). | The depth; `n`. |
 | The same, with `arrivalsAbove: { count, within }` | More than `count` estimated arrivals within `within` (1s to 7d). | The arrivals in the window; `count`. |
 | The same, with `anyArrival: true` | Any Message arrives. | The arrivals at this Sample; none. |
-| `replayRulePaused: true`, optionally `rule: <name>` | A Replay rule of the profile is paused; each rule is its own Alert. The reason is in the notification. | None. |
+| `replayRulePaused: true`, optionally `rule: <name>` | A Replay Rule of the profile is paused; each rule is its own Alert. The reason is in the notification. | None. |
 | `setupWarning: loses_messages` or `may_lose_messages` | A dead-letter queue has a set-up warning at least this bad (`may_lose_messages` includes `loses_messages`); each queue is its own Alert. The codes are in the notification. | How many warnings; none. |
 | `samplingFailing: { for }` | The profile has had no good sampling run for `for` (1s to 7d), counted from its last good run. The error code is in the notification. | Seconds since then; `for` in seconds. |
 
@@ -174,20 +174,20 @@ profiles:
 
 **A `queue:` must name a dead-letter queue.** Only those are sampled, so a rule naming another queue never fires, and startup does not refuse it because it does not ask the broker.
 
-**How an Alert moves.** It is pending while the condition has not held for `for`, and is forgotten quietly if the condition goes false. Once it has held, it is firing and a notification goes out. It resolves, with another notification, when the condition is false at two Samples in a row, a full Sample apart, or at once when a Replay rule resumes or sampling succeeds. The next firing is a new Alert with a new id. Evaluation runs after each sampling run and on each Replay rule pause and resume.
+**How an Alert moves.** It is pending while the condition has not held for `for`, and is forgotten quietly if the condition goes false. Once it has held, it is firing and a notification goes out. It resolves, with another notification, when the condition is false at two Samples in a row, a full Sample apart, or at once when a Replay Rule resumes or sampling succeeds. The next firing is a new Alert with a new id. Evaluation runs after each sampling run and on each Replay Rule pause and resume.
 
 - A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is, and a run with no depth for a queue holds that queue's Alerts.
 - **Arrival conditions count only what the depth has borne out**: a take-out counts once the next Sample shows it did not explain a drop in depth. So false spikes do not fire them, and arrivals hidden by triage alert one Sample late. The history and the metrics are not corrected in this way, and can show a spike with no Alert.
 - A firing Alert survives a restart without being sent again. A crash between storing an Alert and sending it loses that notification rather than sending it twice.
 - Removing an Alert Rule from the file drops its Alerts at the next restart, with no resolved notification.
-- A Replay rule already paused, or a queue already warned, fires at the next evaluation, also when the Alert Rule has just been deployed. A Replay rule deployed with `startPaused` never fires. Removing a paused Replay rule from the file sends a resolved notification.
+- A Replay Rule already paused, or a queue already warned, fires at the next evaluation, also when the Alert Rule has just been deployed. A Replay Rule deployed with `startPaused` never fires. Removing a paused Replay Rule from the file sends a resolved notification.
 
 **Startup refuses**, with a message naming the place in the file:
 
 - An Alert Destination with an unknown `type`, an unset `urlEnv` or `signingSecretEnv`, a URL that is not `http` or `https`, `signingSecretEnv` on a type other than `webhook`, a malformed or duplicate name. This holds even for a destination no rule uses.
 - An Alert Rule naming an undeclared destination or one twice, with a duplicate name, a malformed pattern or duration, a vhost outside the profile's `vhosts`, or anything but exactly one condition.
 - A queue condition, `setupWarning` or `samplingFailing` on an `operatorToken` profile, which is not sampled.
-- `replayRulePaused` on a profile with no Replay rules, or with `rule:` naming a Replay rule it does not have.
+- `replayRulePaused` on a profile with no Replay Rules, or with `rule:` naming a Replay Rule it does not have.
 - A rule-level `for` on `samplingFailing`.
 
 ### Webhook schema
@@ -210,7 +210,7 @@ A generic webhook receives this JSON, in version 1. `version` changes if its sha
 | `vhost`, `queue` | Null when the condition is not about a queue. |
 | `condition` | `depthAbove`, `arrivalsAbove`, `anyArrival`, `replayRulePaused`, `setupWarning` or `samplingFailing`. |
 | `value`, `threshold` | As in the [Alert Rules table](#alert-rules), null where it says none. |
-| `replayRule` | The Replay rule of a `replayRulePaused` Alert, otherwise null. |
+| `replayRule` | The Replay Rule of a `replayRulePaused` Alert, otherwise null. |
 | `reason` | Why a condition on Volverán itself holds: the pause's reason (at most 500 characters), the set-up warning codes or the sampling error code. Otherwise null. |
 | `startedAt`, `endedAt` | ISO 8601. `endedAt` is null until `resolved`. |
 | `url` | Where to look in Volverán; null with no `VOLVERAN_PUBLIC_URL`. |
@@ -258,7 +258,7 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 | `volveran_dead_letter_queue_setup_warnings` | gauge | `profile`, `vhost`, `queue`, `code`, `severity` | Set-up warnings of the queue at its latest Sample. `severity` is `loses_messages` or `may_lose_messages`. A code the queue does not have has no series, rather than 0. |
 | `volveran_sampling_up` | gauge | `profile` | 1 if the Broker Profile's latest sampling run succeeded, 0 if it failed. Absent until it has ever run. |
 | `volveran_sampling_last_success_timestamp_seconds` | gauge | `profile` | When the Broker Profile was last sampled successfully, in seconds since the Unix epoch. Absent if it never was. |
-| `volveran_replay_rule_paused` | gauge | `profile`, `rule`, `reason` | 1 while the Replay rule is paused, 0 while it runs. `reason` says why it is paused, in the words of whoever paused it or an automatic stop's code (such as `died_again`), and is empty otherwise. |
+| `volveran_replay_rule_paused` | gauge | `profile`, `rule`, `reason` | 1 while the Replay Rule is paused, 0 while it runs. `reason` says why it is paused, in the words of whoever paused it or an automatic stop's code (such as `died_again`), and is empty otherwise. |
 | `volveran_replay_rule_passes_total` | counter | `profile`, `rule`, `result` | Rule Passes, by `result`: `ran`, `skipped` or `failed`. |
 | `volveran_apply_messages_total` | counter | `profile`, `decision`, `outcome` | Messages an Apply acted on, Rule Passes included. `decision` is `discard`, `replay` or `move`; `outcome` is `done`, `failed` or `not-attempted`. Kept Messages are not counted. |
 | `volveran_checkouts_active` | gauge | | Active Checkouts. |
@@ -322,7 +322,7 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: 'Replay rule {{ $labels.rule }} on {{ $labels.profile }} is paused: see the Replay rules view for why'
+            summary: 'Replay Rule {{ $labels.rule }} on {{ $labels.profile }} is paused: see the Replay rules view for why'
         - alert: DeadLetterQueueLosesMessages
           expr: volveran_dead_letter_queue_setup_warnings{severity="loses_messages"} > 0
           labels:

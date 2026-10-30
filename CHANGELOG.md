@@ -35,7 +35,7 @@ A profiles file and chart values from 0.4 keep working unchanged. These are all 
 - `alertDestinations` at the top of the profiles file: `name`, `type` (`slack`, `teams` or `webhook`), `urlEnv`, and `signingSecretEnv` on a `webhook`. Startup refuses an unset variable. Deliveries have a 5-second timeout and up to 3 attempts, and their outcomes are kept in the audit store (schema v12). `VOLVERAN_PUBLIC_URL`, by default in Team Mode the origin of `VOLVERAN_OIDC_REDIRECT_URL`, starts the links in notifications. `POST /api/alert-destinations/:name/test` (`admin` on any profile) sends a test notification and answers with the outcome. The chart gains `brokerProfiles.alertDestinations` and `alerts.existingSecret`. See [ADR 0012](docs/adr/0012-alerting-declared-in-the-profiles-file.md). (#78)
 - The generic webhook's documented JSON body, version 1, with `alertId`, `status`, `rule`, `profile`, `vhost`, `queue`, `condition`, `value`, `threshold`, `replayRule`, `reason`, `startedAt`, `endedAt`, `url` and `test` (`true` on a test notification, which your service should ignore), and with a signing secret `x-volveran-timestamp` and `x-volveran-signature`. See the [webhook schema](docs/observability.md#webhook-schema). (#78, #80)
 - `alerts` on a Broker Profile: Alert Rules with `name`, `destinations`, `when`, `for` and `repeatEvery`. Queue conditions take `vhost` and `queue` or `queuePattern`, with `depthAbove`, `arrivalsAbove: { count, within }` or `anyArrival`. Alerts go from pending to firing to resolved, survive a restart without being sent again (schema v14), and are dropped quietly when their rule leaves the file. Arrival conditions count only arrivals the depth has borne out, so false spikes from lagging statistics do not fire them. (#79)
-- Alert Rules on Volverán itself: `replayRulePaused: true` (optionally `rule`), `setupWarning: loses_messages | may_lose_messages` and `samplingFailing: { for }`. Startup refuses `replayRulePaused` on a profile with no Replay rules, `setupWarning` and `samplingFailing` on an `operatorToken` profile, and a rule-level `for` on `samplingFailing`. Audit schema v15. (#80)
+- Alert Rules on Volverán itself: `replayRulePaused: true` (optionally `rule`), `setupWarning: loses_messages | may_lose_messages` and `samplingFailing: { for }`. Startup refuses `replayRulePaused` on a profile with no Replay Rules, `setupWarning` and `samplingFailing` on an `operatorToken` profile, and a rule-level `for` on `samplingFailing`. Audit schema v15. (#80)
 - The Alerts view shows firing and pending Alerts, the selected profile's Alert Rules and recent notifications with their outcomes, and lets an `admin` send a test notification. `GET /api/alerts` answers `{ alerts, notifications, destinations }` (`403 no_role` with no Role anywhere), and `GET /api/profiles/:profile/alert-rules` answers `{ rules }`. The queue list shows firing Alerts on their queue (`firingAlerts`). URLs and secrets never reach the browser. (#79, #80, #81)
 
 **Metrics**
@@ -52,7 +52,7 @@ A profiles file and chart values from 0.4 keep working unchanged. These are all 
 
 ### Changed
 
-- A Replay rule's pause reason reaches notifications and metrics; see the [Replay rules guide](docs/replay-rules.md#being-told-when-a-rule-pauses). Nothing about how rules run has changed.
+- A Replay Rule's pause reason reaches notifications and metrics; see the [Replay rules guide](docs/replay-rules.md#being-told-when-a-rule-pauses). Nothing about how rules run has changed.
 
 ## [0.4.0] - 2026-10-29
 

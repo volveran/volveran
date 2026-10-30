@@ -105,4 +105,4 @@ Messages someone Replayed by hand, or another rule Replayed, do not count toward
 
 ## Being told when a rule pauses
 
-An Alert Rule with `replayRulePaused: true` sends a notification, with the reason, when a Replay rule pauses, and another when it resumes, and the metric `volveran_replay_rule_paused` shows the same to Prometheus. See [Observability](observability.md#alert-rules).
+An Alert Rule with `replayRulePaused: true` sends a notification, with the reason, when a Replay Rule pauses, and another when it resumes, and the metric `volveran_replay_rule_paused` shows the same to Prometheus. See [Observability](observability.md#alert-rules).

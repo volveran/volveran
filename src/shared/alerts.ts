@@ -84,7 +84,7 @@ export interface AlertRuleView {
 }
 
 export function alertPlaceText({ vhost, queue, replayRule }: { vhost: string | null; queue: string | null; replayRule?: string | null }): string {
-  if (replayRule) return `Replay rule ${replayRule}`;
+  if (replayRule) return `Replay Rule ${replayRule}`;
   if (queue !== null) return vhost === null ? queue : `${queue} (vhost ${vhost})`;
   return vhost === null ? 'The Broker Profile' : `Vhost ${vhost}`;
 }
@@ -111,7 +111,7 @@ export function ruleConditionText(when: AlertRuleCondition): string {
     case 'anyArrival':
       return `Any Message arrives${on}`;
     case 'replayRulePaused':
-      return typeof when.rule === 'string' ? `Replay rule ${when.rule} is paused` : 'Any Replay rule of the profile is paused';
+      return typeof when.rule === 'string' ? `Replay Rule ${when.rule} is paused` : 'Any Replay Rule of the profile is paused';
     case 'setupWarning':
       return when.severity === 'loses_messages'
         ? 'A dead-letter queue has a set-up warning that loses Messages'

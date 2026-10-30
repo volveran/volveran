@@ -126,7 +126,7 @@ function factsOf(n: Notification): Array<{ title: string; value: string }> {
     ['Vhost', n.vhost],
     ['Queue', n.queue],
     ['Condition', n.test ? null : n.condition],
-    ['Replay rule', n.replayRule ?? null],
+    ['Replay Rule', n.replayRule ?? null],
     ['Reason', n.reason ?? null],
     ['Value', n.value],
     ['Threshold', n.threshold],
