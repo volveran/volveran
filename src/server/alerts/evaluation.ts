@@ -33,10 +33,8 @@ import { matchesQueueFilter } from '../triage/queue-list.js';
 import type { FinishedRun, LatestSample } from '../history/sampler.js';
 import type { Notification } from './payloads.js';
 import type { SetupWarningSeverity } from '../../shared/queues.js';
+import { PAUSE_REASON_LIMIT } from '../../shared/replay-rules.js';
 import type { AlertCondition, AlertRule, QueueCondition } from './rules.js';
-
-/** Chat tools refuse a long field, and the whole notification with it; an Operator's pause reason can be any length. */
-const REASON_LIMIT = 500;
 
 /** One Alert: one Alert Rule on one queue, from when its condition held until it resolves. */
 export interface AlertState {
@@ -174,7 +172,7 @@ export function evaluateAlerts({ profile, rules, memory, at, run, pausedReplayRu
     if (when.kind === 'replayRulePaused') {
       const paused = pausedReplayRules.filter((r) => when.rule === null || r.name === when.rule);
       for (const replayRule of paused) {
-        const reason = replayRule.reason?.slice(0, REASON_LIMIT) ?? null;
+        const reason = replayRule.reason?.slice(0, PAUSE_REASON_LIMIT) ?? null;
         const alert = ours.find((a) => a.replayRule === replayRule.name);
         const since = Math.min(replayRule.pausedAt, now);
         const base = alert ? { ...alert, reason } : newAlert(profile, rule, { replayRule: replayRule.name, reason }, { holds: true, value: null, threshold: null }, since);
