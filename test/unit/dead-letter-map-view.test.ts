@@ -2,7 +2,7 @@
 // within a column, loops placed without looping, the connected-component search
 // and the text listing.
 import { describe, expect, it } from 'vitest';
-import { layoutMap, mapComponent, mapListing } from '../../src/web/dead-letter-map-view.js';
+import { edgeRoute, layoutMap, mapComponent, mapListing, nodeBox } from '../../src/web/dead-letter-map-view.js';
 import type { DeadLetterMap, DeadLetterMapEdge, DeadLetterMapNode } from '../../src/shared/dead-letter-map.js';
 
 const q = (name: string, inCycle = false): DeadLetterMapNode => ({
@@ -250,5 +250,31 @@ describe('mapListing', () => {
 
   it('is empty for an empty map', () => {
     expect(mapListing(map([], []))).toBe('');
+  });
+});
+
+describe('edgeRoute', () => {
+  it('takes an edge that crosses columns between the rows, not through the nodes on the way', () => {
+    // long → park crosses the columns of dlx and dead, in its own row.
+    const m = map(
+      [x('dlx'), x('park'), q('dead'), q('long'), q('parked'), q('work')],
+      [deadLetter('long', 'park'), deadLetter('work', 'dlx', 'dead'), binding('dlx', 'queue:dead', ['work'], 'dead'), deadLetter('dead', 'park'), binding('park', 'queue:parked', ['dead', 'long'])],
+    );
+    const layout = layoutMap(m);
+    const node = (id: string) => layout.nodes.find((n) => n.id === id)!;
+    const edge = layout.edges.find((e) => e.from === 'queue:long')!;
+    const { lane } = edgeRoute(edge, node(edge.from), node(edge.to));
+    expect(lane).not.toBeNull();
+    for (const n of layout.nodes) {
+      const box = nodeBox(n);
+      expect(lane! <= box.y || lane! >= box.y + box.height).toBe(true);
+    }
+  });
+
+  it('draws an edge to the next column straight across the gap', () => {
+    const layout = layoutMap(chain);
+    const node = (id: string) => layout.nodes.find((n) => n.id === id)!;
+    const edge = layout.edges.find((e) => e.from === 'queue:work')!;
+    expect(edgeRoute(edge, node(edge.from), node(edge.to)).lane).toBeNull();
   });
 });

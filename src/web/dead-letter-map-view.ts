@@ -1,5 +1,5 @@
 // The pure logic of the Dead-letter Map (DeadLetterMapView.tsx): where each
-// node goes in the diagram.
+// node goes in the diagram, how edges get there, the search and the text listing.
 import type { DeadLetterMap, DeadLetterMapEdge, DeadLetterMapExchange, DeadLetterMapQueue } from '../shared/dead-letter-map.js';
 
 type DrawnKind = DeadLetterMapEdge['kind'];
@@ -225,4 +225,54 @@ export function mapListing(map: DeadLetterMap): string {
   const cycles = map.cycles.map((cycle) => `Cycle: ${cycle.flatMap((id) => (queues.has(id) ? [queues.get(id)!.name] : [])).join(', ')}`);
   const warnings = [...queues.values()].flatMap((q) => q.setupWarnings.map((w) => `Set-up warning on ${q.name} (${SEVERITY_TEXT[w.severity]}): ${w.message}`));
   return [routes, cycles, warnings].filter((part) => part.length > 0).map((part) => part.join('\n')).join('\n\n');
+}
+
+export const NODE = { width: 180, queueHeight: 78, smallHeight: 36 };
+export const CELL = { width: 320, height: 104 };
+export const PAD = 16;
+/** Room under the last row for the edges that go back. */
+export const BOTTOM = 40;
+
+export function nodeBox(n: Pick<PlacedNode, 'kind' | 'column' | 'row'>): { x: number; y: number; height: number } {
+  const height = n.kind === 'queue' ? NODE.queueHeight : NODE.smallHeight;
+  return { x: PAD + n.column * CELL.width, y: PAD + n.row * CELL.height + (NODE.queueHeight - height) / 2, height };
+}
+
+/**
+ * The line of an edge and where its label goes. `lane` is the height it runs
+ * at when it crosses columns: between the rows, where there are no nodes.
+ */
+export function edgeRoute(edge: PlacedEdge, from: PlacedNode, to: PlacedNode): { d: string; label: { x: number; y: number }; lane: number | null } {
+  const a = nodeBox(from);
+  const b = nodeBox(to);
+  if (from.id === to.id) {
+    const x = a.x + NODE.width / 2;
+    const y = a.y + a.height;
+    return { d: `M${x - 20} ${y} C${x - 40} ${y + 30} ${x + 40} ${y + 30} ${x + 20} ${y + 2}`, label: { x, y: y + 34 }, lane: null };
+  }
+  if (edge.back) {
+    // Under the rows, so it never runs through a node on the way.
+    const sx = a.x + NODE.width / 2;
+    const sy = a.y + a.height;
+    const ex = b.x + NODE.width / 2;
+    const ey = b.y + b.height + 2;
+    const low = Math.max(sy, ey) + 26;
+    return { d: `M${sx} ${sy} C${sx} ${low} ${ex} ${low} ${ex} ${ey}`, label: { x: (sx + ex) / 2, y: low + 2 }, lane: null };
+  }
+  const x1 = a.x + NODE.width;
+  const y1 = a.y + a.height / 2;
+  const x2 = b.x;
+  const y2 = b.y + b.height / 2;
+  if (to.column - from.column === 1) {
+    const bend = (x2 - x1) / 2;
+    return { d: `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2 - 2} ${y2}`, label: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 5 }, lane: null };
+  }
+  const gap = CELL.width - NODE.width;
+  const lane = PAD + from.row * CELL.height + NODE.queueHeight + (CELL.height - NODE.queueHeight) / 2;
+  const turn = gap / 4;
+  return {
+    d: `M${x1} ${y1} C${x1 + turn} ${y1} ${x1 + turn} ${lane} ${x1 + 2 * turn} ${lane} L${x2 - 2 * turn} ${lane} C${x2 - turn} ${lane} ${x2 - turn} ${y2} ${x2 - 2} ${y2}`,
+    label: { x: x1 + gap / 2, y: y1 - 5 },
+    lane,
+  };
 }

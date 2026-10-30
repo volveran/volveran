@@ -8,19 +8,9 @@ import type { DeadLetterMap, DeadLetterMapQueue } from '../shared/dead-letter-ma
 import { historyPath } from '../shared/history-link.js';
 import type { Role } from '../shared/roles.js';
 import { api, ApiError } from './api.js';
-import { exchangeLabel, layoutMap, mapComponent, mapListing, type PlacedEdge, type PlacedNode } from './dead-letter-map-view.js';
+import { BOTTOM, CELL, edgeRoute, exchangeLabel, layoutMap, mapComponent, mapListing, NODE, nodeBox, PAD, type PlacedEdge, type PlacedNode } from './dead-letter-map-view.js';
 import { ErrorBox } from './ErrorBox.js';
 import { CheckoutCell, mayCheckOut, SetupWarnings, severityLabel } from './queue-cells.js';
-
-const NODE = { width: 180, queueHeight: 78, smallHeight: 36 };
-const CELL = { width: 320, height: 104 };
-const PAD = 16;
-/** Room under the last row for the edges that go back. */
-const BOTTOM = 40;
-
-const nodeHeight = (n: PlacedNode) => (n.kind === 'queue' ? NODE.queueHeight : NODE.smallHeight);
-const nodeX = (n: PlacedNode) => PAD + n.column * CELL.width;
-const nodeY = (n: PlacedNode) => PAD + n.row * CELL.height + (NODE.queueHeight - nodeHeight(n)) / 2;
 
 function shorten(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.ceil((max - 1) / 2))}…${text.slice(-Math.floor((max - 1) / 2))}`;
@@ -32,31 +22,7 @@ function markerOf(edge: PlacedEdge): string {
 }
 
 function Edge({ edge, from, to }: { edge: PlacedEdge; from: PlacedNode; to: PlacedNode }) {
-  const x1 = nodeX(from) + NODE.width;
-  const y1 = nodeY(from) + nodeHeight(from) / 2;
-  const x2 = nodeX(to);
-  const y2 = nodeY(to) + nodeHeight(to) / 2;
-  let d: string;
-  let label: { x: number; y: number };
-  if (from === to) {
-    const x = nodeX(from) + NODE.width / 2;
-    const y = nodeY(from) + nodeHeight(from);
-    d = `M${x - 20} ${y} C${x - 40} ${y + 30} ${x + 40} ${y + 30} ${x + 20} ${y + 2}`;
-    label = { x, y: y + 34 };
-  } else if (edge.back) {
-    // Under the rows, so it never runs through a node on the way.
-    const sx = nodeX(from) + NODE.width / 2;
-    const sy = nodeY(from) + nodeHeight(from);
-    const ex = nodeX(to) + NODE.width / 2;
-    const ey = nodeY(to) + nodeHeight(to) + 2;
-    const low = Math.max(sy, ey) + 26;
-    d = `M${sx} ${sy} C${sx} ${low} ${ex} ${low} ${ex} ${ey}`;
-    label = { x: (sx + ex) / 2, y: low + 2 };
-  } else {
-    const bend = (x2 - x1) / 2;
-    d = `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2 - 2} ${y2}`;
-    label = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 5 };
-  }
+  const { d, label } = edgeRoute(edge, from, to);
   const text = edge.labels.join(', ');
   return (
     <g className={`map-edge map-edge-${edge.kind}${edge.inCycle ? ' in-cycle' : ''}`}>
@@ -80,7 +46,7 @@ function QueueNode({ node, profile, vhost, role, onCheckout }: { node: DeadLette
   const severity = worstSeverity(node);
   const canCheckOut = mayCheckOut(role) && node.checkout.available && !node.checkedOutBy;
   return (
-    <g className={`map-node map-queue${node.inCycle ? ' in-cycle' : ''}`} transform={`translate(${nodeX(node)} ${nodeY(node)})`}>
+    <g className={`map-node map-queue${node.inCycle ? ' in-cycle' : ''}`} transform={`translate(${nodeBox(node).x} ${nodeBox(node).y})`}>
       <rect width={NODE.width} height={NODE.queueHeight} rx={6} />
       <text className="map-name" x={8} y={17}>
         <title>{node.name}</title>
@@ -118,7 +84,7 @@ function OtherNode({ node }: { node: PlacedNode }) {
   const name = node.kind === 'exchange' ? exchangeLabel(node.name) : node.kind === 'loss' ? '✕ Messages lost' : '? Cannot be told from the set-up';
   const detail = node.kind === 'exchange' && node.missing ? `${name} (does not exist)` : name;
   return (
-    <g className={`map-node ${className}`} transform={`translate(${nodeX(node)} ${nodeY(node)})`}>
+    <g className={`map-node ${className}`} transform={`translate(${nodeBox(node).x} ${nodeBox(node).y})`}>
       <rect width={NODE.width} height={NODE.smallHeight} rx={node.kind === 'exchange' ? 18 : 4} />
       <text className="map-name" x={NODE.width / 2} y={22} textAnchor="middle">
         <title>{detail}</title>
