@@ -192,6 +192,11 @@ export function parseProfilesFile(
     const credentials = parseCredentials(raw, env, where, `${where} ("${name}")`);
     const vhosts = parseVhosts(raw.vhosts, where);
     const replayRate = parseReplayRate(raw.replayRate, `${where} ("${name}").replayRate`);
+    const replayRules = parseReplayRules(
+      raw.replayRules,
+      { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
+      `${where} ("${name}")`,
+    );
     return {
       name,
       managementUrl: requireUrl(raw, 'managementUrl', ['http:', 'https:'], where).replace(/\/+$/, ''),
@@ -205,14 +210,10 @@ export function parseProfilesFile(
       requireApproval: parseRequireApproval(raw.requireApproval, isProtected, `${where} ("${name}").requireApproval`),
       roles: parseRoles(raw.roles, `${where} ("${name}").roles`),
       replayRate,
-      replayRules: parseReplayRules(
-        raw.replayRules,
-        { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
-        `${where} ("${name}")`,
-      ),
+      replayRules,
       alerts: parseAlertRules(
         raw.alerts,
-        { credentials: credentials.kind, vhosts, destinations: alertDestinations.map((d) => d.name) },
+        { credentials: credentials.kind, vhosts, destinations: alertDestinations.map((d) => d.name), replayRules: replayRules.map((r) => r.name) },
         `${where} ("${name}")`,
       ),
       canary: parseCanary(raw.canary, `${where} ("${name}").canary`),

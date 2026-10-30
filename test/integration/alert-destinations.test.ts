@@ -88,6 +88,8 @@ describe('test notifications', () => {
       condition: 'test',
       value: null,
       threshold: null,
+      replayRule: null,
+      reason: null,
       startedAt: expect.any(String),
       endedAt: null,
       url: 'https://volveran.example.com/',

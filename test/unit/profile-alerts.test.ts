@@ -82,4 +82,50 @@ describe('alerts in the profiles file', () => {
     refuses([rule({ destinations: [] })], /non-empty list/);
     refuses('nope', /must be a list/);
   });
+
+  describe('conditions on Volverán itself', () => {
+    const replayRule = { name: 'retry', vhost: '/', queue: 'a.dlq', every: '5m', backoff: { initial: '10m', multiplier: 1, max: '10m' }, maxAttempts: 3, stopWhen: { diedAgain: 3, within: '1h' } };
+    const withRules = { replayRules: [replayRule] };
+    const when = (w: unknown, over: Record<string, unknown> = {}) => rule({ when: w, ...over });
+
+    it('reads replayRulePaused, for any Replay Rule or a named one', () => {
+      expect(parse([when({ replayRulePaused: true })], withRules)[0]!.when).toEqual({ kind: 'replayRulePaused', rule: null });
+      expect(parse([when({ replayRulePaused: true, rule: 'retry' })], withRules)[0]!.when).toEqual({ kind: 'replayRulePaused', rule: 'retry' });
+    });
+
+    it('refuses a replayRulePaused naming an unknown Replay Rule, or on a profile with none', () => {
+      refuses([when({ replayRulePaused: true, rule: 'nope' })], /\.when\.rule names "nope", which is not a Replay Rule of this profile/, withRules);
+      refuses([when({ replayRulePaused: true })], /\.when\.replayRulePaused is on a profile with no Replay Rules/);
+      refuses([when({ replayRulePaused: 'yes' })], /\.when\.replayRulePaused must be true/, withRules);
+    });
+
+    it('reads setupWarning and refuses another severity', () => {
+      expect(parse([when({ setupWarning: 'may_lose_messages' })])[0]!.when).toEqual({ kind: 'setupWarning', severity: 'may_lose_messages' });
+      refuses([when({ setupWarning: 'bad' })], /\.when\.setupWarning must be loses_messages or may_lose_messages/);
+    });
+
+    it('reads samplingFailing and refuses a malformed one', () => {
+      expect(parse([when({ samplingFailing: { for: '10m' } })])[0]!.when).toEqual({ kind: 'samplingFailing', forMs: 600_000 });
+      refuses([when({ samplingFailing: {} })], /\.when\.samplingFailing\.for must be a duration/);
+      refuses([when({ samplingFailing: true })], /\.when\.samplingFailing must be a mapping with for/);
+      refuses([when({ samplingFailing: { for: '10m', other: 1 } })], /\.when\.samplingFailing\.other is not a key/);
+    });
+
+    it('refuses the rule-level `for` on samplingFailing, which has its own', () => {
+      refuses([when({ samplingFailing: { for: '10m' } }, { for: '5m' })], /\.for does not apply to samplingFailing/);
+    });
+
+    it('refuses keys that belong to another condition', () => {
+      refuses([when({ setupWarning: 'loses_messages', vhost: '/' })], /\.when\.vhost does not apply to setupWarning/);
+      refuses([when({ replayRulePaused: true, queue: 'a' })], /\.when\.queue does not apply to replayRulePaused/, withRules);
+      refuses([when({ vhost: '/', queue: 'a', depthAbove: 1, rule: 'retry' })], /\.when\.rule does not apply to depthAbove/, withRules);
+      refuses([when({ depthAbove: 1, setupWarning: 'loses_messages' })], /\.when must have exactly one of/);
+    });
+
+    it('refuses setupWarning and samplingFailing on an operatorToken profile, which is not sampled', () => {
+      const tokens = { username: undefined, passwordEnv: undefined, credentials: 'operatorToken' };
+      refuses([when({ setupWarning: 'loses_messages' })], /operatorToken/, tokens);
+      refuses([when({ samplingFailing: { for: '10m' } })], /operatorToken/, tokens);
+    });
+  });
 });

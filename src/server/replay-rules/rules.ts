@@ -68,6 +68,8 @@ export interface ReplayRulesOptions {
   onError?(ruleKey: string, err: unknown): void;
   /** A pass was recorded, scheduled or Run now. */
   onPassRecorded?(profile: string, rule: string, pass: RulePass): void;
+  /** A rule was paused or resumed, automatically or by an Operator. Must not throw. */
+  onPauseChanged?(profile: string): void;
 }
 
 export class ReplayRules {
@@ -286,6 +288,7 @@ export class ReplayRules {
     this.options.state.setPaused(ruleKey(profile.name, rule.name), { reason, by: by.operator.displayName, at });
     this.recordPauseOrResume(profile, rule, by, at, { action: 'rule_pause', reason });
     this.reschedule(profile, rule);
+    this.options.onPauseChanged?.(profile.name);
   }
 
   /** Resumes the rule for `by`, clearing the automatic stop's count; records it as an Audit Entry and schedules its next pass. */
@@ -296,6 +299,7 @@ export class ReplayRules {
     this.options.state.clearDiedAgain(key);
     this.recordPauseOrResume(profile, rule, by, at, { action: 'rule_resume', reason: null });
     this.reschedule(profile, rule);
+    this.options.onPauseChanged?.(profile.name);
   }
 
   /** The Audit Entry of a pause or resume: no Message, the rule named, done at once. */

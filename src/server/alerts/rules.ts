@@ -1,10 +1,13 @@
 // Alert Rules in the profiles file (ADR 0012): a Broker Profile's `alerts`, read
 // and checked at startup with the rest of the profile. A refusal names the
-// profile, the rule and the key. Queue conditions need Samples, so a profile with
-// `credentials: operatorToken`, which is not sampled, cannot have one.
+// profile, the rule and the key. Queue conditions, setupWarning and samplingFailing
+// need Samples, so a profile with `credentials: operatorToken`, which is not
+// sampled, cannot have one. It cannot have Replay Rules either, so replayRulePaused
+// is refused there too, as on any profile with none.
 import { ProfilesConfigError } from '../config-error.js';
 import { durationWithin } from '../duration.js';
 import { isRecord } from '../is-record.js';
+import type { SetupWarningSeverity } from '../../shared/queues.js';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -13,7 +16,11 @@ const WEEK = 7 * 24 * 60 * MINUTE;
 const RULE_KEYS = ['name', 'destinations', 'when', 'for', 'repeatEvery'];
 const NAME = /^[A-Za-z0-9_-]+$/;
 const QUEUE_CONDITIONS = ['depthAbove', 'arrivalsAbove', 'anyArrival'];
-const WHEN_KEYS = ['vhost', 'queue', 'queuePattern', ...QUEUE_CONDITIONS];
+const VOLVERAN_CONDITIONS = ['replayRulePaused', 'setupWarning', 'samplingFailing'];
+const CONDITIONS = [...QUEUE_CONDITIONS, ...VOLVERAN_CONDITIONS];
+const SELECTION_KEYS = ['vhost', 'queue', 'queuePattern'];
+const WHEN_KEYS = [...SELECTION_KEYS, 'rule', ...CONDITIONS];
+const SEVERITIES: readonly SetupWarningSeverity[] = ['loses_messages', 'may_lose_messages'];
 
 /** Which dead-letter queues a queue condition is about: one by name, or each one matching a glob. */
 export interface QueueSelection {
@@ -22,10 +29,19 @@ export interface QueueSelection {
   queuePattern: string | null;
 }
 
-export type AlertCondition =
+export type QueueCondition =
   | (QueueSelection & { kind: 'depthAbove'; threshold: number })
   | (QueueSelection & { kind: 'arrivalsAbove'; count: number; withinMs: number })
   | (QueueSelection & { kind: 'anyArrival' });
+
+export type AlertCondition =
+  | QueueCondition
+  /** A Replay Rule paused; `rule` null: any Replay Rule of the profile, each its own Alert. */
+  | { kind: 'replayRulePaused'; rule: string | null }
+  /** A dead-letter queue has a set-up warning at least this bad; each queue is its own Alert. */
+  | { kind: 'setupWarning'; severity: SetupWarningSeverity }
+  /** The profile has not been sampled well for this long. */
+  | { kind: 'samplingFailing'; forMs: number };
 
 export interface AlertRule {
   /** Unique within the profile. */
@@ -44,6 +60,8 @@ export interface AlertRuleContext {
   credentials: 'shared' | 'operatorToken';
   vhosts: 'all' | string[];
   destinations: readonly string[];
+  /** The names of the profile's Replay Rules. */
+  replayRules: readonly string[];
 }
 
 /** Reads a Broker Profile's `alerts`; `where` names the profile in refusals. */
@@ -71,10 +89,12 @@ function parseRule(raw: Record<string, unknown>, name: string, context: AlertRul
   for (const key of Object.keys(raw)) {
     if (!RULE_KEYS.includes(key)) fail(`.${key} is not a key of an Alert Rule`);
   }
+  const when = parseCondition(raw.when, context, fail);
+  if (when.kind === 'samplingFailing' && raw.for !== undefined) fail('.for does not apply to samplingFailing; give its own: samplingFailing: { for }');
   return {
     name,
     destinations: parseDestinations(raw.destinations, context.destinations, fail),
-    when: parseCondition(raw.when, context, fail),
+    when,
     forMs: raw.for === undefined ? 0 : durationWithin(raw.for, SECOND, WEEK) ?? fail('.for must be a duration from 1s to 7d'),
     repeatEveryMs: raw.repeatEvery === undefined ? null : durationWithin(raw.repeatEvery, MINUTE, WEEK) ?? fail('.repeatEvery must be a duration from 1m to 7d'),
   };
@@ -93,15 +113,28 @@ function parseDestinations(value: unknown, declared: readonly string[], fail: (m
 }
 
 function parseCondition(value: unknown, context: AlertRuleContext, fail: (message: string) => never): AlertCondition {
-  if (!isRecord(value)) return fail(`.when must be a mapping with one of ${QUEUE_CONDITIONS.join(', ')}`);
+  if (!isRecord(value)) return fail(`.when must be a mapping with one of ${CONDITIONS.join(', ')}`);
   for (const key of Object.keys(value)) {
     if (!WHEN_KEYS.includes(key)) fail(`.when.${key} is not a key of a condition`);
   }
-  const given = QUEUE_CONDITIONS.filter((key) => value[key] !== undefined);
-  if (given.length !== 1) fail(`.when must have exactly one of ${QUEUE_CONDITIONS.join(', ')}`);
-  if (context.credentials === 'operatorToken') {
-    fail('.when is a queue condition on a profile with credentials: operatorToken, which is not sampled; its profile needs username and passwordEnv');
+  const given = CONDITIONS.filter((key) => value[key] !== undefined);
+  if (given.length !== 1) fail(`.when must have exactly one of ${CONDITIONS.join(', ')}`);
+  const condition = given[0]!;
+  const own = QUEUE_CONDITIONS.includes(condition) ? SELECTION_KEYS : condition === 'replayRulePaused' ? ['rule'] : [];
+  for (const key of [...SELECTION_KEYS, 'rule']) {
+    if (value[key] !== undefined && !own.includes(key)) fail(`.when.${key} does not apply to ${condition}`);
   }
+  if (condition === 'replayRulePaused') return parseReplayRulePaused(value, context, fail);
+  if (context.credentials === 'operatorToken') {
+    const what = QUEUE_CONDITIONS.includes(condition) ? 'a queue condition' : condition;
+    fail(`.when is ${what} on a profile with credentials: operatorToken, which is not sampled; its profile needs username and passwordEnv`);
+  }
+  if (condition === 'setupWarning') {
+    return SEVERITIES.includes(value.setupWarning as SetupWarningSeverity)
+      ? { kind: 'setupWarning', severity: value.setupWarning as SetupWarningSeverity }
+      : fail(`.when.setupWarning must be ${SEVERITIES.join(' or ')}`);
+  }
+  if (condition === 'samplingFailing') return parseSamplingFailing(value.samplingFailing, fail);
   const selection = parseSelection(value, context, fail);
   const whole = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null);
 
@@ -122,6 +155,23 @@ function parseCondition(value: unknown, context: AlertRuleContext, fail: (messag
     count: whole(arrivals.count) ?? fail('.when.arrivalsAbove.count must be a whole number, 0 or more'),
     withinMs: durationWithin(arrivals.within, SECOND, WEEK) ?? fail('.when.arrivalsAbove.within must be a duration from 1s to 7d'),
   };
+}
+
+function parseReplayRulePaused(value: Record<string, unknown>, context: AlertRuleContext, fail: (message: string) => never): AlertCondition {
+  if (value.replayRulePaused !== true) return fail('.when.replayRulePaused must be true');
+  if (context.replayRules.length === 0) return fail('.when.replayRulePaused is on a profile with no Replay Rules');
+  const { rule } = value;
+  if (rule === undefined) return { kind: 'replayRulePaused', rule: null };
+  if (typeof rule !== 'string' || !context.replayRules.includes(rule)) return fail(`.when.rule names "${String(rule)}", which is not a Replay Rule of this profile`);
+  return { kind: 'replayRulePaused', rule };
+}
+
+function parseSamplingFailing(value: unknown, fail: (message: string) => never): AlertCondition {
+  if (!isRecord(value)) return fail('.when.samplingFailing must be a mapping with for');
+  for (const key of Object.keys(value)) {
+    if (key !== 'for') fail(`.when.samplingFailing.${key} is not a key of samplingFailing; it takes for`);
+  }
+  return { kind: 'samplingFailing', forMs: durationWithin(value.for, SECOND, WEEK) ?? fail('.when.samplingFailing.for must be a duration from 1s to 7d') };
 }
 
 function parseSelection(value: Record<string, unknown>, context: AlertRuleContext, fail: (message: string) => never): QueueSelection {
