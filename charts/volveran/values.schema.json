@@ -593,6 +593,11 @@
     }
   },
   "definitions": {
+    "alertDuration": {
+      "type": "string",
+      "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$",
+      "minLength": 2
+    },
     "brokerProfile": {
       "type": "object",
       "additionalProperties": false,
@@ -761,6 +766,46 @@
               "items": {
                 "type": "string",
                 "minLength": 1
+              }
+            }
+          }
+        },
+        "alerts": {
+          "description": "Alert Rules: tell an Alert Destination when a dead-letter queue is too deep, fills too fast or receives anything. Not allowed with credentials: operatorToken. Durations are a whole number and a unit (d, h, m, s). Volverán checks the ranges and destination names at startup.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "destinations", "when"],
+            "properties": {
+              "name": { "description": "Unique within the profile.", "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+              "destinations": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+              "for": { "$ref": "#/definitions/alertDuration" },
+              "repeatEvery": { "$ref": "#/definitions/alertDuration" },
+              "when": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["vhost"],
+                "oneOf": [
+                  { "required": ["queue"] },
+                  { "required": ["queuePattern"] }
+                ],
+                "properties": {
+                  "vhost": { "type": "string", "minLength": 1 },
+                  "queue": { "type": "string", "minLength": 1 },
+                  "queuePattern": { "description": "Glob on queue names (*, ?); each matching dead-letter queue is its own Alert.", "type": "string", "minLength": 1 },
+                  "depthAbove": { "type": "integer", "minimum": 0 },
+                  "arrivalsAbove": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["count", "within"],
+                    "properties": {
+                      "count": { "type": "integer", "minimum": 0 },
+                      "within": { "$ref": "#/definitions/alertDuration" }
+                    }
+                  },
+                  "anyArrival": { "const": true }
+                }
               }
             }
           }

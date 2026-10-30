@@ -12,6 +12,7 @@ import { isRecord } from './is-record.js';
 import type { RunMode } from './run-mode.js';
 import { durationWithin } from './duration.js';
 import { parseAlertDestinations, type AlertDestination } from './alerts/destinations.js';
+import { parseAlertRules, type AlertRule } from './alerts/rules.js';
 import { parseReplayRules, type ReplayRule } from './replay-rules/config.js';
 import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../shared/replay-rate.js';
 import { ROLES, type Role } from '../shared/roles.js';
@@ -77,6 +78,8 @@ export interface BrokerProfile {
   replayRate: ReplayRateLimits;
   /** The profile's Replay Rules (replay-rules/config.ts); empty when it declares none. */
   replayRules: ReplayRule[];
+  /** The profile's Alert Rules (alerts/rules.ts); empty when it declares none. */
+  alerts: AlertRule[];
   /** Canary Replay on this profile: how long a Canary is watched (the Watch Window), and when one is required. */
   canary: CanarySettings;
 }
@@ -205,6 +208,11 @@ export function parseProfilesFile(
       replayRules: parseReplayRules(
         raw.replayRules,
         { credentials: credentials.kind, vhosts, maxRate: replayRate.max },
+        `${where} ("${name}")`,
+      ),
+      alerts: parseAlertRules(
+        raw.alerts,
+        { credentials: credentials.kind, vhosts, destinations: alertDestinations.map((d) => d.name) },
         `${where} ("${name}")`,
       ),
       canary: parseCanary(raw.canary, `${where} ("${name}").canary`),

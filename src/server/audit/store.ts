@@ -18,6 +18,7 @@ import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
 import { HistoryStore } from './history.js';
 import { NotificationStore } from './notifications.js';
+import { AlertStore } from './alerts.js';
 import { RuleStateStore } from './rule-state.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
@@ -307,6 +308,31 @@ const MIGRATIONS: string[] = [
    ) WITHOUT ROWID;
    CREATE INDEX sampling_runs_at ON sampling_runs (at);
    CREATE INDEX audit_entries_profile_queue_time ON audit_entries (profile, vhost, queue, created_at);`,
+  // v14 (#79): Alerts (audit/alerts.ts), so a restart neither forgets nor re-sends a firing one; and what
+  // arrival conditions remember of each queue. '' stands for no vhost or queue, in the keys.
+  `CREATE TABLE alerts (
+     profile TEXT NOT NULL,
+     rule TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     alert_id TEXT NOT NULL,
+     status TEXT NOT NULL,
+     condition TEXT NOT NULL,
+     value REAL,
+     threshold REAL,
+     since INTEGER NOT NULL,
+     last_notified_at INTEGER,
+     false_since INTEGER,
+     PRIMARY KEY (profile, rule, vhost, queue)
+   ) WITHOUT ROWID;
+   CREATE TABLE alert_queue_arrivals (
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     unsettled INTEGER NOT NULL,
+     recent TEXT NOT NULL,
+     PRIMARY KEY (profile, vhost, queue)
+   ) WITHOUT ROWID;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -319,6 +345,8 @@ export class AuditStore {
   readonly history: HistoryStore;
   /** The outcomes of notifications, in the same database. */
   readonly notifications: NotificationStore;
+  /** Alerts, in the same database. */
+  readonly alerts: AlertStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -332,6 +360,7 @@ export class AuditStore {
     this.ruleState = new RuleStateStore(this.db);
     this.history = new HistoryStore(this.db);
     this.notifications = new NotificationStore(this.db);
+    this.alerts = new AlertStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
