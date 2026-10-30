@@ -22,6 +22,8 @@ const publicHosts = [
   // References.
   'kubernetes.io', 'k8s.io', 'fluxcd.io', 'helm.sh', 'rabbitmq.com', 'getsops.io', 'age-encryption.org',
   'keepachangelog.com', 'semver.org', 'nodejs.org', 'openid.net', 'datatracker.ietf.org', 'json-schema.org',
+  // The Prometheus Operator's API group, in the chart's ServiceMonitor.
+  'monitoring.coreos.com',
   // Tools compared in docs/comparison.md.
   'warrenops.io', 'rabbitgui.com',
 ];

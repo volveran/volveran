@@ -4,7 +4,7 @@
 
 **Dead letters come back.** Volverán is open-source, self-hosted dead-letter triage for RabbitMQ. Hold the Messages in a dead-letter queue, decide what happens to each one, apply everything in one step, and restore anything you discarded by mistake.
 
-> **Status: v0.4.1 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, Roles and four-eyes Approval, Died Again detection, the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.4: Replay at scale (Throttled Replay, Canary Replay, stopping an Apply part way, and Replay rules that Replay on their own with back-off and an automatic stop), comparing two Messages side by side, and the Failure Details of Spring AMQP and MassTransit. Upgrading from 0.3: Apply now runs in the background, and the Apply API answers `202` without the outcomes (see the [changelog](CHANGELOG.md)). Observability is next; see the [roadmap](ROADMAP.md).
+> **Status: v0.5.0 released.** Solo Mode and Team Mode (OIDC sign-in), Checkout, Decisions (Discard, Replay, Move, Keep), Apply, Protected Profiles, Roles and four-eyes Approval, Died Again detection, Replay at scale (Throttled Replay, Canary Replay and Replay rules), the Audit view and Restore, and Kubernetes deployment with a signed Helm chart and a Flux CD example. New in 0.5: observability (depth history of every dead-letter queue, Alerts to Slack, Microsoft Teams and webhooks, Prometheus metrics, and a Dead-letter Map). Upgrading from 0.4: sampling starts on its own and the audit store grows; nothing notifies anyone and no metrics port opens until you configure them (see the [changelog](CHANGELOG.md)). Production hardening is next; see the [roadmap](ROADMAP.md).
 
 ## Why
 
@@ -25,6 +25,8 @@ Messages that Spring AMQP or MassTransit gave up on carry no `x-death`; Volverá
 
 The queue list also checks each queue's dead-letter set-up and warns about the ways the broker silently loses Messages: a dead-letter exchange that is missing or routes nowhere, a dead-letter queue whose TTL, length limit or expiry drops Messages, a quorum queue past its delivery limit with nowhere to dead-letter, and a quorum queue that dead-letters at-most-once.
 
+Between visits, Volverán keeps watch. It samples every dead-letter queue into a **depth history**, sends **Alerts** to Slack, Microsoft Teams or a webhook, serves **Prometheus metrics**, and draws a **Dead-letter Map** of where each vhost's Messages go when they die ([Observability](#observability)).
+
 In Team Mode, each Broker Profile can map your OIDC groups to a **Role** (`viewer`, `operator` or `admin`), and can connect to the broker with each Operator's own OAuth 2.0 token instead of shared credentials, so RabbitMQ applies their own permissions ([Team Mode guide](docs/team-mode.md)).
 
 Messages that go back to the queue (Keep, an ended Checkout) keep their order, with one caveat on quorum queues. A classic queue puts each one back in its original position. A quorum queue puts them back in their original order ahead of newer Messages, but behind any Messages returned to it earlier, for example by another consumer ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#order-after-a-return)).
@@ -33,7 +35,7 @@ There are two modes. **Solo Mode** runs on your laptop with no sign-in and liste
 
 ## Quick start
 
-The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.4.1`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
+The image is `ghcr.io/volveran/volveran`, built for `linux/amd64` and `linux/arm64`. Each release is tagged with its version (`0.5.0`) and the newest one also as `latest`. Release notes are in the [changelog](CHANGELOG.md).
 
 ### Solo Mode
 
@@ -49,7 +51,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.4.1
+  ghcr.io/volveran/volveran:0.5.0
 ```
 
 4. Open <http://127.0.0.1:8080>.
@@ -79,7 +81,7 @@ docker run --rm --read-only -p 8080:8080 \
   -e VOLVERAN_OIDC_REDIRECT_URL=https://volveran.example.com/auth/callback \
   -e VOLVERAN_SESSION_SECRET \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.4.1
+  ghcr.io/volveran/volveran:0.5.0
 ```
 
 | Variable | Default | Meaning |
@@ -107,7 +109,7 @@ kubectl -n volveran create secret generic volveran-oidc \
   --from-literal=session-secret="$(openssl rand -base64 48)"
 kubectl -n volveran create secret generic volveran-broker-passwords \
   --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.4.1 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.5.0 \
   --namespace volveran -f values.yaml
 ```
 
@@ -135,6 +137,10 @@ The [Kubernetes guide](docs/kubernetes.md) has the values file and covers exposu
 | `VOLVERAN_BODY_RETENTION_DAYS` | `30` | Discarded Message bodies older than this are evicted (1 to 36500); Audit Entries are kept indefinitely, marked "body expired", and can no longer be Restored |
 | `VOLVERAN_BODY_RETENTION_MAX_BYTES` | `1GiB` | most bytes of Discarded bodies kept in total, in bytes or with `KiB`, `MiB`, `GiB`, `TiB`; beyond it the oldest bodies are evicted first. The Audit view warns at 90 % |
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
+| `VOLVERAN_HISTORY_INTERVAL_SECONDS` | `60` | how often Volverán samples the dead-letter queues of every Broker Profile with shared credentials, reading only the management API (15 to 3600) |
+| `VOLVERAN_HISTORY_RETENTION_DAYS` | `14` | how long Samples and the outcomes of notifications are kept (1 to 90); the retention job removes older ones ([sizing](docs/observability.md#sizing)) |
+| `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link |
+| `VOLVERAN_METRICS_PORT` | off | serves Prometheus metrics at `/metrics` on this port, at `VOLVERAN_HOST`'s address, with no session; never on the web app's port ([metric reference](docs/observability.md#metrics)) |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](docs/adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
 
@@ -172,11 +178,24 @@ Each line is one JSON object per Message, in queue order:
 
 `properties` and `headers` use the same lossless AMQP JSON as Audit Entries, so they hold the Message byte for byte: a byte array is `{ "$bytes": "<base64>" }`, a 64-bit integer `{ "$bigint": "<decimal>" }`, and a table with a key starting with `$` is wrapped as `{ "$table": { ... } }`. Typed values such as decimals stay as amqplib decodes them (`{ "!": "decimal", "value": { "places": 2, "digits": 1234 } }`). For example, `jq -r 'select(.bodyKind == "json") | .body | @base64d' export.ndjson` prints the JSON bodies.
 
+### Observability
+
+The [observability guide](docs/observability.md) has the set-ups and references for all of this.
+
+**Depth history.** Volverán samples the dead-letter queues of every Broker Profile with shared credentials once a minute (`VOLVERAN_HISTORY_INTERVAL_SECONDS`), reading only the management API, and keeps the Samples in the audit store for 14 days (`VOLVERAN_HISTORY_RETENTION_DAYS`). The queue list shows a 24-hour depth chart per queue, and a queue's history view shows depth and estimated arrivals, gaps, and marks for the Applies and Rule Passes that took Messages out (`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=`). Arrivals are estimated, because the broker does not count dead-lettered Messages, and a consumer outside Volverán hides them. 100 queues at the defaults take about 190 MiB ([sizing](docs/observability.md#sizing)). A profile with `credentials: operatorToken` is not sampled, because with nobody signed in there is no credential to sample with.
+
+**Alerts.** Declare where notifications go once, at the top of the profiles file (`alertDestinations`): a Slack incoming webhook, a Microsoft Teams workflow webhook or a generic webhook, signed if you like, with each URL and secret in an environment variable. Declare Alert Rules under a Broker Profile (`alerts`): the depth stays above a threshold, Messages arrive faster than a rate or at all, a Replay rule pauses, a dead-letter queue has a set-up warning, or the profile cannot be sampled. Startup refuses a broken set-up. A notification never contains a Message's body, headers or `message_id`. The Alerts view shows what is firing and whether each notification was delivered, and lets an `admin` send a test notification ([Alerts](docs/observability.md#alerts), [ADR 0012](docs/adr/0012-alerting-declared-in-the-profiles-file.md), API: `GET /api/alerts`, `GET /api/profiles/:profile/alert-rules`, `POST /api/alert-destinations/:name/test`).
+
+**Metrics.** With `VOLVERAN_METRICS_PORT` set, Volverán serves Prometheus metrics at `/metrics` on that port, with no session. A scrape never contacts a broker. The Helm chart can add a `ServiceMonitor` ([metric reference and example alerts](docs/observability.md#metrics)).
+
+**Dead-letter Map.** Each vhost's map shows which queues dead-letter into which, through which exchange and routing key, with losses, chains, cycles and MassTransit `_error` queues, listed as text too (`GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map`, [Dead-letter Map](docs/observability.md#dead-letter-map)).
+
 ## Learn more
 
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
 - [Architecture decisions](docs/adr/).
 - [Roadmap](ROADMAP.md).
+- [Observability](docs/observability.md): depth history and its sizing, Alert Rules and Alert Destinations, the webhook schema, the metric reference, ServiceMonitor set-up and the Dead-letter Map.
 - [Replay rules](docs/replay-rules.md): how a rule decides what to Replay and stops itself, with worked examples.
 - [Spring AMQP and MassTransit](docs/spring-amqp-and-masstransit.md): what Volverán reads from the failure headers these frameworks write, and how their Messages are Replayed.
 - [How Volverán compares](docs/comparison.md) with Warren, RabbitGUI and RabbitScout.

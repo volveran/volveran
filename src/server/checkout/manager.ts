@@ -59,7 +59,7 @@ import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
 import { queueRefOf, type QueueRef } from '../profiles.js';
 import { STOP_REASONS } from '../apply/stop-reasons.js';
-import type { ApplyOptions, RuleActing } from '../apply/types.js';
+import type { ApplyOptions, MessageOutcome, RuleActing } from '../apply/types.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
@@ -150,6 +150,8 @@ export interface CheckoutManagerOptions {
   ruleBadge?: RuleBadgeOf;
   /** An Apply running in the background failed unexpectedly (its steps report their own failures); the Checkout still ends. */
   onApplyError?(checkoutId: string, err: unknown): void;
+  /** An Apply ended with these outcomes, one per Message of the Checkout. */
+  onApplyEnded?(checkout: Checkout, outcomes: readonly MessageOutcome[]): void;
 }
 
 /**
@@ -412,6 +414,12 @@ export class CheckoutManager {
     return this.view(checkout);
   }
 
+  /** How many Checkouts are active now, and how many of those wait for Approval. */
+  counts(): { active: number; waitingApproval: number } {
+    const active = [...this.checkouts.values()].filter((c) => c.status === 'active');
+    return { active: active.length, waitingApproval: active.filter((c) => c.approvalRequest !== null).length };
+  }
+
   /** The Checkouts waiting for Approval, oldest request first, except `approver`'s own. */
   listAwaitingApproval(approver: Operator): ApprovalSummary[] {
     return [...this.checkouts.values()]
@@ -526,6 +534,7 @@ export class CheckoutManager {
         },
       });
       checkout.lastApply = { at: startedAt.toISOString(), outcomes, approvedBy: approver?.displayName ?? null };
+      this.options.onApplyEnded?.(checkout, outcomes);
     } catch (err) {
       this.options.onApplyError?.(checkout.id, err);
     }

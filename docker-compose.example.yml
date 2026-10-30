@@ -7,7 +7,7 @@
 # host's network (no `ports:`): see README "Quick start".
 services:
   volveran:
-    image: ghcr.io/volveran/volveran:0.4.1
+    image: ghcr.io/volveran/volveran:0.5.0
     network_mode: host
     read_only: true
     restart: unless-stopped

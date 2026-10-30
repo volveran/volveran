@@ -2,7 +2,8 @@
 The optional NetworkPolicy. It selects only the Volverán pod and admits
 traffic to the http port from the peers in networkPolicy.ingressFrom (the
 Gateway or ingress controller), so nothing else in the cluster reaches the
-sign-in or the API. Kubelet probes come from the pod's own node, which
+sign-in or the API. The peers in networkPolicy.metricsFrom (the scraper) reach
+the metrics port only, when metrics are on. Kubelet probes come from the pod's own node, which
 NetworkPolicy always allows. Egress stays open unless networkPolicy.egress
 lists rules; then those rules plus DNS to the cluster resolver are allowed,
 so name resolution never breaks.
@@ -24,13 +25,23 @@ spec:
     - Egress
     {{- end }}
   {{- /* An empty "from" would admit every source, so no peers means no ingress rule. */}}
-  {{- with .Values.networkPolicy.ingressFrom }}
+  {{- $metricsFrom := and .Values.metrics.enabled .Values.networkPolicy.metricsFrom }}
+  {{- if or .Values.networkPolicy.ingressFrom $metricsFrom }}
   ingress:
+    {{- with .Values.networkPolicy.ingressFrom }}
     - from:
         {{- toYaml . | nindent 8 }}
       ports:
         - port: http
           protocol: TCP
+    {{- end }}
+    {{- with $metricsFrom }}
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: metrics
+          protocol: TCP
+    {{- end }}
   {{- else }}
   ingress: []
   {{- end }}

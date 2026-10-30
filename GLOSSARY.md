@@ -54,6 +54,10 @@ _Avoid_: Test Message, probe, pilot
 How long Volverán watches for a Canary that dies again, through a queue of its own bound to the dead-letter exchange (it never reads the dead-letter queue). Set per Broker Profile.
 _Avoid_: Timeout, grace period
 
+**Sample**:
+One reading of a dead-letter queue's depth and estimated arrivals at one time, taken from the management API without a Checkout. Estimated arrivals are the change in depth since the Sample before plus the Messages Volverán took out in between, never below zero, because the broker does not count dead-lettered Messages; a consumer outside Volverán hides arrivals, and a queue's first Sample has none known, nor has its first after a sampling run that had no depth for it. With no depth reported there is no Sample.
+_Avoid_: Data point, reading, metric
+
 **Message**:
 A single RabbitMQ message, identified to the user by its `message_id`.
 _Avoid_: Event, item, record
@@ -82,6 +86,10 @@ _Avoid_: Skip, requeue, ignore
 Said of a Message that Volverán Replayed, Moved or Restored and that has been dead-lettered again, recognised by the replay id (`x-volveran-replay-id`) it carries. How many times it has died again comes from following the replay ids back through the Audit Entries.
 _Avoid_: Repeat offender, recurring, boomerang
 
+**Dead-letter Map**:
+The graph of where a vhost's dead-lettered Messages go: the queues that dead-letter or are dead-lettered into, the exchanges and bindings between them, losses (a missing exchange, or one that routes nowhere), cycles, and MassTransit `_error` queues linked to their input queue by convention. It shows the broker's set-up, not the Messages that took a path.
+_Avoid_: Topology, flow diagram
+
 **Failure Details**:
 The exception and context a client framework (Spring AMQP, MassTransit) writes into a Message's headers when it gives up on it: the exception type and message, the stack trace, the consumer, the time and the original queue or exchange.
 _Avoid_: Error info, fault (except in MassTransit's own header names)
@@ -99,6 +107,20 @@ _Avoid_: Permission, access level
 **Approval**:
 A second Operator's consent, after reviewing its Decisions, to an Apply on a Protected Profile. In Team Mode, an Apply with any Decision other than Keep on a Protected Profile waits for it (unless the profile sets `requireApproval: false`); approving runs the Apply, and its Audit Entries record both people. Rejecting, with a reason, returns the Checkout to staging; withdrawing it or the Checkout ending cancels the request.
 _Avoid_: Sign-off, review, four-eyes (four-eyes may describe the feature in prose)
+
+## Alerting
+
+**Alert Destination**:
+Where notifications go: a Slack incoming webhook, a Microsoft Teams workflow webhook or a generic webhook, declared once in the profiles file. Its URL and signing secret come from environment variables.
+_Avoid_: Channel, receiver, sink, notifier
+
+**Alert Rule**:
+A condition on dead-letter queues or on Volverán itself, declared under a Broker Profile in the profiles file: the depth stays above a threshold, Messages arrive faster than a rate, or any Message arrives at all; a Replay Rule paused, a dead-letter queue has a set-up warning, or the profile has not been sampled for a while. It names its Alert Destinations, how long the condition must hold (`for`) and how often to send it again (`repeatEvery`). A rule with a name pattern covers every matching dead-letter queue. Arrivals here are estimated arrivals that the depth has borne out: a take-out counts only once the next Sample shows it did not explain a drop in depth, so arrivals hidden by triage alert one Sample late.
+_Avoid_: Alarm, trigger, monitor
+
+**Alert**:
+One Alert Rule firing for one queue (or one paused Replay Rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay Rule resumes or sampling succeeds. A firing Alert survives a restart without being sent again; removing its rule from the file drops it quietly.
+_Avoid_: Incident, event, page
 
 ## Running
 

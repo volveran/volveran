@@ -15,8 +15,10 @@ export interface ManagementQueue {
   name: string;
   /** The broker's queue type: classic, quorum, stream, or a plugin's type. */
   type: string;
-  /** Ready plus unacknowledged Messages, from management statistics (lags). */
+  /** Ready plus unacknowledged Messages, from management statistics (lags). 0 when `depthMissing`. */
   messages: number;
+  /** The API listed the queue without its depth, as it does just after a restart: `messages` is not a reading. */
+  depthMissing?: true;
   consumers: number;
   arguments: Record<string, unknown>;
   /** Definition of the policies in effect (operator policy merged in), {} for none. */
@@ -201,6 +203,7 @@ function toQueue(q: any): ManagementQueue {
     name: String(q.name),
     type: String(q.type ?? 'classic'),
     messages: Number(q.messages ?? 0),
+    ...(typeof q.messages === 'number' ? {} : { depthMissing: true as const }),
     consumers: Number(q.consumers ?? 0),
     arguments: isRecord(q.arguments) ? q.arguments : {},
     // The API sends [] rather than {} when no policy applies.
