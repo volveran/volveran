@@ -86,6 +86,16 @@ Between visits, Volverán keeps watch. None of it needs a Checkout or reads a Me
 - **Prometheus metrics** on a port of their own, with a `ServiceMonitor` in the Helm chart. A scrape never contacts a broker.
 - **The Dead-letter Map** shows which queues dead-letter into which, with the losses, chains and cycles.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/map-dark.png">
+  <img src="docs/images/map-light.png" alt="The Dead-letter Map: queues, the exchanges they dead-letter through, and two paths where Messages are lost">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-dark.png">
+  <img src="docs/images/history-light.png" alt="The depth history of orders.dlq over 24 hours, with an incident building up and being triaged away">
+</picture>
+
 ## Built for teams
 
 Run it on your laptop in **Solo Mode**, or as a shared service in **Team Mode**, with single sign-on through any OIDC provider (Keycloak, JumpCloud, Okta, Entra ID).

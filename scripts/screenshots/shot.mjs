@@ -37,13 +37,13 @@ const caption = (text) =>
     (document.querySelector('dialog[open]') ?? document.body).append(band);
   }, text);
 // Part of the page, for a phone: the region of an element, up to a width.
-const clip = async (name, selector, maxWidth) => {
+const clip = async (name, selector, maxWidth, maxHeight = 900) => {
   await wait(400);
   const box = await page.evaluate((selector) => {
     const r = document.querySelector(selector).getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height };
   }, selector);
-  await page.screenshot({ path: `${outDir}/${name}-${theme}.png`, clip: { ...box, width: Math.min(box.width, maxWidth), height: Math.min(box.height, 900 - box.y) } });
+  await page.screenshot({ path: `${outDir}/${name}-${theme}.png`, clip: { ...box, width: Math.min(box.width, maxWidth), height: Math.min(box.height, maxHeight, 900 - box.y) } });
   console.log('clip', name);
 };
 const clickText = async (sel, text) => {
@@ -226,6 +226,26 @@ const scenariosImpl = {
     await clickText('.view-switch button', 'Replay rules');
     await wait(1500);
     await shot('rules');
+  },
+  async history() {
+    await pickProfile('staging');
+    await page.goto(`${BASE}#/history/staging/%2F/orders.dlq`, { waitUntil: 'load' });
+    await page.reload({ waitUntil: 'load' });
+    await wait(2500);
+    await shot('history');
+  },
+  async alerts() {
+    await pickProfile('staging');
+    await clickText('.view-switch button', 'Alerts');
+    await wait(1500);
+    await shot('alerts');
+  },
+  async map() {
+    await pickProfile('staging');
+    await clickText('.view-switch button', 'Dead-letter Map');
+    await wait(2500);
+    await shot('map');
+    await clip('map-part', 'main svg, section svg', 860, 200);
   },
   async shortcuts() {
     await pickProfile('staging');
