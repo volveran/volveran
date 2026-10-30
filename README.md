@@ -74,6 +74,15 @@ The consumer has often only just recovered when the Replay starts. Sending every
   <img src="docs/images/rules-light.png" alt="Two Replay rules with their schedule, back-off, attempts and stop condition">
 </picture>
 
+## Know before anyone asks
+
+Between visits, Volverán keeps watch. None of it needs a Checkout or reads a Message ([guide](docs/observability.md)).
+
+- **Depth history** samples every dead-letter queue once a minute and keeps 14 days, with estimated arrivals and marks for each Apply that took Messages out.
+- **Alerts** go to Slack, Microsoft Teams or a signed webhook when a queue grows, Messages arrive, a Replay rule pauses or a queue starts losing Messages. Rules live in the profiles file, so a change goes through review.
+- **Prometheus metrics** on a port of their own, with a `ServiceMonitor` in the Helm chart. A scrape never contacts a broker.
+- **The Dead-letter Map** shows which queues dead-letter into which, with the losses, chains and cycles.
+
 ## Built for teams
 
 Run it on your laptop in **Solo Mode**, or as a shared service in **Team Mode**, with single sign-on through any OIDC provider (Keycloak, JumpCloud, Okta, Entra ID).
@@ -124,13 +133,11 @@ helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.5.0 \
 
 ## Where it's going
 
-Not available yet, in priority order ([roadmap](ROADMAP.md)):
-
-- **Observability:** queue depth and rate history, alerts to Slack, Teams and webhooks, Prometheus metrics, and a dead-letter topology map.
-- **Production hardening:** PostgreSQL as an audit store, several replicas (Team Mode runs one today), a security review, and a stable configuration format.
+Not available yet ([roadmap](ROADMAP.md)): PostgreSQL as an audit store, several replicas (Team Mode runs one today), a security review, upgrade guarantees and a stable configuration format.
 
 ## Learn more
 
+- [Observability](docs/observability.md): sizing, Alert Rules, the webhook schema and the metric reference.
 - [Configuration](docs/configuration.md): every setting and the health checks.
 - [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
