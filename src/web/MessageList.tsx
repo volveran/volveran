@@ -297,7 +297,7 @@ export function MessageDetailView({ message: m }: { message: MessageDetail }) {
       {m.diedAgain && <DiedAgainNote diedAgain={m.diedAgain} />}
       {m.rule && <RuleNote rule={m.rule} />}
       {m.deliveryBudget?.warning && (
-        <div className="warning">
+        <div className="warning last-delivery">
           <p>{m.deliveryBudget.warning}</p>
         </div>
       )}

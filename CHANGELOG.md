@@ -56,6 +56,7 @@ A profiles file and chart values from 0.4 keep working unchanged. These are all 
 ### Changed
 
 - A Replay Rule's pause reason reaches notifications and metrics; see the [Replay rules guide](docs/replay-rules.md#being-told-when-a-rule-pauses). Nothing about how rules run has changed.
+- The web app has a visual design. Labels are set in Atkinson Hyperlegible Next and data (queue names, `message_id`s, routing keys, headers, bodies) in Atkinson Hyperlegible Mono, both bundled, so nothing is fetched from another host. Every notice, panel and tag takes one level of a severity scale (info, warning, danger): Discard, typed confirmations, Reject, Stop, a Lost Checkout, Died Again, the last Delivery Budget attempt and set-up warnings that lose Messages are danger. A Protected Profile frames the whole window in red, over open prompts too. Each Message row carries a bar in its Decision's colour, and ComparisonView marks differences in a colour of their own. Light and dark themes meet WCAG AA contrast. No label, shortcut or focus behaviour changes.
 
 ## [0.4.0] - 2026-10-29
 
