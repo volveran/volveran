@@ -39,6 +39,10 @@ export interface LatestSample {
   queue: string;
   at: Date;
   depth: number;
+  /** The depth of the Sample before; null on the queue's first Sample. */
+  previousDepth: number | null;
+  /** The Messages Volverán took out since the Sample before, by their Audit Entries. */
+  takenOut: number;
   /** Since the Sample before; null when unknown (the queue's first Sample). */
   estimatedArrivals: number | null;
   setupWarnings: SetupWarning[];
@@ -239,6 +243,8 @@ export class QueueSampler {
           ...ref,
           at,
           depth: q.approximateMessages,
+          previousDepth: previous?.depth ?? null,
+          takenOut,
           estimatedArrivals: estimateArrivals({ previousDepth: previous?.depth ?? null, depth: q.approximateMessages, takenOut }),
           setupWarnings: q.setupWarnings,
         };

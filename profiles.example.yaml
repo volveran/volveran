@@ -36,6 +36,24 @@ profiles:
         whenAttemptsUsedUp: keep #   or { moveTo: { queue: orders.parked } }
         stopWhen: { diedAgain: 10, within: 15m }  # required: pause once 10 Replayed Messages die again within 15m
         startPaused: true        #   deploy paused, resume from the Replay rules view
+    alerts:                      # optional; tell an Alert Destination about a dead-letter queue (ADR 0012).
+      - name: orders-deep        #   unique in this profile: letters, digits, - and _
+        destinations: [ops-slack, pager]  # names from alertDestinations above
+        when:                    #   vhost, queue or queuePattern, and one condition
+          vhost: /
+          queue: orders.dlq
+          depthAbove: 100        #   the depth is above this
+        for: 5m                  #   optional; the condition must hold this long before it fires (1s to 7d)
+        repeatEvery: 1h          #   optional; send it again while it fires (1m to 7d); default never
+      - name: any-dlq-burst
+        destinations: [ops-teams]
+        when:
+          vhost: /
+          queuePattern: "*.dlq"  #   the profile filter's glob; each matching dead-letter queue is its own Alert
+          arrivalsAbove: { count: 50, within: 10m }  # more than 50 estimated arrivals within 10m
+      - name: payments-silent
+        destinations: [pager]
+        when: { vhost: /, queue: payments.dlq, anyArrival: true }  # any Message arrives at all
 
   - name: prod
     managementUrl: https://rabbit.prod.example.com:15671
