@@ -5,6 +5,7 @@
 import { parseBodyRetention, type BodyRetention } from './audit/body-retention.js';
 import { parseHistoryInterval } from './history-interval.js';
 import { parseHistoryRetention } from './history-retention.js';
+import { resolvePublicUrl } from './public-url.js';
 import { parseMetricsPort } from './metrics/config.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
@@ -17,7 +18,9 @@ export interface Config {
   bodyRetention: BodyRetention;
   /** How often the sampler runs. */
   historyIntervalMs: number;
-  /** Samples and sampling runs older than this are removed. */
+  /** The base of the links in notifications; null: they carry none. */
+  publicUrl: string | null;
+  /** How long Samples, sampling runs and notification outcomes are kept, in milliseconds (VOLVERAN_HISTORY_RETENTION_DAYS). */
   historyRetentionMs: number;
   /** The metrics listener's port; null keeps it off. */
   metricsPort: number | null;
@@ -38,6 +41,8 @@ export function loadConfig(
   if (!retention.ok) return retention;
   const historyInterval = parseHistoryInterval(env);
   if (!historyInterval.ok) return historyInterval;
+  const publicUrl = resolvePublicUrl(env, mode.mode);
+  if (!publicUrl.ok) return publicUrl;
   const historyRetention = parseHistoryRetention(env);
   if (!historyRetention.ok) return historyRetention;
   const metricsPort = parseMetricsPort(env);
@@ -50,6 +55,7 @@ export function loadConfig(
       checkoutTiming: timing.timing,
       bodyRetention: retention.retention,
       historyIntervalMs: historyInterval.intervalMs,
+      publicUrl: publicUrl.url,
       historyRetentionMs: historyRetention.retentionMs,
       metricsPort: metricsPort.port,
     },

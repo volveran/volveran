@@ -154,8 +154,15 @@ names the missing value.
 | Value | Default | Description |
 |---|---|---|
 | `brokerProfiles.profiles` | `[]` (at least one, unless `brokerProfiles.existingConfigMap` is set) | Broker Profiles in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `managementUrl`, `amqpUrl`, `caFile`, `username`, `passwordEnv`, `credentials` (`shared`, the default, or `operatorToken`: the Operator's own access token, without `username` and `passwordEnv`), `tokenUsernameClaim` (only with `operatorToken`; default `sub`), `vhosts`, `defaultQueueFilter`, `protected`, `requireApproval` (only with `protected: true`; default `true`: an Apply waits for a second Operator's Approval), `replayRate` (`default` and/or `max`, numbers of Messages per second from 0.1 to 1000: the Replay Rate an Apply runs at, and the most an Operator may choose; Volverán refuses `default` above `max`), `canary` (`watchWindow`, a duration from `5s` to `10m`, default `30s`: how long a Canary is watched for dying again; `requiredAbove`, a whole number: an Apply with more Replays must start with a Canary), `replayRules` (Replay rules, see `profiles.example.yaml`; the schema refuses a rule without `stopWhen` or with a `whenAttemptsUsedUp` other than `keep` or `{ moveTo: { queue } }`, and Volverán checks the ranges at startup), `roles` (any of `viewer`, `operator`, `admin`, each a non-empty list of groups; the schema refuses other role names). Rendered to a chart-managed ConfigMap mounted at `/config/profiles.yaml`; a change rolls the pod. A `password` key is refused. |
+| `brokerProfiles.alertDestinations` | `[]` | Alert Destinations in the same shape as the profiles YAML (`profiles.example.yaml`): `name`, `type` (`slack`, `teams` or `webhook`), `urlEnv`, and `signingSecretEnv` on a `webhook`. URLs and signing secrets never go here: the variables they name are keys of `alerts.existingSecret`, and Volverán refuses to start when one is not set. With `brokerProfiles.existingConfigMap`, declare them in that file instead. |
 | `brokerProfiles.passwordsSecret` | `""` | An existing Secret whose keys become environment variables. Each profile's `passwordEnv` must name one of its keys. |
 | `brokerProfiles.existingConfigMap` | `""` | An existing ConfigMap with a `profiles.yaml` key, mounted at `/config` instead of the chart-managed one. Leave `brokerProfiles.profiles` empty when it is set. The chart cannot see its content, so a change to it does not roll the pod: restart the Deployment yourself. A `caFile` in it is an absolute path under `/etc/volveran/ca` (see CA bundles). |
+
+### Alerts
+
+| Value | Default | Description |
+|---|---|---|
+| `alerts.existingSecret` | `""` | An existing Secret whose keys become environment variables: the URLs and signing secrets named by each Alert Destination's `urlEnv` and `signingSecretEnv`. A webhook URL is a credential, so keep it in a Secret (SOPS, External Secrets). The chart cannot see its content, so a change to it does not roll the pod: restart the Deployment yourself. With `networkPolicy.egress` set, allow the destinations too. |
 
 ### CA bundles
 

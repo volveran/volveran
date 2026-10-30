@@ -33,11 +33,16 @@
 //                           how often the sampler reads the dead-letter queues
 //                           (default 60, 15 to 3600)
 //   VOLVERAN_HISTORY_RETENTION_DAYS
-//                           how long Samples are kept (default 14, 1 to 90)
+//                           how long Samples and notification outcomes are kept
+//                           (default 14, 1 to 90)
+//   VOLVERAN_PUBLIC_URL     the base of the links in notifications (default in
+//                           Team Mode: the origin of VOLVERAN_OIDC_REDIRECT_URL;
+//                           otherwise notifications carry no link)
 //   VOLVERAN_METRICS_PORT   serves Prometheus metrics at /metrics on this port,
 //                           at VOLVERAN_HOST's address (default off; see
 //                           metrics/listener.ts)
-// plus each Broker Profile's password variable (its `passwordEnv`).
+// plus each Broker Profile's password variable (its `passwordEnv`) and each
+// Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
 import path from 'node:path';
 import { product } from '../shared/product.js';
 import { ConfigError } from './config-error.js';

@@ -87,6 +87,8 @@ export interface TestApp {
 
 export interface StartAppOptions {
   profiles?: ProfileFixture[];
+  /** The top-level `alertDestinations`, as written in the profiles file. */
+  alertDestinations?: Array<Record<string, unknown>>;
   /** Raw YAML to write as the profiles file instead of `profiles`. */
   rawYaml?: string;
   /**
@@ -124,7 +126,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
   const profiles = options.profiles ?? [];
   const dir = await makeTempDir('app');
   const profilesFile = path.join(dir, 'profiles.yaml');
-  await writeFile(profilesFile, options.rawYaml ?? stringify({ profiles }));
+  await writeFile(profilesFile, options.rawYaml ?? stringify({ profiles, ...(options.alertDestinations && { alertDestinations: options.alertDestinations }) }));
 
   const env: Record<string, string | undefined> = { VOLVERAN_OPERATOR: testOperator };
   for (const p of profiles) {

@@ -1,7 +1,19 @@
 # Volverán Broker Profiles. Mount this file into the container at
 # /config/profiles.yaml (or point VOLVERAN_PROFILES_FILE at it).
-# Passwords never go in this file: each profile names the environment
-# variable that holds its password.
+# Passwords and webhook URLs never go in this file: each names the environment
+# variable that holds it.
+alertDestinations:             # optional; where notifications go (ADR 0012).
+  - name: ops-slack            #   letters, digits, - and _; an admin can send it a test notification
+    type: slack                #   slack (incoming webhook), teams (workflow webhook) or webhook
+    urlEnv: VOLVERAN_OPS_SLACK_URL  # the variable holding the URL: it is a credential, and startup refuses it unset
+  - name: ops-teams
+    type: teams
+    urlEnv: VOLVERAN_OPS_TEAMS_URL
+  - name: pager
+    type: webhook
+    urlEnv: VOLVERAN_PAGER_URL
+    signingSecretEnv: VOLVERAN_PAGER_SECRET  # optional, webhook only: signs each body with HMAC-SHA256
+
 profiles:
   - name: dev
     managementUrl: http://localhost:15672   # http or https

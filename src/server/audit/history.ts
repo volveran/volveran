@@ -1,4 +1,4 @@
-// Depth history in the audit store (migration v12): one Sample per dead-letter
+// Depth history in the audit store (migration v13): one Sample per dead-letter
 // queue per sampling run, and one sampling run per Broker Profile. Written by
 // the sampler, read by the history route, never read from the broker. Samples
 // and runs older than VOLVERAN_HISTORY_RETENTION_DAYS are removed by the

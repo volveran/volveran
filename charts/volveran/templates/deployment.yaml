@@ -151,11 +151,18 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.brokerProfiles.passwordsSecret }}
-          # Each key becomes a variable named by some profile's passwordEnv.
+          {{- if or .Values.brokerProfiles.passwordsSecret .Values.alerts.existingSecret }}
           envFrom:
+            {{- with .Values.brokerProfiles.passwordsSecret }}
+            # Each key becomes a variable named by some profile's passwordEnv.
             - secretRef:
                 name: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.alerts.existingSecret }}
+            # Each key becomes a variable named by some Alert Destination's urlEnv or signingSecretEnv.
+            - secretRef:
+                name: {{ . | quote }}
+            {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.pod.resources | nindent 12 }}

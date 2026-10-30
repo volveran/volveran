@@ -17,6 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Operator } from '../operator.js';
 import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
 import { HistoryStore } from './history.js';
+import { NotificationStore } from './notifications.js';
 import { RuleStateStore } from './rule-state.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
@@ -266,7 +267,26 @@ const MIGRATIONS: string[] = [
      PRIMARY KEY (rule_key, audit_entry_id)
    );
    ALTER TABLE replay_rule_passes ADD COLUMN cannot_replay INTEGER;`,
-  // v12 (#73): depth history (audit/history.ts), one Sample per dead-letter queue per sampling run, one
+  // v12 (#78): the outcome of each notification to an Alert Destination.
+  `CREATE TABLE notifications (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at INTEGER NOT NULL,
+     alert_id TEXT NOT NULL,
+     destination TEXT NOT NULL,
+     destination_type TEXT NOT NULL,
+     status TEXT NOT NULL,
+     test INTEGER NOT NULL,
+     rule TEXT NOT NULL,
+     profile TEXT,
+     vhost TEXT,
+     queue TEXT,
+     outcome TEXT NOT NULL,
+     http_status INTEGER,
+     error TEXT,
+     attempts INTEGER NOT NULL
+   );
+   CREATE INDEX notifications_at ON notifications (at);`,
+  // v13 (#73): depth history (audit/history.ts), one Sample per dead-letter queue per sampling run, one
   // run per Broker Profile; and an index for the Messages taken out of a queue between two Samples.
   `CREATE TABLE history_samples (
      profile TEXT NOT NULL,
@@ -297,6 +317,8 @@ export class AuditStore {
   readonly ruleState: RuleStateStore;
   /** Depth history, in the same database. */
   readonly history: HistoryStore;
+  /** The outcomes of notifications, in the same database. */
+  readonly notifications: NotificationStore;
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -309,6 +331,7 @@ export class AuditStore {
     this.migrate();
     this.ruleState = new RuleStateStore(this.db);
     this.history = new HistoryStore(this.db);
+    this.notifications = new NotificationStore(this.db);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
