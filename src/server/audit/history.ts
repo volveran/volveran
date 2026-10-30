@@ -5,43 +5,9 @@
 // periodic retention job. The Applies and Rule Passes on a queue are read from
 // the Audit Entries.
 import type { DatabaseSync } from 'node:sqlite';
+import type { QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
 
-export interface StoredSample {
-  /** Epoch milliseconds. */
-  at: number;
-  depth: number;
-  estimatedArrivals: number | null;
-}
-
-export interface SamplingRunRow {
-  /** Epoch milliseconds. */
-  at: number;
-  ok: boolean;
-  /** Why it failed; null on a good run. */
-  errorCode: string | null;
-  /** The sampling interval it ran at; null on a run from before migration v16. */
-  intervalMs: number | null;
-}
-
-export interface QueueSample extends StoredSample {
-  vhost: string;
-  queue: string;
-}
-
-export interface SampledQueue {
-  profile: string;
-  vhost: string;
-  queue: string;
-}
-
-/** One Apply or Rule Pass's Messages taken out of a queue, by Decision. */
-export interface TakeOut {
-  checkoutId: string;
-  at: number;
-  operator: string;
-  rule: string | null;
-  counts: { discard: number; replay: number; move: number };
-}
+export type { QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut };
 
 /** Taking a Message out is one of these, carried out. A Keep or a failed step leaves it in the queue. */
 const TAKEN_OUT = `action IN ('discard', 'replay', 'move') AND outcome = 'done'`;
