@@ -7,9 +7,9 @@
 //   GET /healthz → 200 { status: "ok" } whenever the process serves HTTP
 //   GET /readyz  → 200 { status: "ok" } once startup has finished,
 //                  503 { status: "unavailable" } while the audit store cannot be
-//                  reached (only PostgreSQL ever is), and 503 once shutdown starts
+//                  reached, and 503 once shutdown starts
 //
-// A pod that cannot write Audit Entries takes no traffic, and is not restarted:
+// A Replica that cannot write Audit Entries takes no traffic, and is not restarted:
 // it reconnects by itself. The server only listens once startup has finished (server.ts), so no request
 // reaches /readyz before then. Once shutdown starts, Fastify answers 503 to
 // every request itself (its return503OnClosing default) before any route
