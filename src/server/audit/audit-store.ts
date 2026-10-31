@@ -240,14 +240,19 @@ export interface AuditStore {
   close(): Promise<void>;
 }
 
+/** The Audit Entry of a pause or resume of a Replay Rule, which has no Message. */
+export type RulePauseEntry = NewAuditEntry & { message: null };
+
 /** Replay Rule state, by rule key `<profile>/<rule>`. */
 export interface RuleStateStore {
   /** The rule's state; creates it (paused when `startPaused`) the first time the rule is seen, after which the stored state wins. */
   ensure(ruleKey: string, startPaused: boolean): Promise<RuleState>;
   /** The rule's state; null when it has never started. */
   state(ruleKey: string): Promise<RuleState | null>;
-  /** Pauses the rule (`reason`, `by`, `at`) or, with null, lets it run again. */
-  setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): Promise<void>;
+  /** Pauses the rule (`reason`, `by`, `at`) and writes its Audit Entry, done, as one unit of work. */
+  pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<void>;
+  /** Lets the rule run again, forgets the Died Again Messages counted for its automatic stop, and writes its Audit Entry, done, as one unit of work. */
+  resume(ruleKey: string, entry: RulePauseEntry): Promise<void>;
   /** Keeps `pass` in the rule's history, dropping the oldest beyond PASS_HISTORY. */
   recordPass(ruleKey: string, pass: RulePass): Promise<void>;
   /** The rule's kept passes, newest first. */
@@ -265,8 +270,6 @@ export interface RuleStateStore {
    * how many are left: the count of the automatic stop.
    */
   countDiedAgain(ruleKey: string, rule: { profile: string; name: string }, auditEntryIds: readonly number[], now: Date, since: Date): Promise<number>;
-  /** Forgets the Died Again Messages counted for the rule's automatic stop (a resume). */
-  clearDiedAgain(ruleKey: string): Promise<void>;
   /** When a pass of the rule first saw each of `messageIds`, without storing anything; an id none has seen is left out. */
   firstSeenAt(ruleKey: string, messageIds: readonly string[]): Promise<Map<string, Date>>;
 }

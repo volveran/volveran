@@ -30,7 +30,7 @@
 import { randomUUID } from 'node:crypto';
 import { sharedBrokerUser } from '../broker-credentials.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
-import type { AuditStore, RuleStateStore } from '../audit/audit-store.js';
+import type { RulePauseEntry, RuleStateStore } from '../audit/audit-store.js';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { OneAtATime } from '../one-at-a-time.js';
 import type { Operator } from '../operator.js';
@@ -63,8 +63,6 @@ interface RuleActor {
 export interface ReplayRulesOptions {
   checkouts: CheckoutManager;
   state: RuleStateStore;
-  /** Where the pauses and resumes are recorded as Audit Entries. */
-  audit: Pick<AuditStore, 'record' | 'setOutcome'>;
   profiles: readonly BrokerProfile[];
   testHooks?: RuleSchedulerTestHooks;
   /** A scheduled pass broke unexpectedly (not a skip or a refused Checkout, which are recorded). */
@@ -342,32 +340,29 @@ export class ReplayRules {
   /** Pauses the rule for `by` with `reason`, records it as an Audit Entry, and clears its next pass. Inside the rule's turn. */
   private async markPaused(profile: BrokerProfile, rule: ReplayRule, by: RuleActor, reason: string): Promise<void> {
     const at = this.clock.now();
-    await this.options.state.setPaused(ruleKey(profile.name, rule.name), { reason, by: by.operator.displayName, at });
-    await this.recordPauseOrResume(profile, rule, by, at, { action: 'rule_pause', reason });
+    const entry = this.pauseOrResumeEntry(profile, rule, by, at, { action: 'rule_pause', reason });
+    await this.options.state.pause(ruleKey(profile.name, rule.name), { reason, by: by.operator.displayName, at }, entry);
     await this.scheduleNext(profile, rule);
     await this.options.onPauseChanged?.(profile.name);
   }
 
   /** Resumes the rule for `by`, clearing the automatic stop's count; records it as an Audit Entry and schedules its next pass. Inside the rule's turn. */
   private async markResumed(profile: BrokerProfile, rule: ReplayRule, by: RuleActor): Promise<void> {
-    const key = ruleKey(profile.name, rule.name);
-    const at = this.clock.now();
-    await this.options.state.setPaused(key, null);
-    await this.options.state.clearDiedAgain(key);
-    await this.recordPauseOrResume(profile, rule, by, at, { action: 'rule_resume', reason: null });
+    const entry = this.pauseOrResumeEntry(profile, rule, by, this.clock.now(), { action: 'rule_resume', reason: null });
+    await this.options.state.resume(ruleKey(profile.name, rule.name), entry);
     await this.scheduleNext(profile, rule);
     await this.options.onPauseChanged?.(profile.name);
   }
 
-  /** The Audit Entry of a pause or resume: no Message, the rule named, done at once. */
-  private async recordPauseOrResume(
+  /** The Audit Entry of a pause or resume: no Message, the rule named. */
+  private pauseOrResumeEntry(
     profile: BrokerProfile,
     rule: ReplayRule,
     by: RuleActor,
     at: Date,
     { action, reason }: { action: 'rule_pause' | 'rule_resume'; reason: string | null },
-  ): Promise<void> {
-    const entryId = await this.options.audit.record({
+  ): RulePauseEntry {
+    return {
       at,
       operator: by.operator,
       role: by.role,
@@ -383,7 +378,6 @@ export class ReplayRules {
       checkoutId: null,
       message: null,
       rule: rule.name,
-    });
-    await this.options.audit.setOutcome(entryId, 'done');
+    };
   }
 }

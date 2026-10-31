@@ -74,11 +74,11 @@ async function seed(dataDir: string): Promise<{ discard: number; restore: number
   const discard = await store.record(entry({ messageId: NUL_ID, message: { body: BODY, properties: { contentType: 'x/y' }, headers: { h: 'v' } } }));
   await store.setOutcome(discard, 'done');
   const restore = await store.record(entry({ action: 'restore', restoreOf: discard, replayId: 'replay-1' }));
-  const highest = await store.record(entry({ action: 'replay', rule: 'rule', rulePassId: 'pass-1', replayId: 'replay-2' }));
-  await store.evictBodies({ now: new Date(), maxAgeMs: Number.MAX_SAFE_INTEGER, maxBodyBytes: BODY.length });
   const key = 'prod/rule';
   await store.ruleState.ensure(key, false);
-  await store.ruleState.setPaused(key, { reason: 'why', by: 'Ada', at: AT });
+  await store.ruleState.pause(key, { reason: 'why', by: 'Ada', at: AT }, { ...entry({ action: 'rule_pause', messageId: 'unused', rule: 'rule' }), message: null });
+  const highest = await store.record(entry({ action: 'replay', rule: 'rule', rulePassId: 'pass-1', replayId: 'replay-2' }));
+  await store.evictBodies({ now: new Date(), maxAgeMs: Number.MAX_SAFE_INTEGER, maxBodyBytes: BODY.length });
   await store.ruleState.recordPass(key, { id: 'pass-1', at: AT.toISOString(), status: 'ran', reason: null, summary: { held: 1, replayed: 1, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, cannotReplay: 0, failed: 0 } });
   await store.ruleState.firstSeen(key, [NUL_ID], AT);
   await store.ruleState.countDiedAgain(key, { profile: 'prod', name: 'rule' }, [highest], AT, new Date(0));
@@ -136,7 +136,7 @@ describe('copy-audit-store', () => {
     expect(out).toMatch(/OK/);
     expect(code).toBe(0);
     for (const table of TABLES) {
-      const rows = table === 'audit_entries' ? 4 : 1;
+      const rows = table === 'audit_entries' ? 5 : 1;
       expect(await countIn(table)).toBe(rows);
       expect(out).toMatch(new RegExp(`^${table}: ${rows} rows`, 'm'));
     }
@@ -281,7 +281,7 @@ describe('copy-audit-store', () => {
     const { code, out } = await copy();
     expect(code).toBe(1);
     expect(out).toMatch(/not empty/);
-    expect(await countIn('audit_entries')).toBe(4);
+    expect(await countIn('audit_entries')).toBe(5);
   });
 
   it('accepts a target Volverán has only set up, with its tables but no rows', async () => {

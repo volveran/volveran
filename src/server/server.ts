@@ -157,7 +157,6 @@ async function serve(
   const replayRules = new ReplayRules({
     checkouts,
     state: auditStore.ruleState,
-    audit: auditStore,
     profiles,
     testHooks: options.checkoutTestHooks?.ruleScheduler,
     // Called only once the app below is listening.
