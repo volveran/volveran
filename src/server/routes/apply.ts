@@ -91,16 +91,16 @@ export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDep
     // 404 for an unknown Checkout before asking for confirmation. Nothing
     // awaits between this check and apply() reading the Decisions.
     checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-    return reply.code(202).send({ checkout: await checkouts.withRuleBadges(checkouts.apply(req.params.id, role, req.body?.rate, req.body?.canary)) });
+    return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role, req.body?.rate, req.body?.canary) });
   });
 
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.withRuleBadges(checkouts.stopApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' })) };
+    return { checkout: checkouts.stopApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/continue', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.withRuleBadges(checkouts.continueApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' })) };
+    return { checkout: checkouts.continueApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 }

@@ -1,6 +1,7 @@
 // The audit store interface on PostgreSQL (ADR 0013). The pool is bounded, and a call
 // of several statements runs on one connection, in one transaction (`transaction`).
-// A commit is durable when its promise resolves, as ADR 0001 needs of `record`.
+// A commit is durable when its promise resolves, as ADR 0001 needs of `record`:
+// every connection sets `synchronous_commit` to `on` (createPool).
 import type pg from 'pg';
 import { insertEntry, searchEntries, toEntry, type EntryRow } from './audit-entry-sql.js';
 import type {
@@ -15,15 +16,13 @@ import type {
   RuleStateStore,
 } from './audit-store.js';
 import { ConfigError } from '../config-error.js';
-import { asStartupError, createPool, transaction, type PostgresTls } from './postgres-connection.js';
+import { asStartupError, createPool, numbered, refusalAsStartupError, transaction, type PostgresTls } from './postgres-connection.js';
 import { migrate } from './postgres-migrations.js';
 import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
 import { PostgresNotificationStore } from './postgres-notifications.js';
 import { PostgresRuleStateStore } from './postgres-rule-state.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
-
-const numbered = (position: number) => `$${position}`;
 
 /** Under the chart's readiness probe timeout, so a probe gets an answer and not a timeout. */
 const PING_TIMEOUT_MS = 2_000;
@@ -74,6 +73,11 @@ export class PostgresAuditStore implements AuditStore {
       await Promise.all(pools.map((pool) => pool.end().catch(() => {})));
       throw asStartupError(err, url);
     }
+  }
+
+  /** A failure of startup after the store opened, as a ConfigError when PostgreSQL refused: a permission missing on a table only shows when it is first read. */
+  static startupFailure(err: unknown, url: string): unknown {
+    return refusalAsStartupError(err, url);
   }
 
   async record(entry: NewAuditEntry): Promise<number> {

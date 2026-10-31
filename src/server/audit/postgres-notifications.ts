@@ -2,11 +2,9 @@
 import type pg from 'pg';
 import { positions } from './audit-entry-sql.js';
 import type { NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
-import { notificationScope, toDelivery, type NotificationRow } from './store-rows.js';
+import { numbered } from './postgres-connection.js';
+import { notificationScope, RECENT_LIMIT, toDelivery, type NotificationRow } from './store-rows.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
-
-/** How many outcomes `recent` answers with unless told otherwise. */
-const RECENT_LIMIT = 100;
 
 export class PostgresNotificationStore implements NotificationStore {
   constructor(private readonly pool: pg.Pool) {}
@@ -23,7 +21,7 @@ export class PostgresNotificationStore implements NotificationStore {
   }
 
   async recent(limit = RECENT_LIMIT, visible?: NotificationScope): Promise<NotificationDelivery[]> {
-    const next = positions((position) => `$${position}`);
+    const next = positions(numbered);
     const { where, values } = visible ? notificationScope(visible, next) : { where: '1 = 1', values: [] };
     const { rows } = await this.pool.query<NotificationRow>(`SELECT * FROM notifications WHERE ${where} ORDER BY at DESC, id DESC LIMIT ${next()}`, [...values, limit]);
     return rows.map(toDelivery);

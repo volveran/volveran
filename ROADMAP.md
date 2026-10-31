@@ -20,7 +20,7 @@ Volverán **v0.6.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.
   - Discard (reason required).
   - Replay (back to the queue the Message was dead-lettered from).
   - Move (to a named queue, or to an exchange with a routing key).
-  - Keep (returns the Message without using up Delivery Budget).
+  - Keep (returns the Message to its queue).
 - One Apply, at-least-once ([ADR 0001](docs/adr/0001-apply-settles-each-message-at-least-once.md)), with a per-Message outcome.
 - Replay, Move and Restore remove `CC`, `BCC` and dead-letter headers and add `x-volveran-replay-id` and `x-volveran-from`. The original headers are kept in the Audit Entry.
 - Set-up check: warn when a quorum dead-letter queue has a finite `delivery-limit` (including the default of 20) and no dead-letter exchange, because the broker drops Messages that pass the limit.

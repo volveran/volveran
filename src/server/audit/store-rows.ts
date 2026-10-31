@@ -3,7 +3,7 @@
 // As in audit-entry-sql.ts, the stores differ only in how a statement names its
 // parameters and in how they run it.
 import type { Placeholder } from './audit-entry-sql.js';
-import type { NotificationScope, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
+import type { NotificationScope, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
 import type { AlertMemory, AlertState } from '../alerts/evaluation.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
 import type { RulePass, RulePassStatus, RuleState } from '../../shared/replay-rules.js';
@@ -78,7 +78,7 @@ export interface RunRow {
   interval_ms: number | null;
 }
 
-export function toRun(row: RunRow): SamplingRunRow {
+export function toRun(row: RunRow): StoredSamplingRun {
   return { at: row.at, ok: row.ok === 1, errorCode: row.error_code, intervalMs: row.interval_ms };
 }
 
@@ -95,19 +95,22 @@ export interface TakeOutRow {
 }
 
 /** Each Checkout's take-outs, by Decision, from a row per Checkout and action; oldest first. */
+/** How many notification outcomes `recent` answers with unless told otherwise. */
+export const RECENT_LIMIT = 100;
+
 export function toTakeOuts(rows: readonly TakeOutRow[]): TakeOut[] {
   const byCheckout = new Map<string, TakeOut>();
   for (const row of rows) {
-    const mark = byCheckout.get(row.checkout_id) ?? {
+    const takeOut = byCheckout.get(row.checkout_id) ?? {
       checkoutId: row.checkout_id,
       at: row.at,
       operator: row.operator,
       rule: row.rule,
       counts: { discard: 0, replay: 0, move: 0 },
     };
-    mark.at = Math.max(mark.at, row.at);
-    mark.counts[row.action] = Number(row.n);
-    byCheckout.set(row.checkout_id, mark);
+    takeOut.at = Math.max(takeOut.at, row.at);
+    takeOut.counts[row.action] = Number(row.n);
+    byCheckout.set(row.checkout_id, takeOut);
   }
   return [...byCheckout.values()].sort((a, b) => a.at - b.at);
 }

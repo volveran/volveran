@@ -68,28 +68,32 @@ async function main() {
     host: process.env.VOLVERAN_HOST ?? '127.0.0.1',
     port: Number(process.env.VOLVERAN_PORT ?? 8080),
   };
-  const [command, ...args] = process.argv.slice(2);
-  if (command === 'check-config') {
-    if (args.length > 0) {
-      throw new ConfigError('check-config takes no arguments: it checks the file named by VOLVERAN_PROFILES_FILE');
-    }
-    const { exitCode, lines } = await checkConfig(settings);
-    for (const line of lines) console.log(line);
-    process.exitCode = exitCode;
-    return;
-  }
-  if (command === 'copy-audit-store') {
-    if (args.length > 0) {
-      throw new ConfigError('copy-audit-store takes no arguments: it copies VOLVERAN_DATA_DIR into VOLVERAN_POSTGRES_URL');
-    }
-    const lines = await copyAuditStoreCommand(process.env, path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'));
-    for (const line of lines) console.log(line);
+  const dataDir = path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data');
+  const commands: Record<string, { refusal: string; run(): Promise<string[]> }> = {
+    'check-config': {
+      refusal: 'check-config takes no arguments: it checks the file named by VOLVERAN_PROFILES_FILE',
+      async run() {
+        const { exitCode, lines } = await checkConfig(settings);
+        process.exitCode = exitCode;
+        return lines;
+      },
+    },
+    'copy-audit-store': {
+      refusal: 'copy-audit-store takes no arguments: it copies VOLVERAN_DATA_DIR into VOLVERAN_POSTGRES_URL',
+      run: () => copyAuditStoreCommand(process.env, dataDir),
+    },
+  };
+  const [name, ...args] = process.argv.slice(2);
+  const command = name === undefined ? undefined : commands[name];
+  if (command) {
+    if (args.length > 0) throw new ConfigError(command.refusal);
+    for (const line of await command.run()) console.log(line);
     return;
   }
   const server = await startServer({
     ...settings,
     webRoot: process.env.VOLVERAN_WEB_ROOT ?? defaultWebRoot(import.meta.url),
-    dataDir: path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'),
+    dataDir,
     logger: true,
   });
   console.log(`${product.name} ${product.version} listening on ${server.url}`);

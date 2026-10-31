@@ -198,7 +198,7 @@ Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --ver
 **A deploy signs everyone out and ends open Checkouts.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
 
 - Sessions live in the Volverán process, so every Operator signs in again afterwards.
-- On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order, without costing Delivery Budget. An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
+- On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order (on a quorum queue, a large Checkout can use up Delivery Budget as it ends; see the [changelog](../CHANGELOG.md)). An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
 - `pod.terminationGracePeriodSeconds` (60 by default) is the time it has for that before `SIGKILL`. Raise it if Checkouts on slow brokers need longer.
 - The `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready.
 

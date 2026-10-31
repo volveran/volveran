@@ -9,11 +9,11 @@ export class PostgresAlertStore implements AlertStore {
   constructor(private readonly pool: pg.Pool) {}
 
   async load(profile: string): Promise<AlertMemory> {
-    const [alerts, arrivals] = await Promise.all([
-      this.pool.query<AlertRow>('SELECT * FROM alerts WHERE profile = $1 ORDER BY rule COLLATE "C", vhost COLLATE "C", queue COLLATE "C", replay_rule COLLATE "C"', [profile]),
-      this.pool.query<ArrivalsRow>('SELECT * FROM alert_queue_arrivals WHERE profile = $1 ORDER BY vhost COLLATE "C", queue COLLATE "C"', [profile]),
-    ]);
-    return toAlertMemory(alerts.rows, arrivals.rows);
+    return transaction(this.pool, async (client) => {
+      const alerts = await client.query<AlertRow>('SELECT * FROM alerts WHERE profile = $1 ORDER BY rule COLLATE "C", vhost COLLATE "C", queue COLLATE "C", replay_rule COLLATE "C"', [profile]);
+      const arrivals = await client.query<ArrivalsRow>('SELECT * FROM alert_queue_arrivals WHERE profile = $1 ORDER BY vhost COLLATE "C", queue COLLATE "C"', [profile]);
+      return toAlertMemory(alerts.rows, arrivals.rows);
+    });
   }
 
   async save(profile: string, memory: AlertMemory): Promise<void> {

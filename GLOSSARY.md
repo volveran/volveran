@@ -79,7 +79,7 @@ Sending a Message to a queue the user names, or to an exchange with a routing ke
 _Avoid_: Transfer, copy, shovel
 
 **Keep**:
-Returning a Message to its source queue unchanged at the end of a Checkout, without using up any of its Delivery Budget.
+Returning a Message to its source queue unchanged at the end of a Checkout. The return costs no Delivery Budget while the channel stays open, but on a quorum queue the channel closing straight after it, as a Checkout's end does today, can use some up (ADR 0006).
 _Avoid_: Skip, requeue, ignore
 
 **Died Again**:
@@ -131,6 +131,10 @@ _Avoid_: Local mode, dev mode, no-auth mode
 **Team Mode**:
 The tool running as a shared service that Operators reach over the network after signing in through single sign-on.
 _Avoid_: Server mode, hosted mode, SSO mode
+
+**Replica**:
+One running Volverán server among those sharing an audit store on PostgreSQL. Until multi-Replica work lands, run exactly one.
+_Avoid_: Pod, node
 
 **Audit Entry**:
 A record of one triage action: which Operator did it, as which broker user, when, on which Broker Profile and queue. For a Discard it includes a full copy of the Message.

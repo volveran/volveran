@@ -3,10 +3,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { NotificationDelivery } from '../../shared/alerts.js';
 import type { NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
-import { notificationScope, toDelivery, type NotificationRow } from './store-rows.js';
-
-/** How many outcomes `recent` answers with unless told otherwise. */
-const RECENT_LIMIT = 100;
+import { notificationScope, RECENT_LIMIT, toDelivery, type NotificationRow } from './store-rows.js';
 
 export class SqliteNotificationStore implements NotificationStore {
   constructor(private readonly db: DatabaseSync) {}

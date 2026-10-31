@@ -173,6 +173,7 @@ describe('Replay rule scheduler', () => {
     expect(started.status).toBe(201);
     const [row] = started.body.checkout.messages;
     const { message } = (await app.get(`/api/checkouts/${started.body.checkout.id}/messages/${row.handle}`)).body;
+    const decided = await app.post(`/api/checkouts/${started.body.checkout.id}/decisions`, { handles: [row.handle], decision: { kind: 'keep' } });
     await app.delete(`/api/checkouts/${started.body.checkout.id}`);
 
     // Attempt 1 waits 20 minutes from the Message's latest dead-lettering (its x-death time).
@@ -185,6 +186,8 @@ describe('Replay rule scheduler', () => {
     };
     expect(row.rule).toEqual(expected);
     expect(message.rule).toEqual(expected);
+    // Every response that shows the Checkout carries the badge.
+    expect(decided.body.checkout.messages[0].rule).toEqual(expected);
   });
 
   it('runs a rule when its timer fires, every `every` plus a small jitter', async () => {

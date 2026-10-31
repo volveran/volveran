@@ -4,14 +4,13 @@
 // one transaction, so a failure or a wrong row count leaves the target empty to try again.
 // Tables and columns come from the two schemas, so a future table cannot be left behind.
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type pg from 'pg';
 import { ConfigError } from '../config-error.js';
 import { PostgresAuditStore } from './postgres-audit-store.js';
-import { asStartupError, createPool, transaction, type PostgresTls } from './postgres-connection.js';
-import { parsePostgresUrl } from './postgres-url.js';
+import { asStartupError, createPool, numbered, transaction, type PostgresTls } from './postgres-connection.js';
+import { parsePostgresUrl, readPostgresTls } from './postgres-url.js';
 import { AUDIT_DB_FILE, SqliteAuditStore } from './sqlite-audit-store.js';
 
 export interface CopyAuditStoreOptions {
@@ -81,7 +80,7 @@ async function copyRows(source: DatabaseSync, client: pg.PoolClient, table: stri
   const insertInto = `INSERT INTO ${quoted(table)} (${columns.map(quoted).join(', ')}) VALUES `;
   const flush = async (batch: unknown[][]) => {
     if (batch.length === 0) return;
-    const rows = batch.map((_, r) => `(${columns.map((_, c) => `$${r * columns.length + c + 1}`).join(', ')})`);
+    const rows = batch.map((_, r) => `(${columns.map((_, c) => numbered(r * columns.length + c + 1)).join(', ')})`);
     await client.query(insertInto + rows.join(', '), batch.flat());
   };
   // In key order, so a Restore's entry follows the Discard it refers to.
@@ -163,14 +162,6 @@ export async function copyAuditStoreCommand(env: Record<string, string | undefin
   const settings = parsePostgresUrl(env);
   if (!settings.ok) throw new ConfigError(settings.error);
   if (settings.url === null) throw new ConfigError('copy-audit-store needs VOLVERAN_POSTGRES_URL, the database to copy into.');
-  let tls: PostgresTls | null = settings.tls && {};
-  if (settings.tls?.caFile) {
-    try {
-      tls = { ca: await readFile(settings.tls.caFile, 'utf8') };
-    } catch (err) {
-      throw new ConfigError(`VOLVERAN_POSTGRES_CA_FILE could not be read: ${(err as Error).message}`);
-    }
-  }
-  const copied = await copyAuditStore({ dataDir, postgresUrl: settings.url, tls });
+  const copied = await copyAuditStore({ dataDir, postgresUrl: settings.url, tls: await readPostgresTls(settings.tls) });
   return [...copied.map(({ table, rows }) => `${table}: ${rows} rows, verified`), 'OK: copied, and the SQLite store is still there. Set VOLVERAN_POSTGRES_URL on Volverán and start it.'];
 }

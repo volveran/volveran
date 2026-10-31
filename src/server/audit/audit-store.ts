@@ -162,7 +162,7 @@ export interface StoredSample {
   estimatedArrivals: number | null;
 }
 
-export interface SamplingRunRow {
+export interface StoredSamplingRun {
   /** Epoch milliseconds. */
   at: number;
   ok: boolean;
@@ -274,15 +274,15 @@ export interface RuleStateStore {
 /** Depth history: one Sample per dead-letter queue per sampling run, one run per Broker Profile. */
 export interface HistoryStore {
   /** Records a sampling run and its Samples in one commit. */
-  recordRun(profile: string, run: SamplingRunRow, samples: readonly QueueSample[]): Promise<void>;
+  recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void>;
   /** The queue's latest Sample before `before` (default: of all), or null. */
   latestSample(queue: SampledQueue, before?: number): Promise<StoredSample | null>;
   /** The queue's Samples from `from` to `to` (inclusive), oldest first. */
   samples(queue: SampledQueue, from: number, to: number): Promise<StoredSample[]>;
   /** The profile's runs in the range, oldest first, from its last good run before the range to its first good run after. */
-  runsAround(profile: string, from: number, to: number): Promise<SamplingRunRow[]>;
+  runsAround(profile: string, from: number, to: number): Promise<StoredSamplingRun[]>;
   /** The profile's latest run and latest good run, for the latest snapshot after a restart. */
-  lastRuns(profile: string): Promise<{ last: SamplingRunRow | null; lastOk: SamplingRunRow | null }>;
+  lastRuns(profile: string): Promise<{ last: StoredSamplingRun | null; lastOk: StoredSamplingRun | null }>;
   /** When the profile's latest good run before `before` ran, or null. */
   lastGoodRunBefore(profile: string, before: number): Promise<number | null>;
   /** How many Messages Volverán took out of the queue after `after`, up to and including `until`. */

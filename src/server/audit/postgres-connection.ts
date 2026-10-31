@@ -76,13 +76,22 @@ export function createPool(connectionString: string, { tls, queryTimeoutMs = QUE
     Client: StoreClient,
     ...(tls && { ssl: { rejectUnauthorized: true, ca: tls.ca } }),
   });
+  // ADR 0001 needs a commit durable when it answers, whatever the database or role is set
+  // to. This is queued ahead of anything the connection is asked. If it fails, the
+  // connection goes, so nothing commits on it with the setting in doubt.
+  pool.on('connect', (client) => {
+    client.query('SET synchronous_commit = on').catch(() => client.end().catch(() => {}));
+  });
   // A connection lost while idle. The pool drops it and the next call makes a new one or
   // rejects; without a listener, the event would stop the process.
   pool.on('error', () => {});
   return pool;
 }
 
-/** Runs `work` in one transaction: committed when it resolves, rolled back when it rejects. */
+/** PostgreSQL's placeholder for the parameter at this position, from 1. */
+export const numbered = (position: number) => `$${position}`;
+
+/** Runs `work` in one transaction: committed when it resolves, gone with its connection when it rejects. */
 export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   let failure: Error | undefined;
@@ -93,10 +102,10 @@ export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient
     return result;
   } catch (err) {
     failure = err as Error;
-    await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
-    // A connection whose transaction failed is not trusted again.
+    // A connection whose transaction failed is not trusted again. Dropping it rolls the
+    // transaction back; asking on a silent connection would wait out a second timeout.
     client.release(failure);
   }
 }
@@ -125,6 +134,11 @@ function explain(err: Error & { code?: string }, connectionString: string): stri
   }
   if (code === 'ENOENT' || code === 'EACCES') return `Could not read a file VOLVERAN_POSTGRES_URL names: ${detail}.`;
   return null;
+}
+
+/** `err`, from startup work on an open store, as asStartupError when PostgreSQL refused it; otherwise `err`. */
+export function refusalAsStartupError(err: unknown, connectionString: string): unknown {
+  return err instanceof pg.DatabaseError ? asStartupError(err, connectionString) : err;
 }
 
 /** `err` as the clear startup error it should be, when it is about PostgreSQL; otherwise `err`. */
