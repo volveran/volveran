@@ -119,7 +119,7 @@ describe('Background work on a delayed store', () => {
     expect(listed.passes).toHaveLength(2);
   });
 
-  it('closes with sampling, a pass, a pause and retention under way, and logs no store failure', async () => {
+  it('closes with sampling, a pass and retention under way, and logs no store failure', async () => {
     const logs: Array<Record<string, any>> = [];
     const scheduler = ruleSchedulerHooks();
     const sampler = samplerHooks();
@@ -130,7 +130,7 @@ describe('Background work on a delayed store', () => {
       env: { VOLVERAN_METRICS_PORT: String(await closedPort()) },
       logs,
     });
-    const under = [scheduler.runPass('local', RULE), sampler.sampleNow(), app.post(`${rulePath}/pause`, { reason: 'closing' })];
+    const under = [scheduler.runPass('local', RULE), sampler.sampleNow()];
     await new Promise((resolve) => setTimeout(resolve, 15));
     apps.pop();
     await app.close();

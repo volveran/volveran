@@ -35,9 +35,9 @@ export class StoreReadings<T> {
   /** Resolves after a reading that began after this call has ended; never rejects. Does nothing unless started. */
   refresh(): Promise<void> {
     if (!this.started) return Promise.resolve();
-    if (!this.running) return this.begin();
+    if (!this.running && !this.next) return this.begin();
     // The one running may have read too early for this caller.
-    this.next ??= this.running.then(() => {
+    this.next ??= this.running!.then(() => {
       this.next = null;
       return this.started ? this.begin() : undefined;
     });
