@@ -68,7 +68,7 @@ export function registerProfileRoutes(app: FastifyInstance, access: ProfileAcces
     const queues = narrowQueues(reading.queues, { onlyDeadLetterQueues: req.query.onlyDeadLetterQueues === 'true', search: req.query.search });
     return {
       defaultQueueFilter: profile.defaultQueueFilter ?? null,
-      queues: firingAlertsOn(alerts, profile.name, vhost, isSampled(profile) ? depthSeriesOf(history, profile.name, vhost, queues) : queues),
+      queues: await firingAlertsOn(alerts, profile.name, vhost, isSampled(profile) ? await depthSeriesOf(history, profile.name, vhost, queues) : queues),
       setupWarningCounts: reading.setupWarningCounts,
     };
   });

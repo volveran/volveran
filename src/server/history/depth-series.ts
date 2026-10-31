@@ -3,7 +3,7 @@
 // are the profile's, read once for the whole list.
 import { downsample } from './downsample.js';
 import { historyGaps } from './gaps.js';
-import type { HistoryStore } from '../audit/history.js';
+import type { HistoryStore } from '../audit/audit-store.js';
 import type { RuleClock } from '../replay-rules/rule-clock.js';
 import type { DepthSeries } from '../../shared/history.js';
 import type { QueueRow } from '../../shared/queues.js';
@@ -18,20 +18,22 @@ export interface DepthSeriesDeps {
   intervalMs: number;
 }
 
-export function depthSeriesOf(
+export async function depthSeriesOf(
   { history, clock, intervalMs }: DepthSeriesDeps,
   profile: string,
   vhost: string,
   queues: readonly QueueRow[],
-): QueueRow[] {
+): Promise<QueueRow[]> {
   const to = clock.now().getTime();
   const from = to - DAY_MS;
-  const gaps: DepthSeries['gaps'] = historyGaps(history.runsAround(profile, from, to), { from, to, now: to, intervalMs }).map(
+  const gaps: DepthSeries['gaps'] = historyGaps(await history.runsAround(profile, from, to), { from, to, now: to, intervalMs }).map(
     (g) => ({ from: g.from, to: g.to }),
   );
-  return queues.map((queue) => {
-    if (!queue.deadLetterQueue) return queue;
-    const samples = downsample(history.samples({ profile, vhost, queue: queue.name }, from, to), MAX_SAMPLES);
-    return { ...queue, depthSeries: { from, to, points: samples.map((s) => [s.at, s.depth]), gaps } };
-  });
+  return Promise.all(
+    queues.map(async (queue) => {
+      if (!queue.deadLetterQueue) return queue;
+      const samples = downsample(await history.samples({ profile, vhost, queue: queue.name }, from, to), MAX_SAMPLES);
+      return { ...queue, depthSeries: { from, to, points: samples.map((s): [number, number] => [s.at, s.depth]), gaps } };
+    }),
+  );
 }

@@ -56,7 +56,7 @@ export interface RulePassOptions {
   /** The time the back-off is measured against (default: when the pass starts). */
   now?: Date;
   /** When a pass of the rule first saw each message id (rule state), storing `now` for new ones; default none. */
-  firstSeen?(messageIds: string[], now: Date): Map<string, Date>;
+  firstSeen?(messageIds: string[], now: Date): Promise<Map<string, Date>>;
 }
 
 /** What a pass saw that its automatic stop needs (not kept with the pass). */
@@ -95,7 +95,7 @@ export async function runRulePass(
   };
   try {
     const messageIds = [...checkout.held.values()].flatMap((d) => messageIdOf(d) ?? []);
-    const firstSeen = options.firstSeen?.(messageIds, now) ?? new Map<string, Date>();
+    const firstSeen = (await options.firstSeen?.(messageIds, now)) ?? new Map<string, Date>();
     const due: number[] = [];
     const usedUp: number[] = [];
     for (const [handle, delivery] of checkout.held) {

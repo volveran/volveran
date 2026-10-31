@@ -8,7 +8,7 @@
 // error code, because a network error's text can name the URL.
 import { randomUUID } from 'node:crypto';
 import { HttpError } from '../http-error.js';
-import type { NotificationStore, NewNotificationDelivery } from '../audit/notifications.js';
+import type { NotificationStore, NewNotificationDelivery } from '../audit/audit-store.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
 import type { AlertDestination } from './destinations.js';
 import { buildRequest, testNotification, type Notification } from './payloads.js';
@@ -87,7 +87,7 @@ export class Notifier {
       result = await this.attempt(destination, notification);
       if (result.outcome === 'delivered') break;
     }
-    const delivery = this.record(destination, notification, result, attempts);
+    const delivery = await this.record(destination, notification, result, attempts);
     this.options.onDelivered?.(delivery);
     return delivery;
   }
@@ -134,12 +134,12 @@ export class Notifier {
     });
   }
 
-  private record(
+  private async record(
     destination: AlertDestination,
     n: Notification,
     result: AttemptResult,
     attempts: number,
-  ): NotificationDelivery {
+  ): Promise<NotificationDelivery> {
     const entry: NewNotificationDelivery = {
       at: new Date(),
       alertId: n.alertId,
@@ -156,7 +156,7 @@ export class Notifier {
       attempts,
     };
     try {
-      return this.options.store.record(entry);
+      return await this.options.store.record(entry);
     } catch (err) {
       // A delivery that happened stays reported, even if the store could not take its outcome.
       this.options.onError?.(err);
