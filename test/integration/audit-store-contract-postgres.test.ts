@@ -3,32 +3,14 @@ import { PostgresAuditStore } from '../../src/server/audit/postgres-audit-store.
 import { auditStoreContract } from '../support/audit-store-contract.js';
 import { createTestDatabase } from '../support/test-postgres.js';
 
-auditStoreContract(
-  'PostgreSQL',
-  async () => {
-    const database = await createTestDatabase();
-    return {
-      store: await PostgresAuditStore.open(database.url),
-      reopen: () => PostgresAuditStore.open(database.url),
-      makeNewer: async () => {
-        await database.query('UPDATE audit_store_version SET version = 100000');
-      },
-      cleanup: () => database.drop(),
-    };
-  },
-  [
-    'Audit Entries',
-    'plain text',
-    'search',
-    'replay trail',
-    'retention',
-    'Replay Rule state',
-    'depth history',
-    'notifications',
-    'Alerts',
-    'a call is one atomic unit of work',
-    'failures',
-    'closing',
-    'a store newer than the binary',
-  ],
-);
+auditStoreContract('PostgreSQL', async () => {
+  const database = await createTestDatabase();
+  return {
+    store: await PostgresAuditStore.open(database.url),
+    reopen: () => PostgresAuditStore.open(database.url),
+    makeNewer: async () => {
+      await database.query('UPDATE audit_store_version SET version = 100000');
+    },
+    cleanup: () => database.drop(),
+  };
+});

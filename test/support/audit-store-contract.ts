@@ -29,24 +29,6 @@ export interface OpenedAuditStore {
   cleanup(): Promise<void>;
 }
 
-/** The contract's parts, so that an implementation still being built can switch them on as it gets there. */
-export const CONTRACT_PARTS = [
-  'Audit Entries',
-  'search',
-  'plain text',
-  'replay trail',
-  'retention',
-  'Replay Rule state',
-  'depth history',
-  'notifications',
-  'Alerts',
-  'a call is one atomic unit of work',
-  'failures',
-  'closing',
-  'a store newer than the binary',
-] as const;
-export type ContractPart = (typeof CONTRACT_PARTS)[number];
-
 const AT = new Date('2026-10-01T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
 const after = (ms: number) => new Date(AT.getTime() + ms);
@@ -69,9 +51,7 @@ function entry(overrides: Partial<NewAuditEntry> = {}): NewAuditEntry {
   };
 }
 
-/** Runs `parts` of the contract (all of them unless told otherwise); the rest show as skipped. */
-export function auditStoreContract(name: string, open: () => Promise<OpenedAuditStore>, parts: readonly ContractPart[] = CONTRACT_PARTS): void {
-  const part = (title: ContractPart, tests: () => void) => describe.runIf(parts.includes(title))(title, tests);
+export function auditStoreContract(name: string, open: () => Promise<OpenedAuditStore>): void {
   // Some of these write thousands of rows; a database over a network takes its time.
   describe(`the audit store contract: ${name}`, { timeout: 60_000 }, () => {
     let opened: OpenedAuditStore;
@@ -93,7 +73,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       await opened.cleanup();
     });
 
-    part('Audit Entries', () => {
+    describe('Audit Entries', () => {
       it('records a pending entry with who, where and why, then its outcome', async () => {
         const id = await store.record(entry());
 
@@ -225,7 +205,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('plain text', () => {
+    describe('plain text', () => {
       const NUL = 'a\0b';
       const everyTextField = entry({
         operator: { id: NUL, displayName: NUL },
@@ -395,7 +375,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('search', () => {
+    describe('search', () => {
       const ids = async (query?: AuditQuery) => (await store.list(query)).map((e) => e.id);
 
       it('lists every entry newest first without a query, and without bodies', async () => {
@@ -477,7 +457,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('replay trail', () => {
+    describe('replay trail', () => {
       const headers = (replayId?: string) => (replayId ? { 'x-volveran-replay-id': replayId } : {});
       const copy = (replayId?: string) => ({ body: null, properties: {}, headers: headers(replayId) });
 
@@ -500,7 +480,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('retention', () => {
+    describe('retention', () => {
       const NO_SIZE_LIMIT = Number.MAX_SAFE_INTEGER;
       const NOW = AT;
       const discard = (messageId: string, ageMs: number, bytes: number) =>
@@ -602,7 +582,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('Replay Rule state', () => {
+    describe('Replay Rule state', () => {
       const KEY = 'local/transient-payments';
       const pass = (n: number): RulePass => ({
         id: `pass-${n}`,
@@ -706,7 +686,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('depth history', () => {
+    describe('depth history', () => {
       const QUEUE = { profile: 'local', vhost: '/', queue: 'orders.dlq' };
       const run = (at: number, ok = true): StoredSamplingRun => ({ at, ok, errorCode: ok ? null : 'broker_unreachable', intervalMs: 1000 });
       const sample = (at: number, depth: number, overrides: Partial<QueueSample> = {}): QueueSample => ({ vhost: '/', queue: 'orders.dlq', at, depth, estimatedArrivals: null, ...overrides });
@@ -823,7 +803,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('notifications', () => {
+    describe('notifications', () => {
       const delivery = (overrides: Partial<NewNotificationDelivery> = {}): NewNotificationDelivery => ({
         at: AT,
         alertId: 'a-1',
@@ -899,7 +879,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('Alerts', () => {
+    describe('Alerts', () => {
       const firing: AlertMemory['alerts'][number] = {
         alertId: 'a-1',
         rule: 'deep',
@@ -973,7 +953,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('a call is one atomic unit of work', () => {
+    describe('a call is one atomic unit of work', () => {
       it('leaves what was remembered of a profile when saving fails partway', async () => {
         const firing: AlertMemory['alerts'][number] = {
           alertId: 'a-1',
@@ -1017,7 +997,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('failures', () => {
+    describe('failures', () => {
       it('rejects rather than throws on a closed store, on every part of it', async () => {
         await store.close();
         const calls: Array<() => Promise<unknown>> = [
@@ -1041,7 +1021,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('closing', () => {
+    describe('closing', () => {
       it('answers a ping while it is open', async () => {
         await expect(store.ping()).resolves.toBeUndefined();
       });
@@ -1052,7 +1032,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    part('a store newer than the binary', () => {
+    describe('a store newer than the binary', () => {
       it('refuses to open it, and leaves it refused', async () => {
         await store.record(entry());
         await store.close();
