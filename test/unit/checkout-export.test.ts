@@ -3,7 +3,7 @@
 // test/integration/export.test.ts covers the rest against a real broker.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AuditStore } from '../../src/server/audit/audit-store.js';
-import { AuditStore as SyncAuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { startExport } from '../../src/server/checkout/export.js';
 import type { Checkout } from '../../src/server/checkout/state.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
@@ -32,20 +32,20 @@ const checkoutOf = (ids: string[]) =>
   }) as unknown as Checkout;
 
 describe('an export on a store that answers late', () => {
-  let sync: SyncAuditStore;
+  let sqlite: SqliteAuditStore;
   let slow: AuditStore;
-  const entry = () => sync.list({ action: 'export' })[0];
+  const entry = async () => (await sqlite.list({ action: 'export' }))[0];
 
   beforeEach(() => {
-    sync = new SyncAuditStore();
-    slow = delayedAuditStore(sync.async);
+    sqlite = new SqliteAuditStore();
+    slow = delayedAuditStore(sqlite);
   });
-  afterEach(() => sync.close());
+  afterEach(() => sqlite.close());
 
   it('has its pending Audit Entry stored once it has started', async () => {
     const started = await startExport(checkoutOf(['a']), null, { audit: slow, role: 'operator' });
     expect(started.count).toBe(1);
-    expect(entry()).toMatchObject({ outcome: 'pending', messageCount: 1 });
+    expect(await entry()).toMatchObject({ outcome: 'pending', messageCount: 1 });
   });
 
   it('keeps the Messages and Decisions as they were when it started', async () => {
@@ -64,7 +64,7 @@ describe('an export on a store that answers late', () => {
   it('has stored the outcome by the time the last line has been read', async () => {
     const { lines } = await startExport(checkoutOf(['a', 'b']), null, { audit: slow, role: 'operator' });
     for await (const _ of lines);
-    expect(entry()).toMatchObject({ outcome: 'done' });
+    expect(await entry()).toMatchObject({ outcome: 'done' });
   });
 
   it('has stored the failure by the time a stopped download has closed', async () => {
@@ -72,13 +72,13 @@ describe('an export on a store that answers late', () => {
     const reading = lines[Symbol.asyncIterator]();
     await reading.next();
     await reading.return!(undefined);
-    expect(entry()).toMatchObject({ outcome: 'failed', outcomeReason: 'The download stopped after 1 of 2 Messages.' });
+    expect(await entry()).toMatchObject({ outcome: 'failed', outcomeReason: 'The download stopped after 1 of 2 Messages.' });
   });
 
   it('refuses a Checkout that is over, recording nothing', async () => {
     const checkout = checkoutOf(['a']);
     checkout.status = 'ended' as Checkout['status'];
     await expect(startExport(checkout, null, { audit: slow, role: 'operator' })).rejects.toMatchObject({ code: 'checkout_not_active' });
-    expect(sync.list({ action: 'export' })).toEqual([]);
+    expect(await sqlite.list({ action: 'export' })).toEqual([]);
   });
 });

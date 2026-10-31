@@ -2,7 +2,7 @@
 // one turn per profile, so evaluations cannot lose each other's result.
 import { afterEach, describe, expect, it } from 'vitest';
 import { Alerting } from '../../src/server/alerts/alerting.js';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import type { FinishedRun } from '../../src/server/history/sampler.js';
 import { parseProfilesFile } from '../../src/server/profiles.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
@@ -28,15 +28,15 @@ const deepRun = (name: string): FinishedRun => ({
 });
 
 describe('Alerting on a delayed store', () => {
-  const stores: AuditStore[] = [];
-  afterEach(() => {
-    while (stores.length) stores.pop()!.close();
+  const stores: SqliteAuditStore[] = [];
+  afterEach(async () => {
+    while (stores.length) await stores.pop()!.close();
   });
 
   function alertingOn(calls: string[]) {
-    const sync = new AuditStore();
-    stores.push(sync);
-    const store = delayedAuditStore(sync.async, async (call) => {
+    const sqlite = new SqliteAuditStore();
+    stores.push(sqlite);
+    const store = delayedAuditStore(sqlite, async (call) => {
       calls.push(call);
       await new Promise((resolve) => setTimeout(resolve, 5));
     });
@@ -69,10 +69,10 @@ describe('Alerting on a delayed store', () => {
   });
 
   it('goes on after an evaluation that failed, and a Replay Rule change never rejects', async () => {
-    const sync = new AuditStore();
-    stores.push(sync);
+    const sqlite = new SqliteAuditStore();
+    stores.push(sqlite);
     let failing = true;
-    const store = delayedAuditStore(sync.async, () => {
+    const store = delayedAuditStore(sqlite, () => {
       if (failing) throw new Error('store gone');
     });
     const sent: unknown[] = [];

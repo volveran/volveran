@@ -9,8 +9,8 @@ import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
-import type { AuditStore as AsyncAuditStore } from './audit/audit-store.js';
-import { AuditStore } from './audit/store.js';
+import type { AuditStore } from './audit/audit-store.js';
+import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
 import { AlertMetrics } from './metrics/alerts.js';
@@ -66,7 +66,7 @@ export interface ServerOptions {
   /** Overrides the body retention from VOLVERAN_BODY_RETENTION_DAYS / _MAX_BYTES / _INTERVAL_MINUTES. */
   bodyRetention?: Partial<BodyRetention>;
   /** Test seam: what the callers on the audit store interface talk to (a delayed store); unset in production. */
-  wrapAuditStore?(store: AsyncAuditStore): AsyncAuditStore;
+  wrapAuditStore?(store: AuditStore): AuditStore;
   /** Test seams of the Checkout manager; unset in production. */
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
@@ -91,16 +91,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     file: { profiles, alertDestinations, versionDeclared },
   } = await readStartupConfig(options);
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const audit = new AuditStore(options.dataDir);
-  const asyncAudit = options.wrapAuditStore?.(audit.async) ?? audit.async;
+  const sqliteAudit = new SqliteAuditStore(options.dataDir);
+  const auditStore = options.wrapAuditStore?.(sqliteAudit) ?? sqliteAudit;
   // A scrape takes the last of these readings and never waits on the store. Replay
   // Rules are created below; this reads only once it has started.
   const metricsReadings = new StoreReadings({
     read: async () => {
       const [ruleStates, storedBodyBytes, memories] = await Promise.all([
         replayRules.states(),
-        asyncAudit.storedBodyBytes(),
-        Promise.all(profiles.map((p) => asyncAudit.alerts.load(p.name))),
+        auditStore.storedBodyBytes(),
+        Promise.all(profiles.map((p) => auditStore.alerts.load(p.name))),
       ]);
       const firingRules = new Map(profiles.map((p, i) => [p.name, memories[i]!.alerts.filter((a) => a.status === 'firing').map((a) => a.rule)]));
       return { ruleStates, storedBodyBytes, firingRules };
@@ -116,7 +116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     storedBodyBytes: () => metricsReadings.current()?.storedBodyBytes ?? null,
   });
   const checkouts = new CheckoutManager({
-    audit: asyncAudit,
+    audit: auditStore,
     limits,
     enforceApproval: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
@@ -141,11 +141,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
         }),
       };
-  const restore = new RestoreService(asyncAudit, (id) => checkouts.isRunning(id));
+  const restore = new RestoreService(auditStore, (id) => checkouts.isRunning(id));
   const replayRules = new ReplayRules({
     checkouts,
-    state: asyncAudit.ruleState,
-    audit: asyncAudit,
+    state: auditStore.ruleState,
+    audit: auditStore,
     profiles,
     testHooks: options.checkoutTestHooks?.ruleScheduler,
     // Called only once the app below is listening.
@@ -160,7 +160,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
   const sampler = new QueueSampler({
     profiles,
-    history: asyncAudit.history,
+    history: auditStore.history,
     intervalMs: config.historyIntervalMs,
     testHooks: options.samplerTestHooks,
     // Called only once the app below is listening.
@@ -172,14 +172,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const notifier = new Notifier({
     onDelivered: (delivery) => alertMetrics.delivered(delivery),
     destinations: alertDestinations,
-    store: asyncAudit.notifications,
+    store: auditStore.notifications,
     publicUrl: config.publicUrl,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'The outcome of a notification could not be recorded'),
   });
   const alerting = new Alerting({
     profiles,
-    store: asyncAudit.alerts,
+    store: auditStore.alerts,
     notifier,
     clock: samplerClock,
     pausedReplayRules: (profile) => replayRules.pausedRules(profile),
@@ -191,7 +191,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await alerting.evaluate(finished);
     await metricsReadings.refresh();
   });
-  const usage = async () => bodyStoreUsage(await asyncAudit.storedBodyBytes(), retention);
+  const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
     access,
@@ -199,8 +199,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     replayRules,
     notifier,
     alertDestinations,
-    audit: { audit: asyncAudit, restore, usage },
-    history: { history: asyncAudit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
+    audit: { audit: auditStore, restore, usage },
+    history: { history: auditStore.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
   });
@@ -246,13 +246,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
   const evict = async () => {
     try {
-      const { evicted } = await asyncAudit.evictBodies({ now: new Date(), ...retention });
+      const { evicted } = await auditStore.evictBodies({ now: new Date(), ...retention });
       if (evicted > 0) app.log.info({ evicted }, 'Retention evicted Discarded Message bodies');
     } catch (err) {
       app.log.error(err, 'Retention could not evict Discarded Message bodies');
     }
     try {
-      await asyncAudit.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
+      await auditStore.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
     } catch (err) {
       app.log.error(err, 'Retention could not remove old notification outcomes');
     }
@@ -260,7 +260,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // The same job removes Samples and sampling runs past the history retention.
   const removeOldHistory = async () => {
     try {
-      const { samples } = await asyncAudit.history.removeOlderThan(Date.now() - config.historyRetentionMs);
+      const { samples } = await auditStore.history.removeOlderThan(Date.now() - config.historyRetentionMs);
       if (samples > 0) app.log.info({ samples }, 'Retention removed old Samples');
     } catch (err) {
       app.log.error(err, 'Retention could not remove old Samples');
@@ -297,7 +297,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await alerting.stop();
     await notifier.close();
     await checkouts.endAll();
-    await asyncAudit.close();
+    await auditStore.close();
   });
   try {
     await alerting.start();

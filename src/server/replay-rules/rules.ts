@@ -1,6 +1,6 @@
 // The Replay Rules of every Broker Profile (ADR 0011), owned by the server
 // like the Checkout manager: their declarations from the profiles file, their
-// state in the audit store (audit/rule-state.ts), and the scheduler.
+// state in the audit store (audit/audit-store.ts), and the scheduler.
 //
 // - start() gives every rule its state the first time it is seen (paused
 //   when `startPaused`; the stored state wins afterwards) and schedules each

@@ -9,9 +9,11 @@ The interface holds these promises for any implementation:
 - **A store call is an interleave point for the caller.** Other requests can run while one is awaited. A section that must be first-wins claims its state in memory before its first store call, never after.
 - **Types are the store's vocabulary, not a database's.** Rows, statements and connections stay inside an implementation.
 
-SQLite keeps doing its work synchronously inside each call (`SqliteAuditStore` wraps the synchronous store), so its transactions cannot interleave and its speed does not change. Each write still fsyncs on the event loop, as it always has.
+SQLite keeps doing its work synchronously inside each call (`SqliteAuditStore` never awaits within one), so its transactions cannot interleave and its speed does not change. Each write still fsyncs on the event loop, as it always has.
 
-The move is an expand and contract: the interface comes first beside the synchronous form, `AuditStore.async` hands out the asynchronous form on the same connection so that both can run together, callers move in groups, and the synchronous form goes when none is left. During the move the interface has the name it keeps, so moving a caller changes its import and adds its awaits, and nothing is renamed at the end.
+The move was an expand and contract: the interface came first beside the synchronous form, which handed out the asynchronous form on the same connection so that both could run together, callers moved in groups, and the synchronous form went when none was left. During the move the interface had the name it keeps, so moving a caller changed its import and added its awaits, and nothing was renamed at the end.
+
+What the interface promises is checked by one contract suite, `auditStoreContract` in `test/support/audit-store-contract.ts`. It takes the implementation as a parameter and looks at nothing but the interface.
 
 ## Considered Options
 

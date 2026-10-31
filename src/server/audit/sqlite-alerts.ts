@@ -3,15 +3,16 @@
 // One evaluation's result replaces the profile's rows.
 import type { DatabaseSync } from 'node:sqlite';
 import type { AlertMemory, AlertState } from '../alerts/evaluation.js';
+import type { AlertStore } from './audit-store.js';
 
 /** Stands for no vhost, queue or Replay Rule in the tables' keys. */
 const NONE = '';
 
-export class AlertStore {
+export class SqliteAlertStore implements AlertStore {
   constructor(private readonly db: DatabaseSync) {}
 
   /** What is remembered of the profile. */
-  load(profile: string): AlertMemory {
+  async load(profile: string): Promise<AlertMemory> {
     const alerts = this.db.prepare('SELECT * FROM alerts WHERE profile = ? ORDER BY rule, vhost, queue, replay_rule').all(profile) as unknown as AlertRow[];
     const arrivals = this.db.prepare('SELECT * FROM alert_queue_arrivals WHERE profile = ? ORDER BY vhost, queue').all(profile) as unknown as ArrivalsRow[];
     return {
@@ -35,7 +36,7 @@ export class AlertStore {
   }
 
   /** Replaces what is remembered of the profile, in one commit. */
-  save(profile: string, memory: AlertMemory): void {
+  async save(profile: string, memory: AlertMemory): Promise<void> {
     this.transaction(() => {
       this.db.prepare('DELETE FROM alerts WHERE profile = ?').run(profile);
       this.db.prepare('DELETE FROM alert_queue_arrivals WHERE profile = ?').run(profile);
@@ -52,7 +53,7 @@ export class AlertStore {
   }
 
   /** Quietly forgets the Alerts of rules no longer in the file, and all of profiles no longer in it. */
-  keepOnly(rulesByProfile: ReadonlyMap<string, readonly string[]>): void {
+  async keepOnly(rulesByProfile: ReadonlyMap<string, readonly string[]>): Promise<void> {
     this.transaction(() => {
       const rows = this.db.prepare('SELECT DISTINCT profile, rule FROM alerts').all() as unknown as Array<{ profile: string; rule: string }>;
       const remove = this.db.prepare('DELETE FROM alerts WHERE profile = ? AND rule = ?');

@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditStore } from '../../src/server/audit/audit-store.js';
 import { RestoreService } from '../../src/server/audit/restore.js';
-import { AuditStore as SyncAuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import type { ProfileAccess } from '../../src/server/profile-access.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
 
@@ -25,14 +25,14 @@ const target = {
 } as unknown as ProfileAccess;
 
 describe('Restore on a store that answers late', () => {
-  let sync: SyncAuditStore;
+  let sqlite: SqliteAuditStore;
   let slow: AuditStore;
   let discardId: number;
 
-  beforeEach(() => {
-    sync = new SyncAuditStore();
-    slow = delayedAuditStore(sync.async);
-    discardId = sync.record({
+  beforeEach(async () => {
+    sqlite = new SqliteAuditStore();
+    slow = delayedAuditStore(sqlite);
+    discardId = await sqlite.record({
       at: new Date('2026-10-01T12:00:00.000Z'),
       operator: OPERATOR,
       brokerUser: 'svc',
@@ -46,10 +46,10 @@ describe('Restore on a store that answers late', () => {
       checkoutId: 'c-1',
       message: { body: Buffer.from('hello'), properties: {}, headers: {} },
     });
-    sync.setOutcome(discardId, 'done');
+    await sqlite.setOutcome(discardId, 'done');
     opened.run = async () => {};
   });
-  afterEach(() => sync.close());
+  afterEach(() => sqlite.close());
 
   const restore = (service: RestoreService) => service.restore(discardId, { confirm: true }, OPERATOR, target);
   const service = (audit: AuditStore = slow) => new RestoreService(audit, () => false);
@@ -57,7 +57,7 @@ describe('Restore on a store that answers late', () => {
   it('has its pending Audit Entry stored before it publishes', async () => {
     const atPublish: string[] = [];
     opened.run = async () => {
-      atPublish.push(...sync.list({ restoreOf: discardId }).map((e) => e.outcome));
+      atPublish.push(...(await sqlite.list({ restoreOf: discardId })).map((e) => e.outcome));
     };
     await restore(service());
     expect(atPublish).toEqual(['pending']);
@@ -73,12 +73,12 @@ describe('Restore on a store that answers late', () => {
     const results = await Promise.allSettled([restore(s), restore(s)]);
     expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'restore_in_progress' } });
-    expect(sync.list({ restoreOf: discardId })).toHaveLength(1);
+    expect(await sqlite.list({ restoreOf: discardId })).toHaveLength(1);
   });
 
   it('refuses a second Restore once the first has done its work', async () => {
-    const { id: _id, ...discard } = sync.get(discardId)!;
-    sync.record({ ...discard, operator: OPERATOR, action: 'restore', restoreOf: discardId, message: null });
+    const { id: _id, ...discard } = (await sqlite.get(discardId))!;
+    await sqlite.record({ ...discard, operator: OPERATOR, action: 'restore', restoreOf: discardId, message: null });
     await expect(restore(service())).rejects.toMatchObject({ code: 'already_restored' });
   });
 

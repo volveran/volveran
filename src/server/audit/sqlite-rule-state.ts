@@ -13,23 +13,25 @@
 //   stop. Only the stop's window is kept; a resume clears them.
 import type { DatabaseSync } from 'node:sqlite';
 import type { RulePass, RulePassStatus, RuleState } from '../../shared/replay-rules.js';
-import { FIRST_SEEN_LIMIT, PASS_HISTORY } from './audit-store.js';
+import { FIRST_SEEN_LIMIT, PASS_HISTORY, type RuleStateStore } from './audit-store.js';
 
-export { FIRST_SEEN_LIMIT, PASS_HISTORY };
-
-export class RuleStateStore {
+export class SqliteRuleStateStore implements RuleStateStore {
   constructor(private readonly db: DatabaseSync) {}
 
   /** The rule's state; creates it (paused when `startPaused`) the first time the rule is seen, after which the stored state wins. */
-  ensure(ruleKey: string, startPaused: boolean): RuleState {
+  async ensure(ruleKey: string, startPaused: boolean): Promise<RuleState> {
     this.db
       .prepare('INSERT INTO replay_rule_state (rule_key, paused) VALUES (?, ?) ON CONFLICT (rule_key) DO NOTHING')
       .run(ruleKey, startPaused ? 1 : 0);
-    return this.state(ruleKey)!;
+    return this.read(ruleKey)!;
   }
 
   /** The rule's state; null when it has never started. */
-  state(ruleKey: string): RuleState | null {
+  async state(ruleKey: string): Promise<RuleState | null> {
+    return this.read(ruleKey);
+  }
+
+  private read(ruleKey: string): RuleState | null {
     const row = this.db.prepare('SELECT * FROM replay_rule_state WHERE rule_key = ?').get(ruleKey) as StateRow | undefined;
     if (!row) return null;
     return {
@@ -41,7 +43,7 @@ export class RuleStateStore {
   }
 
   /** Pauses the rule (`reason`, `by`, `at`) or, with null, lets it run again. */
-  setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): void {
+  async setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): Promise<void> {
     this.db
       .prepare(
         `INSERT INTO replay_rule_state (rule_key, paused, paused_reason, paused_by, paused_at) VALUES (?, ?, ?, ?, ?)
@@ -52,7 +54,7 @@ export class RuleStateStore {
   }
 
   /** Keeps `pass` in the rule's history, dropping the oldest beyond PASS_HISTORY. */
-  recordPass(ruleKey: string, pass: RulePass): void {
+  async recordPass(ruleKey: string, pass: RulePass): Promise<void> {
     const s = pass.summary;
     this.db.exec('BEGIN');
     try {
@@ -90,7 +92,7 @@ export class RuleStateStore {
   }
 
   /** The rule's kept passes, newest first. */
-  passes(ruleKey: string): RulePass[] {
+  async passes(ruleKey: string): Promise<RulePass[]> {
     const rows = this.db
       .prepare('SELECT * FROM replay_rule_passes WHERE rule_key = ? ORDER BY at DESC, rowid DESC')
       .all(ruleKey) as unknown as PassRow[];
@@ -120,7 +122,7 @@ export class RuleStateStore {
    * or `now` for an id not seen before (which is stored, dropping the oldest
    * beyond FIRST_SEEN_LIMIT).
    */
-  firstSeen(ruleKey: string, messageIds: readonly string[], now: Date): Map<string, Date> {
+  async firstSeen(ruleKey: string, messageIds: readonly string[], now: Date): Promise<Map<string, Date>> {
     const seen = new Map<string, Date>();
     if (messageIds.length === 0) return seen;
     this.db.exec('BEGIN');
@@ -153,7 +155,7 @@ export class RuleStateStore {
    * `rule`) count, and each counts once. Forgets those seen before `since`
    * and answers how many are left: the count of the automatic stop.
    */
-  countDiedAgain(ruleKey: string, rule: { profile: string; name: string }, auditEntryIds: readonly number[], now: Date, since: Date): number {
+  async countDiedAgain(ruleKey: string, rule: { profile: string; name: string }, auditEntryIds: readonly number[], now: Date, since: Date): Promise<number> {
     this.db.exec('BEGIN');
     try {
       const insert = this.db.prepare(
@@ -173,12 +175,12 @@ export class RuleStateStore {
   }
 
   /** Forgets the Died Again Messages counted for the rule's automatic stop (a resume). */
-  clearDiedAgain(ruleKey: string): void {
+  async clearDiedAgain(ruleKey: string): Promise<void> {
     this.db.prepare('DELETE FROM replay_rule_died_again WHERE rule_key = ?').run(ruleKey);
   }
 
   /** When a pass of the rule first saw `messageId`, without storing anything; null when none has. */
-  firstSeenAt(ruleKey: string, messageId: string): Date | null {
+  async firstSeenAt(ruleKey: string, messageId: string): Promise<Date | null> {
     const row = this.db
       .prepare('SELECT first_seen_at FROM replay_rule_first_seen WHERE rule_key = ? AND message_id = ?')
       .get(ruleKey, messageId) as { first_seen_at: number } | undefined;

@@ -4,7 +4,7 @@
 // touches the broker or the audit store.
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { applyAndWait, closedPort, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testOperator, testProfile, withChannel, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, type TestIdentity } from './oidc-provider.js';
 
@@ -270,7 +270,7 @@ describe('Audit Entries of a Broker Profile the Operator has no role on, or no l
 
   beforeAll(async () => {
     dataDir = await makeTempDir('roles-retired');
-    const store = new AuditStore(dataDir);
+    const store = new SqliteAuditStore(dataDir);
     const recorded = (profile: string, action: 'discard' | 'replay', replayId: string | null) =>
       store.record({
         at: new Date(),
@@ -287,9 +287,9 @@ describe('Audit Entries of a Broker Profile the Operator has no role on, or no l
         message: { body, properties: { messageId: 'm-1' }, headers: {} },
         replayId,
       });
-    retired = recorded('retired', 'discard', null);
-    secretReplay = recorded('secret', 'replay', 'r-secret');
-    store.close();
+    retired = await recorded('retired', 'discard', null);
+    secretReplay = await recorded('secret', 'replay', 'r-secret');
+    await store.close();
     const port = await closedPort();
     baseUrl = `http://127.0.0.1:${port}`;
     const nowhere = await closedPort();
