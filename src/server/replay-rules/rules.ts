@@ -79,7 +79,7 @@ export class ReplayRules {
   private readonly timers = new Map<string, { at: Date; cancel(): void }>();
   /** Rule key → its passes in progress: at most one scheduled, and any Run now beside it. */
   private readonly running = new Map<string, Set<Promise<unknown>>>();
-  private readonly turns = new OneAtATime();
+  private readonly perRule = new OneAtATime();
   private stopped = false;
 
   constructor(private readonly options: ReplayRulesOptions) {
@@ -109,7 +109,7 @@ export class ReplayRules {
     for (const timer of this.timers.values()) timer.cancel();
     this.timers.clear();
     await Promise.allSettled([...this.running.values()].flatMap((passes) => [...passes]));
-    await this.turns.settled();
+    await this.perRule.settled();
   }
 
   /** The rules of `profile`, in file order, with their state, last passes and next pass time. */
@@ -204,7 +204,7 @@ export class ReplayRules {
   async pause(profile: BrokerProfile, name: string, operator: Operator, role: Role, reason: unknown): Promise<RuleState> {
     const rule = this.find(profile, name);
     if (typeof reason !== 'string' || reason.trim() === '') throw new InvalidRequestError('"reason" must say why the rule is paused.');
-    return this.turns.run(ruleKey(profile.name, name), async () => {
+    return this.perRule.run(ruleKey(profile.name, name), async () => {
       if ((await this.stateOf(profile, rule)).paused) throw replayRulePaused(profile.name, name);
       await this.markPaused(profile, rule, { operator, role }, reason.trim());
       return this.stateOf(profile, rule);
@@ -218,7 +218,7 @@ export class ReplayRules {
    */
   async resume(profile: BrokerProfile, name: string, operator: Operator, role: Role): Promise<RuleState> {
     const rule = this.find(profile, name);
-    return this.turns.run(ruleKey(profile.name, name), async () => {
+    return this.perRule.run(ruleKey(profile.name, name), async () => {
       if (!(await this.stateOf(profile, rule)).paused) throw replayRuleRunning(profile.name, name);
       await this.markResumed(profile, rule, { operator, role });
       return this.stateOf(profile, rule);
@@ -227,7 +227,7 @@ export class ReplayRules {
 
   /** Schedules the rule's next pass from its last one, or clears it while the rule is paused. */
   private reschedule(profile: BrokerProfile, rule: ReplayRule): Promise<void> {
-    return this.turns.run(ruleKey(profile.name, rule.name), () => this.scheduleNext(profile, rule));
+    return this.perRule.run(ruleKey(profile.name, rule.name), () => this.scheduleNext(profile, rule));
   }
 
   /** Inside the rule's turn, so that two of these cannot each leave a timer. A store that fails does not end the rule: it tries again one `every` later. */
@@ -261,7 +261,7 @@ export class ReplayRules {
     let reschedule = true;
     const scheduled = async () => {
       // In the rule's turn: a pause that answered before this read is seen.
-      const state = await this.turns.run(key, () => this.options.state.state(key));
+      const state = await this.perRule.run(key, () => this.options.state.state(key));
       if (this.stopped || state?.paused !== false) {
         reschedule = false;
         return null;
@@ -307,7 +307,7 @@ export class ReplayRules {
     });
     await this.options.state.recordPass(key, pass);
     this.options.onPassRecorded?.(profile.name, rule.name, pass);
-    await this.turns.run(key, () => this.afterPass(profile, rule, now, findings, error));
+    await this.perRule.run(key, () => this.afterPass(profile, rule, now, findings, error));
     return { pass, error };
   }
 
