@@ -3,6 +3,7 @@ dist/
 data/
 .data/
 .test-tmp/
+verify.log
 *.sqlite
 *.sqlite-*
 !test/fixtures/upgrade/**/*.sqlite

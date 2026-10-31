@@ -17,6 +17,7 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "postinstall": "npm ci --prefix tools/lint --no-audit --no-fund",
     "lint": "npm run typecheck && tools/lint/node_modules/.bin/eslint --config tools/lint/eslint.config.mjs src test",
+    "verify": "scripts/verify.sh",
     "test": "npm run test:unit",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:chart": "vitest run --config vitest.chart.config.ts",
