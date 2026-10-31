@@ -6,9 +6,7 @@
 // the Audit Entries.
 import type { DatabaseSync } from 'node:sqlite';
 import type { HistoryStore, QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
-
-/** Taking a Message out is one of these, carried out. A Keep or a failed step leaves it in the queue. */
-const TAKEN_OUT = `action IN ('discard', 'replay', 'move') AND outcome = 'done'`;
+import { TAKEN_OUT, toRun, toSample, toTakeOuts, type RunRow, type SampleRow, type TakeOutRow } from './store-rows.js';
 
 export class SqliteHistoryStore implements HistoryStore {
   constructor(private readonly db: DatabaseSync) {}
@@ -103,28 +101,8 @@ export class SqliteHistoryStore implements HistoryStore {
          WHERE profile = ? AND vhost = ? AND queue = ? AND created_at >= ? AND created_at <= ? AND checkout_id IS NOT NULL AND ${TAKEN_OUT}
          GROUP BY checkout_id, action`,
       )
-      .all(profile, vhost, queue, from, to) as unknown as Array<{
-      checkout_id: string;
-      action: 'discard' | 'replay' | 'move';
-      n: number;
-      at: number;
-      operator: string;
-      rule: string | null;
-    }>;
-    const byCheckout = new Map<string, TakeOut>();
-    for (const row of rows) {
-      const mark = byCheckout.get(row.checkout_id) ?? {
-        checkoutId: row.checkout_id,
-        at: row.at,
-        operator: row.operator,
-        rule: row.rule,
-        counts: { discard: 0, replay: 0, move: 0 },
-      };
-      mark.at = Math.max(mark.at, row.at);
-      mark.counts[row.action] = Number(row.n);
-      byCheckout.set(row.checkout_id, mark);
-    }
-    return [...byCheckout.values()].sort((a, b) => a.at - b.at);
+      .all(profile, vhost, queue, from, to) as unknown as TakeOutRow[];
+    return toTakeOuts(rows);
   }
 
   /** Removes the Samples and sampling runs older than `before`. */
@@ -133,25 +111,4 @@ export class SqliteHistoryStore implements HistoryStore {
     const runs = this.db.prepare('DELETE FROM sampling_runs WHERE at < ?').run(before);
     return { samples: Number(samples.changes), runs: Number(runs.changes) };
   }
-}
-
-interface SampleRow {
-  at: number;
-  depth: number;
-  estimated_arrivals: number | null;
-}
-
-interface RunRow {
-  at: number;
-  ok: number;
-  error_code: string | null;
-  interval_ms: number | null;
-}
-
-function toSample(row: SampleRow): StoredSample {
-  return { at: row.at, depth: row.depth, estimatedArrivals: row.estimated_arrivals };
-}
-
-function toRun(row: RunRow): SamplingRunRow {
-  return { at: row.at, ok: row.ok === 1, errorCode: row.error_code, intervalMs: row.interval_ms };
 }

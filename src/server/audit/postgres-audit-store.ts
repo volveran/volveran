@@ -14,21 +14,29 @@ import type {
   NotificationStore,
   RuleStateStore,
 } from './audit-store.js';
-import { createPool, storableValues, transaction } from './postgres-connection.js';
+import { createPool, transaction } from './postgres-connection.js';
 import { migrate } from './postgres-migrations.js';
-import { unfinishedAlerts, unfinishedHistory, unfinishedNotifications, unfinishedRuleState } from './postgres-unfinished.js';
+import { PostgresAlertStore } from './postgres-alerts.js';
+import { PostgresHistoryStore } from './postgres-history.js';
+import { PostgresNotificationStore } from './postgres-notifications.js';
+import { PostgresRuleStateStore } from './postgres-rule-state.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
 const numbered = (position: number) => `$${position}`;
 
 export class PostgresAuditStore implements AuditStore {
-  readonly ruleState: RuleStateStore = unfinishedRuleState;
-  readonly history: HistoryStore = unfinishedHistory;
-  readonly notifications: NotificationStore = unfinishedNotifications;
-  readonly alerts: AlertStore = unfinishedAlerts;
+  readonly ruleState: RuleStateStore;
+  readonly history: HistoryStore;
+  readonly notifications: NotificationStore;
+  readonly alerts: AlertStore;
   private closing: Promise<void> | undefined;
 
-  private constructor(private readonly pool: pg.Pool) {}
+  private constructor(private readonly pool: pg.Pool) {
+    this.ruleState = new PostgresRuleStateStore(pool);
+    this.history = new PostgresHistoryStore(pool);
+    this.notifications = new PostgresNotificationStore(pool);
+    this.alerts = new PostgresAlertStore(pool);
+  }
 
   /** Connects to the database at `url` and brings its schema up to date. Refuses a store newer than this version. */
   static async open(url: string): Promise<PostgresAuditStore> {
@@ -45,7 +53,7 @@ export class PostgresAuditStore implements AuditStore {
   async record(entry: NewAuditEntry): Promise<number> {
     const { sql, values } = insertEntry(entry, numbered);
     return transaction(this.pool, async (client) => {
-      const { rows } = await client.query<{ id: number }>(`${sql} RETURNING id`, storableValues(values));
+      const { rows } = await client.query<{ id: number }>(`${sql} RETURNING id`, values);
       const { id } = rows[0]!;
       const body = entry.message?.body;
       if (body) await client.query('INSERT INTO audit_message_bodies (entry_id, body) VALUES ($1, $2)', [id, body]);
@@ -54,7 +62,7 @@ export class PostgresAuditStore implements AuditStore {
   }
 
   async setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): Promise<void> {
-    await this.pool.query('UPDATE audit_entries SET outcome = $1, outcome_reason = $2 WHERE id = $3', storableValues([outcome, reason, id]));
+    await this.pool.query('UPDATE audit_entries SET outcome = $1, outcome_reason = $2 WHERE id = $3', [outcome, reason, id]);
   }
 
   async setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): Promise<void> {
@@ -63,7 +71,7 @@ export class PostgresAuditStore implements AuditStore {
 
   async list(query: AuditQuery = {}): Promise<AuditEntry[]> {
     const { sql, values } = searchEntries(query, numbered);
-    const { rows } = await this.pool.query<EntryRow>(sql, storableValues(values));
+    const { rows } = await this.pool.query<EntryRow>(sql, values);
     return rows.map(toEntry);
   }
 

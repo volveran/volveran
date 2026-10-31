@@ -303,6 +303,68 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         }
       });
 
+      it('keeps a NUL in Replay Rule state, and finds its first-seen time again', async () => {
+        const key = `local/${NUL}`;
+        const ids = [NUL, 'ab', '\0'];
+
+        const seen = await store.ruleState.firstSeen(key, ids, AT);
+        expect([...seen.keys()].sort()).toEqual([...ids].sort());
+        await store.ruleState.firstSeen(key, ids, after(1000));
+
+        expect(await store.ruleState.firstSeen(key, [NUL], after(2000))).toEqual(new Map([[NUL, AT]]));
+        expect(await store.ruleState.firstSeenAt(key, [NUL, 'a\0'])).toEqual(new Map([[NUL, AT]]));
+
+        await store.ruleState.ensure(key, false);
+        await store.ruleState.setPaused(key, { reason: NUL, by: NUL, at: AT });
+        expect(await store.ruleState.state(key)).toMatchObject({ paused: true, pausedReason: NUL, pausedBy: NUL });
+        await store.ruleState.recordPass(key, { id: NUL, at: AT.toISOString(), status: 'failed', reason: NUL, summary: null });
+        expect(await store.ruleState.passes(key)).toMatchObject([{ id: NUL, reason: NUL }]);
+
+        const entryId = await store.record(entry({ profile: NUL, rule: NUL }));
+        expect(await store.ruleState.countDiedAgain(key, { profile: NUL, name: NUL }, [entryId], AT, AT)).toBe(1);
+      });
+
+      it('keeps a NUL in depth history, and counts what was taken out of such a queue', async () => {
+        const queue = { profile: NUL, vhost: NUL, queue: NUL };
+        await store.history.recordRun(NUL, { at: 1000, ok: false, errorCode: NUL, intervalMs: 60_000 }, [{ vhost: NUL, queue: NUL, at: 1000, depth: 3, estimatedArrivals: null }]);
+        expect(await store.history.latestSample(queue)).toMatchObject({ depth: 3 });
+        expect((await store.history.lastRuns(NUL)).last).toMatchObject({ errorCode: NUL });
+
+        const id = await store.record(entry({ at: new Date(2000), profile: NUL, vhost: NUL, queue: NUL, checkoutId: NUL, operator: { id: 'o', displayName: NUL } }));
+        await store.setOutcome(id, 'done');
+
+        expect(await store.history.takenOut(queue, 1000, 3000)).toBe(1);
+        expect(await store.history.takeOuts(queue, 1000, 3000)).toMatchObject([{ checkoutId: NUL, operator: NUL, counts: { discard: 1 } }]);
+      });
+
+      it('keeps a NUL in the outcome of a notification', async () => {
+        const recorded = await store.notifications.record({
+          at: AT, alertId: NUL, destination: NUL, destinationType: 'slack', status: 'firing', test: false, rule: NUL,
+          profile: NUL, vhost: NUL, queue: NUL, replayRule: NUL, outcome: 'failed', httpStatus: null, error: NUL, attempts: 1,
+        });
+
+        expect(await store.notifications.recent()).toEqual([recorded]);
+        expect(await store.notifications.recent(10, { profiles: { only: [NUL] }, tests: false })).toEqual([recorded]);
+      });
+
+      it('keeps a NUL in Alerts, in the order of a store that holds it as it is', async () => {
+        const alert = (queue: string): AlertMemory['alerts'][number] => ({
+          alertId: NUL, rule: NUL, vhost: NUL, queue, status: 'firing', condition: 'depthAbove', value: null, threshold: null,
+          since: 1000, lastNotifiedAt: null, falseSince: null, replayRule: NUL, reason: NUL,
+        });
+        // Bytewise: NUL first, then what might stand for it, then the rest.
+        const queues = ['a', 'a\0', 'a\0\0', 'a\0b', 'a\u0001', 'a\u0002', 'aa', 'a\u2400'];
+        const memory: AlertMemory = {
+          alerts: queues.map(alert),
+          arrivals: queues.map((queue) => ({ vhost: NUL, queue, unsettled: 1, recent: [] })),
+        };
+        await store.alerts.save(NUL, { alerts: [...memory.alerts].reverse(), arrivals: [...memory.arrivals].reverse() });
+
+        expect(await store.alerts.load(NUL)).toEqual(memory);
+        await store.alerts.keepOnly(new Map([[NUL, []]]));
+        expect((await store.alerts.load(NUL)).alerts).toEqual([]);
+      });
+
       it('stores half of a surrogate pair as the replacement character, as UTF-8 cannot hold it', async () => {
         const id = await store.record(entry({ messageId: 'a\ud800b', reason: 'a\ud800b' }));
 
@@ -606,9 +668,14 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           ]),
         );
         expect(await store.ruleState.firstSeen(KEY, [], t2)).toEqual(new Map());
-        expect(await store.ruleState.firstSeenAt(KEY, 'a')).toEqual(t1);
-        expect(await store.ruleState.firstSeenAt(KEY, 'never')).toBeNull();
-        expect(await store.ruleState.firstSeenAt('local/other', 'a')).toBeNull();
+        expect(await store.ruleState.firstSeenAt(KEY, ['a', 'b', 'a', 'never'])).toEqual(
+          new Map([
+            ['a', t1],
+            ['b', t2],
+          ]),
+        );
+        expect(await store.ruleState.firstSeenAt(KEY, [])).toEqual(new Map());
+        expect(await store.ruleState.firstSeenAt('local/other', ['a'])).toEqual(new Map());
       });
 
       it(`forgets the oldest first-seen times beyond ${FIRST_SEEN_LIMIT}`, async () => {
@@ -617,8 +684,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
         await store.ruleState.firstSeen(KEY, many, after(DAY));
 
-        expect(await store.ruleState.firstSeenAt(KEY, 'a')).toBeNull();
-        expect(await store.ruleState.firstSeenAt(KEY, 'm-0')).toEqual(after(DAY));
+        expect(await store.ruleState.firstSeenAt(KEY, ['a', 'm-0'])).toEqual(new Map([['m-0', after(DAY)]]));
       });
 
       it("counts each Died Again Message whose last Audit Entry is the rule's once, within the window, until a resume clears it", async () => {
@@ -876,6 +942,12 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         };
         await store.alerts.save('local', memory);
         expect(await store.alerts.load('local')).toEqual(memory);
+      });
+
+      it('orders Alerts by the bytes of their rule names, on any database locale', async () => {
+        const named = (rule: string, alertId: string) => ({ ...firing, rule, alertId });
+        await store.alerts.save('local', { alerts: [named('apple', 'a-1'), named('Zebra', 'a-2')], arrivals: [] });
+        expect((await store.alerts.load('local')).alerts.map((a) => a.rule)).toEqual(['Zebra', 'apple']);
       });
 
       it('replaces what is remembered of the profile, and only that profile', async () => {
