@@ -322,9 +322,10 @@ export class CheckoutManager {
   }
 
   /**
-   * `view` with each row's rule badge, for a response. Apart from the methods that
-   * answer a view, because this reads the store: they settle first-wins sections
-   * with no await, and what they did stands even if the badges cannot be read.
+   * `view` with each row's rule badge; routes/checkouts.ts adds them to every
+   * response. Apart from the methods that answer a view, because this reads the store:
+   * they settle first-wins sections with no await, and what they did stands even
+   * if the badges cannot be read.
    */
   async withRuleBadges(view: CheckoutView): Promise<CheckoutView> {
     const checkout = this.checkouts.get(view.id);

@@ -49,13 +49,13 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     async (req) => {
       const { role } = checkoutAccess(deps, req, 'checkout');
       checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-      return { checkout: await checkouts.withRuleBadges(checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary)) };
+      return { checkout: checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary) };
     },
   );
 
   app.delete<{ Params: { id: string } }>('/api/checkouts/:id/approval-request', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.withRuleBadges(checkouts.withdrawApproval(req.params.id)) };
+    return { checkout: checkouts.withdrawApproval(req.params.id) };
   });
 
   app.get('/api/approvals', async (req) => {
@@ -96,20 +96,20 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
       const checkout = awaiting(req);
       requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
       // Nothing awaits between these checks and approve() taking the request.
-      return reply.code(202).send({ checkout: await checkouts.withRuleBadges(checkouts.approve(checkout.id, operatorOf(req))) });
+      return reply.code(202).send({ checkout: checkouts.approve(checkout.id, operatorOf(req)) });
     },
   );
 
   app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/stop', async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
-    return { checkout: await checkouts.withRuleBadges(checkouts.stopApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' })) };
+    return { checkout: checkouts.stopApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
   });
 
   app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/continue', async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
-    return { checkout: await checkouts.withRuleBadges(checkouts.continueApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' })) };
+    return { checkout: checkouts.continueApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
   });
 
   app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(
@@ -120,7 +120,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
       if (reason === '') {
         throw new InvalidRequestError('A rejection needs a "reason": the requester sees it, so they know what to change.');
       }
-      return { checkout: await checkouts.withRuleBadges(checkouts.reject(checkout.id, operatorOf(req), reason)) };
+      return { checkout: checkouts.reject(checkout.id, operatorOf(req), reason) };
     },
   );
 }

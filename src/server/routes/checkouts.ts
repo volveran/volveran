@@ -17,6 +17,7 @@
 // capability `checkout`.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
+import type { CheckoutView } from '../checkout/view.js';
 import { CheckoutError } from '../checkout/errors.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
@@ -67,6 +68,12 @@ export async function compareMessages(checkouts: CheckoutManager, id: string, qu
 
 export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts, access } = deps;
+  // Every response that shows a Checkout gets its rule badges here, after the route is
+  // done: reading them awaits the store, which a first-wins section must not (ADR 0013).
+  app.addHook('preSerialization', async (_req, _reply, payload: unknown) => {
+    if (!isRecord(payload) || !isRecord(payload.checkout) || !Array.isArray(payload.checkout.messages)) return payload;
+    return { ...payload, checkout: await checkouts.withRuleBadges(payload.checkout as unknown as CheckoutView) };
+  });
   // Registered before the routes, so it covers every route under /api/checkouts/:id.
   app.addHook('preHandler', async (req) => {
     const url = req.routeOptions.url;
@@ -85,13 +92,13 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
       const target = access.queue(operatorOf(req), 'checkout', profile, vhost, queue);
       const auditScope = access.auditScope(operatorOf(req), 'read_audit_entries');
       const checkout = await checkouts.start(target, operatorOf(req), { overrideConsumers, auditScope });
-      return reply.status(201).send({ checkout: await checkouts.withRuleBadges(checkout) });
+      return reply.status(201).send({ checkout: checkout });
     },
   );
 
   app.get<{ Params: { id: string } }>('/api/checkouts/:id', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.withRuleBadges(checkouts.get(req.params.id)) };
+    return { checkout: checkouts.get(req.params.id) };
   });
 
   app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
@@ -109,12 +116,12 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
   // poll cannot keep Messages held after the browser is gone.
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/heartbeat', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.withRuleBadges(checkouts.heartbeat(req.params.id)) };
+    return { checkout: checkouts.heartbeat(req.params.id) };
   });
 
   const end = async (req: FastifyRequest<{ Params: { id: string } }>) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.withRuleBadges(await checkouts.end(req.params.id)) };
+    return { checkout: await checkouts.end(req.params.id) };
   };
   app.delete<{ Params: { id: string } }>('/api/checkouts/:id', end);
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', end);
