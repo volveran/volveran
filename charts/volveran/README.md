@@ -1,7 +1,7 @@
 # volveran Helm chart
 
 Runs [Volverán](https://github.com/volveran/volveran) on Kubernetes as a shared service: Team Mode (OIDC sign-in), one
-replica, and a PersistentVolumeClaim for the audit store. The pod passes the `restricted` Pod Security Standard.
+replica, and a PersistentVolumeClaim for the audit store, or PostgreSQL. The pod passes the `restricted` Pod Security Standard.
 
 The chart version always equals the Volverán version, and the default image tag is the chart's `appVersion`.
 
@@ -11,12 +11,13 @@ These follow from Volverán's design and are not values:
 
 - **Team Mode only**, listening on `0.0.0.0` inside the pod. Solo Mode never listens off loopback (ADR 0002), so it is
   not a value at all.
-- **One replica with the `Recreate` strategy.** A Checkout's held Messages live in one process and the audit store is
-  SQLite with a single writer, so `replicaCount` must be `1` (ADR 0003, `docs/adr/0003-single-replica-on-kubernetes.md`).
+- **One replica with the `Recreate` strategy.** A Checkout's held Messages live in one process, so `replicaCount` must
+  be `1`, on PostgreSQL too (ADR 0003, `docs/adr/0003-single-replica-on-kubernetes.md`).
 - **No Secret holding a credential, no PodDisruptionBudget and no HorizontalPodAutoscaler** are ever rendered.
 - **Pod security:** UID and GID 1000, `fsGroup` 1000, read-only root filesystem, no privilege escalation, all
   capabilities dropped, `RuntimeDefault` seccomp, and a 64Mi `emptyDir` at `/tmp`.
-- **Probes:** liveness on `/healthz`, readiness on `/readyz` (never depends on a broker), and a startup probe that
+- **Probes:** liveness on `/healthz`, readiness on `/readyz` (never depends on a broker; fails while PostgreSQL is
+  unreachable, when that is the audit store), and a startup probe that
   gives a slow OIDC provider five minutes.
 - **The audit store PersistentVolumeClaim is kept on uninstall** (`helm.sh/resource-policy: keep`). Delete it by hand
   to delete the audit trail.
@@ -197,8 +198,15 @@ brokerProfiles:
 
 ### Audit store
 
+SQLite on a PersistentVolumeClaim by default. With `postgres.existingSecret` the audit store is in PostgreSQL, and no claim or data volume is rendered: see the [PostgreSQL guide](../../docs/postgresql.md).
+
 | Value | Default | Description |
 |---|---|---|
+| `postgres.existingSecret` | `""` | An existing Secret holding the connection URL (`postgres://user:password@host:5432/database`). The database must exist. Empty stays on SQLite. |
+| `postgres.urlKey` | `url` | The key of the URL in that Secret. |
+| `postgres.requireTls` | `true` | Sets `VOLVERAN_POSTGRES_REQUIRE_TLS`: refuses a connection without TLS, or with a certificate that does not verify. Then leave `ssl`, `sslmode` and `sslrootcert` out of the URL. `false` leaves TLS to the URL. |
+| `postgres.ca.bundle` | `""` | The name of one of `caBundles.bundles` holding the CA of the server's certificate, when it is private. Sets `VOLVERAN_POSTGRES_CA_FILE`. |
+| `postgres.ca.key` | `ca.crt` | The key (file) of that bundle holding the PEM certificates. |
 | `persistence.enabled` | `true` | `false` puts the audit store on an `emptyDir`: Audit Entries, Discarded Message bodies, depth history and firing Alerts are lost on every restart, and the install notes warn about it. Only for trying the chart out. |
 | `persistence.existingClaim` | `""` | An existing PersistentVolumeClaim to mount instead of a chart-created one, for example to migrate a volume or restore from a backup. No claim is created, and `size`, `storageClass` and `accessMode` are ignored. |
 | `persistence.size` | `1Gi` | Size of the audit store PersistentVolumeClaim: Audit Entries, Discarded Message bodies (kept 30 days or 1 GiB by default) and depth history (about 190 MiB for 100 dead-letter queues at the defaults). See [Sizing the audit store](#sizing-the-audit-store). |
@@ -207,7 +215,7 @@ brokerProfiles:
 
 #### Sizing the audit store
 
-Add up what the claim must hold:
+On PostgreSQL, see [sizing](../../docs/postgresql.md#sizing). On SQLite, add up what the claim must hold:
 
 - **Discarded bodies:** up to `settings.bodyRetentionMaxBytes`, 1 GiB by default, which is the whole default claim. Raise `persistence.size` or lower the limit.
 - **Depth history:** about 100 bytes per Sample, that is dead-letter queues × (86,400 / `settings.historyIntervalSeconds`) × `settings.historyRetentionDays` × 100 bytes. 100 queues at the defaults (60 s, 14 days) take about 190 MiB; at 15 s and 90 days, about 4.7 GiB. It grows for one retention period, then stays level.

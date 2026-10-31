@@ -1,6 +1,7 @@
 {{- /*
 The single Volverán pod, always in Team Mode. replicas and strategy are fixed:
-one process holds the Checkouts and writes the audit store (ADR 0003).
+one process holds the Checkouts (ADR 0003). The audit store is SQLite on the data
+volume, or, with postgres.existingSecret, PostgreSQL, and then there is no volume.
 */ -}}
 {{- include "volveran.validate" . }}
 {{- include "volveran.validateOptions" . }}
@@ -121,8 +122,25 @@ spec:
               value: "8080"
             - name: VOLVERAN_PROFILES_FILE
               value: /config/profiles.yaml
+            {{- if .Values.postgres.existingSecret }}
+            # The URL can hold a password, so it comes only from a Secret.
+            - name: VOLVERAN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret | quote }}
+                  key: {{ .Values.postgres.urlKey | quote }}
+            {{- if .Values.postgres.requireTls }}
+            - name: VOLVERAN_POSTGRES_REQUIRE_TLS
+              value: "true"
+            {{- end }}
+            {{- with .Values.postgres.ca.bundle }}
+            - name: VOLVERAN_POSTGRES_CA_FILE
+              value: {{ printf "%s/%s/%s" (include "volveran.caBundlesDir" $) . $.Values.postgres.ca.key | quote }}
+            {{- end }}
+            {{- else }}
             - name: VOLVERAN_DATA_DIR
               value: /data
+            {{- end }}
             - name: VOLVERAN_OIDC_ISSUER
               value: {{ .Values.oidc.issuer | quote }}
             - name: VOLVERAN_OIDC_CLIENT_ID
@@ -181,14 +199,17 @@ spec:
             - name: broker-profiles
               mountPath: /config
               readOnly: true
+            {{- if not .Values.postgres.existingSecret }}
             - name: data
               mountPath: /data
+            {{- end }}
             {{- range .Values.caBundles.bundles }}
             - name: ca-{{ .name }}
               mountPath: {{ printf "%s/%s" (include "volveran.caBundlesDir" $) .name }}
               readOnly: true
             {{- end }}
       volumes:
+        {{- if not .Values.postgres.existingSecret }}
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
@@ -197,6 +218,7 @@ spec:
           # persistence.enabled is false: the audit store is lost on every restart.
           emptyDir: {}
           {{- end }}
+        {{- end }}
         - name: broker-profiles
           configMap:
             name: {{ include "volveran.profilesConfigMapName" . }}

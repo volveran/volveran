@@ -9,6 +9,8 @@ export const STOP_REASONS = {
   timeLimit: 'The Checkout reached its time limit before this Message; it is back in the queue.',
   /** An Operator (the owner, or the approver of an approved Apply) stopped it; `name` is their display name. */
   stoppedBy: (name: string) => `Stopped by ${name} before this Message; it is back in the queue.`,
+  /** The audit store failed a write, so no further Message can have its Audit Entry first (ADR 0001). */
+  auditStoreFailed: 'The audit store could not be written before this Message; it is back in the queue.',
   /** The Checkout ended (no heartbeat, the owner, shutdown) while the Apply waited after its Canary. */
   checkoutEndedWhileWaiting: 'The Checkout ended while the Apply waited after its Canary; this Message is back in the queue.',
 } as const;

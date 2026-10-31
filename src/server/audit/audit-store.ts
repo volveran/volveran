@@ -234,6 +234,8 @@ export interface AuditStore {
   evictBodies(eviction: BodyEviction): Promise<{ evicted: number }>;
   /** The total size of the bodies stored now (what the size limit applies to). */
   storedBodyBytes(): Promise<number>;
+  /** Resolves if the store can be reached now, and rejects soon if not, for a readiness probe. Never waits long. */
+  ping(): Promise<void>;
   /** Closes the store. Closing it again does nothing. */
   close(): Promise<void>;
 }

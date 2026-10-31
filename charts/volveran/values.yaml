@@ -63,8 +63,21 @@ caBundles:
     bundle: ""
     key: ca.crt
 
-# The audit store (Audit Entries, Discarded Message bodies and depth history, SQLite).
-# See "Sizing the audit store" in README.md.
+# The audit store on PostgreSQL instead of SQLite (see docs/postgresql.md). Leave
+# existingSecret empty to stay on SQLite. It needs a database and a user that exist.
+postgres:
+  # -- An existing Secret holding the connection URL (postgres://user:password@host:5432/database).
+  existingSecret: ""
+  urlKey: url
+  # -- Refuses a connection without TLS and a certificate that does not verify.
+  requireTls: true
+  # -- The CA of the server's certificate, when it is private: one of caBundles.bundles and its key.
+  ca:
+    bundle: ""
+    key: ca.crt
+
+# The audit store on SQLite (Audit Entries, Discarded Message bodies and depth history).
+# Not used with postgres.existingSecret. See "Sizing the audit store" in README.md.
 persistence:
   # -- false uses an emptyDir: the audit trail is lost on every restart.
   enabled: true

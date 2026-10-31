@@ -167,6 +167,38 @@
         }
       }
     },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "description": "An existing Secret holding the connection URL. Set, it makes PostgreSQL the audit store; empty stays on SQLite.",
+          "type": "string"
+        },
+        "urlKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requireTls": {
+          "description": "Refuses a connection without TLS and a certificate that does not verify.",
+          "type": "boolean"
+        },
+        "ca": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bundle": {
+              "description": "One of caBundles.bundles, holding the CA of the server's certificate.",
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
     "persistence": {
       "type": "object",
       "additionalProperties": false,
