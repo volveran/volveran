@@ -11,8 +11,10 @@ import {
   makeTempDir,
   deadLetterRoutes,
   fixtureQueues,
+  lockFreed,
   management,
   purgeQueues,
+  ranSummary,
   ruleSchedulerHooks,
   startApp,
   testProfile,
@@ -78,17 +80,18 @@ describe('Replay rule automatic stop', () => {
     await purgeQueues('/', route.dlqs.filter((q) => q !== dlq));
     const passAt = async (minutes: number) => {
       scheduler.set(new Date(t0.getTime() + minutes * MINUTE));
+      await lockFreed(dlq);
       return scheduler.runPass('local', RULE);
     };
 
-    expect((await passAt(11))!.summary).toMatchObject({ replayed: 2 });
+    expect(ranSummary(await passAt(11))).toMatchObject({ replayed: 2 });
     await rejectAll();
     // Two died again: below the limit of 3, so the rule goes on.
-    expect((await passAt(22))!.summary).toMatchObject({ replayed: 2 });
+    expect(ranSummary(await passAt(22))).toMatchObject({ replayed: 2 });
     expect((await listed(app)).state.paused).toBe(false);
     await rejectAll();
     // Two more: 4 within the hour.
-    expect((await passAt(33))!.summary).toMatchObject({ replayed: 2 });
+    expect(ranSummary(await passAt(33))).toMatchObject({ replayed: 2 });
 
     const paused = await listed(app);
     expect(paused).toMatchObject({
@@ -136,7 +139,7 @@ describe('Replay rule automatic stop', () => {
       await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
       await purgeQueues('/', route.dlqs.filter((q) => q !== dlq));
 
-      expect((await scheduler.runPass('local', RULE))!.summary).toMatchObject({ held: 1, replayed: 0, failed: 1 });
+      expect(ranSummary(await scheduler.runPass('local', RULE))).toMatchObject({ held: 1, replayed: 0, failed: 1 });
 
       expect(await listed(app)).toMatchObject({ state: { paused: true, pausedReason: 'broker_permission_denied' } });
     } finally {
@@ -155,7 +158,8 @@ describe('Replay rule automatic stop', () => {
     });
     const passAt = async (minutes: number) => {
       scheduler.set(new Date(t0.getTime() + minutes * MINUTE));
-      return (await scheduler.runPass('local', RULE))!.summary;
+      await lockFreed(dlq);
+      return ranSummary(await scheduler.runPass('local', RULE));
     };
 
     // Its back-off runs from when the first pass saw it.
