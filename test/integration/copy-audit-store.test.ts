@@ -175,7 +175,7 @@ describe('copy-audit-store', () => {
   });
 
   it('starts ids at 1 for a table the source never used', async () => {
-    new SqliteAuditStore(dataDir).close();
+    await new SqliteAuditStore(dataDir).close();
     expect((await copy()).code).toBe(0);
     const copied = await PostgresAuditStore.open(target.url);
     try {
