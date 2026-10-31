@@ -10,6 +10,7 @@ import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
 import type { AuditStore } from './audit/audit-store.js';
+import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
@@ -91,8 +92,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     file: { profiles, alertDestinations, versionDeclared },
   } = await readStartupConfig(options);
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const sqliteAudit = new SqliteAuditStore(options.dataDir);
-  const auditStore = options.wrapAuditStore?.(sqliteAudit) ?? sqliteAudit;
+  const openedStore = config.postgresUrl ? await PostgresAuditStore.open(config.postgresUrl) : new SqliteAuditStore(options.dataDir);
+  const auditStore = options.wrapAuditStore?.(openedStore) ?? openedStore;
   // A scrape takes the last of these readings and never waits on the store. Replay
   // Rules are created below; this reads only once it has started.
   const metricsReadings = new StoreReadings({

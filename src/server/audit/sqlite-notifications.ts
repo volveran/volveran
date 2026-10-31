@@ -11,8 +11,8 @@ function scopeClause({ profiles, tests }: NotificationScope): { where: string; p
   const names = 'only' in profiles ? profiles.only : profiles.except;
   const list = names.map(() => '?').join(', ');
   // NOT IN () is true of everything; a test notification's NULL profile matches neither form.
-  const ofProfile = 'only' in profiles ? (names.length ? `profile IN (${list})` : '0') : names.length ? `profile NOT IN (${list})` : 'profile IS NOT NULL';
-  return { where: `((test = 0 AND ${ofProfile}) OR (test = 1 AND ${tests ? '1' : '0'}))`, params: names };
+  const ofProfile = 'only' in profiles ? (names.length ? `profile IN (${list})` : '1 = 0') : names.length ? `profile NOT IN (${list})` : 'profile IS NOT NULL';
+  return { where: `((test = 0 AND ${ofProfile}) OR (test = 1 AND ${tests ? '1 = 1' : '1 = 0'}))`, params: names };
 }
 
 export class SqliteNotificationStore implements NotificationStore {
@@ -47,7 +47,7 @@ export class SqliteNotificationStore implements NotificationStore {
 
   /** The latest outcomes, newest first; `visible` narrows them in the query, so the limit counts only what is kept. */
   async recent(limit = RECENT_LIMIT, visible?: NotificationScope): Promise<NotificationDelivery[]> {
-    const { where, params } = visible ? scopeClause(visible) : { where: '1', params: [] };
+    const { where, params } = visible ? scopeClause(visible) : { where: '1 = 1', params: [] };
     const rows = this.db
       .prepare(`SELECT * FROM notifications WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`)
       .all(...params, limit) as unknown as Row[];

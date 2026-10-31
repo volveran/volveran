@@ -18,10 +18,14 @@ export class SqliteHistoryStore implements HistoryStore {
     this.db.exec('BEGIN');
     try {
       this.db
-        .prepare('INSERT OR REPLACE INTO sampling_runs (profile, at, ok, error_code, interval_ms) VALUES (?, ?, ?, ?, ?)')
+        .prepare(
+          `INSERT INTO sampling_runs (profile, at, ok, error_code, interval_ms) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (profile, at) DO UPDATE SET ok = excluded.ok, error_code = excluded.error_code, interval_ms = excluded.interval_ms`,
+        )
         .run(profile, run.at, run.ok ? 1 : 0, run.errorCode, run.intervalMs);
       const insert = this.db.prepare(
-        'INSERT OR REPLACE INTO history_samples (profile, vhost, queue, at, depth, estimated_arrivals) VALUES (?, ?, ?, ?, ?, ?)',
+        `INSERT INTO history_samples (profile, vhost, queue, at, depth, estimated_arrivals) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (profile, vhost, queue, at) DO UPDATE SET depth = excluded.depth, estimated_arrivals = excluded.estimated_arrivals`,
       );
       for (const s of samples) insert.run(profile, s.vhost, s.queue, s.at, s.depth, s.estimatedArrivals);
       this.db.exec('COMMIT');

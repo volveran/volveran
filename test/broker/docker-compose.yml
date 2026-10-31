@@ -8,7 +8,9 @@
 #   VOLVERAN_TEST_OIDC_PORT  host port of the mock OIDC provider (empty: random free port)
 #   VOLVERAN_TEST_OAUTH_AMQP_PORT / VOLVERAN_TEST_OAUTH_MGMT_PORT  host ports of the
 #                            OAuth 2.0 broker (empty: random free ports)
+#   VOLVERAN_TEST_POSTGRES_PORT  host port of PostgreSQL (empty: random free port)
 #   VOLVERAN_TEST_RABBITMQ_IMAGE  image to test against (default: the pinned tag)
+#   VOLVERAN_TEST_POSTGRES_IMAGE  PostgreSQL image to test against (default: the pinned tag)
 name: ${VOLVERAN_TEST_PROJECT:-volveran-test}
 
 services:
@@ -70,3 +72,25 @@ services:
       - ./oidc.json:/etc/mock-oauth2-server/config.json:ro
     environment:
       JSON_CONFIG_PATH: /etc/mock-oauth2-server/config.json
+
+  # The audit store on PostgreSQL. Its data is thrown away with the container,
+  # and it does not fsync: the tests are after behaviour, not durability. Each
+  # test makes its own database in it (test/support/test-postgres.ts). The
+  # healthcheck goes over TCP, because the image's first start runs a temporary
+  # server on its Unix socket only.
+  postgres:
+    image: ${VOLVERAN_TEST_POSTGRES_IMAGE:-postgres:17.6-alpine}
+    command: ["postgres", "-c", "fsync=off", "-c", "max_connections=200"]
+    ports:
+      - "127.0.0.1:${VOLVERAN_TEST_POSTGRES_PORT:-}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: volveran
+      POSTGRES_PASSWORD: volveran-test-pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U volveran"]
+      interval: 2s
+      timeout: 10s
+      retries: 60
+      start_period: 5s
