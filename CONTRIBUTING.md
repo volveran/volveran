@@ -11,6 +11,7 @@ npm run test:broker    # starts the test broker, runs test/broker-facts/, stops 
 npm run test:integration  # same for test/integration/
 npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
 scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
+npm run test:chart:release  # renders the chart from the last release tag and the working tree and fails on a difference not listed in test/chart/release-diff-allow.yaml (needs Helm)
 npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator (needs kind, kubectl, Helm)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it

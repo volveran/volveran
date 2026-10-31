@@ -1,0 +1,8 @@
+# Differences from the last release that `npm run test:chart:release` accepts,
+# because an Operator upgrading is meant to get them. `change` is one changed
+# line of the render, without its indentation, as the check prints it (`+ ` or
+# `- ` first). `fixture` limits it to one fixture's file name. Remove an entry
+# once it is in a release; the check says which ones it no longer needs.
+allowed: []
+#  - change: '+ imagePullPolicy: Always'
+#    reason: why an upgrade should bring this

@@ -20,6 +20,7 @@
     "test": "npm run test:unit",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:chart": "vitest run --config vitest.chart.config.ts",
+    "test:chart:release": "node scripts/chart-release-diff.mjs",
     "test:broker": "node scripts/test-broker.mjs run -- vitest run --config vitest.broker-facts.config.ts",
     "test:integration": "node scripts/test-broker.mjs run -- vitest run --config vitest.integration.config.ts",
     "test:smoke": "node scripts/kind-smoke.mjs",

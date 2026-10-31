@@ -1,4 +1,5 @@
-# Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform), the
+# Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform, against
+# the last release), the
 # kind smoke test (pushes and pull requests only) and
 # the broker-facts suite and the integration suite on both audit stores. Pushes and pull requests test
 # against the pinned RabbitMQ image (test/broker/docker-compose.yml, which
@@ -60,6 +61,8 @@ jobs:
         run: npm run test:chart
       - name: kubeconform (Kubernetes and CRD catalog schemas)
         run: scripts/validate-chart.sh
+      - name: Chart against the last release
+        run: npm run test:chart:release
 
   smoke:
     name: kind smoke test
