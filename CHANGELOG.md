@@ -32,6 +32,7 @@ If you choose PostgreSQL:
 - The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders, which changes the ConfigMap and so rolls the pod once on upgrade.
 - `VOLVERAN_POSTGRES_URL` keeps the audit store in PostgreSQL instead of SQLite: Audit Entries, Discarded bodies and their retention, Replay Rule state, depth history, notifications and Alerts. It answers as SQLite does, also for a NUL in a message id or other plain text. Without it nothing changes. See the new [PostgreSQL guide](docs/postgresql.md), which includes sizing.
 - `copy-audit-store`, a mode of the image that copies a SQLite store of any released version into an empty PostgreSQL while Volverán is stopped, with ids and Discarded bodies, verifying each table's row count. A non-empty target is refused ([guide](docs/postgresql.md#copying-the-audit-trail)).
+- Volverán sets `synchronous_commit` to `on` on its PostgreSQL connections, whatever the server's default, so a settled Audit Entry is durable.
 - The chart keeps the audit store in PostgreSQL with `postgres.existingSecret`, reading the URL from that Secret, requiring TLS by default (`postgres.requireTls`), and trusting a mounted CA with `postgres.ca`. Then it renders no claim and no data volume. Without it the render does not change.
 - `VOLVERAN_POSTGRES_REQUIRE_TLS` and `VOLVERAN_POSTGRES_CA_FILE` require TLS to PostgreSQL, with a verified certificate.
 - On PostgreSQL, `/readyz` answers `503` while the database cannot be reached. Volverán reconnects by itself when it returns. `/healthz` does not change, and neither depends on a broker.
@@ -45,6 +46,11 @@ If you choose PostgreSQL:
 ### Deprecated
 
 - 1.0 will refuse unknown keys at the top level of the profiles file and in a Broker Profile, which are ignored today. `check-config` lists them.
+
+### Fixed
+
+- A Checkout that could not start because the audit store failed while it looked for Died Again Messages no longer holds its queue, its Operator and its Messages until a restart.
+- Rule badges no longer drop out of the Messages after a Decision is set, or in an approver's view of an Apply.
 
 ## [0.5.1] - 2026-10-30
 
