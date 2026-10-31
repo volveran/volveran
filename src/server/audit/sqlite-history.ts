@@ -5,18 +5,16 @@
 // periodic retention job. The Applies and Rule Passes on a queue are read from
 // the Audit Entries.
 import type { DatabaseSync } from 'node:sqlite';
-import type { QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
-
-export type { QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut };
+import type { HistoryStore, QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
 
 /** Taking a Message out is one of these, carried out. A Keep or a failed step leaves it in the queue. */
 const TAKEN_OUT = `action IN ('discard', 'replay', 'move') AND outcome = 'done'`;
 
-export class HistoryStore {
+export class SqliteHistoryStore implements HistoryStore {
   constructor(private readonly db: DatabaseSync) {}
 
   /** Records a sampling run and its Samples in one commit. */
-  recordRun(profile: string, run: SamplingRunRow, samples: readonly QueueSample[]): void {
+  async recordRun(profile: string, run: SamplingRunRow, samples: readonly QueueSample[]): Promise<void> {
     this.db.exec('BEGIN');
     try {
       this.db
@@ -37,7 +35,7 @@ export class HistoryStore {
    * The queue's latest Sample before `before` (default: of all), or null. The
    * store has it, so a restart keeps the series going.
    */
-  latestSample({ profile, vhost, queue }: SampledQueue, before = Number.MAX_SAFE_INTEGER): StoredSample | null {
+  async latestSample({ profile, vhost, queue }: SampledQueue, before = Number.MAX_SAFE_INTEGER): Promise<StoredSample | null> {
     const row = this.db
       .prepare('SELECT at, depth, estimated_arrivals FROM history_samples WHERE profile = ? AND vhost = ? AND queue = ? AND at < ? ORDER BY at DESC LIMIT 1')
       .get(profile, vhost, queue, before) as SampleRow | undefined;
@@ -45,7 +43,7 @@ export class HistoryStore {
   }
 
   /** The queue's Samples from `from` to `to` (inclusive), oldest first. */
-  samples({ profile, vhost, queue }: SampledQueue, from: number, to: number): StoredSample[] {
+  async samples({ profile, vhost, queue }: SampledQueue, from: number, to: number): Promise<StoredSample[]> {
     return this.db
       .prepare(
         'SELECT at, depth, estimated_arrivals FROM history_samples WHERE profile = ? AND vhost = ? AND queue = ? AND at >= ? AND at <= ? ORDER BY at',
@@ -55,7 +53,7 @@ export class HistoryStore {
   }
 
   /** The profile's runs in the range, oldest first, from its last good run before the range to its first good run after. */
-  runsAround(profile: string, from: number, to: number): SamplingRunRow[] {
+  async runsAround(profile: string, from: number, to: number): Promise<SamplingRunRow[]> {
     const edge = (sql: string, at: number) =>
       (this.db.prepare(sql).get(profile, at) as { at: number | null }).at;
     const start = edge('SELECT MAX(at) AS at FROM sampling_runs WHERE profile = ? AND ok = 1 AND at <= ?', from);
@@ -67,7 +65,7 @@ export class HistoryStore {
   }
 
   /** The profile's latest run and latest good run, for the latest snapshot after a restart. */
-  lastRuns(profile: string): { last: SamplingRunRow | null; lastOk: SamplingRunRow | null } {
+  async lastRuns(profile: string): Promise<{ last: SamplingRunRow | null; lastOk: SamplingRunRow | null }> {
     const read = (where: string) => {
       const row = this.db.prepare(`SELECT at, ok, error_code, interval_ms FROM sampling_runs WHERE profile = ? ${where} ORDER BY at DESC LIMIT 1`).get(profile);
       return row ? toRun(row as unknown as RunRow) : null;
@@ -76,13 +74,13 @@ export class HistoryStore {
   }
 
   /** When the profile's latest good run before `before` ran, or null. */
-  lastGoodRunBefore(profile: string, before: number): number | null {
+  async lastGoodRunBefore(profile: string, before: number): Promise<number | null> {
     const row = this.db.prepare('SELECT MAX(at) AS at FROM sampling_runs WHERE profile = ? AND ok = 1 AND at < ?').get(profile, before) as { at: number | null };
     return row.at;
   }
 
   /** How many Messages Volverán took out of the queue after `after`, up to and including `until`. */
-  takenOut({ profile, vhost, queue }: SampledQueue, after: number, until: number): number {
+  async takenOut({ profile, vhost, queue }: SampledQueue, after: number, until: number): Promise<number> {
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS n FROM audit_entries
@@ -93,7 +91,7 @@ export class HistoryStore {
   }
 
   /** The Applies and Rule Passes that took Messages out of the queue in the range, oldest first. */
-  takeOuts({ profile, vhost, queue }: SampledQueue, from: number, to: number): TakeOut[] {
+  async takeOuts({ profile, vhost, queue }: SampledQueue, from: number, to: number): Promise<TakeOut[]> {
     const rows = this.db
       .prepare(
         `SELECT checkout_id, action, COUNT(*) AS n, MAX(created_at) AS at, MAX(operator_name) AS operator, MAX(rule) AS rule
@@ -126,7 +124,7 @@ export class HistoryStore {
   }
 
   /** Removes the Samples and sampling runs older than `before`. */
-  removeOlderThan(before: number): { samples: number; runs: number } {
+  async removeOlderThan(before: number): Promise<{ samples: number; runs: number }> {
     const samples = this.db.prepare('DELETE FROM history_samples WHERE at < ?').run(before);
     const runs = this.db.prepare('DELETE FROM sampling_runs WHERE at < ?').run(before);
     return { samples: Number(samples.changes), runs: Number(runs.changes) };

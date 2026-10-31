@@ -1,12 +1,14 @@
-// The Died Again chain through the audit store: a Replay's entry names the replay
-// id it carried, a Restore's comes from the Discard it republished.
+// The Died Again chain when the store takes its time; the audit store contract
+// covers what the chain reads.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { NewAuditEntry } from '../../src/server/audit/audit-store.js';
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
-import { AuditStore as SyncAuditStore, type NewAuditEntry } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
 
 const headers = (replayId?: string) => (replayId ? { 'x-volveran-replay-id': replayId } : {});
+const copy = (replayId?: string) => ({ body: null, properties: {}, headers: headers(replayId) });
 
 function entry(overrides: Partial<NewAuditEntry>): NewAuditEntry {
   return {
@@ -26,27 +28,22 @@ function entry(overrides: Partial<NewAuditEntry>): NewAuditEntry {
   };
 }
 
-describe('replayTrail', () => {
-  let sync: SyncAuditStore;
+describe('replayTrail on a delayed store', () => {
+  let store: SqliteAuditStore;
   beforeEach(() => {
-    sync = new SyncAuditStore();
+    store = new SqliteAuditStore();
   });
-  afterEach(() => sync.close());
+  afterEach(() => store.close());
 
-  const copy = (replayId?: string) => ({ body: null, properties: {}, headers: headers(replayId) });
+  it('follows a Restore through the Discard it republished', async () => {
+    await store.record(entry({ replayId: 'r1', message: copy() }));
+    const discard = await store.record(entry({ action: 'discard', message: { ...copy('r1'), body: Buffer.from('x') } }));
+    const restore = await store.record(entry({ action: 'restore', restoreOf: discard, replayId: 'r2' }));
 
-  it('follows a Replay, and a Restore through the Discard it republished', async () => {
-    sync.record(entry({ replayId: 'r1', message: copy() }));
-    const discard = sync.record(entry({ action: 'discard', message: { ...copy('r1'), body: Buffer.from('x') } }));
-    const restore = sync.record(entry({ action: 'restore', restoreOf: discard, replayId: 'r2' }));
-    const trail = replayTrail(delayedAuditStore(sync.async));
-
-    expect(await diedAgain(headers('r2'), trail)).toMatchObject({ replayId: 'r2', count: 2, last: { auditEntryId: restore, action: 'restore' } });
-  });
-
-  it('shows nothing of a Broker Profile outside the scope', async () => {
-    sync.record(entry({ replayId: 'r1', message: copy() }));
-    const trail = replayTrail(sync.async, { only: ['other'] });
-    expect(await diedAgain(headers('r1'), trail)).toEqual({ replayId: 'r1', count: 1, last: null });
+    expect(await diedAgain(headers('r2'), replayTrail(delayedAuditStore(store)))).toMatchObject({
+      replayId: 'r2',
+      count: 2,
+      last: { auditEntryId: restore, action: 'restore' },
+    });
   });
 });

@@ -3,7 +3,7 @@
 // the firing Alerts in the queue list, and the two alert metric families.
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import {
   closedPort,
   ruleSchedulerHooks,
@@ -143,15 +143,15 @@ describe('seeing Alerts', () => {
   it('keeps an Operator\'s recent notifications even behind many of a profile they cannot see', async () => {
     const dataDir = await makeTempDir('alerts-view');
     dirs.push(dataDir);
-    const store = new AuditStore(dataDir);
+    const store = new SqliteAuditStore(dataDir);
     const row = (profile: string, at: Date) => ({
       at, alertId: `${profile}-a`, destination: 'pager', destinationType: 'webhook' as const, status: 'firing' as const, test: false,
       rule: 'deep', profile, vhost: '/', queue: dlq, replayRule: null, outcome: 'delivered' as const, httpStatus: 200, error: null, attempts: 1,
     });
     const now = Date.now();
-    store.notifications.record(row('prod', new Date(now - 10_000)));
-    for (let i = 0; i < 150; i++) store.notifications.record(row('staging', new Date(now - 5_000 + i)));
-    store.close();
+    await store.notifications.record(row('prod', new Date(now - 10_000)));
+    for (let i = 0; i < 150; i++) await store.notifications.record(row('staging', new Date(now - 5_000 + i)));
+    await store.close();
 
     const { as } = await startTeam(samplerHooks(), dataDir);
     const seen = (await (await as('vera', ['support'])).get('/api/alerts')).body.notifications;
@@ -161,13 +161,13 @@ describe('seeing Alerts', () => {
   it('shows an Alert with no vhost and no queue, and puts it on no queue', async () => {
     const dataDir = await makeTempDir('alerts-view');
     dirs.push(dataDir);
-    const store = new AuditStore(dataDir);
+    const store = new SqliteAuditStore(dataDir);
     const since = Date.UTC(2026, 9, 30, 3, 0);
-    store.alerts.save('prod', {
+    await store.alerts.save('prod', {
       arrivals: [],
       alerts: [{ alertId: 'whole-profile', rule: 'deep', vhost: null, queue: null, replayRule: null, reason: null, status: 'firing', condition: 'depthAbove', value: null, threshold: null, since, lastNotifiedAt: since, falseSince: null }],
     });
-    store.close();
+    await store.close();
 
     const { as } = await startTeam(samplerHooks(), dataDir);
     const viewer = await as('vera', ['support']);

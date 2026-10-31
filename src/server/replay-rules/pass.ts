@@ -37,7 +37,7 @@ import { evaluateRule } from './evaluate.js';
 /** How many Messages a pass holds per Message it may Replay, so that the Kept ones do not crowd out the due ones. */
 export const KEPT_FACTOR = 3;
 
-/** A rule's key in the rule state (audit/rule-state.ts): `<profile>/<rule>`. */
+/** A rule's key in the rule state (audit/audit-store.ts): `<profile>/<rule>`. */
 export function ruleKey(profile: string, rule: string): string {
   return `${profile}/${rule}`;
 }

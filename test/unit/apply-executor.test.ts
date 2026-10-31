@@ -1,7 +1,7 @@
 // The Apply executor with an in-memory audit store and a fake broker (the ack).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as amqp from 'amqplib';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { executeApply, type ApplyRun } from '../../src/server/apply/executor.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import { AckUncertainError, type ApplyContext } from '../../src/server/apply/types.js';
@@ -21,9 +21,9 @@ function held(handle: number, headers: Record<string, unknown> = {}): amqp.Consu
 }
 
 describe('Apply executor', () => {
-  let audit: AuditStore;
+  let audit: SqliteAuditStore;
   beforeEach(() => {
-    audit = new AuditStore();
+    audit = new SqliteAuditStore();
   });
   afterEach(() => audit.close());
 
@@ -50,7 +50,7 @@ describe('Apply executor', () => {
         ack,
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),
       },
-      audit: audit.async,
+      audit: audit,
       stopReason: () => null,
       onDone: (handle) => done.push(handle),
       ...overrides,
@@ -63,8 +63,8 @@ describe('Apply executor', () => {
     const { outcomes, done } = run(
       { kept: [1, 3], steps: [{ handle: 2, decision: DISCARD }] },
       async (m) => {
-        const [entry] = audit.list();
-        storedBeforeAck.push([entry?.outcome, audit.body(entry!.id)?.toString(), m.fields.deliveryTag]);
+        const [entry] = await audit.list();
+        storedBeforeAck.push([entry?.outcome, (await audit.body(entry!.id))?.toString(), m.fields.deliveryTag]);
       },
     );
 
@@ -75,7 +75,7 @@ describe('Apply executor', () => {
     ]);
     expect(storedBeforeAck).toEqual([['pending', 'body-2', 2]]);
     expect(done).toEqual([2]);
-    expect(audit.list()).toEqual([
+    expect(await audit.list()).toEqual([
       expect.objectContaining({
         action: 'discard',
         reason: 'duplicate',
@@ -114,7 +114,7 @@ describe('Apply executor', () => {
       [3, 'not-attempted'],
     ]);
     expect(acked).toEqual([1]);
-    expect(audit.list().map((e) => e.messageId)).toEqual(['m-1']);
+    expect((await audit.list()).map((e) => e.messageId)).toEqual(['m-1']);
   });
 
   it('starts Replay and Move steps at least 1/rate apart, without pacing Discards, and records the rate on every Audit Entry', async () => {
@@ -147,7 +147,7 @@ describe('Apply executor', () => {
         [4, 100],
         [5, 200],
       ]);
-      expect(audit.list().map((e) => e.rate)).toEqual([10, 10, 10, 10, 10]);
+      expect((await audit.list()).map((e) => e.rate)).toEqual([10, 10, 10, 10, 10]);
     } finally {
       vi.useRealTimers();
     }
@@ -179,12 +179,12 @@ describe('Apply executor', () => {
   it('records no rate on the Audit Entries of an Apply with no Replay Rate', async () => {
     const { outcomes } = run({ kept: [], steps: [{ handle: 1, decision: DISCARD }] }, async () => {});
     await outcomes;
-    expect(audit.list().map((e) => e.rate)).toEqual([null]);
+    expect((await audit.list()).map((e) => e.rate)).toEqual([null]);
   });
 
   it('leaves the Message alone when its Audit Entry cannot be written', async () => {
     const acked: number[] = [];
-    audit.close(); // every write now fails
+    await audit.close(); // every write now fails
     const { outcomes } = run({ kept: [], steps: [{ handle: 1, decision: DISCARD }] }, async (m) => {
       acked.push(m.fields.deliveryTag);
     });
@@ -202,7 +202,7 @@ describe('Apply executor', () => {
 
     expect(await outcomes).toEqual([expect.objectContaining({ status: 'failed', reason: 'Channel closed' })]);
     expect(done).toEqual([]);
-    expect(audit.list()[0]).toMatchObject({ outcome: 'failed', outcomeReason: 'Channel closed' });
+    expect((await audit.list())[0]).toMatchObject({ outcome: 'failed', outcomeReason: 'Channel closed' });
   });
 
   it('records a Discard whose ack the broker may or may not have processed as uncertain, keeping the copy', async () => {
@@ -213,9 +213,9 @@ describe('Apply executor', () => {
     expect(await outcomes).toEqual([
       expect.objectContaining({ status: 'failed', reason: expect.stringContaining('may or may not') }),
     ]);
-    const [entry] = audit.list();
+    const [entry] = await audit.list();
     expect(entry).toMatchObject({ outcome: 'uncertain', messageId: 'm-1' });
-    expect(audit.body(entry!.id)?.toString()).toBe('body-1');
+    expect((await audit.body(entry!.id))?.toString()).toBe('body-1');
   });
 
   // ADR 0013: a missing await shows only when the store takes its time.
@@ -225,10 +225,10 @@ describe('Apply executor', () => {
       const { outcomes } = run(
         { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
         async () => {
-          const [entry] = audit.list();
-          atAck.push([entry?.outcome, entry && audit.body(entry.id)?.toString()]);
+          const [entry] = await audit.list();
+          atAck.push([entry?.outcome, entry && (await audit.body(entry.id))?.toString()]);
         },
-        { audit: delayedAuditStore(audit.async) },
+        { audit: delayedAuditStore(audit) },
       );
 
       await outcomes;
@@ -243,7 +243,7 @@ describe('Apply executor', () => {
           acked.push(m.fields.deliveryTag);
         },
         {
-          audit: delayedAuditStore(audit.async, async () => {
+          audit: delayedAuditStore(audit, async () => {
             throw new Error('the database went away');
           }),
         },
@@ -259,11 +259,11 @@ describe('Apply executor', () => {
       const { outcomes } = run(
         { kept: [], steps: [1, 2].map((handle) => ({ handle, decision: DISCARD })) },
         async () => {},
-        { audit: delayedAuditStore(audit.async) },
+        { audit: delayedAuditStore(audit) },
       );
 
       await outcomes;
-      expect(audit.list().map((e) => e.outcome)).toEqual(['done', 'done']);
+      expect((await audit.list()).map((e) => e.outcome)).toEqual(['done', 'done']);
     });
 
     it('still reports a done step when its outcome cannot be written, leaving the entry pending', async () => {
@@ -271,7 +271,7 @@ describe('Apply executor', () => {
         { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
         async () => {},
         {
-          audit: delayedAuditStore(audit.async, async (call) => {
+          audit: delayedAuditStore(audit, async (call) => {
             if (call === 'setOutcome') throw new Error('the database went away');
           }),
         },
@@ -279,7 +279,7 @@ describe('Apply executor', () => {
 
       expect(await outcomes).toEqual([expect.objectContaining({ status: 'done' })]);
       expect(done).toEqual([1]);
-      expect(audit.list()[0]).toMatchObject({ outcome: 'pending' });
+      expect((await audit.list())[0]).toMatchObject({ outcome: 'pending' });
     });
 
     it('counts a step as settled before writing its outcome, so a late stop finds nothing left to stop', async () => {
@@ -292,7 +292,7 @@ describe('Apply executor', () => {
         { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
         async () => {},
         {
-          audit: delayedAuditStore(audit.async, async (call) => {
+          audit: delayedAuditStore(audit, async (call) => {
             if (call !== 'setOutcome') return;
             writing();
             await released;

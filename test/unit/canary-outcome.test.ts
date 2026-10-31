@@ -1,6 +1,6 @@
 // Writing a Canary's watch outcome, on a store that takes its time (ADR 0013).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { canaryHooks } from '../../src/server/checkout/canary.js';
 import type { Checkout } from '../../src/server/checkout/state.js';
 import { delayedAuditStore, type StoreDelay } from '../support/delayed-audit-store.js';
@@ -8,11 +8,11 @@ import { delayedAuditStore, type StoreDelay } from '../support/delayed-audit-sto
 const FAILED = { handle: 1, messageId: 'm-1', decision: { kind: 'replay' }, status: 'failed', reason: 'no route' } as const;
 
 describe('a Canary that failed', () => {
-  let audit: AuditStore;
+  let audit: SqliteAuditStore;
   let entryId: number;
-  beforeEach(() => {
-    audit = new AuditStore();
-    entryId = audit.record({
+  beforeEach(async () => {
+    audit = new SqliteAuditStore();
+    entryId = await audit.record({
       at: new Date(),
       operator: { id: 'ana', displayName: 'Ana' },
       brokerUser: 'svc',
@@ -36,7 +36,7 @@ describe('a Canary that failed', () => {
     const hooks = canaryHooks(checkout, {
       handle: 1,
       watchWindowMs: 1_000,
-      audit: delayedAuditStore(audit.async, delay),
+      audit: delayedAuditStore(audit, delay),
       stopSignal: AbortSignal.abort(),
       waitStarted: () => {},
       waitEnded: () => {},
@@ -50,7 +50,7 @@ describe('a Canary that failed', () => {
     const checkout = await failedCanary(20);
 
     expect(checkout.canary?.status).toBe('failed');
-    expect(audit.get(entryId)?.canaryOutcome).toBe('failed');
+    expect((await audit.get(entryId))?.canaryOutcome).toBe('failed');
   });
 
   it('still shows on the Checkout when the outcome cannot be written', async () => {
@@ -59,6 +59,6 @@ describe('a Canary that failed', () => {
     });
 
     expect(checkout.canary?.status).toBe('failed');
-    expect(audit.get(entryId)?.canaryOutcome).toBeNull();
+    expect((await audit.get(entryId))?.canaryOutcome).toBeNull();
   });
 });

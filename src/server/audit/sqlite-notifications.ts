@@ -2,9 +2,7 @@
 // as long as the depth history (VOLVERAN_HISTORY_RETENTION_DAYS).
 import type { DatabaseSync } from 'node:sqlite';
 import type { NotificationDelivery } from '../../shared/alerts.js';
-import type { NewNotificationDelivery, NotificationScope } from './audit-store.js';
-
-export type { NewNotificationDelivery, NotificationScope };
+import type { NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
 
 /** How many outcomes `recent` answers with unless told otherwise. */
 const RECENT_LIMIT = 100;
@@ -17,10 +15,10 @@ function scopeClause({ profiles, tests }: NotificationScope): { where: string; p
   return { where: `((test = 0 AND ${ofProfile}) OR (test = 1 AND ${tests ? '1' : '0'}))`, params: names };
 }
 
-export class NotificationStore {
+export class SqliteNotificationStore implements NotificationStore {
   constructor(private readonly db: DatabaseSync) {}
 
-  record(d: NewNotificationDelivery): NotificationDelivery {
+  async record(d: NewNotificationDelivery): Promise<NotificationDelivery> {
     const { lastInsertRowid } = this.db
       .prepare(
         `INSERT INTO notifications (at, alert_id, destination, destination_type, status, test, rule, profile, vhost, queue,
@@ -48,7 +46,7 @@ export class NotificationStore {
   }
 
   /** The latest outcomes, newest first; `visible` narrows them in the query, so the limit counts only what is kept. */
-  recent(limit = RECENT_LIMIT, visible?: NotificationScope): NotificationDelivery[] {
+  async recent(limit = RECENT_LIMIT, visible?: NotificationScope): Promise<NotificationDelivery[]> {
     const { where, params } = visible ? scopeClause(visible) : { where: '1', params: [] };
     const rows = this.db
       .prepare(`SELECT * FROM notifications WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`)
@@ -74,7 +72,7 @@ export class NotificationStore {
   }
 
   /** Removes the outcomes from before `cutoff`; returns how many. */
-  removeOlderThan(cutoff: Date): number {
+  async removeOlderThan(cutoff: Date): Promise<number> {
     return Number(this.db.prepare('DELETE FROM notifications WHERE at < ?').run(cutoff.getTime()).changes);
   }
 }

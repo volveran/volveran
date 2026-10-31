@@ -6,7 +6,8 @@
 import { rm } from 'node:fs/promises';
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AuditStore, type NewAuditEntry } from '../../src/server/audit/store.js';
+import type { NewAuditEntry } from '../../src/server/audit/audit-store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import {
   applyAndWait,
   deadLetter,
@@ -279,10 +280,10 @@ describe('Audit browsing and Restore', () => {
     async (outcome) => {
       const dataDir = await makeTempDir('audit-uncertain');
       try {
-        const store = new AuditStore(dataDir);
-        const id = store.record(storedDiscard(`uncertain-${outcome}`, 0, 'crashed'));
-        if (outcome === 'uncertain') store.setOutcome(id, 'uncertain', 'The connection dropped before the ack was confirmed.');
-        store.close();
+        const store = new SqliteAuditStore(dataDir);
+        const id = await store.record(storedDiscard(`uncertain-${outcome}`, 0, 'crashed'));
+        if (outcome === 'uncertain') await store.setOutcome(id, 'uncertain', 'The connection dropped before the ack was confirmed.');
+        await store.close();
         const restarted = await startApp({ profiles: [testProfile({ name: 'local' })], dataDir });
         try {
           const refused = await restarted.post(`/api/audit-entries/${id}/restore`, { confirm: true });
@@ -306,10 +307,10 @@ describe('Audit browsing and Restore', () => {
   it('does not Restore a Discard that failed in a known way (its Message stayed in the queue)', async () => {
     const dataDir = await makeTempDir('audit-failed');
     try {
-      const store = new AuditStore(dataDir);
-      const id = store.record(storedDiscard('failed-1', 0));
-      store.setOutcome(id, 'failed', 'The Checkout is no longer active, so the Message was left in the queue.');
-      store.close();
+      const store = new SqliteAuditStore(dataDir);
+      const id = await store.record(storedDiscard('failed-1', 0));
+      await store.setOutcome(id, 'failed', 'The Checkout is no longer active, so the Message was left in the queue.');
+      await store.close();
       const restarted = await startApp({ profiles: [testProfile({ name: 'local' })], dataDir });
       try {
         const res = await restarted.post(`/api/audit-entries/${id}/restore`, { confirm: true, confirmUncertain: true });
@@ -370,9 +371,9 @@ describe('Retention of Discarded Message bodies', () => {
 
   it('evicts bodies past the age limit on a schedule, keeps the Audit Entries, and refuses to Restore them with the reason', async () => {
     const dir = await dataDir();
-    const store = new AuditStore(dir);
-    const kept = store.record(storedDiscard('young', 29 * DAY));
-    store.close();
+    const store = new SqliteAuditStore(dir);
+    const kept = await store.record(storedDiscard('young', 29 * DAY));
+    await store.close();
     const app = await startApp({
       profiles: [testProfile({ name: 'local' })],
       dataDir: dir,
@@ -381,9 +382,9 @@ describe('Retention of Discarded Message bodies', () => {
     });
     try {
       // Written while the app runs, so only the schedule (not startup) can evict it.
-      const late = new AuditStore(dir);
-      const expired = late.record(storedDiscard('old', 31 * DAY));
-      late.close();
+      const late = new SqliteAuditStore(dir);
+      const expired = await late.record(storedDiscard('old', 31 * DAY));
+      await late.close();
 
       const entry = await eventually(async () => {
         const res = await app.get(`/api/audit-entries/${expired}`);
@@ -408,12 +409,12 @@ describe('Retention of Discarded Message bodies', () => {
 
   it('evicts the oldest bodies at startup once they exceed the size limit, and reports the store size for the UI warning', async () => {
     const dir = await dataDir();
-    const store = new AuditStore(dir);
-    const oldest = store.record(storedDiscard('size-1', 3 * DAY, 'c', Buffer.alloc(400, 1)));
-    const middle = store.record(storedDiscard('size-2', 2 * DAY, 'c', Buffer.alloc(400, 2)));
-    const newest = store.record(storedDiscard('size-3', 1 * DAY, 'c', Buffer.alloc(400, 3)));
-    for (const id of [oldest, middle, newest]) store.setOutcome(id, 'done');
-    store.close();
+    const store = new SqliteAuditStore(dir);
+    const oldest = await store.record(storedDiscard('size-1', 3 * DAY, 'c', Buffer.alloc(400, 1)));
+    const middle = await store.record(storedDiscard('size-2', 2 * DAY, 'c', Buffer.alloc(400, 2)));
+    const newest = await store.record(storedDiscard('size-3', 1 * DAY, 'c', Buffer.alloc(400, 3)));
+    for (const id of [oldest, middle, newest]) await store.setOutcome(id, 'done');
+    await store.close();
     const app = await startApp({
       profiles: [testProfile({ name: 'local' })],
       dataDir: dir,
