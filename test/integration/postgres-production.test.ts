@@ -64,6 +64,21 @@ describe('TLS to PostgreSQL', () => {
     await expect(refused).rejects.toThrow(/TLS.*VOLVERAN_POSTGRES_CA_FILE/s);
   });
 
+  it('refuses a certificate that does not name the host it connected to', async () => {
+    // The CA signed the certificate, which names 127.0.0.1 and localhost, and this is 127.0.0.2.
+    const proxy = await startTcpProxy(portOf(database.url), '127.0.0.2');
+    const u = new URL(database.url);
+    u.hostname = '127.0.0.2';
+    u.port = String(proxy.port);
+    try {
+      const refused = PostgresAuditStore.open(u.href, { ca });
+      await expect(refused).rejects.toBeInstanceOf(ConfigError);
+      await expect(refused).rejects.toThrow(/TLS/);
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it('refuses a server that offers no TLS when it is required', async () => {
     // Answers "no" to the request to start TLS, as a PostgreSQL with ssl=off does.
     const plain = net.createServer((socket) => {

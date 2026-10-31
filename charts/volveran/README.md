@@ -202,7 +202,7 @@ SQLite on a PersistentVolumeClaim by default. With `postgres.existingSecret` the
 
 | Value | Default | Description |
 |---|---|---|
-| `postgres.existingSecret` | `""` | An existing Secret holding the connection URL (`postgres://user:password@host:5432/database`). The database must exist. Empty stays on SQLite. |
+| `postgres.existingSecret` | `""` | An existing Secret holding the connection URL (`postgres://user:password@postgres.example.com:5432/database`). The database must exist. Empty stays on SQLite. |
 | `postgres.urlKey` | `url` | The key of the URL in that Secret. |
 | `postgres.requireTls` | `true` | Sets `VOLVERAN_POSTGRES_REQUIRE_TLS`: refuses a connection without TLS, or with a certificate that does not verify. Then leave `ssl`, `sslmode` and `sslrootcert` out of the URL. `false` leaves TLS to the URL. |
 | `postgres.ca.bundle` | `""` | The name of one of `caBundles.bundles` holding the CA of the server's certificate, when it is private. Sets `VOLVERAN_POSTGRES_CA_FILE`. |

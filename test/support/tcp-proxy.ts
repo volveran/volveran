@@ -11,7 +11,7 @@ export interface TcpProxy {
   close(): Promise<void>;
 }
 
-export async function startTcpProxy(targetPort: number): Promise<TcpProxy> {
+export async function startTcpProxy(targetPort: number, listenHost = '127.0.0.1'): Promise<TcpProxy> {
   let mode: 'open' | 'cut' | 'silent' = 'open';
   const sockets = new Set<net.Socket>();
   const pairs = new Set<[net.Socket, net.Socket]>();
@@ -37,7 +37,7 @@ export async function startTcpProxy(targetPort: number): Promise<TcpProxy> {
       });
     }
   });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise<void>((resolve) => server.listen(0, listenHost, resolve));
   const destroyAll = () => {
     for (const socket of sockets) socket.destroy();
   };
