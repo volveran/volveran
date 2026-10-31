@@ -245,7 +245,7 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 
 - The only route is `/metrics`, on its own port, at `VOLVERAN_HOST`'s address. In Solo Mode that is loopback.
 - It needs no session, so keep the port away from anything but your scraper. The web app's port never serves metrics.
-- A scrape never contacts a broker.
+- A scrape never contacts a broker and never waits on the audit store. What it shows from the store (`volveran_replay_rule_paused`, `volveran_alerts_firing`, `volveran_audit_store_body_bytes`) is read in the background, every 15 seconds and whenever Volverán changes one of them itself, and keeps its last value while the store cannot be read.
 - Metric and label names stay stable within a minor version.
 - Counters are held in memory and start again from zero after a restart, which `rate()` handles. A counter has no series until the first thing it counts.
 

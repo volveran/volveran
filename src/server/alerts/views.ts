@@ -1,6 +1,5 @@
 // Alerts as the API shows them, read from the audit store, never a broker.
-import type { AlertStore } from '../audit/alerts.js';
-import type { NotificationStore } from '../audit/notifications.js';
+import type { AlertStore, NotificationStore } from '../audit/audit-store.js';
 import type { AlertDestinationView, AlertView } from '../../shared/alerts.js';
 import type { QueueRow } from '../../shared/queues.js';
 import type { AlertDestination } from './destinations.js';
@@ -15,8 +14,8 @@ export interface AlertReadings {
 export const destinationView = ({ name, type }: AlertDestination): AlertDestinationView => ({ name, type });
 
 /** The profile's pending and firing Alerts, firing first. */
-export function alertsOf(store: Pick<AlertStore, 'load'>, profile: string): AlertView[] {
-  const views = store.load(profile).alerts.map(
+export async function alertsOf(store: Pick<AlertStore, 'load'>, profile: string): Promise<AlertView[]> {
+  const views = (await store.load(profile)).alerts.map(
     ({ alertId, rule, vhost, queue, replayRule, reason, status, condition, value, threshold, since }): AlertView => ({
       alertId,
       profile,
@@ -36,8 +35,8 @@ export function alertsOf(store: Pick<AlertStore, 'load'>, profile: string): Aler
 }
 
 /** Puts each queue's firing Alerts on its row. An Alert with no queue belongs to no row. */
-export function firingAlertsOn({ alerts }: Pick<AlertReadings, 'alerts'>, profile: string, vhost: string, queues: readonly QueueRow[]): QueueRow[] {
-  const firing = alertsOf(alerts, profile).filter((a) => a.status === 'firing' && a.vhost === vhost);
+export async function firingAlertsOn({ alerts }: Pick<AlertReadings, 'alerts'>, profile: string, vhost: string, queues: readonly QueueRow[]): Promise<QueueRow[]> {
+  const firing = (await alertsOf(alerts, profile)).filter((a) => a.status === 'firing' && a.vhost === vhost);
   return queues.map((queue) => {
     const firingAlerts = firing.filter((a) => a.queue === queue.name);
     return queue.deadLetterQueue || firingAlerts.length > 0 ? { ...queue, firingAlerts } : queue;

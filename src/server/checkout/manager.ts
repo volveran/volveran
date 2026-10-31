@@ -121,8 +121,8 @@ export interface CheckoutTestHooks {
   ruleScheduler?: RuleSchedulerTestHooks;
 }
 
-/** A running Replay Rule's badge for one held Message (replay-rules/rules.ts); null when no running rule matches it. */
-export type RuleBadgeOf = (checkout: Checkout, delivery: Delivery, diedAgainCount: number) => RuleBadge | null;
+/** Each held Message's running Replay Rule's badge, in the order given (replay-rules/rules.ts); null when no running rule matches it. */
+export type RuleBadgesOf = (checkout: Checkout, held: ReadonlyArray<{ delivery: Delivery; diedAgainCount: number }>) => Promise<Array<RuleBadge | null>>;
 
 export interface CheckoutStartOptions extends StartOptions {
   /**
@@ -150,7 +150,9 @@ export interface CheckoutManagerOptions {
   endedRetentionMs?: number;
   testHooks?: CheckoutTestHooks;
   /** The rule badge on Message rows and in the Message view; none when left out. */
-  ruleBadge?: RuleBadgeOf;
+  ruleBadges?: RuleBadgesOf;
+  /** Rule badges could not be read; the Checkout is shown without them. */
+  onRuleBadgesError?(err: unknown): void;
   /** An Apply running in the background failed unexpectedly (its steps report their own failures); the Checkout still ends. */
   onApplyError?(checkoutId: string, err: unknown): void;
   /** An Apply ended with these outcomes, one per Message of the Checkout. */
@@ -301,20 +303,44 @@ export class CheckoutManager {
     return c && this.checkouts.has(c.id) ? this.view(c) : null;
   }
 
-  message(id: string, handle: number): MessageDetail {
+  async message(id: string, handle: number): Promise<MessageDetail> {
     const checkout = this.find(id);
     const m = checkout.held.get(handle);
     if (!m) throw new CheckoutError('message_not_found', `Checkout ${id} holds no Message with handle ${handle}.`);
     const diedAgain = checkout.diedAgain.get(handle) ?? null;
-    return {
-      ...messageDetail(handle, m, queueInfo(checkout)),
-      diedAgain,
-      rule: this.options.ruleBadge?.(checkout, m, diedAgain?.count ?? 0) ?? null,
-    };
+    const detail = messageDetail(handle, m, queueInfo(checkout));
+    const [rule] = await this.ruleBadges(checkout, [{ delivery: m, diedAgainCount: diedAgain?.count ?? 0 }]);
+    return { ...detail, diedAgain, rule: rule ?? null };
+  }
+
+  /**
+   * `view` with each row's rule badge, for a response. Apart from the methods that
+   * answer a view, because this reads the store: they settle first-wins sections
+   * with no await, and what they did stands even if the badges cannot be read.
+   */
+  async withRuleBadges(view: CheckoutView): Promise<CheckoutView> {
+    const checkout = this.checkouts.get(view.id);
+    if (!checkout) return view;
+    const rows = view.messages.flatMap((row) => {
+      const delivery = checkout.held.get(row.handle);
+      return delivery ? [{ row, delivery, diedAgainCount: checkout.diedAgain.get(row.handle)?.count ?? 0 }] : [];
+    });
+    const badges = await this.ruleBadges(checkout, rows);
+    const byHandle = new Map(rows.map(({ row }, i) => [row.handle, badges[i] ?? null]));
+    return { ...view, messages: view.messages.map((row) => ({ ...row, rule: byHandle.get(row.handle) ?? null })) };
+  }
+
+  private async ruleBadges(checkout: Checkout, held: ReadonlyArray<{ delivery: Delivery; diedAgainCount: number }>): Promise<Array<RuleBadge | null>> {
+    try {
+      return (await this.options.ruleBadges?.(checkout, held)) ?? [];
+    } catch (err) {
+      this.options.onRuleBadgesError?.(err);
+      return [];
+    }
   }
 
   private view(checkout: Checkout): CheckoutView {
-    return checkoutView(checkout, this.options.ruleBadge);
+    return checkoutView(checkout);
   }
 
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */

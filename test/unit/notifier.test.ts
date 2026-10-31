@@ -33,7 +33,7 @@ describe('Notifier', () => {
     cleanups.push(() => store.close());
     const notifier = new Notifier({
       destinations: Object.entries(destinations).map(([name, url]) => ({ name, type: 'webhook', url, signingSecret: null })),
-      store: store.notifications,
+      store: store.async.notifications,
       publicUrl: null,
       timing: deliveryTiming,
     });

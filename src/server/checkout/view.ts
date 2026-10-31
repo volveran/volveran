@@ -7,7 +7,6 @@ import { messageIdOf, messageSummary, type QueueInfo } from '../triage/message-v
 import { replayOrigin } from '../triage/replay-origin.js';
 import { remainingMs } from '../triage/checkout-timing.js';
 import { pacedDurationMs } from '../../shared/replay-rate.js';
-import type { RuleBadgeOf } from './manager.js';
 import type { Checkout } from './state.js';
 import { canaryView } from './canary.js';
 import type { CanaryConfirmation, RequestedCanary } from '../../shared/checkout.js';
@@ -19,8 +18,8 @@ export function queueInfo(c: Checkout): QueueInfo {
   return { type: c.queueType, deliveryLimit: c.deliveryLimit, deadLetterExchange: c.deadLetterExchange };
 }
 
-/** The Checkout as the API returns it; `ruleBadge` gives each row its running Replay Rule's badge. */
-export function view(c: Checkout, ruleBadge?: RuleBadgeOf): CheckoutView {
+/** The Checkout as the API returns it, read at once; the rows' rule badges come from the store (CheckoutManager.withRuleBadges). */
+export function view(c: Checkout): CheckoutView {
   const info = queueInfo(c);
   const handles = [...c.held.keys()];
   const decisionSummary = summarizeDecisions(handles, c.decisions);
@@ -55,7 +54,7 @@ export function view(c: Checkout, ruleBadge?: RuleBadgeOf): CheckoutView {
           ? { available: true }
           : { available: false, reason: origin.reason, suggestedMove: origin.suggestedMove },
         diedAgain: c.diedAgain.get(handle) ?? null,
-        rule: ruleBadge?.(c, m, c.diedAgain.get(handle)?.count ?? 0) ?? null,
+        rule: null,
       };
     }),
     diedAgainCount: handles.filter((h) => c.diedAgain.has(h)).length,

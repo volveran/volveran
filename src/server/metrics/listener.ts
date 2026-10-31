@@ -2,7 +2,7 @@
 // VOLVERAN_METRICS_PORT is set. It has no session and no other routes, and
 // shares nothing with the web app's port, so an HTTPRoute or Ingress to that
 // port can never reach it. A scrape only reads what `families` gives from
-// this process: it never contacts a broker.
+// this process: it never contacts a broker or waits on the audit store.
 import http from 'node:http';
 import { renderMetrics, type MetricFamily } from './exposition.js';
 

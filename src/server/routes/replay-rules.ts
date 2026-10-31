@@ -27,7 +27,7 @@ import type { ReplayRuleView, RulePass, RuleState } from '../../shared/replay-ru
 export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRules, access: ProfileAccessCheck) {
   app.get<{ Params: { profile: string } }>('/api/profiles/:profile/replay-rules', async (req): Promise<{ rules: ReplayRuleView[] }> => {
     const { profile } = access.profile(operatorOf(req), 'see_profile', req.params.profile);
-    return { rules: rules.list(profile) };
+    return { rules: await rules.list(profile) };
   });
 
   app.post<{ Params: { profile: string; name: string } }>(
@@ -43,7 +43,7 @@ export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRule
     async (req): Promise<{ state: RuleState }> => {
       const operator = operatorOf(req);
       const { profile, role } = access.profile(operator, 'pause_replay_rule', req.params.profile);
-      return { state: rules.pause(profile, req.params.name, operator, role, req.body?.reason) };
+      return { state: await rules.pause(profile, req.params.name, operator, role, req.body?.reason) };
     },
   );
 
@@ -52,7 +52,7 @@ export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRule
     async (req): Promise<{ state: RuleState }> => {
       const operator = operatorOf(req);
       const { profile, role } = access.profile(operator, 'resume_replay_rule', req.params.profile);
-      return { state: rules.resume(profile, req.params.name, operator, role) };
+      return { state: await rules.resume(profile, req.params.name, operator, role) };
     },
   );
 }

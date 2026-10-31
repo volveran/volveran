@@ -37,11 +37,11 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     let now = Date.parse('2026-10-30T10:00:00.000Z');
     const sampler = new QueueSampler({
       profiles,
-      history: store.history,
+      history: store.async.history,
       intervalMs: 60_000,
       testHooks: { clock: { now: () => new Date(now), setTimer: () => ({ cancel() {} }) }, sampler: (c) => (control = c) },
     });
-    sampler.start();
+    await sampler.start();
     cleanups.push(() => sampler.stop());
     const finished: FinishedRun[] = [];
     sampler.onRun((run) => void finished.push(run));

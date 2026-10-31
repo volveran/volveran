@@ -56,12 +56,12 @@ export function parseHandle(raw: unknown): number {
  * their diff. 400 for a missing handle or the same handle twice, 404 for a
  * handle the Checkout does not hold.
  */
-export function compareMessages(checkouts: CheckoutManager, id: string, query: unknown): MessageComparison {
+export async function compareMessages(checkouts: CheckoutManager, id: string, query: unknown): Promise<MessageComparison> {
   const { a, b } = isRecord(query) ? query : {};
   if (a === undefined || b === undefined) throw new InvalidRequestError('Name the two Messages to compare with "a" and "b".');
   const [left, right] = [parseHandle(a), parseHandle(b)];
   if (left === right) throw new InvalidRequestError('Compare two different Messages: "a" and "b" are the same handle.');
-  const views = [checkouts.message(id, left), checkouts.message(id, right)] as const;
+  const views = await Promise.all([checkouts.message(id, left), checkouts.message(id, right)]);
   return { left: views[0], right: views[1], diff: diffMessages(views[0], views[1]) };
 }
 
@@ -85,19 +85,19 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
       const target = access.queue(operatorOf(req), 'checkout', profile, vhost, queue);
       const auditScope = access.auditScope(operatorOf(req), 'read_audit_entries');
       const checkout = await checkouts.start(target, operatorOf(req), { overrideConsumers, auditScope });
-      return reply.status(201).send({ checkout });
+      return reply.status(201).send({ checkout: await checkouts.withRuleBadges(checkout) });
     },
   );
 
   app.get<{ Params: { id: string } }>('/api/checkouts/:id', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.get(req.params.id) };
+    return { checkout: await checkouts.withRuleBadges(checkouts.get(req.params.id)) };
   });
 
   app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
     const handle = parseHandle(req.params.handle);
     checkoutAccess(deps, req, 'checkout');
-    return { message: checkouts.message(req.params.id, handle) };
+    return { message: await checkouts.message(req.params.id, handle) };
   });
 
   app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', async (req) => {
@@ -109,12 +109,12 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
   // poll cannot keep Messages held after the browser is gone.
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/heartbeat', async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.heartbeat(req.params.id) };
+    return { checkout: await checkouts.withRuleBadges(checkouts.heartbeat(req.params.id)) };
   });
 
   const end = async (req: FastifyRequest<{ Params: { id: string } }>) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: await checkouts.end(req.params.id) };
+    return { checkout: await checkouts.withRuleBadges(await checkouts.end(req.params.id)) };
   };
   app.delete<{ Params: { id: string } }>('/api/checkouts/:id', end);
   app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', end);

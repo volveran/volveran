@@ -17,6 +17,7 @@ import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
 import { QueueMetrics } from './metrics/queues.js';
 import { startRuntimeMetrics } from './metrics/runtime.js';
+import { StoreReadings } from './metrics/store-readings.js';
 import { TriageMetrics } from './metrics/triage.js';
 import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
@@ -79,6 +80,9 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
+/** How often the metrics read the audit store when nothing has told them to. */
+const METRICS_READING_INTERVAL_MS = 15_000;
+
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const {
@@ -89,11 +93,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
   const audit = new AuditStore(options.dataDir);
   const asyncAudit = options.wrapAuditStore?.(audit.async) ?? audit.async;
+  // A scrape takes the last of these readings and never waits on the store. Replay
+  // Rules are created below; this reads only once it has started.
+  const metricsReadings = new StoreReadings({
+    read: async () => {
+      const [ruleStates, storedBodyBytes, memories] = await Promise.all([
+        replayRules.states(),
+        asyncAudit.storedBodyBytes(),
+        Promise.all(profiles.map((p) => asyncAudit.alerts.load(p.name))),
+      ]);
+      const firingRules = new Map(profiles.map((p, i) => [p.name, memories[i]!.alerts.filter((a) => a.status === 'firing').map((a) => a.rule)]));
+      return { ruleStates, storedBodyBytes, firingRules };
+    },
+    intervalMs: METRICS_READING_INTERVAL_MS,
+    // Called only once the app below is listening or starting up.
+    onError: (err) => app.log.error({ err }, 'The metrics could not read the audit store; they keep their last values'),
+  });
   // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
   const triageMetrics = new TriageMetrics({
-    ruleStates: () => replayRules.states(),
+    ruleStates: () => metricsReadings.current()?.ruleStates ?? [],
     checkoutCounts: () => checkouts.counts(),
-    storedBodyBytes: () => audit.storedBodyBytes(),
+    storedBodyBytes: () => metricsReadings.current()?.storedBodyBytes ?? null,
   });
   const checkouts = new CheckoutManager({
     audit: asyncAudit,
@@ -103,10 +123,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
     // Replay Rules are created below, before any Checkout can start.
-    ruleBadge: (c, delivery, diedAgainCount) => replayRules.badge(c.profile, c.vhost, c.queue, delivery, diedAgainCount),
+    ruleBadges: (c, held) => replayRules.badges(c.profile, c.vhost, c.queue, held),
+    // Called only once the app below is listening.
+    onRuleBadgesError: (err) => app.log.error({ err }, 'The rule badges of a Checkout could not be read'),
     // Called only once the app below is listening.
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
-    onApplyEnded: (checkout, outcomes) => triageMetrics.applyEnded(checkout.profile.name, outcomes),
+    onApplyEnded: (checkout, outcomes) => {
+      triageMetrics.applyEnded(checkout.profile.name, outcomes);
+      void metricsReadings.refresh();
+    },
   });
   const access: Access =
     config.mode.kind === 'solo'
@@ -119,20 +144,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const restore = new RestoreService(asyncAudit, (id) => checkouts.isRunning(id));
   const replayRules = new ReplayRules({
     checkouts,
-    state: audit.ruleState,
-    audit,
+    state: asyncAudit.ruleState,
+    audit: asyncAudit,
     profiles,
     testHooks: options.checkoutTestHooks?.ruleScheduler,
     // Called only once the app below is listening.
     onError: (rule, err) => app.log.error({ err, rule }, 'A scheduled Replay rule pass failed unexpectedly'),
     onPassRecorded: (profile, rule, pass) => triageMetrics.passRecorded(profile, rule, pass.status),
     // Alerting is created below, before any rule starts.
-    onPauseChanged: (profile) => alerting.replayRuleChanged(profile),
+    onPauseChanged: async (profile) => {
+      await alerting.replayRuleChanged(profile);
+      await metricsReadings.refresh();
+    },
   });
   const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
   const sampler = new QueueSampler({
     profiles,
-    history: audit.history,
+    history: asyncAudit.history,
     intervalMs: config.historyIntervalMs,
     testHooks: options.samplerTestHooks,
     // Called only once the app below is listening.
@@ -140,18 +168,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const queueMetrics = new QueueMetrics(() => sampler.latest());
   sampler.onRun((finished) => queueMetrics.runFinished(finished));
-  const alertMetrics = new AlertMetrics({ profiles, store: audit.alerts });
+  const alertMetrics = new AlertMetrics({ profiles, firingRules: (profile) => metricsReadings.current()?.firingRules.get(profile) ?? null });
   const notifier = new Notifier({
     onDelivered: (delivery) => alertMetrics.delivered(delivery),
     destinations: alertDestinations,
-    store: audit.notifications,
+    store: asyncAudit.notifications,
     publicUrl: config.publicUrl,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'The outcome of a notification could not be recorded'),
   });
   const alerting = new Alerting({
     profiles,
-    store: audit.alerts,
+    store: asyncAudit.alerts,
     notifier,
     clock: samplerClock,
     pausedReplayRules: (profile) => replayRules.pausedRules(profile),
@@ -159,7 +187,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
   });
-  sampler.onRun((finished) => alerting.evaluate(finished));
+  sampler.onRun(async (finished) => {
+    await alerting.evaluate(finished);
+    await metricsReadings.refresh();
+  });
   const usage = async () => bodyStoreUsage(await asyncAudit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
@@ -169,8 +200,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     notifier,
     alertDestinations,
     audit: { audit: asyncAudit, restore, usage },
-    alertStores: { alerts: audit.alerts, notifications: audit.notifications },
-    history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
+    history: { history: asyncAudit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
   });
@@ -214,34 +244,42 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
-  const evict = () => {
+  const evict = async () => {
     try {
-      const { evicted } = audit.evictBodies({ now: new Date(), ...retention });
+      const { evicted } = await asyncAudit.evictBodies({ now: new Date(), ...retention });
       if (evicted > 0) app.log.info({ evicted }, 'Retention evicted Discarded Message bodies');
     } catch (err) {
       app.log.error(err, 'Retention could not evict Discarded Message bodies');
     }
     try {
-      audit.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
+      await asyncAudit.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
     } catch (err) {
       app.log.error(err, 'Retention could not remove old notification outcomes');
     }
   };
   // The same job removes Samples and sampling runs past the history retention.
-  const removeOldHistory = () => {
+  const removeOldHistory = async () => {
     try {
-      const { samples } = audit.history.removeOlderThan(Date.now() - config.historyRetentionMs);
+      const { samples } = await asyncAudit.history.removeOlderThan(Date.now() - config.historyRetentionMs);
       if (samples > 0) app.log.info({ samples }, 'Retention removed old Samples');
     } catch (err) {
       app.log.error(err, 'Retention could not remove old Samples');
     }
   };
+  // Never rejects. A run still going when the next is due is left to finish.
+  let retentionRun: Promise<void> | null = null;
   const runRetention = () => {
-    evict();
-    removeOldHistory();
+    retentionRun ??= (async () => {
+      await evict();
+      await removeOldHistory();
+      await metricsReadings.refresh();
+    })().finally(() => {
+      retentionRun = null;
+    });
+    return retentionRun;
   };
-  runRetention();
-  const retentionTimer = setInterval(runRetention, retention.intervalMs);
+  await runRetention();
+  const retentionTimer = setInterval(() => void runRetention(), retention.intervalMs);
   retentionTimer.unref();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
@@ -249,25 +287,35 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   // finishes first) before the audit store closes and the process exits.
   let metricsListener: MetricsListener | undefined;
   app.addHook('onClose', async () => {
-    // First: a scrape reads the audit store.
     await metricsListener?.close();
+    await metricsReadings.stop();
     clearInterval(retentionTimer);
+    await retentionRun;
     await sampler.stop();
     // Before the notifier: a last pass can pause its rule, which sends a notification.
     await replayRules.stop();
+    await alerting.stop();
     await notifier.close();
     await checkouts.endAll();
-    audit.close();
+    await asyncAudit.close();
   });
-  // Replay Rules: give each its state and schedule the running ones.
-  replayRules.start();
-  sampler.start();
+  try {
+    await alerting.start();
+    // The sampler before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
+    await sampler.start();
+    // Replay Rules: give each its state and schedule the running ones.
+    await replayRules.start();
+  } catch (err) {
+    await app.close();
+    throw err;
+  }
 
   // Metrics: on a port of their own, at the same address, so loopback in Solo Mode.
   if (config.metricsPort !== null) {
     const runtimeMetrics = startRuntimeMetrics();
     app.addHook('onClose', async () => runtimeMetrics.stop());
     try {
+      await metricsReadings.start();
       metricsListener = await startMetricsListener({
         host: options.host,
         port: config.metricsPort,
@@ -303,15 +351,13 @@ interface AppOptions {
   notifier: Notifier;
   alertDestinations: AlertDestination[];
   audit: AuditRouteDeps;
-  /** The stores of the Alert readings, still synchronous until #97 moves them. */
-  alertStores: Pick<AuditStore, 'alerts' | 'notifications'>;
   history: HistoryRouteDeps;
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, alertStores, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -339,7 +385,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
   const checkoutDeps = { checkouts, access: profileAccess };
   registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
-  const alertReadings = { ...alertStores, destinations: alertDestinations };
+  const alertReadings = { alerts: audit.audit.alerts, notifications: audit.audit.notifications, destinations: alertDestinations };
   registerProfileRoutes(app, profileAccess, history, alertReadings);
   registerReplayRuleRoutes(app, replayRules, profileAccess);
   registerAlertDestinationRoutes(app, notifier, profileAccess);
