@@ -85,9 +85,29 @@ export class PostgresAuditStore implements AuditStore {
     return rows[0]?.body ?? null;
   }
 
-  /** Comes with Discard and Restore on PostgreSQL (#100); retention logs that it could not run. */
-  async evictBodies(_eviction: BodyEviction): Promise<{ evicted: number }> {
-    throw new Error('Body retention is not available on PostgreSQL yet');
+  /**
+   * One statement, so one transaction. `newer_bytes`: this body plus every newer one. A
+   * call that waited for another to finish finds the row marked, and neither counts nor
+   * marks it again.
+   */
+  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction): Promise<{ evicted: number }> {
+    const { rows } = await this.pool.query<{ evicted: number }>(
+      `WITH stored AS (
+         SELECT id, created_at,
+                SUM(body_bytes) OVER (ORDER BY created_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS newer_bytes
+         FROM audit_entries WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL
+       ), marked AS (
+         UPDATE audit_entries SET body_expired_at = $1
+         WHERE body_expired_at IS NULL
+           AND id IN (SELECT id FROM stored WHERE created_at < $2 OR newer_bytes > $3)
+         RETURNING id
+       ), removed AS (
+         DELETE FROM audit_message_bodies WHERE entry_id IN (SELECT id FROM marked)
+       )
+       SELECT COUNT(*) AS evicted FROM marked`,
+      [now.getTime(), now.getTime() - maxAgeMs, maxBodyBytes],
+    );
+    return { evicted: rows[0]!.evicted };
   }
 
   async storedBodyBytes(): Promise<number> {

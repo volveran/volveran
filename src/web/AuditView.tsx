@@ -7,6 +7,7 @@
 // Restore needs the role `admin` on the entry's Broker Profile; below it the
 // action is shown as unavailable.
 import { useEffect, useState } from 'react';
+import { showingNul } from '../shared/audit.js';
 import { roleIncludes, type Role } from '../shared/roles.js';
 import { api, ApiError, type AuditAction, type AuditEntry, type AuditSearch, type AuditStoreUsage, type Profile } from './api.js';
 
@@ -272,7 +273,7 @@ function EntryRow({
       <td>
         {ACTION_LABELS[entry.action]}
         {entry.restoreOf !== null && <small className="muted"> of #{entry.restoreOf}</small>}
-        {entry.reason && <small className="muted"> ({entry.reason})</small>}
+        {entry.reason && <small className="muted"> ({showingNul(entry.reason)})</small>}
         {entry.rate !== null && <small className="muted"> at {entry.rate} Messages/s</small>}
         {entry.canary && (
           <span className="badge canary-badge" title="Replayed alone before the rest of its Apply, and watched">
@@ -286,14 +287,14 @@ function EntryRow({
           </small>
         )}
       </td>
-      <td className="name">{entry.messageId ?? <span className="muted">none</span>}</td>
+      <td className="name">{entry.messageId === null ? <span className="muted">none</span> : showingNul(entry.messageId)}</td>
       <td className="name">
-        <small className="muted">{entry.profile} · </small>
-        {entry.vhost === '/' ? '' : `${entry.vhost} / `}
-        {entry.queue}
+        <small className="muted">{showingNul(entry.profile)} · </small>
+        {entry.vhost === '/' ? '' : `${showingNul(entry.vhost)} / `}
+        {showingNul(entry.queue)}
       </td>
       <td className="name">
-        {entry.destination ? (entry.destination.queue ?? `${entry.destination.exchange} ${entry.destination.routingKey}`) : ''}
+        {entry.destination ? showingNul(entry.destination.queue ?? `${entry.destination.exchange} ${entry.destination.routingKey}`) : ''}
         {entry.replayId && (
           <small className="muted" title="x-volveran-replay-id">
             {' '}
@@ -302,16 +303,16 @@ function EntryRow({
         )}
       </td>
       <td title={entry.operatorId}>
-        {entry.operatorName}
+        {showingNul(entry.operatorName)}
         {entry.role && <small className="muted"> ({entry.role})</small>}
-        <small className="muted"> as {entry.brokerUser}</small>
+        <small className="muted"> as {showingNul(entry.brokerUser)}</small>
       </td>
       <td className="name" title={entry.rulePassId ? `Rule Pass ${entry.rulePassId}` : undefined}>
-        {entry.rule ?? ''}
+        {showingNul(entry.rule ?? '')}
       </td>
       <td title={entry.outcomeReason ?? undefined}>
         <span className={`badge outcome-${entry.outcome}`}>{entry.outcome}</span>
-        {entry.outcomeReason && <small className="muted"> {entry.outcomeReason}</small>}
+        {entry.outcomeReason && <small className="muted"> {showingNul(entry.outcomeReason)}</small>}
       </td>
       <td>
         {bodyExpired && (

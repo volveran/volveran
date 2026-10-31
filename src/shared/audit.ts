@@ -98,3 +98,6 @@ export interface BodyStoreUsage {
   /** Near the size limit: the oldest bodies will soon be evicted. */
   nearLimit: boolean;
 }
+
+/** A stored value as an Operator reads it: a NUL shows as a symbol, as a browser would draw it as nothing. */
+export const showingNul = (text: string): string => text.replaceAll('\0', '\u2400');

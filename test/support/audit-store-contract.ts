@@ -33,6 +33,7 @@ export interface OpenedAuditStore {
 export const CONTRACT_PARTS = [
   'Audit Entries',
   'search',
+  'plain text',
   'replay trail',
   'retention',
   'Replay Rule state',
@@ -224,6 +225,176 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
+    part('plain text', () => {
+      const NUL = 'a\0b';
+      const everyTextField = entry({
+        operator: { id: NUL, displayName: NUL },
+        approver: { id: NUL, displayName: NUL },
+        brokerUser: NUL,
+        profile: NUL,
+        vhost: NUL,
+        queue: NUL,
+        messageId: NUL,
+        reason: NUL,
+        destination: { exchange: NUL, routingKey: NUL, queue: NUL },
+        checkoutId: NUL,
+        replayId: NUL,
+        rule: NUL,
+        rulePassId: NUL,
+      });
+
+      it('keeps a NUL in every plain text field of an entry and its outcome, also after a restart', async () => {
+        const id = await store.record(everyTextField);
+        await store.setOutcome(id, 'failed', NUL);
+
+        await reopen();
+
+        const expected = {
+          operatorId: NUL,
+          operatorName: NUL,
+          approverId: NUL,
+          approverName: NUL,
+          brokerUser: NUL,
+          profile: NUL,
+          vhost: NUL,
+          queue: NUL,
+          messageId: NUL,
+          reason: NUL,
+          destination: { exchange: NUL, routingKey: NUL, queue: NUL },
+          checkoutId: NUL,
+          replayId: NUL,
+          rule: NUL,
+          rulePassId: NUL,
+          outcome: 'failed',
+          outcomeReason: NUL,
+        };
+        expect(await store.get(id)).toMatchObject(expected);
+        expect(await store.list()).toEqual([expect.objectContaining(expected)]);
+      });
+
+      it('finds a value with a NUL by every text field a search can name', async () => {
+        const id = await store.record(everyTextField);
+        const queries: AuditQuery[] = [
+          { queue: NUL },
+          { messageId: NUL },
+          { checkoutId: NUL },
+          { replayId: NUL },
+          { profile: NUL },
+          { operator: NUL },
+          { rule: NUL },
+          { profiles: { only: [NUL] } },
+        ];
+        for (const query of queries) {
+          expect((await store.list(query)).map((e) => e.id)).toEqual([id]);
+        }
+        expect(await store.list({ profiles: { except: [NUL] } })).toEqual([]);
+      });
+
+      it('tells apart values that differ only around a NUL, whatever they look like', async () => {
+        // The last ones are what a store might write instead of a NUL.
+        const values = [NUL, 'ab', 'a b', 'a\0\0b', 'a\\0b', 'a\\u0000b', 'a␀0b', 'a␀␀b', 'a␀b', '␀', '\0', '\\'];
+        const ids = new Map<string, number>();
+        for (const value of values) ids.set(value, await store.record(entry({ messageId: value })));
+
+        for (const value of values) {
+          const [found, ...others] = await store.list({ messageId: value });
+          expect(others).toEqual([]);
+          expect(found).toMatchObject({ id: ids.get(value), messageId: value });
+        }
+      });
+
+      it('keeps a NUL in Replay Rule state, and finds its first-seen time again', async () => {
+        const key = `local/${NUL}`;
+        const ids = [NUL, 'ab', '\0'];
+
+        const seen = await store.ruleState.firstSeen(key, ids, AT);
+        expect([...seen.keys()].sort()).toEqual([...ids].sort());
+        await store.ruleState.firstSeen(key, ids, after(1000));
+
+        expect(await store.ruleState.firstSeen(key, [NUL], after(2000))).toEqual(new Map([[NUL, AT]]));
+        expect(await store.ruleState.firstSeenAt(key, [NUL, 'a\0'])).toEqual(new Map([[NUL, AT]]));
+
+        await store.ruleState.ensure(key, false);
+        await store.ruleState.setPaused(key, { reason: NUL, by: NUL, at: AT });
+        expect(await store.ruleState.state(key)).toMatchObject({ paused: true, pausedReason: NUL, pausedBy: NUL });
+        await store.ruleState.recordPass(key, { id: NUL, at: AT.toISOString(), status: 'failed', reason: NUL, summary: null });
+        expect(await store.ruleState.passes(key)).toMatchObject([{ id: NUL, reason: NUL }]);
+
+        const entryId = await store.record(entry({ profile: NUL, rule: NUL }));
+        expect(await store.ruleState.countDiedAgain(key, { profile: NUL, name: NUL }, [entryId], AT, AT)).toBe(1);
+      });
+
+      it('keeps a NUL in depth history, and counts what was taken out of such a queue', async () => {
+        const queue = { profile: NUL, vhost: NUL, queue: NUL };
+        await store.history.recordRun(NUL, { at: 1000, ok: false, errorCode: NUL, intervalMs: 60_000 }, [{ vhost: NUL, queue: NUL, at: 1000, depth: 3, estimatedArrivals: null }]);
+        expect(await store.history.latestSample(queue)).toMatchObject({ depth: 3 });
+        expect((await store.history.lastRuns(NUL)).last).toMatchObject({ errorCode: NUL });
+
+        const id = await store.record(entry({ at: new Date(2000), profile: NUL, vhost: NUL, queue: NUL, checkoutId: NUL, operator: { id: 'o', displayName: NUL } }));
+        await store.setOutcome(id, 'done');
+
+        expect(await store.history.takenOut(queue, 1000, 3000)).toBe(1);
+        expect(await store.history.takeOuts(queue, 1000, 3000)).toMatchObject([{ checkoutId: NUL, operator: NUL, counts: { discard: 1 } }]);
+      });
+
+      it('keeps a NUL in the outcome of a notification', async () => {
+        const recorded = await store.notifications.record({
+          at: AT, alertId: NUL, destination: NUL, destinationType: 'slack', status: 'firing', test: false, rule: NUL,
+          profile: NUL, vhost: NUL, queue: NUL, replayRule: NUL, outcome: 'failed', httpStatus: null, error: NUL, attempts: 1,
+        });
+
+        expect(await store.notifications.recent()).toEqual([recorded]);
+        expect(await store.notifications.recent(10, { profiles: { only: [NUL] }, tests: false })).toEqual([recorded]);
+      });
+
+      it('keeps a NUL in Alerts, in the order of a store that holds it as it is', async () => {
+        const alert = (queue: string): AlertMemory['alerts'][number] => ({
+          alertId: NUL, rule: NUL, vhost: NUL, queue, status: 'firing', condition: 'depthAbove', value: null, threshold: null,
+          since: 1000, lastNotifiedAt: null, falseSince: null, replayRule: NUL, reason: NUL,
+        });
+        // Bytewise: NUL first, then what might stand for it, then the rest.
+        const queues = ['a', 'a\0', 'a\0\0', 'a\0b', 'a\u0001', 'a\u0002', 'aa', 'a\u2400'];
+        const memory: AlertMemory = {
+          alerts: queues.map(alert),
+          arrivals: queues.map((queue) => ({ vhost: NUL, queue, unsettled: 1, recent: [] })),
+        };
+        await store.alerts.save(NUL, { alerts: [...memory.alerts].reverse(), arrivals: [...memory.arrivals].reverse() });
+
+        expect(await store.alerts.load(NUL)).toEqual(memory);
+        await store.alerts.keepOnly(new Map([[NUL, []]]));
+        expect((await store.alerts.load(NUL)).alerts).toEqual([]);
+      });
+
+      it('stores half of a surrogate pair as the replacement character, as UTF-8 cannot hold it', async () => {
+        const id = await store.record(entry({ messageId: 'a\ud800b', reason: 'a\ud800b' }));
+
+        expect(await store.get(id)).toMatchObject({ messageId: 'a\ufffdb', reason: 'a\ufffdb' });
+      });
+
+      it('keeps a NUL in the properties, headers and filter it holds as JSON', async () => {
+        const id = await store.record(
+          entry({
+            filter: { all: [{ field: 'messageId', op: 'contains', value: NUL }] } as unknown as NewAuditEntry['filter'],
+            message: { body: null, properties: { messageId: NUL, appId: 'a␀0b' }, headers: { [NUL]: NUL, nested: { list: [NUL] } } },
+          }),
+        );
+
+        const found = await store.get(id);
+        expect(found?.filter).toEqual({ all: [{ field: 'messageId', op: 'contains', value: NUL }] });
+        expect(found?.message?.properties).toEqual({ messageId: NUL, appId: 'a␀0b' });
+        expect(found?.message?.headers).toEqual({ [NUL]: NUL, nested: { list: [NUL] } });
+      });
+
+      it('settles a Message whose id has a NUL: a Restore of it can be written too', async () => {
+        const discard = await store.record(entry({ messageId: NUL, message: { body: Buffer.from('x'), properties: { messageId: NUL }, headers: {} } }));
+        await store.setOutcome(discard, 'done');
+        const restore = await store.record(entry({ action: 'restore', messageId: (await store.get(discard))!.messageId, restoreOf: discard }));
+
+        expect((await store.list({ restoreOf: discard })).map((e) => [e.id, e.messageId])).toEqual([[restore, NUL]]);
+        expect(await store.body(discard)).toEqual(Buffer.from('x'));
+      });
+    });
+
     part('search', () => {
       const ids = async (query?: AuditQuery) => (await store.list(query)).map((e) => e.id);
 
@@ -377,6 +548,53 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
         expect(await store.evictBodies({ now: NOW, maxAgeMs: 30 * DAY, maxBodyBytes: 0 })).toEqual({ evicted: 0 });
         expect(await store.get(replay)).toMatchObject({ bodyExpiredAt: null, message: { bodyBytes: null } });
+      });
+
+      it('gives back a body byte for byte, whatever its bytes, and an empty one too', async () => {
+        const everyByte = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+        const full = await store.record(entry({ message: { body: everyByte, properties: {}, headers: {} } }));
+        const empty = await store.record(entry({ message: { body: Buffer.alloc(0), properties: {}, headers: {} } }));
+
+        expect((await store.body(full))?.equals(everyByte)).toBe(true);
+        expect((await store.body(empty))?.length).toBe(0);
+        expect((await store.get(empty))?.message?.bodyBytes).toBe(0);
+      });
+
+      it('keeps a body exactly at the age limit, and bodies that exactly fit the size limit', async () => {
+        const atLimit = await discard('at-limit', 30 * DAY, 50);
+        await discard('other', 0, 50);
+
+        expect(await store.evictBodies({ now: NOW, maxAgeMs: 30 * DAY, maxBodyBytes: 100 })).toEqual({ evicted: 0 });
+        expect(await store.body(atLimit)).not.toBeNull();
+      });
+
+      it('among bodies of the same moment, evicts the first written', async () => {
+        const first = await discard('first', 0, 40);
+        const second = await discard('second', 0, 40);
+
+        expect(await store.evictBodies({ now: NOW, maxAgeMs: 30 * DAY, maxBodyBytes: 50 })).toEqual({ evicted: 1 });
+
+        expect(await store.body(first)).toBeNull();
+        expect(await store.body(second)).not.toBeNull();
+      });
+
+      it('keeps the mark of the eviction that came first, and evicts each body once when two run together', async () => {
+        const old = await discard('old', 31 * DAY, 10);
+        const limits = { maxAgeMs: 30 * DAY, maxBodyBytes: NO_SIZE_LIMIT };
+
+        const [one, other] = await Promise.all([store.evictBodies({ now: NOW, ...limits }), store.evictBodies({ now: NOW, ...limits })]);
+        expect(one.evicted + other.evicted).toBe(1);
+
+        expect(await store.evictBodies({ now: after(DAY), ...limits })).toEqual({ evicted: 0 });
+        expect((await store.get(old))?.bodyExpiredAt).toEqual(NOW);
+      });
+
+      it('keeps a size limit and a total beyond what 32 bits hold', async () => {
+        const big = 5 * 1024 ** 3;
+        await discard('small', 0, 10);
+
+        expect(await store.evictBodies({ now: NOW, maxAgeMs: 30 * DAY, maxBodyBytes: big })).toEqual({ evicted: 0 });
+        expect(await store.storedBodyBytes()).toBe(10);
       });
 
       it('reports no bytes when no body is stored', async () => {
