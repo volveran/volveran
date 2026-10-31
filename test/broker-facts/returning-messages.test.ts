@@ -8,10 +8,11 @@ type Closing = 'wait-until-ready' | 'connection' | 'channel' | 'round-trip';
 const bodiesOf = (count: number) => Array.from({ length: count }, (_, i) => `m${i}`);
 
 /** Holds every Message in `q` as a Checkout does, returns them with `nack`, and closes as `closing` says. */
-async function checkOutAndReturn(q: string, count: number, closing: Closing): Promise<void> {
+async function checkOutAndReturn(q: string, count: number, closing: Closing, beforeNacks?: () => void): Promise<void> {
   const conn = await connect();
   const { ch, consumerTag, held } = await hold(conn, q, count, { arguments: { 'x-consumer-timeout': 3_600_000 } });
   await ch.cancel(consumerTag);
+  beforeNacks?.();
   for (const m of held) ch.nack(m, false, true);
   if (closing === 'round-trip') await ch.checkQueue(q);
   if (closing === 'wait-until-ready') {
@@ -38,12 +39,15 @@ async function counted(s: Scratch, q: string, count: number): Promise<{ counted:
   }
 }
 
-/** Tries up to `attempts` times, since how far the `nack`s get first varies; whether any used up Delivery Budget. */
-async function everCounted(s: Scratch, closing: Closing, count: number, attempts: number): Promise<boolean> {
+/**
+ * Tries up to `attempts` times, since how far the `nack`s get first varies; whether any used up Delivery Budget.
+ * `beforeNacks` runs just before each return.
+ */
+async function everCounted(s: Scratch, closing: Closing, count: number, attempts: number, beforeNacks?: () => void): Promise<boolean> {
   for (let i = 0; i < attempts; i++) {
     const q = await s.queue(`return-${closing}`, { 'x-queue-type': 'quorum' });
     await s.publish(q, bodiesOf(count));
-    await checkOutAndReturn(q, count, closing);
+    await checkOutAndReturn(q, count, closing, beforeNacks);
     const result = await counted(s, q, count);
     expect(result.bodies).toEqual(bodiesOf(count));
     if (result.counted > 0) return true;
@@ -82,7 +86,21 @@ describe('Returning Messages before closing', () => {
   describe("A passive declare's round trip after `nack` is not enough: closing the channel then can still use up Delivery Budget.", () => {
     it('some of 200 Messages are counted', async (ctx) => {
       const s = await scratchFor(ctx);
-      expect(await everCounted(s, 'round-trip', 200, 10)).toBe(true);
+      // The round trip gives the queue time to catch up, and on a slow client it often does:
+      // 10 of 20 tries here, and all 10 once in CI. Another quorum queue's publishes keep the
+      // broker busy through it (19 of 20), without touching the queue under test. More
+      // Messages do not help (1 of 8 tries with 1,000).
+      const other = await s.queue('return-busy', { 'x-queue-type': 'quorum' });
+      const conn = await connect();
+      try {
+        const busy = await conn.createChannel();
+        const publishToOther = () => {
+          for (let i = 0; i < 1_000; i++) busy.sendToQueue(other, Buffer.alloc(1024), { persistent: true });
+        };
+        expect(await everCounted(s, 'round-trip', 200, 10, publishToOther), 'no try of 10 used up Delivery Budget').toBe(true);
+      } finally {
+        await conn.close();
+      }
     });
   });
 });
