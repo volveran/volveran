@@ -24,6 +24,7 @@ export function ApplyProgressPanel({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Its handler fires and forgets it: `onStop` reports its own errors.
   const stop = async () => {
     setConfirming(false);
     setBusy(true);

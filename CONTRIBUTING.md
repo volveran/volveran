@@ -5,7 +5,7 @@ Requirements: Node.js 24 and Docker with Compose v2.
 ```sh
 npm ci
 npm run dev            # server and web app with reload (Vite on :5173; it proxies /api and /auth)
-npm run lint           # typecheck server, web app and tests
+npm run lint           # typecheck server, web app and tests, then ESLint (tools/lint) for what tsc cannot see: floating promises
 npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
 npm run test:integration  # same for test/integration/

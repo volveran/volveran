@@ -47,7 +47,7 @@ describe.concurrent('Queue counts', () => {
       expect(stale).toBe(true);
       expect(caughtUpAfterMs).toBeGreaterThan(0);
       expect(caughtUpAfterMs).toBeLessThan(15_000);
-      ctx.annotate(`management API caught up ${caughtUpAfterMs} ms after the confirm`);
+      await ctx.annotate(`management API caught up ${caughtUpAfterMs} ms after the confirm`);
     });
 
     it('the management API shows 0 consumers on a quorum queue that has one', async (ctx) => {

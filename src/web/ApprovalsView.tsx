@@ -235,6 +235,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
     };
   }, [id, focused, done]);
 
+  // Reports its own errors, so handlers fire and forget it.
   const approve = async () => {
     setBusy(true);
     try {
@@ -249,6 +250,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
     }
   };
 
+  // Reports its own errors, so handlers fire and forget it.
   const reject = async () => {
     setBusy(true);
     try {

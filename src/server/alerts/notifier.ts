@@ -59,6 +59,7 @@ export class Notifier {
     if (!destination) return Promise.reject(alertDestinationNotFound(destinationName));
     const delivery = this.deliver(destination, notification);
     this.inProgress.add(delivery);
+    // Only tidies up; the caller has `delivery` itself and answers for how it ends.
     void delivery.finally(() => this.inProgress.delete(delivery));
     return delivery;
   }

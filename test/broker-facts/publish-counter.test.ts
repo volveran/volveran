@@ -108,7 +108,7 @@ describe('Publish counter', () => {
         await untilPublishCount(q, 3);
         lags.push(Date.now() - confirmedAt);
       }
-      ctx.annotate(`publish counter caught up after ${lags.join(', ')} ms`);
+      await ctx.annotate(`publish counter caught up after ${lags.join(', ')} ms`);
       for (const lag of lags) expect(lag).toBeLessThan(15_000);
     });
   });

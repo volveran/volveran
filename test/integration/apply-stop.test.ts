@@ -393,6 +393,7 @@ describe.each(storeSpeeds)("Stop races (Solo Mode, %s)", (_speed, wrapAuditStore
         stopped = new Promise((resolve) =>
           setTimeout(() => resolve(stop(quick, id)), 0),
         );
+        // The test awaits `stopped` itself, and a failure there fails it.
         void stopped.then(release.open);
       };
       const id = await startApply(quick, 3);

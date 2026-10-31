@@ -207,6 +207,7 @@ function TestableDestination({ name, type, mayTest, onSent }: { name: string; ty
   const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<string>();
   const [error, setError] = useState<ApiError>();
+  // Reports its own errors, so handlers fire and forget it.
   const send = async () => {
     setSending(true);
     setOutcome(undefined);

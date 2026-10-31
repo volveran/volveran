@@ -12,6 +12,7 @@ export class OneAtATime {
       () => {},
     );
     this.lasts.set(key, last);
+    // `last` never rejects, and nobody waits for this tidying up.
     void last.then(() => {
       if (this.lasts.get(key) === last) this.lasts.delete(key);
     });

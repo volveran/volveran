@@ -28,6 +28,7 @@ export class StoreReadings<T> {
     this.started = true;
     await this.refresh();
     if (!this.started) return;
+    // refresh never rejects.
     this.timer = setInterval(() => void this.refresh(), this.options.intervalMs);
     this.timer.unref();
   }

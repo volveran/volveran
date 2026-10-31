@@ -142,6 +142,7 @@ async function serve(
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
     onApplyEnded: (checkout, outcomes) => {
       triageMetrics.applyEnded(checkout.profile.name, outcomes);
+      // Never rejects, and an Apply's end should not wait for a reading.
       void metricsReadings.refresh();
     },
   });
@@ -277,7 +278,7 @@ async function serve(
       app.log.error(err, 'Retention could not remove old Samples');
     }
   };
-  // Never rejects. A run still going when the next is due is left to finish.
+  // Never rejects, so the timer can leave it running. A run still going when the next is due is left to finish.
   let retentionRun: Promise<void> | null = null;
   const runRetention = () => {
     retentionRun ??= (async () => {
