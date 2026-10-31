@@ -8,10 +8,10 @@ import type { AuditAction, AuditCanaryOutcome, AuditOutcome } from '../../shared
 import type { Filter } from '../../shared/filters.js';
 import type { Role } from '../../shared/roles.js';
 
-type Placeholder = (position: number) => string;
+export type Placeholder = (position: number) => string;
 export type SqlValue = string | number | null;
 
-const positions = (placeholder: Placeholder) => {
+export const positions = (placeholder: Placeholder) => {
   let position = 0;
   return () => placeholder(++position);
 };
