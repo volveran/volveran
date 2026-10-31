@@ -3,7 +3,7 @@
 // As in audit-entry-sql.ts, the stores differ only in how a statement names its
 // parameters and in how they run it.
 import type { Placeholder } from './audit-entry-sql.js';
-import type { NotificationScope, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
+import type { NotificationScope, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
 import type { AlertMemory, AlertState } from '../alerts/evaluation.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
 import type { RulePass, RulePassStatus, RuleState } from '../../shared/replay-rules.js';
@@ -78,7 +78,7 @@ export interface RunRow {
   interval_ms: number | null;
 }
 
-export function toRun(row: RunRow): SamplingRunRow {
+export function toRun(row: RunRow): StoredSamplingRun {
   return { at: row.at, ok: row.ok === 1, errorCode: row.error_code, intervalMs: row.interval_ms };
 }
 

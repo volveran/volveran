@@ -12,7 +12,7 @@ import {
   type NewAuditEntry,
   type NewNotificationDelivery,
   type QueueSample,
-  type SamplingRunRow,
+  type StoredSamplingRun,
 } from '../../src/server/audit/audit-store.js';
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
@@ -708,7 +708,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
     part('depth history', () => {
       const QUEUE = { profile: 'local', vhost: '/', queue: 'orders.dlq' };
-      const run = (at: number, ok = true): SamplingRunRow => ({ at, ok, errorCode: ok ? null : 'broker_unreachable', intervalMs: 1000 });
+      const run = (at: number, ok = true): StoredSamplingRun => ({ at, ok, errorCode: ok ? null : 'broker_unreachable', intervalMs: 1000 });
       const sample = (at: number, depth: number, overrides: Partial<QueueSample> = {}): QueueSample => ({ vhost: '/', queue: 'orders.dlq', at, depth, estimatedArrivals: null, ...overrides });
       const stored = (at: number, depth: number, estimatedArrivals: number | null = null) => ({ at, depth, estimatedArrivals });
 

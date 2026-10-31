@@ -5,14 +5,14 @@
 // periodic retention job. The Applies and Rule Passes on a queue are read from
 // the Audit Entries.
 import type { DatabaseSync } from 'node:sqlite';
-import type { HistoryStore, QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
+import type { HistoryStore, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
 import { TAKEN_OUT, toRun, toSample, toTakeOuts, type RunRow, type SampleRow, type TakeOutRow } from './store-rows.js';
 
 export class SqliteHistoryStore implements HistoryStore {
   constructor(private readonly db: DatabaseSync) {}
 
   /** Records a sampling run and its Samples in one commit. */
-  async recordRun(profile: string, run: SamplingRunRow, samples: readonly QueueSample[]): Promise<void> {
+  async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void> {
     this.db.exec('BEGIN');
     try {
       this.db
@@ -55,7 +55,7 @@ export class SqliteHistoryStore implements HistoryStore {
   }
 
   /** The profile's runs in the range, oldest first, from its last good run before the range to its first good run after. */
-  async runsAround(profile: string, from: number, to: number): Promise<SamplingRunRow[]> {
+  async runsAround(profile: string, from: number, to: number): Promise<StoredSamplingRun[]> {
     const edge = (sql: string, at: number) =>
       (this.db.prepare(sql).get(profile, at) as { at: number | null }).at;
     const start = edge('SELECT MAX(at) AS at FROM sampling_runs WHERE profile = ? AND ok = 1 AND at <= ?', from);
@@ -67,7 +67,7 @@ export class SqliteHistoryStore implements HistoryStore {
   }
 
   /** The profile's latest run and latest good run, for the latest snapshot after a restart. */
-  async lastRuns(profile: string): Promise<{ last: SamplingRunRow | null; lastOk: SamplingRunRow | null }> {
+  async lastRuns(profile: string): Promise<{ last: StoredSamplingRun | null; lastOk: StoredSamplingRun | null }> {
     const read = (where: string) => {
       const row = this.db.prepare(`SELECT at, ok, error_code, interval_ms FROM sampling_runs WHERE profile = ? ${where} ORDER BY at DESC LIMIT 1`).get(profile);
       return row ? toRun(row as unknown as RunRow) : null;

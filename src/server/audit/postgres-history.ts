@@ -1,13 +1,13 @@
 // Depth history on PostgreSQL. See sqlite-history.ts for what is kept and why.
 import type pg from 'pg';
-import type { HistoryStore, QueueSample, SampledQueue, SamplingRunRow, StoredSample, TakeOut } from './audit-store.js';
+import type { HistoryStore, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
 import { transaction } from './postgres-connection.js';
 import { TAKEN_OUT, toRun, toSample, toTakeOuts, type RunRow, type SampleRow, type TakeOutRow } from './store-rows.js';
 
 export class PostgresHistoryStore implements HistoryStore {
   constructor(private readonly pool: pg.Pool) {}
 
-  async recordRun(profile: string, run: SamplingRunRow, samples: readonly QueueSample[]): Promise<void> {
+  async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void> {
     await transaction(this.pool, async (client) => {
       await client.query(
         `INSERT INTO sampling_runs (profile, at, ok, error_code, interval_ms) VALUES ($1, $2, $3, $4, $5)
@@ -40,7 +40,7 @@ export class PostgresHistoryStore implements HistoryStore {
     return rows.map(toSample);
   }
 
-  async runsAround(profile: string, from: number, to: number): Promise<SamplingRunRow[]> {
+  async runsAround(profile: string, from: number, to: number): Promise<StoredSamplingRun[]> {
     const { rows } = await this.pool.query<RunRow>(
       `SELECT at, ok, error_code, interval_ms FROM sampling_runs
        WHERE profile = $1
@@ -52,7 +52,7 @@ export class PostgresHistoryStore implements HistoryStore {
     return rows.map(toRun);
   }
 
-  async lastRuns(profile: string): Promise<{ last: SamplingRunRow | null; lastOk: SamplingRunRow | null }> {
+  async lastRuns(profile: string): Promise<{ last: StoredSamplingRun | null; lastOk: StoredSamplingRun | null }> {
     const { rows } = await this.pool.query<RunRow & { good: boolean }>(
       `(SELECT at, ok, error_code, interval_ms, false AS good FROM sampling_runs WHERE profile = $1 ORDER BY at DESC LIMIT 1)
        UNION ALL
