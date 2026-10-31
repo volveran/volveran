@@ -6,6 +6,14 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-31
+
+A queue can be Checked Out again straight after its Checkout ends.
+
+**Upgrading from 0.6.0:** there is no store migration and no configuration change. The new image tag restarts the pod on upgrade, which ends open Checkouts. Ending a Checkout can take up to 3 seconds longer if another consumer attached during it.
+
+**Known issue: ending a Checkout through Keep can use up Delivery Budget on quorum queues (#134).** It is not fixed in 0.6.1. Volverán closes the channel straight after returning the Messages, and closing it overtakes `nack`s still on their way: on the test broker most Messages past the first few dozen were counted as delivered ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). This applies however the Checkout ends with Messages still held, including at shutdown and so whenever the pod rolls, as it does on this upgrade. A Message on a queue with a finite `delivery-limit` can reach the limit sooner than its attempts suggest.
+
 ### Fixed
 
 - A queue can be Checked Out again straight after its Checkout ends. The start could be refused with `checkout_in_progress`, naming no one, while the broker was still deleting the old lock queue.
@@ -248,7 +256,8 @@ First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/volveran/volveran/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/volveran/volveran/releases/tag/v0.6.1
 [0.6.0]: https://github.com/volveran/volveran/releases/tag/v0.6.0
 [0.5.1]: https://github.com/volveran/volveran/releases/tag/v0.5.1
 [0.5.0]: https://github.com/volveran/volveran/releases/tag/v0.5.0
