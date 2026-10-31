@@ -28,3 +28,4 @@ What the interface promises is checked by one contract suite, `auditStoreContrac
 - Each caller now has store failures arriving as rejections in code that used to throw at the call; a floating call would become an unhandled rejection, which stops the process.
 - An atomic operation a later feature needs (a claim on a body, a lease) is a new method here, with a test in the contract suite on both stores.
 - PostgreSQL's implementation must carry out a multi-statement method on one pooled connection, in one transaction.
+- Migrations are numbered and append-only, per store, with the version in the store (`PRAGMA user_version` on SQLite, the table `audit_store_version` on PostgreSQL). Both refuse a store newer than the binary at startup. PostgreSQL migrates under a session advisory lock, so Replicas starting together apply each migration once.

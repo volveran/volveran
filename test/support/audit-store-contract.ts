@@ -3,6 +3,7 @@
 // and looks at nothing but the interface, so nothing here knows which database answers.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AlertMemory } from '../../src/server/alerts/evaluation.js';
+import { ConfigError } from '../../src/server/config-error.js';
 import {
   FIRST_SEEN_LIMIT,
   PASS_HISTORY,
@@ -22,9 +23,28 @@ export interface OpenedAuditStore {
   store: AuditStore;
   /** A new store on the same data, as after a restart. */
   reopen(): Promise<AuditStore>;
+  /** Marks the data, with every store on it closed, as written by a later version of Volverán. */
+  makeNewer(): Promise<void>;
   /** Removes what the store left behind; every store it opened is closed by then. */
   cleanup(): Promise<void>;
 }
+
+/** The contract's parts, so that an implementation still being built can switch them on as it gets there. */
+export const CONTRACT_PARTS = [
+  'Audit Entries',
+  'search',
+  'replay trail',
+  'retention',
+  'Replay Rule state',
+  'depth history',
+  'notifications',
+  'Alerts',
+  'a call is one atomic unit of work',
+  'failures',
+  'closing',
+  'a store newer than the binary',
+] as const;
+export type ContractPart = (typeof CONTRACT_PARTS)[number];
 
 const AT = new Date('2026-10-01T12:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -48,7 +68,9 @@ function entry(overrides: Partial<NewAuditEntry> = {}): NewAuditEntry {
   };
 }
 
-export function auditStoreContract(name: string, open: () => Promise<OpenedAuditStore>): void {
+/** Runs `parts` of the contract (all of them unless told otherwise); the rest show as skipped. */
+export function auditStoreContract(name: string, open: () => Promise<OpenedAuditStore>, parts: readonly ContractPart[] = CONTRACT_PARTS): void {
+  const part = (title: ContractPart, tests: () => void) => describe.runIf(parts.includes(title))(title, tests);
   // Some of these write thousands of rows; a database over a network takes its time.
   describe(`the audit store contract: ${name}`, { timeout: 60_000 }, () => {
     let opened: OpenedAuditStore;
@@ -70,7 +92,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       await opened.cleanup();
     });
 
-    describe('Audit Entries', () => {
+    part('Audit Entries', () => {
       it('records a pending entry with who, where and why, then its outcome', async () => {
         const id = await store.record(entry());
 
@@ -202,7 +224,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('search', () => {
+    part('search', () => {
       const ids = async (query?: AuditQuery) => (await store.list(query)).map((e) => e.id);
 
       it('lists every entry newest first without a query, and without bodies', async () => {
@@ -284,7 +306,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('replay trail', () => {
+    part('replay trail', () => {
       const headers = (replayId?: string) => (replayId ? { 'x-volveran-replay-id': replayId } : {});
       const copy = (replayId?: string) => ({ body: null, properties: {}, headers: headers(replayId) });
 
@@ -307,7 +329,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('retention', () => {
+    part('retention', () => {
       const NO_SIZE_LIMIT = Number.MAX_SAFE_INTEGER;
       const NOW = AT;
       const discard = (messageId: string, ageMs: number, bytes: number) =>
@@ -362,7 +384,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('Replay Rule state', () => {
+    part('Replay Rule state', () => {
       const KEY = 'local/transient-payments';
       const pass = (n: number): RulePass => ({
         id: `pass-${n}`,
@@ -462,7 +484,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('depth history', () => {
+    part('depth history', () => {
       const QUEUE = { profile: 'local', vhost: '/', queue: 'orders.dlq' };
       const run = (at: number, ok = true): SamplingRunRow => ({ at, ok, errorCode: ok ? null : 'broker_unreachable', intervalMs: 1000 });
       const sample = (at: number, depth: number, overrides: Partial<QueueSample> = {}): QueueSample => ({ vhost: '/', queue: 'orders.dlq', at, depth, estimatedArrivals: null, ...overrides });
@@ -579,7 +601,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('notifications', () => {
+    part('notifications', () => {
       const delivery = (overrides: Partial<NewNotificationDelivery> = {}): NewNotificationDelivery => ({
         at: AT,
         alertId: 'a-1',
@@ -655,7 +677,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('Alerts', () => {
+    part('Alerts', () => {
       const firing: AlertMemory['alerts'][number] = {
         alertId: 'a-1',
         rule: 'deep',
@@ -723,7 +745,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('a call is one atomic unit of work', () => {
+    part('a call is one atomic unit of work', () => {
       it('leaves what was remembered of a profile when saving fails partway', async () => {
         const firing: AlertMemory['alerts'][number] = {
           alertId: 'a-1',
@@ -767,7 +789,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
-    describe('failures and closing', () => {
+    part('failures', () => {
       it('rejects rather than throws on a closed store, on every part of it', async () => {
         await store.close();
         const calls: Array<() => Promise<unknown>> = [
@@ -789,10 +811,23 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           await expect(promise).rejects.toThrow();
         }
       });
+    });
 
+    part('closing', () => {
       it('closes more than once', async () => {
         await store.close();
         await expect(store.close()).resolves.toBeUndefined();
+      });
+    });
+
+    part('a store newer than the binary', () => {
+      it('refuses to open it, and leaves it refused', async () => {
+        await store.record(entry());
+        await store.close();
+        await opened.makeNewer();
+
+        await expect(opened.reopen()).rejects.toBeInstanceOf(ConfigError);
+        await expect(opened.reopen()).rejects.toThrow(/newer than this version/);
       });
     });
   });
