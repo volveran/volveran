@@ -4,10 +4,14 @@
 // with how many times it has died again (followed through the replay ids the
 // earlier Audit Entries recorded).
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import {
   applyAndWait,
+  checkoutConnectionNames,
+  closeConnection,
   deadLetter,
   deadLetterRoutes,
+  eventually,
   fixtureQueues,
   purgeQueues,
   startApp,
@@ -179,5 +183,87 @@ describe('Died Again', () => {
     expect(matching.body.handles.sort()).toEqual([handle('a'), handle('c')].sort());
     expect(checkout.diedAgainCount).toBe(2);
     expect(matching.body.count).toBe(checkout.diedAgainCount);
+  });
+});
+
+describe('A store failure while a Checkout looks for Died Again Messages', () => {
+  const quorum = deadLetterRoutes.quorum.dlq;
+  const startPath = checkoutPath(quorum);
+  let app: TestApp;
+  /** The next store search waits for this, then fails. */
+  let searches: Array<Promise<void>> = [];
+  const open: string[] = [];
+
+  async function seed() {
+    await withChannel('/', async (ch) => {
+      ch.sendToQueue(quorum, Buffer.from('elsewhere'), {
+        messageId: 'failing-1',
+        headers: { 'x-volveran-replay-id': 'replayed-by-another-instance' },
+      });
+      await ch.waitForConfirms();
+    });
+  }
+
+  beforeAll(async () => {
+    app = await startApp({
+      profiles: [testProfile({ name: 'local' })],
+      wrapAuditStore: (store) =>
+        delayedAuditStore(store, async (call) => {
+          if (call !== 'list') return;
+          const search = searches.shift();
+          if (!search) return;
+          await search;
+          throw new Error('the store is gone');
+        }),
+    });
+  });
+  afterEach(async () => {
+    searches = [];
+    while (open.length) await app.delete(`/api/checkouts/${open.pop()}`);
+    await eventually(async () => expect(await checkoutConnectionNames(quorum)).toEqual([]));
+    await purgeQueues('/', fixtureQueues);
+  });
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('refuses the start and leaves the queue and the Operator free, with the Message back', async () => {
+    await seed();
+    searches = [Promise.resolve()];
+
+    expect((await app.post(startPath)).status).toBe(500);
+
+    await eventually(async () => expect(await checkoutConnectionNames(quorum)).toEqual([]));
+    const again = await app.post(startPath);
+    expect(again.status).toBe(201);
+    open.push(again.body.checkout.id);
+    expect(again.body.checkout.messages.map((m: any) => m.messageId)).toEqual(['failing-1']);
+  });
+
+  it('frees nothing of a newer Checkout when the failing start was lost meanwhile', async () => {
+    await seed();
+    let fail!: () => void;
+    searches = [new Promise<void>((resolve) => (fail = resolve))];
+    const failing = app.post(startPath);
+    const [name] = await eventually(async () => {
+      const names = await checkoutConnectionNames(quorum);
+      expect(names).toHaveLength(1);
+      return names;
+    });
+    // The connection may show before the search begins; once the search is waiting, this loses it.
+    await eventually(async () => expect(searches).toEqual([]));
+    await closeConnection(name!);
+    const newer = await eventually(async () => {
+      const res = await app.post(startPath);
+      expect(res.status).toBe(201);
+      return res;
+    });
+    open.push(newer.body.checkout.id);
+
+    fail();
+    expect((await failing).status).toBe(500);
+
+    // The newer Checkout still holds the queue and the Operator.
+    expect((await app.post(startPath)).status).toBe(409);
   });
 });

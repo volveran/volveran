@@ -258,7 +258,14 @@ export class CheckoutManager {
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
-    await this.findDiedAgain(checkout, options.auditScope);
+    try {
+      await this.findDiedAgain(checkout, options.auditScope);
+    } catch (err) {
+      // It holds Messages by now, so they go back as at any end. If it was lost
+      // during the search that has been done, and the queue may be someone else's.
+      await this.finish(checkout, 'operator');
+      throw err;
+    }
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return this.view(checkout);
