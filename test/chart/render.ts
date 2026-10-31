@@ -44,6 +44,8 @@ export interface K8sObject {
 }
 
 export interface Rendered {
+  /** What Helm printed, byte for byte. */
+  output: string;
   objects: K8sObject[];
   /** Every rendered kind, sorted. */
   kinds(): string[];
@@ -65,6 +67,7 @@ export function render(values: Values = {}, options: RenderOptions = {}): Render
     .filter((obj): obj is K8sObject => obj !== null);
   const ofKind = (kind: string) => objects.filter((obj) => obj.kind === kind);
   return {
+    output,
     objects,
     kinds: () => [...new Set(objects.map((obj) => obj.kind))].sort(),
     ofKind,

@@ -59,7 +59,7 @@ It uses the same parser and checks as startup, so the two cannot disagree. It co
 
 ### The version of the profiles file
 
-`version: 1` goes at the top of the file. A file without it is read as version 1, with a warning at startup. Any other value is refused, at startup and by `check-config`. The chart writes the version into the file it renders; a ConfigMap of your own (`brokerProfiles.existingConfigMap`) should carry it.
+`version: 1` goes at the top of the file. A file without it is read as version 1, with a warning at startup. Any other value is refused, at startup and by `check-config`. The chart writes the version into the file it renders only with `postgres.existingSecret`: on SQLite it leaves the file as 0.5 rendered it, so an upgrade does not change the ConfigMap, and you see the warning, harmless until 1.0. A ConfigMap of your own (`brokerProfiles.existingConfigMap`) should carry it.
 
 ## Team Mode settings
 
