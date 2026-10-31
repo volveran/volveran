@@ -178,24 +178,24 @@ export class ReplayRules {
     const onQueue = profile.replayRules.filter((rule) => rule.vhost === vhost && rule.queue === queue);
     const states = await Promise.all(onQueue.map((rule) => this.options.state.state(ruleKey(profile.name, rule.name))));
     const running = onQueue.filter((rule, i) => !(states[i]?.paused ?? rule.startPaused));
-    return Promise.all(held.map(({ delivery, diedAgainCount }) => this.badge(profile, running, delivery, diedAgainCount)));
-  }
-
-  private async badge(profile: BrokerProfile, rules: readonly ReplayRule[], delivery: Delivery, diedAgainCount: number): Promise<RuleBadge | null> {
-    const messageId = messageIdOf(delivery);
-    for (const rule of rules) {
-      const firstSeenAt = messageId === null ? null : await this.options.state.firstSeenAt(ruleKey(profile.name, rule.name), messageId);
-      const evaluation = evaluateRule(rule, { delivery, diedAgainCount, firstSeenAt }, this.clock.now());
-      if (evaluation.verdict === 'no_match') continue;
-      return {
-        name: rule.name,
-        attempts: evaluation.attempts,
-        maxAttempts: rule.maxAttempts,
-        usedUp: evaluation.verdict === 'used_up',
-        nextAttemptAt: evaluation.nextAttemptAt?.toISOString() ?? null,
-      };
-    }
-    return null;
+    const ids = held.map(({ delivery }) => messageIdOf(delivery)).filter((id) => id !== null);
+    const firstSeen = await Promise.all(running.map((rule) => this.options.state.firstSeenAt(ruleKey(profile.name, rule.name), ids)));
+    return held.map(({ delivery, diedAgainCount }) => {
+      const messageId = messageIdOf(delivery);
+      for (const [i, rule] of running.entries()) {
+        const firstSeenAt = messageId === null ? null : (firstSeen[i]!.get(messageId) ?? null);
+        const evaluation = evaluateRule(rule, { delivery, diedAgainCount, firstSeenAt }, this.clock.now());
+        if (evaluation.verdict === 'no_match') continue;
+        return {
+          name: rule.name,
+          attempts: evaluation.attempts,
+          maxAttempts: rule.maxAttempts,
+          usedUp: evaluation.verdict === 'used_up',
+          nextAttemptAt: evaluation.nextAttemptAt?.toISOString() ?? null,
+        };
+      }
+      return null;
+    });
   }
 
   /**

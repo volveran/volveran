@@ -7,7 +7,7 @@ import { rm } from 'node:fs/promises';
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { NewAuditEntry } from '../../src/server/audit/audit-store.js';
-import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
+import { openTestStore } from './test-store.js';
 import {
   applyAndWait,
   deadLetter,
@@ -280,7 +280,7 @@ describe('Audit browsing and Restore', () => {
     async (outcome) => {
       const dataDir = await makeTempDir('audit-uncertain');
       try {
-        const store = new SqliteAuditStore(dataDir);
+        const store = await openTestStore(dataDir);
         const id = await store.record(storedDiscard(`uncertain-${outcome}`, 0, 'crashed'));
         if (outcome === 'uncertain') await store.setOutcome(id, 'uncertain', 'The connection dropped before the ack was confirmed.');
         await store.close();
@@ -307,7 +307,7 @@ describe('Audit browsing and Restore', () => {
   it('does not Restore a Discard that failed in a known way (its Message stayed in the queue)', async () => {
     const dataDir = await makeTempDir('audit-failed');
     try {
-      const store = new SqliteAuditStore(dataDir);
+      const store = await openTestStore(dataDir);
       const id = await store.record(storedDiscard('failed-1', 0));
       await store.setOutcome(id, 'failed', 'The Checkout is no longer active, so the Message was left in the queue.');
       await store.close();
@@ -371,7 +371,7 @@ describe('Retention of Discarded Message bodies', () => {
 
   it('evicts bodies past the age limit on a schedule, keeps the Audit Entries, and refuses to Restore them with the reason', async () => {
     const dir = await dataDir();
-    const store = new SqliteAuditStore(dir);
+    const store = await openTestStore(dir);
     const kept = await store.record(storedDiscard('young', 29 * DAY));
     await store.close();
     const app = await startApp({
@@ -382,7 +382,7 @@ describe('Retention of Discarded Message bodies', () => {
     });
     try {
       // Written while the app runs, so only the schedule (not startup) can evict it.
-      const late = new SqliteAuditStore(dir);
+      const late = await openTestStore(dir);
       const expired = await late.record(storedDiscard('old', 31 * DAY));
       await late.close();
 
@@ -409,7 +409,7 @@ describe('Retention of Discarded Message bodies', () => {
 
   it('evicts the oldest bodies at startup once they exceed the size limit, and reports the store size for the UI warning', async () => {
     const dir = await dataDir();
-    const store = new SqliteAuditStore(dir);
+    const store = await openTestStore(dir);
     const oldest = await store.record(storedDiscard('size-1', 3 * DAY, 'c', Buffer.alloc(400, 1)));
     const middle = await store.record(storedDiscard('size-2', 2 * DAY, 'c', Buffer.alloc(400, 2)));
     const newest = await store.record(storedDiscard('size-3', 1 * DAY, 'c', Buffer.alloc(400, 3)));

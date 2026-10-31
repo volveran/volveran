@@ -125,6 +125,7 @@ The [chart README](../charts/volveran/README.md#values) lists every value with i
 | `caBundles` | Private CAs mounted under `/etc/volveran/ca/<name>/`, for brokers and the OIDC provider. |
 | `settings`, `extraEnv` | Checkout limits, time limit, heartbeat, body retention, and the depth history's interval and retention; other `VOLVERAN_*` variables. |
 | `persistence` | The audit store claim: size, StorageClass, access mode, or an `existingClaim`. |
+| `postgres` | The audit store on PostgreSQL instead: the Secret holding the URL, required TLS and a CA ([PostgreSQL guide](postgresql.md)). |
 | `httpRoute`, `ingress` | Exposure. Neither is rendered by default. |
 | `metrics` | The Prometheus metrics port, off by default, and an optional `ServiceMonitor`. |
 | `networkPolicy` | Who may reach the pod (`ingressFrom` the web app, `metricsFrom` the metrics port), and optionally where it may connect. |
@@ -153,6 +154,8 @@ The port has no session and listens on the pod's `0.0.0.0`. With `networkPolicy.
 Alert Rules go under each profile (`alerts`) and Alert Destinations under `brokerProfiles.alertDestinations`, or both in the file of an `existingConfigMap`. Nothing notifies anyone until you declare them. Destination URLs and signing secrets go in the Secret named by `alerts.existingSecret`, and Volverán refuses to start when one is not set. The links in notifications use the origin of `oidc.redirectUrl`; set `VOLVERAN_PUBLIC_URL` through `extraEnv` for another. With `networkPolicy.egress` set, allow the destinations. The [observability guide](observability.md#alerts) has Slack, Teams and webhook set-ups.
 
 ## Sizing the audit store
+
+This is for SQLite. On PostgreSQL, see its [sizing](postgresql.md#sizing).
 
 The audit store holds Discarded bodies and, since 0.5, the depth history. A Sample takes about 100 bytes, so 100 dead-letter queues at the default one-minute Samples and 14 days take about 190 MiB ([sizing](observability.md#sizing)). Discarded bodies may take up to `settings.bodyRetentionMaxBytes`, 1 GiB by default, which is also the default `persistence.size`, so raise the claim or lower that limit. A claim can only grow if its StorageClass allows expansion. Set `settings.historyIntervalSeconds` and `settings.historyRetentionDays` with this in mind, and raise `pod.resources` memory with very long or very fine history.
 
@@ -205,7 +208,7 @@ A change to inline `brokerProfiles.profiles` rolls the pod by itself. A change t
 
 ## Backup and restore of the audit store
 
-The audit store is one SQLite database, `/data/audit.sqlite`, on the chart's PersistentVolumeClaim (`volveran-data` for a release named `volveran`). It holds every Audit Entry, the full copy of every Discarded Message, which Restore republishes, the depth history and the state of Alerts. The claim carries `helm.sh/resource-policy: keep`, so `helm uninstall`, and Flux uninstalling a pruned `HelmRelease`, leave it in place; delete it by hand to delete the audit trail. The keep policy does not survive deleting the namespace, which deletes every claim in it. The Flux example's namespace carries `kustomize.toolkit.fluxcd.io/prune: disabled`, so removing the example's Flux `Kustomization` (which has `prune: true`) uninstalls Volverán but leaves the namespace and the claim; delete the namespace by hand when you mean to. If you manage the namespace some other way, keep it out of anything that prunes it.
+On PostgreSQL, see [backup and restore](postgresql.md#backup-and-restore) there. On SQLite, the audit store is one SQLite database, `/data/audit.sqlite`, on the chart's PersistentVolumeClaim (`volveran-data` for a release named `volveran`). It holds every Audit Entry, the full copy of every Discarded Message, which Restore republishes, the depth history and the state of Alerts. The claim carries `helm.sh/resource-policy: keep`, so `helm uninstall`, and Flux uninstalling a pruned `HelmRelease`, leave it in place; delete it by hand to delete the audit trail. The keep policy does not survive deleting the namespace, which deletes every claim in it. The Flux example's namespace carries `kustomize.toolkit.fluxcd.io/prune: disabled`, so removing the example's Flux `Kustomization` (which has `prune: true`) uninstalls Volverán but leaves the namespace and the claim; delete the namespace by hand when you mean to. If you manage the namespace some other way, keep it out of anything that prunes it.
 
 The database runs in WAL mode, so a copy of the file alone, taken while Volverán runs, can miss recent commits. Use one of these:
 

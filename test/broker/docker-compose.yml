@@ -77,10 +77,18 @@ services:
   # and it does not fsync: the tests are after behaviour, not durability. Each
   # test makes its own database in it (test/support/test-postgres.ts). The
   # healthcheck goes over TCP, because the image's first start runs a temporary
-  # server on its Unix socket only.
+  # server on its Unix socket only. It also takes TLS, with the certificate of
+  # test/fixtures/tls, whose key PostgreSQL wants owned by itself and private.
   postgres:
     image: ${VOLVERAN_TEST_POSTGRES_IMAGE:-postgres:17.6-alpine}
-    command: ["postgres", "-c", "fsync=off", "-c", "max_connections=200"]
+    entrypoint:
+      - sh
+      - -c
+      - install -o postgres -g postgres -m 600 /tls/server.key /tmp/server.key && exec docker-entrypoint.sh "$$@"
+      - --
+    command: ["postgres", "-c", "fsync=off", "-c", "max_connections=200", "-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.pem", "-c", "ssl_key_file=/tmp/server.key"]
+    volumes:
+      - ../fixtures/tls:/tls:ro
     ports:
       - "127.0.0.1:${VOLVERAN_TEST_POSTGRES_PORT:-}:5432"
     tmpfs:

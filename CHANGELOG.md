@@ -11,10 +11,14 @@ All notable changes to Volverán are recorded here. The format is based on
 - `check-config`, a mode of the image that checks a profiles file and the environment with the parser and checks startup uses, contacts no broker and exits 0, 1 (startup would refuse this) or 2 (1.0 will refuse a key in this file) ([guide](docs/configuration.md#checking-the-configuration)).
 - The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders, which changes the ConfigMap and so rolls the pod once on upgrade.
 
-- `VOLVERAN_POSTGRES_URL` keeps Audit Entries in PostgreSQL instead of SQLite, the first part of the PostgreSQL audit store. It is not ready for use yet: retention, Replay Rules, depth history, notifications and Alerts follow. Without it nothing changes.
+- `VOLVERAN_POSTGRES_URL` keeps the audit store in PostgreSQL instead of SQLite: Audit Entries, Discarded bodies and their retention, Replay Rule state, depth history, notifications and Alerts. It answers as SQLite does, also for a NUL in a message id or other plain text. Without it nothing changes. See the new [PostgreSQL guide](docs/postgresql.md), which includes sizing.
+- The chart keeps the audit store in PostgreSQL with `postgres.existingSecret`, reading the URL from that Secret, requiring TLS by default (`postgres.requireTls`), and trusting a mounted CA with `postgres.ca`. Then it renders no claim and no data volume. Without it the render does not change.
+- `VOLVERAN_POSTGRES_REQUIRE_TLS` and `VOLVERAN_POSTGRES_CA_FILE` require TLS to PostgreSQL, with a verified certificate.
+- On PostgreSQL, `/readyz` answers `503` while the database cannot be reached. Volverán reconnects by itself when it returns. `/healthz` does not change, and neither depends on a broker.
 
 ### Changed
 
+- An Apply attempts no further step once the audit store fails a write, on either store. The Message in progress finishes, and the rest are reported `not-attempted` and go back to their queue, where before each one was tried and failed in turn.
 - Volverán refuses to start on an audit store newer than it understands, naming both versions. Downgrades were never supported, and now cannot damage the store.
 - A metrics scrape no longer reads the audit store. `volveran_replay_rule_paused`, `volveran_alerts_firing` and `volveran_audit_store_body_bytes` come from a reading taken in the background, at most 15 seconds old ([metrics](docs/observability.md#metrics)).
 

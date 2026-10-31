@@ -3,7 +3,7 @@
 // the firing Alerts in the queue list, and the two alert metric families.
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
+import { openTestStore } from './test-store.js';
 import {
   closedPort,
   ruleSchedulerHooks,
@@ -143,7 +143,7 @@ describe('seeing Alerts', () => {
   it('keeps an Operator\'s recent notifications even behind many of a profile they cannot see', async () => {
     const dataDir = await makeTempDir('alerts-view');
     dirs.push(dataDir);
-    const store = new SqliteAuditStore(dataDir);
+    const store = await openTestStore(dataDir);
     const row = (profile: string, at: Date) => ({
       at, alertId: `${profile}-a`, destination: 'pager', destinationType: 'webhook' as const, status: 'firing' as const, test: false,
       rule: 'deep', profile, vhost: '/', queue: dlq, replayRule: null, outcome: 'delivered' as const, httpStatus: 200, error: null, attempts: 1,
@@ -161,7 +161,7 @@ describe('seeing Alerts', () => {
   it('shows an Alert with no vhost and no queue, and puts it on no queue', async () => {
     const dataDir = await makeTempDir('alerts-view');
     dirs.push(dataDir);
-    const store = new SqliteAuditStore(dataDir);
+    const store = await openTestStore(dataDir);
     const since = Date.UTC(2026, 9, 30, 3, 0);
     await store.alerts.save('prod', {
       arrivals: [],

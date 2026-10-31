@@ -377,6 +377,9 @@ export class SqliteAuditStore implements AuditStore {
     return Number(row.bytes);
   }
 
+  /** A file on the pod's own volume, so nothing can come between the process and it. */
+  async ping(): Promise<void> {}
+
   async close(): Promise<void> {
     if (this.db.isOpen) this.db.close();
   }

@@ -11,7 +11,9 @@ Every setting is an environment variable.
 | `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
 | `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
 | `VOLVERAN_DATA_DIR` | `./data` (`/data` in the image) | the audit store: Audit Entries and Discarded Messages, written with a durable commit before each Discard's ack |
-| `VOLVERAN_POSTGRES_URL` | unset | keeps the audit store in this PostgreSQL database (`postgres://user:password@postgres.example.com:5432/volveran`) instead of SQLite in `VOLVERAN_DATA_DIR`. The database must exist; Volverán creates its tables in it, so its user needs that right. Not ready for use yet: Audit Entries and their search work, while retention, Replay Rules, depth history, notifications and Alerts do not. |
+| `VOLVERAN_POSTGRES_URL` | unset | keeps the audit store in this PostgreSQL database (`postgres://user:password@postgres.example.com:5432/volveran`) instead of SQLite in `VOLVERAN_DATA_DIR`. The database must exist and be UTF8; Volverán creates its tables in it, so its user needs that right ([PostgreSQL guide](postgresql.md)). |
+| `VOLVERAN_POSTGRES_REQUIRE_TLS` | `false` | `true` refuses a connection to PostgreSQL without TLS, or with a certificate that does not verify; then leave `ssl`, `sslmode` and `sslrootcert` out of the URL |
+| `VOLVERAN_POSTGRES_CA_FILE` | unset | PEM file with the CA of PostgreSQL's certificate, instead of the system's CAs. Requires TLS as above |
 | `VOLVERAN_CHECKOUT_MAX_MESSAGES` | `1000` | most Messages one Checkout holds (up to 65,535) |
 | `VOLVERAN_CHECKOUT_MAX_MB` | `100` | most body megabytes one Checkout holds |
 | `VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES` | `30` | how long a Checkout may hold Messages before it ends itself (1 to 1440); on quorum queues the broker's `x-consumer-timeout` backstop is set 1 minute later |
@@ -28,7 +30,7 @@ A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each
 
 ### Health checks
 
-`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that) and `503` once shutdown starts. Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
+`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that), `503` once shutdown starts, and on PostgreSQL `503` with `{"status":"unavailable"}` while the database cannot be reached, [recovering by itself](postgresql.md#when-the-database-goes-away). Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), otherwise return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
 
 ## Checking the configuration
 

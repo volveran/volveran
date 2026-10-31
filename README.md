@@ -146,12 +146,13 @@ helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.5.1 \
 
 ## Where it's going
 
-Not available yet ([roadmap](ROADMAP.md)): PostgreSQL as an audit store, several replicas (Team Mode runs one today), a security review, upgrade guarantees and a stable configuration format.
+Not available yet ([roadmap](ROADMAP.md)): several replicas (Team Mode runs one today), a security review, upgrade guarantees and a stable configuration format.
 
 ## Learn more
 
 - [Observability](docs/observability.md): sizing, Alert Rules, the webhook schema and the metric reference.
 - [Configuration](docs/configuration.md): every setting and the health checks.
+- [PostgreSQL](docs/postgresql.md): keeping the audit store in your own database, with TLS, what happens when it goes away, and sizing.
 - [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
 - [Architecture decisions](docs/adr/).

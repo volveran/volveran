@@ -1,8 +1,10 @@
 // The Apply executor with an in-memory audit store and a fake broker (the ack).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as amqp from 'amqplib';
+import type { AuditStore } from '../../src/server/audit/audit-store.js';
 import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { executeApply, type ApplyRun } from '../../src/server/apply/executor.js';
+import { STOP_REASONS } from '../../src/server/apply/stop-reasons.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import { AckUncertainError, type ApplyContext } from '../../src/server/apply/types.js';
 import type { BrokerProfile } from '../../src/server/profiles.js';
@@ -219,6 +221,39 @@ describe('Apply executor', () => {
   });
 
   // ADR 0013: a missing await shows only when the store takes its time.
+  describe('when the audit store fails', () => {
+    const discards = (...handles: number[]): ApplyPlan => ({ kept: [], steps: handles.map((handle) => ({ handle, decision: { kind: 'discard', reason: 'bad' } })) });
+    const failing = (call: 'record' | 'setOutcome'): AuditStore =>
+      new Proxy(audit, {
+        get: (t, key) => (key === call ? () => Promise.reject(new Error('store gone')) : Reflect.get(t, key)),
+      });
+
+    it('attempts no further step after an Audit Entry could not be written, and acks nothing', async () => {
+      let acks = 0;
+      const { outcomes } = run(discards(1, 2, 3), async () => void acks++, { audit: failing('record') });
+      expect((await outcomes).map((o) => [o.status, o.reason])).toEqual([
+        ['failed', expect.stringContaining('Could not write the Audit Entry')],
+        ['not-attempted', STOP_REASONS.auditStoreFailed],
+        ['not-attempted', STOP_REASONS.auditStoreFailed],
+      ]);
+      expect(acks).toBe(0);
+    });
+
+    it('finishes the step in progress and attempts no further one after an outcome could not be written', async () => {
+      let acks = 0;
+      const { outcomes } = run(discards(1, 2), async () => void acks++, { audit: failing('setOutcome') });
+      expect((await outcomes).map((o) => o.status)).toEqual(['done', 'not-attempted']);
+      expect(acks).toBe(1);
+    });
+
+    it('keeps the reason of a stop asked for first', async () => {
+      const { outcomes } = run(discards(1, 2), async () => {}, { audit: failing('record'), stopReason: () => null });
+      const stopped = run(discards(1, 2), async () => {}, { audit: failing('record'), stopReason: () => 'stopped by ana' });
+      expect((await outcomes)[1]!.reason).toBe(STOP_REASONS.auditStoreFailed);
+      expect((await stopped.outcomes).map((o) => o.reason)).toEqual(['stopped by ana', 'stopped by ana']);
+    });
+  });
+
   describe('on a delayed store', () => {
     it('commits the pending entry and the Discarded copy before acking (ADR 0001)', async () => {
       const atAck: unknown[] = [];

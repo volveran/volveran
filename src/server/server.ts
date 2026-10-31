@@ -4,6 +4,7 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
+import pg from 'pg';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
@@ -11,6 +12,7 @@ import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
 import type { AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
+import { asStartupError } from './audit/postgres-connection.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
@@ -23,7 +25,7 @@ import { TriageMetrics } from './metrics/triage.js';
 import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
-import { readStartupConfig } from './startup-config.js';
+import { readStartupConfig, type StartupConfig } from './startup-config.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
@@ -86,13 +88,25 @@ const METRICS_READING_INTERVAL_MS = 15_000;
 
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
-  const {
-    config,
-    limits,
-    file: { profiles, alertDestinations, versionDeclared },
-  } = await readStartupConfig(options);
+  const startup = await readStartupConfig(options);
+  const { postgresUrl } = startup.config;
+  const openedStore = postgresUrl ? await PostgresAuditStore.open(postgresUrl, startup.postgresTls) : new SqliteAuditStore(options.dataDir);
+  try {
+    return await serve(options, startup, openedStore);
+  } catch (err) {
+    // Nothing else closes the store when startup fails before the app is up.
+    await openedStore.close().catch(() => {});
+    // A permission missing on a table only shows when the table is first read.
+    throw postgresUrl && err instanceof pg.DatabaseError ? asStartupError(err, postgresUrl) : err;
+  }
+}
+
+async function serve(
+  options: ServerOptions,
+  { config, limits, file: { profiles, alertDestinations, versionDeclared } }: StartupConfig,
+  openedStore: AuditStore,
+): Promise<RunningServer> {
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const openedStore = config.postgresUrl ? await PostgresAuditStore.open(config.postgresUrl) : new SqliteAuditStore(options.dataDir);
   const auditStore = options.wrapAuditStore?.(openedStore) ?? openedStore;
   // A scrape takes the last of these readings and never waits on the store. Replay
   // Rules are created below; this reads only once it has started.
@@ -330,7 +344,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   // Listening comes last, so /readyz is only reachable once startup has finished.
-  await app.listen({ host: options.host, port: options.port });
+  try {
+    await app.listen({ host: options.host, port: options.port });
+  } catch (err) {
+    await app.close();
+    throw err;
+  }
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
   const host = options.host.includes(':') ? `[${options.host}]` : options.host;
@@ -370,7 +389,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
-  registerHealthRoutes(app);
+  registerHealthRoutes(app, audit.audit);
 
   // Every request carries its Operator (operator.ts); in Team Mode, /api/
   // routes refuse requests without a session before any handler runs.
