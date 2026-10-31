@@ -3,8 +3,8 @@ name: volveran
 description: Volverán, a RabbitMQ dead-letter queue triage tool, in Team Mode with a persistent audit store.
 type: application
 # version and appVersion always equal package.json's version (test/chart/default-render.test.ts).
-version: 0.5.1
-appVersion: "0.5.1"
+version: 0.6.0
+appVersion: "0.6.0"
 home: https://github.com/volveran/volveran
 sources:
   - https://github.com/volveran/volveran
