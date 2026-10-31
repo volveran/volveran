@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type pg from 'pg';
 import { ConfigError } from '../config-error.js';
 import { PostgresAuditStore } from './postgres-audit-store.js';
-import { asStartupError, createPool, numbered, transaction, type PostgresTls } from './postgres-connection.js';
+import { asStartupError, createPool, numbered, postgresAddress, transaction, type PostgresTls } from './postgres-connection.js';
 import { parsePostgresUrl, readPostgresTls } from './postgres-url.js';
 import { AUDIT_DB_FILE, SqliteAuditStore } from './sqlite-audit-store.js';
 
@@ -162,7 +162,6 @@ async function copyInto(file: string, postgresUrl: string, tls: PostgresTls | nu
   const source = new DatabaseSync(file, { readOnly: true });
   // A copy takes as long as the store is big, so no statement has a time limit.
   const pool = createPool(postgresUrl, { tls, queryTimeoutMs: null, max: 1 });
-  const { hostname, port } = new URL(postgresUrl);
   try {
     // One snapshot of the source, so what is counted is what was copied.
     source.exec('BEGIN');
@@ -171,7 +170,7 @@ async function copyInto(file: string, postgresUrl: string, tls: PostgresTls | nu
       await refuseOtherSchema(client, tables);
       // Two copies at once: the second waits here, then finds the first one's rows.
       await client.query(`LOCK TABLE ${[...tables.keys()].map(quoted).join(', ')} IN ACCESS EXCLUSIVE MODE`);
-      await refuseNonEmpty(client, tables.keys(), `${hostname}:${port || 5432}`);
+      await refuseNonEmpty(client, tables.keys(), postgresAddress(postgresUrl));
       for (const [table, shape] of tables) await copyRows(source, client, table, shape);
       await continueIds(source, client);
       return verifyCounts(source, client, tables.keys());
