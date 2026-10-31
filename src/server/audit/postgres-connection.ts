@@ -85,7 +85,7 @@ export function createPool(connectionString: string, { tls, queryTimeoutMs = QUE
 /** PostgreSQL's placeholder for the parameter at this position, from 1. */
 export const numbered = (position: number) => `$${position}`;
 
-/** Runs `work` in one transaction: committed when it resolves, rolled back when it rejects. */
+/** Runs `work` in one transaction: committed when it resolves, gone with its connection when it rejects. */
 export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   let failure: Error | undefined;
@@ -96,10 +96,10 @@ export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient
     return result;
   } catch (err) {
     failure = err as Error;
-    await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
-    // A connection whose transaction failed is not trusted again.
+    // A connection whose transaction failed is not trusted again. Dropping it rolls the
+    // transaction back; asking on a silent connection would wait out a second timeout.
     client.release(failure);
   }
 }
