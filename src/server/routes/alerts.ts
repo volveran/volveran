@@ -18,12 +18,16 @@ export function registerAlertRoutes(app: FastifyInstance, readings: AlertReading
   app.get('/api/alerts', async (req): Promise<AlertsOverview> => {
     const operator = operatorOf(req);
     access.assertSomeRole(operator);
-    return {
-      alerts: access.list(operator, 'see_profile').flatMap((p) => alertsOf(readings.alerts, p.name)),
-      notifications: readings.notifications.recent(undefined, {
+    const [alerts, notifications] = await Promise.all([
+      Promise.all(access.list(operator, 'see_profile').map((p) => alertsOf(readings.alerts, p.name))),
+      readings.notifications.recent(undefined, {
         profiles: access.auditScope(operator, 'see_profile'),
         tests: access.list(operator, 'send_test_notification').length > 0,
       }),
+    ]);
+    return {
+      alerts: alerts.flat(),
+      notifications,
       destinations: readings.destinations.map(destinationView),
     };
   });

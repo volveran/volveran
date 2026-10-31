@@ -16,8 +16,7 @@
 //    when the rule says `whenAttemptsUsedUp: { moveTo }` (an ordinary Move,
 //    its Audit Entry naming the rule). It Applies at the rule's Replay Rate,
 //    with no Approval or confirmation; the Apply ends the Checkout, which
-//    Keeps every other Message in order (no Delivery Budget used on a quorum
-//    queue). With nothing to do it just ends the Checkout.
+//    Keeps every other Message in order. With nothing to do it just ends the Checkout.
 //
 // The result is the pass's counts, and what the automatic stop looks at: the
 // Audit Entries its Died Again Messages last came from, and how its publishes
@@ -37,7 +36,7 @@ import { evaluateRule } from './evaluate.js';
 /** How many Messages a pass holds per Message it may Replay, so that the Kept ones do not crowd out the due ones. */
 export const KEPT_FACTOR = 3;
 
-/** A rule's key in the rule state (audit/rule-state.ts): `<profile>/<rule>`. */
+/** A rule's key in the rule state (audit/audit-store.ts): `<profile>/<rule>`. */
 export function ruleKey(profile: string, rule: string): string {
   return `${profile}/${rule}`;
 }
@@ -56,7 +55,7 @@ export interface RulePassOptions {
   /** The time the back-off is measured against (default: when the pass starts). */
   now?: Date;
   /** When a pass of the rule first saw each message id (rule state), storing `now` for new ones; default none. */
-  firstSeen?(messageIds: string[], now: Date): Map<string, Date>;
+  firstSeen?(messageIds: string[], now: Date): Promise<Map<string, Date>>;
 }
 
 /** What a pass saw that its automatic stop needs (not kept with the pass). */
@@ -95,7 +94,7 @@ export async function runRulePass(
   };
   try {
     const messageIds = [...checkout.held.values()].flatMap((d) => messageIdOf(d) ?? []);
-    const firstSeen = options.firstSeen?.(messageIds, now) ?? new Map<string, Date>();
+    const firstSeen = (await options.firstSeen?.(messageIds, now)) ?? new Map<string, Date>();
     const due: number[] = [];
     const usedUp: number[] = [];
     for (const [handle, delivery] of checkout.held) {

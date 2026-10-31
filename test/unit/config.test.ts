@@ -17,6 +17,60 @@ describe('loadConfig', () => {
     });
   });
 
+  it('keeps the audit store on SQLite without a PostgreSQL URL, and on PostgreSQL with one', () => {
+    expect(loadConfig({ VOLVERAN_OPERATOR: 'ana' }, '127.0.0.1')).toMatchObject({ config: { postgresUrl: null } });
+    for (const url of ['postgres://volveran:pw@db:5432/volveran', 'postgresql://db/volveran']) {
+      expect(loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_URL: url }, '127.0.0.1')).toMatchObject({ config: { postgresUrl: url } });
+    }
+  });
+
+  it('refuses a PostgreSQL URL it cannot use, without repeating what could be a password', () => {
+    for (const url of ['', 'db.example.com/volveran', 'mysql://user:hunter2@db/volveran']) {
+      const result = loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_URL: url }, '127.0.0.1');
+      expect(result).toEqual({ ok: false, error: expect.stringContaining('VOLVERAN_POSTGRES_URL') });
+      expect(JSON.stringify(result)).not.toContain('hunter2');
+    }
+  });
+
+  describe('TLS to PostgreSQL', () => {
+    const url = 'postgres://volveran:hunter2@db:5432/volveran';
+    const load = (env: Record<string, string>) => loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_URL: url, ...env }, '127.0.0.1');
+    const refusal = (env: Record<string, string>, expected: string) => {
+      const result = load(env);
+      expect(result).toEqual({ ok: false, error: expect.stringContaining(expected) });
+      expect(JSON.stringify(result)).not.toContain('hunter2');
+    };
+
+    it('leaves TLS to the URL unless told', () => {
+      expect(load({})).toMatchObject({ config: { postgresTls: null } });
+      expect(load({ VOLVERAN_POSTGRES_REQUIRE_TLS: 'false' })).toMatchObject({ config: { postgresTls: null } });
+    });
+
+    it('requires it when told, and when given a CA', () => {
+      expect(load({ VOLVERAN_POSTGRES_REQUIRE_TLS: 'true' })).toMatchObject({ config: { postgresTls: { caFile: null } } });
+      expect(load({ VOLVERAN_POSTGRES_CA_FILE: '/ca.crt' })).toMatchObject({ config: { postgresTls: { caFile: '/ca.crt' } } });
+    });
+
+    it('refuses anything but true or false', () => {
+      refusal({ VOLVERAN_POSTGRES_REQUIRE_TLS: 'yes' }, 'VOLVERAN_POSTGRES_REQUIRE_TLS must be true or false');
+    });
+
+    it('refuses a CA with TLS turned off', () => {
+      refusal({ VOLVERAN_POSTGRES_REQUIRE_TLS: 'false', VOLVERAN_POSTGRES_CA_FILE: '/ca.crt' }, 'a CA is only for TLS');
+    });
+
+    it('refuses them without a URL, as the audit store is then on SQLite', () => {
+      const result = loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_REQUIRE_TLS: 'true' }, '127.0.0.1');
+      expect(result).toEqual({ ok: false, error: expect.stringContaining('need VOLVERAN_POSTGRES_URL') });
+    });
+
+    it.each(['sslmode=disable', 'ssl=false', 'sslrootcert=/other.crt'])('refuses %s in the URL, which would override them', (parameter) => {
+      const result = loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_URL: `${url}?${parameter}`, VOLVERAN_POSTGRES_REQUIRE_TLS: 'true' }, '127.0.0.1');
+      expect(result).toEqual({ ok: false, error: expect.stringContaining('out of VOLVERAN_POSTGRES_URL') });
+      expect(JSON.stringify(result)).not.toContain('hunter2');
+    });
+  });
+
   it('reports the first setting that is wrong', () => {
     expect(loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_BODY_RETENTION_DAYS: 'never' }, '127.0.0.1')).toEqual({
       ok: false,

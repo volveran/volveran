@@ -1,9 +1,10 @@
 {{- /*
 The audit store volume (Audit Entries and Discarded Message bodies). Helm keeps
 it on uninstall, so deleting a release never deletes the audit trail. Not
-rendered when persistence is off or persistence.existingClaim names a claim.
+rendered when persistence is off, persistence.existingClaim names a claim or the
+audit store is on PostgreSQL.
 */ -}}
-{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) (not .Values.postgres.existingSecret) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

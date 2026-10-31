@@ -11,6 +11,9 @@ Every setting is an environment variable.
 | `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
 | `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
 | `VOLVERAN_DATA_DIR` | `./data` (`/data` in the image) | the audit store: Audit Entries and Discarded Messages, written with a durable commit before each Discard's ack |
+| `VOLVERAN_POSTGRES_URL` | unset | keeps the audit store in this PostgreSQL database (`postgres://user:password@postgres.example.com:5432/volveran`) instead of SQLite in `VOLVERAN_DATA_DIR`. The database must exist and be UTF8; Volverán creates its tables in it, so its user needs that right ([PostgreSQL guide](postgresql.md)). |
+| `VOLVERAN_POSTGRES_REQUIRE_TLS` | `false` | `true` refuses a connection to PostgreSQL without TLS, or with a certificate that does not verify; then leave `ssl`, `sslmode` and `sslrootcert` out of the URL |
+| `VOLVERAN_POSTGRES_CA_FILE` | unset | PEM file with the CA of PostgreSQL's certificate, instead of the system's CAs. Requires TLS as above |
 | `VOLVERAN_CHECKOUT_MAX_MESSAGES` | `1000` | most Messages one Checkout holds (up to 65,535) |
 | `VOLVERAN_CHECKOUT_MAX_MB` | `100` | most body megabytes one Checkout holds |
 | `VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES` | `30` | how long a Checkout may hold Messages before it ends itself (1 to 1440); on quorum queues the broker's `x-consumer-timeout` backstop is set 1 minute later |
@@ -27,7 +30,36 @@ A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each
 
 ### Health checks
 
-`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that) and `503` once shutdown starts. Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
+`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that), `503` once shutdown starts, and on PostgreSQL `503` with `{"status":"unavailable"}` while the database cannot be reached, [recovering by itself](postgresql.md#when-the-database-goes-away). Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), otherwise return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
+
+## Checking the configuration
+
+`check-config` is a mode of the image: it reads the profiles file and the environment as startup does, reports what it finds and exits. Use it in CI, or to try a file before an upgrade. Give it the file and the variables the deployment will have:
+
+```sh
+docker run --rm --read-only \
+  -v "$PWD/profiles.yaml:/config/profiles.yaml:ro" \
+  -e VOLVERAN_OPERATOR=ci -e VOLVERAN_DEV_PASSWORD \
+  ghcr.io/volveran/volveran:<version> node dist/server/main.js check-config
+```
+
+From a checkout, `npm run build`, then `node dist/server/main.js check-config`. It takes no arguments: the file is the one `VOLVERAN_PROFILES_FILE` names.
+
+| Exit status | Meaning |
+|---|---|
+| `0` | Volverán would start with this, and 1.0 will read the file. There may be warnings |
+| `1` | Startup would refuse this. The first problem is printed; fix it and run again to see the next |
+| `2` | Volverán would start with this, ignoring keys that 1.0 will refuse. Each is listed |
+
+To accept unknown keys for now, treat `2` as a pass in your pipeline. A misspelt key is why it fails by default: `protekted: true` leaves a profile unprotected without a word.
+
+It prints one finding a line, on stdout, starting `error:`, `refused in 1.0:` or `warning:`, then a summary. It names keys and variables, never their values. Warnings are a file without a version and a password variable that is not set, which startup also accepts (using that profile reports `password_not_set`).
+
+It uses the same parser and checks as startup, so the two cannot disagree. It contacts no broker, opens no audit store and listens on nothing, which also means it cannot tell whether a broker is reachable, a password is right, or (in Team Mode) the OIDC issuer answers.
+
+### The version of the profiles file
+
+`version: 1` goes at the top of the file. A file without it is read as version 1, with a warning at startup. Any other value is refused, at startup and by `check-config`. The chart writes the version into the file it renders only with `postgres.existingSecret`: on SQLite it leaves the file as 0.5 rendered it, so an upgrade does not change the ConfigMap, and you see the warning, harmless until 1.0. A ConfigMap of your own (`brokerProfiles.existingConfigMap`) should carry it.
 
 ## Team Mode settings
 

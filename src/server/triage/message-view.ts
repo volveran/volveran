@@ -19,6 +19,12 @@ export interface QueueInfo {
 }
 
 /** The parts of an amqplib delivery this module reads. */
+/** A held Message, as a rule badge is worked out for it. */
+export interface HeldForBadge {
+  delivery: Delivery;
+  diedAgainCount: number;
+}
+
 export interface Delivery {
   fields: { exchange: string; routingKey: string; redelivered: boolean };
   /** AMQP properties (amqplib's MessageProperties); every set one is shown. */

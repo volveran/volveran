@@ -1,0 +1,12 @@
+profiles:
+  - name: fixture
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    username: volveran-admin
+    passwordEnv: VOLVERAN_FIXTURE_PASSWORD
+    vhosts: all
+    defaultQueueFilter: "*.dlq"
+    protected: false
+    roles:
+      admin:
+        - fixture-admins

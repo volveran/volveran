@@ -19,7 +19,7 @@
 // subscribe with onRun(); neither touches the broker or the history tables.
 import { brokerCredentials } from '../broker-credentials.js';
 import { BrokerError } from '../broker-error.js';
-import type { HistoryStore, QueueSample } from '../audit/history.js';
+import type { HistoryStore, QueueSample } from '../audit/audit-store.js';
 import { ManagementClient } from '../management.js';
 import type { BrokerProfile } from '../profiles.js';
 import { systemClock, type RuleClock } from '../replay-rules/rule-clock.js';
@@ -131,16 +131,18 @@ export class QueueSampler {
     this.sampled = options.profiles.filter(isSampled);
   }
 
-  start(): void {
-    for (const { name } of this.sampled) {
-      const { last, lastOk } = this.options.history.lastRuns(name);
-      this.snapshots.set(name, {
-        profile: name,
-        lastRun: last && { profile: name, at: new Date(last.at), ok: last.ok, errorCode: last.errorCode },
-        lastSuccessAt: lastOk && new Date(lastOk.at),
-        queues: [],
-      });
-    }
+  async start(): Promise<void> {
+    await Promise.all(
+      this.sampled.map(async ({ name }) => {
+        const { last, lastOk } = await this.options.history.lastRuns(name);
+        this.snapshots.set(name, {
+          profile: name,
+          lastRun: last && { profile: name, at: new Date(last.at), ok: last.ok, errorCode: last.errorCode },
+          lastSuccessAt: lastOk && new Date(lastOk.at),
+          queues: [],
+        });
+      }),
+    );
     this.schedule();
     this.options.testHooks?.sampler?.({
       sampleNow: () => this.sampleNow(),
@@ -209,9 +211,9 @@ export class QueueSampler {
     }
     if (this.stopped) return null;
 
-    const samples = run.ok ? this.toSamples(profile.name, at, readings) : [];
+    const samples = run.ok ? await this.toSamples(profile.name, at, readings) : [];
     const unknownDepth = readings.flatMap(({ vhost, queues }) => queues.filter((q) => q.depthMissing).map((q) => ({ vhost, queue: q.name })));
-    this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode, intervalMs: this.options.intervalMs }, samples.map(toStored));
+    await this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode, intervalMs: this.options.intervalMs }, samples.map(toStored));
 
     const previous = this.snapshots.get(profile.name);
     this.snapshots.set(profile.name, {
@@ -241,16 +243,16 @@ export class QueueSampler {
     );
   }
 
-  private toSamples(profile: string, at: Date, readings: Awaited<ReturnType<QueueSampler['read']>>): LatestSample[] {
+  private async toSamples(profile: string, at: Date, readings: Awaited<ReturnType<QueueSampler['read']>>): Promise<LatestSample[]> {
     const { history } = this.options;
-    const lastGoodRun = history.lastGoodRunBefore(profile, at.getTime());
-    return readings.flatMap(({ vhost, queues }) =>
-      queues.filter((q) => !q.depthMissing).map((q): LatestSample => {
+    const lastGoodRun = await history.lastGoodRunBefore(profile, at.getTime());
+    const read = readings.flatMap(({ vhost, queues }) =>
+      queues.filter((q) => !q.depthMissing).map(async (q): Promise<LatestSample> => {
         const ref = { profile, vhost, queue: q.name };
-        const latest = history.latestSample(ref, at.getTime());
+        const latest = await history.latestSample(ref, at.getTime());
         // A good run since this queue's latest Sample did not sample it: what happened in between is unknown.
         const previous = latest && lastGoodRun !== null && lastGoodRun > latest.at ? null : latest;
-        const takenOut = previous ? history.takenOut(ref, previous.at, at.getTime()) : 0;
+        const takenOut = previous ? await history.takenOut(ref, previous.at, at.getTime()) : 0;
         return {
           ...ref,
           at,
@@ -262,6 +264,7 @@ export class QueueSampler {
         };
       }),
     );
+    return Promise.all(read);
   }
 }
 

@@ -1,8 +1,9 @@
 // The metrics of triage: Replay rules, Apply outcomes, Checkouts, Approvals
 // and the audit store's stored bodies. The two counters are told by the
 // Checkout manager and the Replay Rules as things happen; the gauges are read
-// at each scrape from the manager and from the audit store's rule state and
-// body sizes, never from a broker.
+// at each scrape from the manager, and from the audit store's rule state and
+// body sizes as last read in the background (store-readings.ts), never from a
+// broker.
 import type { MessageOutcome } from '../apply/types.js';
 import { MetricCounter, type MetricFamily } from './exposition.js';
 import { PAUSE_REASON_LIMIT, type RulePassStatus, type RuleState } from '../../shared/replay-rules.js';
@@ -10,7 +11,8 @@ import { PAUSE_REASON_LIMIT, type RulePassStatus, type RuleState } from '../../s
 export interface TriageReadings {
   ruleStates(): Array<{ profile: string; rule: string; state: RuleState }>;
   checkoutCounts(): { active: number; waitingApproval: number };
-  storedBodyBytes(): number;
+  /** Null until there is a reading: no series, not 0. */
+  storedBodyBytes(): number | null;
 }
 
 export class TriageMetrics {

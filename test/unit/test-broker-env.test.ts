@@ -31,6 +31,7 @@ describe('test broker settings', () => {
       oidcPort: undefined,
       oauthAmqpPort: undefined,
       oauthMgmtPort: undefined,
+      postgresPort: undefined,
     });
   });
 
@@ -42,6 +43,7 @@ describe('test broker settings', () => {
       VOLVERAN_TEST_OIDC_PORT: '18080',
       VOLVERAN_TEST_OAUTH_AMQP_PORT: '5674',
       VOLVERAN_TEST_OAUTH_MGMT_PORT: '15674',
+      VOLVERAN_TEST_POSTGRES_PORT: '5433',
     });
     expect(settings).toEqual({
       project: 'mine',
@@ -50,6 +52,7 @@ describe('test broker settings', () => {
       oidcPort: '18080',
       oauthAmqpPort: '5674',
       oauthMgmtPort: '15674',
+      postgresPort: '5433',
     });
   });
 });

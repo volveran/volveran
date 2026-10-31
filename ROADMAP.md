@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.5.1 is released** (October 2026) as `ghcr.io/volveran/volveran:0.5.1`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v0.6.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.6.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -20,7 +20,7 @@ Volverán **v0.5.1 is released** (October 2026) as `ghcr.io/volveran/volveran:0.
   - Discard (reason required).
   - Replay (back to the queue the Message was dead-lettered from).
   - Move (to a named queue, or to an exchange with a routing key).
-  - Keep (returns the Message without using up Delivery Budget).
+  - Keep (returns the Message to its queue).
 - One Apply, at-least-once ([ADR 0001](docs/adr/0001-apply-settles-each-message-at-least-once.md)), with a per-Message outcome.
 - Replay, Move and Restore remove `CC`, `BCC` and dead-letter headers and add `x-volveran-replay-id` and `x-volveran-from`. The original headers are kept in the Audit Entry.
 - Set-up check: warn when a quorum dead-letter queue has a finite `delivery-limit` (including the default of 20) and no dead-letter exchange, because the broker drops Messages that pass the limit.
@@ -104,9 +104,26 @@ What shipped:
 
 See the [observability guide](docs/observability.md).
 
+## v0.6: PostgreSQL on one Replica (released in 0.6.0)
+
+A stop on the way to v1.0, so that the riskiest change meets real use before the rest depends on it. Everything still runs on one Replica. Upgrading from 0.5 changes little you did not ask for (see the [changelog](CHANGELOG.md)).
+
+What shipped:
+
+- An asynchronous audit store interface ([ADR 0013](docs/adr/0013-audit-store-interface.md)), on SQLite and PostgreSQL, with one contract suite run against both, and the integration suite running on either.
+- PostgreSQL as an alternative audit store, chosen by `VOLVERAN_POSTGRES_URL`, with required TLS in the chart by default and reconnection when the database returns ([guide](docs/postgresql.md)). SQLite stays the default.
+- `copy-audit-store`, which copies a SQLite store of any released version into an empty PostgreSQL and verifies each table's row count.
+- `check-config`, and `version: 1` in the profiles file ([guide](docs/configuration.md#checking-the-configuration)). Unknown keys are still ignored until 1.0; `check-config` lists them.
+- An upgrade suite on real stores of every release since 0.1.0, written by each release's own image.
+- A store newer than the binary is refused at startup, an Apply stops once a store write fails, and a metrics scrape no longer reads the store.
+
+These things differ from the plan or remain open:
+
+- **Keep can use up Delivery Budget on quorum queues.** The broker-facts gate for returning Messages at shutdown did not hold: closing a channel straight after `nack` uses up Delivery Budget, and ending a Checkout does that ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). It is a known issue in 0.6.0, not fixed.
+- **`node:sqlite` is a release candidate on Node 24**, not stable. The status and what follows from it are [recorded](docs/rabbitmq-behaviour.md#nodejs-runtime-nodesqlite).
+
 ## v1.0: Production hardening
 
-- PostgreSQL as an alternative audit store.
 - Several replicas with Checkout coordination between them.
 - Security review, upgrade guarantees and a stable configuration format.
 

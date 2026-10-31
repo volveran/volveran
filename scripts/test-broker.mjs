@@ -3,18 +3,21 @@
 // come from scripts/test-broker-env.mjs: one broker per checkout, on random
 // free ports unless VOLVERAN_TEST_AMQP_PORT / VOLVERAN_TEST_MGMT_PORT /
 // VOLVERAN_TEST_OIDC_PORT / VOLVERAN_TEST_OAUTH_AMQP_PORT /
-// VOLVERAN_TEST_OAUTH_MGMT_PORT are set. The compose file has two brokers:
-// the main one and a second with the OAuth 2.0 backend.
+// VOLVERAN_TEST_OAUTH_MGMT_PORT / VOLVERAN_TEST_POSTGRES_PORT are set. The compose
+// file has two brokers, the main one and a second with the OAuth 2.0 backend,
+// and PostgreSQL.
 //
 //   node scripts/test-broker.mjs up
 //   node scripts/test-broker.mjs down
 //   node scripts/test-broker.mjs run -- <command...>   # up, run, down
 //
 // `run` passes the ports to the command as VOLVERAN_TEST_AMQP_PORT,
-// VOLVERAN_TEST_MGMT_PORT, VOLVERAN_TEST_OIDC_PORT, VOLVERAN_TEST_OAUTH_AMQP_PORT
-// and VOLVERAN_TEST_OAUTH_MGMT_PORT, and tears the broker down afterwards (also on
-// Ctrl-C) unless VOLVERAN_TEST_KEEP_BROKER=1.
+// VOLVERAN_TEST_MGMT_PORT, VOLVERAN_TEST_OIDC_PORT, VOLVERAN_TEST_OAUTH_AMQP_PORT,
+// VOLVERAN_TEST_OAUTH_MGMT_PORT and VOLVERAN_TEST_POSTGRES_PORT, and tears the broker down afterwards (also on
+// Ctrl-C) unless VOLVERAN_TEST_KEEP_BROKER=1. With VOLVERAN_TEST_LOCK_FILE set, `run` waits
+// for that lock first and holds it until the broker is down.
 import { spawn, spawnSync } from 'node:child_process';
+import { acquireLock } from './test-broker-lock.mjs';
 import { composeFile, publishedPorts, repoRoot, testBrokerSettings } from './test-broker-env.mjs';
 
 const settings = testBrokerSettings(repoRoot, process.env);
@@ -27,6 +30,7 @@ const composeEnv = {
   VOLVERAN_TEST_OIDC_PORT: settings.oidcPort ?? '',
   VOLVERAN_TEST_OAUTH_AMQP_PORT: settings.oauthAmqpPort ?? '',
   VOLVERAN_TEST_OAUTH_MGMT_PORT: settings.oauthMgmtPort ?? '',
+  VOLVERAN_TEST_POSTGRES_PORT: settings.postgresPort ?? '',
 };
 
 function compose(...args) {
@@ -61,7 +65,7 @@ async function up() {
   if (!(await waitForOidc(ports.oidcPort))) return { status: 1 };
   console.log(
     `[test-broker] up: project=${settings.project} amqp=${ports.amqpPort} mgmt=${ports.mgmtPort} oidc=${ports.oidcPort}` +
-      ` oauth-amqp=${ports.oauthAmqpPort} oauth-mgmt=${ports.oauthMgmtPort}`,
+      ` oauth-amqp=${ports.oauthAmqpPort} oauth-mgmt=${ports.oauthMgmtPort} postgres=${ports.postgresPort}`,
   );
   return { status, ports };
 }
@@ -83,8 +87,10 @@ if (command === 'up') {
     process.exit(2);
   }
   const keep = process.env.VOLVERAN_TEST_KEEP_BROKER === '1';
+  const releaseLock = process.env.VOLVERAN_TEST_LOCK_FILE ? await acquireLock(process.env.VOLVERAN_TEST_LOCK_FILE) : () => {};
   const finish = (status) => {
     if (!keep) down();
+    releaseLock();
     process.exit(status);
   };
   const started = await up();
@@ -99,6 +105,7 @@ if (command === 'up') {
       VOLVERAN_TEST_OIDC_PORT: started.ports.oidcPort,
       VOLVERAN_TEST_OAUTH_AMQP_PORT: started.ports.oauthAmqpPort,
       VOLVERAN_TEST_OAUTH_MGMT_PORT: started.ports.oauthMgmtPort,
+      VOLVERAN_TEST_POSTGRES_PORT: started.ports.postgresPort,
     },
     shell: process.platform === 'win32',
   });

@@ -1,8 +1,11 @@
 // The Apply executor with an in-memory audit store and a fake broker (the ack).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as amqp from 'amqplib';
-import { AuditStore } from '../../src/server/audit/store.js';
+import type { AuditStore } from '../../src/server/audit/audit-store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { executeApply, type ApplyRun } from '../../src/server/apply/executor.js';
+import { STOP_REASONS } from '../../src/server/apply/stop-reasons.js';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import { AckUncertainError, type ApplyContext } from '../../src/server/apply/types.js';
 import type { BrokerProfile } from '../../src/server/profiles.js';
 import type { ApplyPlan } from '../../src/server/triage/decisions.js';
@@ -20,9 +23,9 @@ function held(handle: number, headers: Record<string, unknown> = {}): amqp.Consu
 }
 
 describe('Apply executor', () => {
-  let audit: AuditStore;
+  let audit: SqliteAuditStore;
   beforeEach(() => {
-    audit = new AuditStore();
+    audit = new SqliteAuditStore();
   });
   afterEach(() => audit.close());
 
@@ -49,7 +52,7 @@ describe('Apply executor', () => {
         ack,
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),
       },
-      audit,
+      audit: audit,
       stopReason: () => null,
       onDone: (handle) => done.push(handle),
       ...overrides,
@@ -62,8 +65,8 @@ describe('Apply executor', () => {
     const { outcomes, done } = run(
       { kept: [1, 3], steps: [{ handle: 2, decision: DISCARD }] },
       async (m) => {
-        const [entry] = audit.list();
-        storedBeforeAck.push([entry?.outcome, audit.body(entry!.id)?.toString(), m.fields.deliveryTag]);
+        const [entry] = await audit.list();
+        storedBeforeAck.push([entry?.outcome, (await audit.body(entry!.id))?.toString(), m.fields.deliveryTag]);
       },
     );
 
@@ -74,7 +77,7 @@ describe('Apply executor', () => {
     ]);
     expect(storedBeforeAck).toEqual([['pending', 'body-2', 2]]);
     expect(done).toEqual([2]);
-    expect(audit.list()).toEqual([
+    expect(await audit.list()).toEqual([
       expect.objectContaining({
         action: 'discard',
         reason: 'duplicate',
@@ -113,7 +116,7 @@ describe('Apply executor', () => {
       [3, 'not-attempted'],
     ]);
     expect(acked).toEqual([1]);
-    expect(audit.list().map((e) => e.messageId)).toEqual(['m-1']);
+    expect((await audit.list()).map((e) => e.messageId)).toEqual(['m-1']);
   });
 
   it('starts Replay and Move steps at least 1/rate apart, without pacing Discards, and records the rate on every Audit Entry', async () => {
@@ -146,7 +149,7 @@ describe('Apply executor', () => {
         [4, 100],
         [5, 200],
       ]);
-      expect(audit.list().map((e) => e.rate)).toEqual([10, 10, 10, 10, 10]);
+      expect((await audit.list()).map((e) => e.rate)).toEqual([10, 10, 10, 10, 10]);
     } finally {
       vi.useRealTimers();
     }
@@ -178,12 +181,12 @@ describe('Apply executor', () => {
   it('records no rate on the Audit Entries of an Apply with no Replay Rate', async () => {
     const { outcomes } = run({ kept: [], steps: [{ handle: 1, decision: DISCARD }] }, async () => {});
     await outcomes;
-    expect(audit.list().map((e) => e.rate)).toEqual([null]);
+    expect((await audit.list()).map((e) => e.rate)).toEqual([null]);
   });
 
   it('leaves the Message alone when its Audit Entry cannot be written', async () => {
     const acked: number[] = [];
-    audit.close(); // every write now fails
+    await audit.close(); // every write now fails
     const { outcomes } = run({ kept: [], steps: [{ handle: 1, decision: DISCARD }] }, async (m) => {
       acked.push(m.fields.deliveryTag);
     });
@@ -201,7 +204,7 @@ describe('Apply executor', () => {
 
     expect(await outcomes).toEqual([expect.objectContaining({ status: 'failed', reason: 'Channel closed' })]);
     expect(done).toEqual([]);
-    expect(audit.list()[0]).toMatchObject({ outcome: 'failed', outcomeReason: 'Channel closed' });
+    expect((await audit.list())[0]).toMatchObject({ outcome: 'failed', outcomeReason: 'Channel closed' });
   });
 
   it('records a Discard whose ack the broker may or may not have processed as uncertain, keeping the copy', async () => {
@@ -212,8 +215,131 @@ describe('Apply executor', () => {
     expect(await outcomes).toEqual([
       expect.objectContaining({ status: 'failed', reason: expect.stringContaining('may or may not') }),
     ]);
-    const [entry] = audit.list();
+    const [entry] = await audit.list();
     expect(entry).toMatchObject({ outcome: 'uncertain', messageId: 'm-1' });
-    expect(audit.body(entry!.id)?.toString()).toBe('body-1');
+    expect((await audit.body(entry!.id))?.toString()).toBe('body-1');
+  });
+
+  // ADR 0013: a missing await shows only when the store takes its time.
+  describe('when the audit store fails', () => {
+    const discards = (...handles: number[]): ApplyPlan => ({ kept: [], steps: handles.map((handle) => ({ handle, decision: { kind: 'discard', reason: 'bad' } })) });
+    const failing = (call: 'record' | 'setOutcome'): AuditStore =>
+      new Proxy(audit, {
+        get: (t, key) => (key === call ? () => Promise.reject(new Error('store gone')) : Reflect.get(t, key)),
+      });
+
+    it('attempts no further step after an Audit Entry could not be written, and acks nothing', async () => {
+      let acks = 0;
+      const { outcomes } = run(discards(1, 2, 3), async () => void acks++, { audit: failing('record') });
+      expect((await outcomes).map((o) => [o.status, o.reason])).toEqual([
+        ['failed', expect.stringContaining('Could not write the Audit Entry')],
+        ['not-attempted', STOP_REASONS.auditStoreFailed],
+        ['not-attempted', STOP_REASONS.auditStoreFailed],
+      ]);
+      expect(acks).toBe(0);
+    });
+
+    it('finishes the step in progress and attempts no further one after an outcome could not be written', async () => {
+      let acks = 0;
+      const { outcomes } = run(discards(1, 2), async () => void acks++, { audit: failing('setOutcome') });
+      expect((await outcomes).map((o) => o.status)).toEqual(['done', 'not-attempted']);
+      expect(acks).toBe(1);
+    });
+
+    it('keeps the reason of a stop asked for first', async () => {
+      const { outcomes } = run(discards(1, 2), async () => {}, { audit: failing('record'), stopReason: () => null });
+      const stopped = run(discards(1, 2), async () => {}, { audit: failing('record'), stopReason: () => 'stopped by ana' });
+      expect((await outcomes)[1]!.reason).toBe(STOP_REASONS.auditStoreFailed);
+      expect((await stopped.outcomes).map((o) => o.reason)).toEqual(['stopped by ana', 'stopped by ana']);
+    });
+  });
+
+  describe('on a delayed store', () => {
+    it('commits the pending entry and the Discarded copy before acking (ADR 0001)', async () => {
+      const atAck: unknown[] = [];
+      const { outcomes } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async () => {
+          const [entry] = await audit.list();
+          atAck.push([entry?.outcome, entry && (await audit.body(entry.id))?.toString()]);
+        },
+        { audit: delayedAuditStore(audit) },
+      );
+
+      await outcomes;
+      expect(atAck).toEqual([['pending', 'body-1']]);
+    });
+
+    it('never acks a Message whose pending entry fails to commit', async () => {
+      const acked: number[] = [];
+      const { outcomes } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async (m) => {
+          acked.push(m.fields.deliveryTag);
+        },
+        {
+          audit: delayedAuditStore(audit, async () => {
+            throw new Error('the database went away');
+          }),
+        },
+      );
+
+      expect(await outcomes).toEqual([
+        expect.objectContaining({ status: 'failed', reason: expect.stringMatching(/Audit Entry.*left in the queue.*went away/) }),
+      ]);
+      expect(acked).toEqual([]);
+    });
+
+    it('has every outcome committed by the time the Apply answers', async () => {
+      const { outcomes } = run(
+        { kept: [], steps: [1, 2].map((handle) => ({ handle, decision: DISCARD })) },
+        async () => {},
+        { audit: delayedAuditStore(audit) },
+      );
+
+      await outcomes;
+      expect((await audit.list()).map((e) => e.outcome)).toEqual(['done', 'done']);
+    });
+
+    it('still reports a done step when its outcome cannot be written, leaving the entry pending', async () => {
+      const { outcomes, done } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async () => {},
+        {
+          audit: delayedAuditStore(audit, async (call) => {
+            if (call === 'setOutcome') throw new Error('the database went away');
+          }),
+        },
+      );
+
+      expect(await outcomes).toEqual([expect.objectContaining({ status: 'done' })]);
+      expect(done).toEqual([1]);
+      expect((await audit.list())[0]).toMatchObject({ outcome: 'pending' });
+    });
+
+    it('counts a step as settled before writing its outcome, so a late stop finds nothing left to stop', async () => {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let writing!: () => void;
+      const reachedWrite = new Promise<void>((resolve) => (writing = resolve));
+      const settled: number[] = [];
+      const { outcomes } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async () => {},
+        {
+          audit: delayedAuditStore(audit, async (call) => {
+            if (call !== 'setOutcome') return;
+            writing();
+            await released;
+          }),
+          onStep: (o) => settled.push(o.handle),
+        },
+      );
+
+      await reachedWrite;
+      expect(settled).toEqual([1]);
+      release();
+      await outcomes;
+    });
   });
 });

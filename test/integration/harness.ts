@@ -15,11 +15,13 @@ import type { BodyRetention } from '../../src/server/audit/body-retention.js';
 import type { SamplerControl, SamplerTestHooks, SamplingRun } from '../../src/server/history/sampler.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
-import type { RulePass } from '../../src/shared/replay-rules.js';
-import { startServer } from '../../src/server/server.js';
+import type { RulePass, RulePassSummary } from '../../src/shared/replay-rules.js';
+import { startServer, type ServerOptions } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
+import { lockQueueName } from '../../src/server/triage/checkout-lock.js';
 import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
 import { brokerUsers, eventually, management, testBroker } from '../broker/client.js';
+import { storeEnv } from './test-store.js';
 
 export * from '../broker/client.js';
 
@@ -108,6 +110,8 @@ export interface StartAppOptions {
   checkoutTiming?: Partial<CheckoutTiming>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
+  /** Wraps the audit store the app's callers talk to (delayedAuditStore in test/support/). */
+  wrapAuditStore?: ServerOptions['wrapAuditStore'];
   /** The queue sampler's clock and "sample now" (samplerHooks). */
   samplerTestHooks?: SamplerTestHooks;
   /** The audit store's directory (kept by the caller); default in memory. */
@@ -135,6 +139,9 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
     if (p.passwordEnv === passwordEnvFor(p.name)) env[p.passwordEnv] = brokerUsers.admin.password;
   }
   Object.assign(env, options.env);
+  // A test that names its store keeps it; any other runs on the store under test.
+  const store = options.env && 'VOLVERAN_POSTGRES_URL' in options.env ? null : await storeEnv(options.dataDir);
+  Object.assign(env, store?.env);
 
   let server;
   try {
@@ -147,12 +154,14 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTiming: options.checkoutTiming,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
+      wrapAuditStore: options.wrapAuditStore,
       samplerTestHooks: options.samplerTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {
+    await store?.release();
     await rm(dir, { recursive: true, force: true });
     throw err;
   }
@@ -175,6 +184,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
     delete: (urlPath) => request('DELETE', urlPath),
     async close() {
       await server.close();
+      await store?.release();
       await rm(dir, { recursive: true, force: true });
     },
   };
@@ -209,13 +219,16 @@ export interface SpawnServerOptions {
 export async function spawnServer(options: SpawnServerOptions): Promise<{ child: ChildProcess; url: string }> {
   const profilesFile = path.join(options.dir, 'profiles.yaml');
   await writeFile(profilesFile, stringify({ profiles: options.profiles }));
+  const dataDir = options.dataDir ?? path.join(options.dir, 'data');
+  const store = 'VOLVERAN_POSTGRES_URL' in options.env ? null : await storeEnv(dataDir);
   const child = spawn(process.execPath, ['--import', 'tsx', options.script], {
     cwd: repoRoot,
     env: {
       PATH: process.env.PATH,
       VOLVERAN_PROFILES_FILE: profilesFile,
       VOLVERAN_PORT: '0',
-      VOLVERAN_DATA_DIR: options.dataDir ?? path.join(options.dir, 'data'),
+      VOLVERAN_DATA_DIR: dataDir,
+      ...store?.env,
       ...options.env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -419,6 +432,29 @@ export function ruleSchedulerHooks(start = new Date()) {
       return control.runScheduledPass(profile, rule);
     },
   };
+}
+
+/** What a Rule Pass counted; when it did not run, fails saying what it was instead, with its reason. */
+export function ranSummary(pass: RulePass | null): RulePassSummary {
+  if (!pass) throw new Error('Expected a Rule Pass, but none ran: the rule is paused or a pass of it is running');
+  if (pass.status !== 'ran') throw new Error(`Expected a Rule Pass to run, but it was ${pass.status}: ${pass.reason}`);
+  return pass.summary!;
+}
+
+/**
+ * Waits until the broker has deleted the lock queue of `queue`. The broker does that
+ * shortly after the connection holding it closes, so a Checkout's end can return while
+ * the next start would still be refused with `checkout_in_progress` (about 50 ms here).
+ */
+export async function lockFreed(queue: string, vhost = '/'): Promise<void> {
+  await eventually(
+    async () => {
+      const { status } = await management(`/queues/${encodeURIComponent(vhost)}/${encodeURIComponent(lockQueueName(queue))}`);
+      if (status !== 404) throw new Error(`The lock queue of "${queue}" is still there (management API answered ${status})`);
+    },
+    15_000,
+    20,
+  );
 }
 
 /**

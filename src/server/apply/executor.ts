@@ -19,8 +19,13 @@
 // For every attempted step an Audit Entry is written as `pending` (for a
 // Discard, with the full Message, in a durable commit) before the broker is
 // touched, then updated with the outcome. A crash in between leaves the
-// Message in the queue *and* in the store: a duplicate, never a loss.
-import type { AuditStore } from '../audit/store.js';
+// Message in the queue *and* in the store: a duplicate, never a loss. Both
+// writes are awaited (ADR 0013), and a step counts as settled before its
+// outcome is written, so a stop arriving during that write finds it settled.
+// When either write fails the store is taken to be gone: the step in progress
+// finishes and no further step is attempted, so nothing is settled without an
+// Audit Entry, and the rest go back to the queue.
+import type { AuditStore } from '../audit/audit-store.js';
 import { messageIdOf } from '../triage/message-view.js';
 import type { ActionDecision, ApplyPlan, Decision } from '../triage/decisions.js';
 import { handlerFor } from './handlers.js';
@@ -80,6 +85,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
 
   for (const handle of plan.kept) outcome(handle, { kind: 'keep' }, 'kept');
 
+  let storeFailed = false;
   const canary = run.canary;
   const steps = canary
     ? [...plan.steps.filter((s) => s.handle === canary.handle), ...plan.steps.filter((s) => s.handle !== canary.handle)]
@@ -98,7 +104,8 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       continue;
     }
     if (message && decision.kind !== 'discard') await pace.wait(run.stopSignal);
-    const stop = message ? run.stopReason() : STOP_REASONS.checkoutNotActive;
+    // A stop asked for first keeps its reason.
+    const stop = message ? (run.stopReason() ?? (storeFailed ? STOP_REASONS.auditStoreFailed : null)) : STOP_REASONS.checkoutNotActive;
     if (!message || stop !== null) {
       outcome(handle, decision, 'not-attempted', stop ?? STOP_REASONS.checkoutNotActive);
       continue;
@@ -108,7 +115,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     let details: AuditDetails;
     try {
       details = handler.audit(decision, message, target);
-      entryId = audit.record({
+      entryId = await audit.record({
         at: new Date(),
         operator: target.operator,
         role: target.role,
@@ -134,6 +141,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
         },
       });
     } catch (err) {
+      storeFailed = true;
       outcome(handle, decision, 'failed', `Could not write the Audit Entry, so the Message was left in the queue: ${(err as Error).message}`);
       continue;
     }
@@ -150,11 +158,6 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       result = { status: 'failed', reason: (err as Error).message };
     }
     if (result.status === 'done') run.onDone(handle);
-    try {
-      audit.setOutcome(entryId, uncertain ? 'uncertain' : result.status, result.status === 'failed' ? result.reason : null);
-    } catch {
-      // The entry stays `pending`; the outcome below is still reported.
-    }
     outcome(
       handle,
       decision,
@@ -162,6 +165,12 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       result.status === 'failed' ? result.reason : null,
       result.status === 'failed' && result.refused === true,
     );
+    try {
+      await audit.setOutcome(entryId, uncertain ? 'uncertain' : result.status, result.status === 'failed' ? result.reason : null);
+    } catch {
+      // The entry stays `pending`; the outcome above is still reported.
+      storeFailed = true;
+    }
     if (isCanary) await canary.afterStep(outcomes.get(handle)!);
   }
 

@@ -5,7 +5,8 @@
 //
 // Ending a Checkout nack-requeues every held Message one at a time in queue
 // order, then the overflow, before closing the channel: on quorum queues that
-// costs no Delivery Budget and keeps the order. A closed channel or
+// keeps the order, and costs no Delivery Budget only for what the queue has
+// taken back when the channel closes (ADR 0006). A closed channel or
 // connection (a crash, the network, a quorum consumer timeout arriving as a
 // channel close) makes it a Lost Checkout: the broker has returned
 // everything, at the cost of one delivery on quorum queues.
@@ -27,7 +28,13 @@
 // owner, or the approver of an approved Apply, can stop it the same way
 // (stopApplyBy); the Checkout then ends ('applied'). Every stop checks and
 // sets the request without awaiting, so the first of a stop, the time limit,
-// a Lost Checkout and the Apply's last step wins.
+// a Lost Checkout and the Apply's last step wins. So does every first-wins
+// section here: it claims its state before any audit store call, and none of
+// them makes one (ADR 0013). The Apply's own store calls happen in steps that
+// have already been claimed, and count a step as settled before its outcome is written.
+// An export claims nothing and is no such section: it only reads, from a copy taken
+// before its store call, so what starts or ends meanwhile changes nothing in it, as
+// when it starts while the download is written.
 //
 // An Apply runs at a Replay Rate (the request's, else the Broker Profile's
 // default, capped by its maximum; triage/replay-rate.ts) or with none. It
@@ -64,11 +71,11 @@ import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { applyOutlastsCheckout, replayRateFor } from '../triage/replay-rate.js';
-import { messageDetail, type Delivery, type MessageDetail } from '../triage/message-view.js';
+import { messageDetail, type HeldForBadge, type MessageDetail } from '../triage/message-view.js';
 import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
-import type { AuditStore, ProfileScope } from '../audit/store.js';
+import type { AuditStore, ProfileScope } from '../audit/audit-store.js';
 import { diedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
@@ -118,8 +125,8 @@ export interface CheckoutTestHooks {
   ruleScheduler?: RuleSchedulerTestHooks;
 }
 
-/** A running Replay Rule's badge for one held Message (replay-rules/rules.ts); null when no running rule matches it. */
-export type RuleBadgeOf = (checkout: Checkout, delivery: Delivery, diedAgainCount: number) => RuleBadge | null;
+/** Each held Message's running Replay Rule's badge, in the order given (replay-rules/rules.ts); null when no running rule matches it. */
+export type RuleBadgesOf = (checkout: Checkout, held: readonly HeldForBadge[]) => Promise<Array<RuleBadge | null>>;
 
 export interface CheckoutStartOptions extends StartOptions {
   /**
@@ -147,7 +154,9 @@ export interface CheckoutManagerOptions {
   endedRetentionMs?: number;
   testHooks?: CheckoutTestHooks;
   /** The rule badge on Message rows and in the Message view; none when left out. */
-  ruleBadge?: RuleBadgeOf;
+  ruleBadges?: RuleBadgesOf;
+  /** Rule badges could not be read; the Checkout is shown without them. */
+  onRuleBadgesError?(err: unknown): void;
   /** An Apply running in the background failed unexpectedly (its steps report their own failures); the Checkout still ends. */
   onApplyError?(checkoutId: string, err: unknown): void;
   /** An Apply ended with these outcomes, one per Message of the Checkout. */
@@ -253,7 +262,14 @@ export class CheckoutManager {
       await checkout.connection?.close().catch(() => {});
       throw err;
     }
-    this.findDiedAgain(checkout, options.auditScope);
+    try {
+      await this.findDiedAgain(checkout, options.auditScope);
+    } catch (err) {
+      // It holds Messages by now, so they go back as at any end. If it was lost
+      // during the search that has been done, and the queue may be someone else's.
+      await this.finish(checkout, 'start-failed');
+      throw err;
+    }
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return this.view(checkout);
@@ -298,27 +314,52 @@ export class CheckoutManager {
     return c && this.checkouts.has(c.id) ? this.view(c) : null;
   }
 
-  message(id: string, handle: number): MessageDetail {
+  async message(id: string, handle: number): Promise<MessageDetail> {
     const checkout = this.find(id);
     const m = checkout.held.get(handle);
     if (!m) throw new CheckoutError('message_not_found', `Checkout ${id} holds no Message with handle ${handle}.`);
     const diedAgain = checkout.diedAgain.get(handle) ?? null;
-    return {
-      ...messageDetail(handle, m, queueInfo(checkout)),
-      diedAgain,
-      rule: this.options.ruleBadge?.(checkout, m, diedAgain?.count ?? 0) ?? null,
-    };
+    const detail = messageDetail(handle, m, queueInfo(checkout));
+    const [rule] = await this.ruleBadges(checkout, [{ delivery: m, diedAgainCount: diedAgain?.count ?? 0 }]);
+    return { ...detail, diedAgain, rule: rule ?? null };
+  }
+
+  /**
+   * `view` with each row's rule badge; routes/checkouts.ts adds them to every
+   * response. Apart from the methods that answer a view, because this reads the store:
+   * they settle first-wins sections with no await, and what they did stands even
+   * if the badges cannot be read.
+   */
+  async withRuleBadges(view: CheckoutView): Promise<CheckoutView> {
+    const checkout = this.checkouts.get(view.id);
+    if (!checkout) return view;
+    const rows = view.messages.flatMap((row) => {
+      const delivery = checkout.held.get(row.handle);
+      return delivery ? [{ row, delivery, diedAgainCount: checkout.diedAgain.get(row.handle)?.count ?? 0 }] : [];
+    });
+    const badges = await this.ruleBadges(checkout, rows);
+    const byHandle = new Map(rows.map(({ row }, i) => [row.handle, badges[i] ?? null]));
+    return { ...view, messages: view.messages.map((row) => ({ ...row, rule: byHandle.get(row.handle) ?? null })) };
+  }
+
+  private async ruleBadges(checkout: Checkout, held: readonly HeldForBadge[]): Promise<Array<RuleBadge | null>> {
+    try {
+      return (await this.options.ruleBadges?.(checkout, held)) ?? [];
+    } catch (err) {
+      this.options.onRuleBadgesError?.(err);
+      return [];
+    }
   }
 
   private view(checkout: Checkout): CheckoutView {
-    return checkoutView(checkout, this.options.ruleBadge);
+    return checkoutView(checkout);
   }
 
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
-  private findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): void {
+  private async findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): Promise<void> {
     const trail = replayTrail(this.options.audit, auditScope);
     for (const [handle, m] of checkout.held) {
-      const found = diedAgain(m.properties.headers, trail);
+      const found = await diedAgain(m.properties.headers, trail);
       if (found) checkout.diedAgain.set(handle, found);
     }
   }
@@ -629,9 +670,10 @@ export class CheckoutManager {
    * Starts an NDJSON export of the held Messages matching `filter` (every
    * one when null) and records its Audit Entry (export.ts). Changes nothing
    * on the broker. Throws `checkout_not_active` on a Checkout that is over
-   * or lost. `role` is the exporting Operator's Role, recorded in the Audit Entry.
+   * or lost, `apply_in_progress` while it is Applied, both as of the start of the
+   * call. `role` is the exporting Operator's Role, recorded in the Audit Entry.
    */
-  exportMessages(id: string, filter: Filter | null, role: Role): CheckoutExport {
+  async exportMessages(id: string, filter: Filter | null, role: Role): Promise<CheckoutExport> {
     return startExport(this.find(id), filter, { audit: this.options.audit, role, beforeLine: this.hooks.beforeExportLine });
   }
 
@@ -659,8 +701,9 @@ export class CheckoutManager {
     try {
       if (channel) {
         // Keep = basic.nack(requeue), one at a time in queue order: unlike
-        // reject or closing with unacked deliveries it uses up no Delivery
-        // Budget, and a quorum queue puts them back in the order returned.
+        // reject it uses up no Delivery Budget by itself, and a quorum queue
+        // puts them back in the order returned. Closing straight after can
+        // overtake the nacks, which does use it up (ADR 0006).
         for (const m of checkout.held.values()) channel.nack(m, false, true);
         for (const m of checkout.overflow) channel.nack(m, false, true);
         await channel.close();

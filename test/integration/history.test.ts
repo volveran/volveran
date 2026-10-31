@@ -14,6 +14,7 @@ import {
   eventually,
   fixtureQueues,
   makeTempDir,
+  management,
   purgeQueues,
   samplerHooks,
   startApp,
@@ -47,8 +48,16 @@ describe('depth history', () => {
     await purgeQueues('/', fixtureQueues);
   });
 
-  /** Waits until management statistics show the depth, as the sampler would read it. */
+  /**
+   * Waits until management statistics show the depth, as the sampler would read it.
+   * A queue listed with no depth yet shows 0 in the queue list, and the sampler rightly
+   * takes no Sample of it, so depth 0 must be a reading: the first Sample would be lost.
+   */
   async function waitForDepth(app: TestApp, depth: number, queue: string = dlq, profile = 'local') {
+    await eventually(async () => {
+      const { body } = await management(`/queues/%2F/${encodeURIComponent(queue)}?columns=messages`);
+      expect(typeof (body as { messages?: unknown }).messages).toBe('number');
+    }, 30_000, 250);
     await eventually(async () => {
       const { body } = await app.get(`/api/profiles/${profile}/vhosts/%2F/queues`);
       expect(body.queues.find((q: any) => q.name === queue)?.approximateMessages).toBe(depth);
@@ -70,7 +79,8 @@ describe('depth history', () => {
     /** A run at the wall clock, because Audit Entries carry real time. */
     const sample = async () => {
       sampler.set(new Date());
-      await sampler.sampleNow();
+      // A failed run takes no Sample either; say so here rather than in the Samples below.
+      expect((await sampler.sampleNow()).map((run) => run.errorCode)).toEqual([null]);
     };
 
     // Statistics may still show Messages purged by an earlier test.

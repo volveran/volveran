@@ -1,0 +1,208 @@
+---
+# Source: volveran/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: volveran-profiles
+  labels:
+    app.kubernetes.io/name: volveran
+    app.kubernetes.io/instance: volveran
+    app.kubernetes.io/version: "<version>"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: volveran-<version>
+data:
+  profiles.yaml: |
+    profiles:
+    - amqpUrl: amqps://rabbit.example.com:5671
+      defaultQueueFilter: '*.dlq'
+      managementUrl: https://rabbit.example.com:15671
+      name: prod
+      passwordEnv: VOLVERAN_PROD_PASSWORD
+      protected: true
+      username: volveran
+      vhosts:
+      - /
+---
+# Source: volveran/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: volveran-data
+  labels:
+    app.kubernetes.io/name: volveran
+    app.kubernetes.io/instance: volveran
+    app.kubernetes.io/version: "<version>"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: volveran-<version>
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Source: volveran/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: volveran
+  labels:
+    app.kubernetes.io/name: volveran
+    app.kubernetes.io/instance: volveran
+    app.kubernetes.io/version: "<version>"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: volveran-<version>
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: volveran
+    app.kubernetes.io/instance: volveran
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Source: volveran/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: volveran
+  labels:
+    app.kubernetes.io/name: volveran
+    app.kubernetes.io/instance: volveran
+    app.kubernetes.io/version: "<version>"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: volveran-<version>
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: volveran
+      app.kubernetes.io/instance: volveran
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: volveran
+        app.kubernetes.io/instance: volveran
+      annotations:
+        # A change to the chart-managed Broker Profiles rolls the pod.
+        checksum/broker-profiles: 3893a5007e5b6e3dfb982f816593e12dc663210b4945b5f20e05332bd4fc8b74
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      # Restricted Pod Security Standard. 1000:1000 is the image's numeric user.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: volveran
+          image: ghcr.io/volveran/volveran:<version>
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Volverán listens only once OIDC discovery has succeeded, so the
+          # startup probe allows 5 minutes (5s x 60) before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # /readyz never checks a broker: one broker outage must not take the UI away.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          env:
+            - name: VOLVERAN_AUTH
+              value: oidc
+            - name: VOLVERAN_HOST
+              value: 0.0.0.0
+            - name: VOLVERAN_PORT
+              value: "8080"
+            - name: VOLVERAN_PROFILES_FILE
+              value: /config/profiles.yaml
+            - name: VOLVERAN_DATA_DIR
+              value: /data
+            - name: VOLVERAN_OIDC_ISSUER
+              value: "https://login.example.com/realms/ops"
+            - name: VOLVERAN_OIDC_CLIENT_ID
+              value: "volveran"
+            - name: VOLVERAN_OIDC_REDIRECT_URL
+              value: "https://volveran.example.com/auth/callback"
+            - name: VOLVERAN_OIDC_SCOPES
+              value: "openid email profile"
+            - name: VOLVERAN_OIDC_GROUPS_CLAIM
+              value: "groups"
+            # Credentials come only from Secrets the platform engineer names.
+            - name: VOLVERAN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "volveran-oidc"
+                  key: "client-secret"
+            - name: VOLVERAN_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "volveran-oidc"
+                  key: "session-secret"
+          envFrom:
+            # Each key becomes a variable named by some profile's passwordEnv.
+            - secretRef:
+                name: "volveran-broker-passwords"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: broker-profiles
+              mountPath: /config
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: volveran-data
+        - name: broker-profiles
+          configMap:
+            name: volveran-profiles
+        # The root filesystem is read-only; /tmp is the only scratch space.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
