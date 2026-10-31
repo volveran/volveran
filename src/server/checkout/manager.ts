@@ -237,6 +237,7 @@ export class CheckoutManager {
       limitedBy: null,
       connection: undefined,
       channel: undefined,
+      onlyConsumer: false,
       held: new Map(),
       overflow: [],
       heldBytes: 0,

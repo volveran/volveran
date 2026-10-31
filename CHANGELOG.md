@@ -9,6 +9,7 @@ All notable changes to Volverán are recorded here. The format is based on
 ### Fixed
 
 - A queue can be Checked Out again straight after its Checkout ends. The start could be refused with `checkout_in_progress`, naming no one, while the broker was still deleting the old lock queue.
+- A queue with many Messages can also be Checked Out again straight after its Checkout ends. A quorum queue could still count the ended Checkout's consumers, so the start was refused with `queue_has_consumers`, and a Replay Rule's pass was recorded `failed`. Ending a Checkout now waits up to 3 seconds for them to clear.
 
 ## [0.6.0] - 2026-10-31
 

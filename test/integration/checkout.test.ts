@@ -272,6 +272,22 @@ describe('Checkout', () => {
       }
     });
 
+    it('has stopped counting its own consumers by the time ending a Checkout answers', async () => {
+      // Many Messages, so a quorum queue has much to do when the Checkout closes. Goes red only with the broker short of CPU.
+      await seedMessages('/', 'payments.dlq', 200);
+      const raw = await connect();
+      try {
+        const ch = await raw.createChannel();
+        for (let i = 0; i < 20; i++) {
+          const { checkout } = (await startCheckout('payments.dlq')).body;
+          await endCheckout(checkout.id);
+          expect((await ch.checkQueue('payments.dlq')).consumerCount).toBe(0);
+        }
+      } finally {
+        await raw.close();
+      }
+    }, 90_000);
+
     it('has freed the broker lock by the time ending a Checkout answers', async () => {
       // An open connection, so the declare follows the end with no handshake in between.
       const raw = await connect();

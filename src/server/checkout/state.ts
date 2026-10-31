@@ -95,6 +95,8 @@ export interface Checkout extends QueueRef {
   connection: amqp.ChannelModel | undefined;
   /** The channel the Messages are held on. */
   channel: amqp.Channel | undefined;
+  /** No other consumer read the queue when this Checkout started, so at its end the consumers counted are its own. */
+  onlyConsumer: boolean;
   /** Held deliveries in queue order, keyed by delivery tag (the Message handle). */
   held: Map<number, amqp.ConsumeMessage>;
   /** Deliveries past the byte limit: not shown, returned right after the held ones. */

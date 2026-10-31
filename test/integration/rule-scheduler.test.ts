@@ -10,7 +10,6 @@ import {
   deadLetterRoutes,
   eventually,
   fixtureQueues,
-  lockFreed,
   makeTempDir,
   purgeQueues,
   ranSummary,
@@ -110,7 +109,6 @@ describe('Replay rule scheduler', () => {
     await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
     const passAt = async (minutes: number) => {
       scheduler.set(new Date(t0.getTime() + minutes * MINUTE));
-      await lockFreed(dlq);
       return ranSummary(await scheduler.runPass('local', RULE));
     };
 
@@ -171,7 +169,6 @@ describe('Replay rule scheduler', () => {
     await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
     expect(ranSummary(await scheduler.runPass('local', RULE))).toMatchObject({ replayed: 1 });
     await rejectAll();
-    await lockFreed(dlq);
 
     const started = await app.post(checkoutPath);
     expect(started.status).toBe(201);
