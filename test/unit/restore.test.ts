@@ -6,7 +6,7 @@ import type { AuditStore } from '../../src/server/audit/audit-store.js';
 import { RestoreService } from '../../src/server/audit/restore.js';
 import { AuditStore as SyncAuditStore } from '../../src/server/audit/store.js';
 import type { ProfileAccess } from '../../src/server/profile-access.js';
-import { slowAuditStore } from './slow-audit-store.js';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 
 const opened = vi.hoisted(() => ({ run: async () => {} }));
 vi.mock('../../src/server/amqp-connection.js', () => ({
@@ -31,7 +31,7 @@ describe('Restore on a store that answers late', () => {
 
   beforeEach(() => {
     sync = new SyncAuditStore();
-    slow = slowAuditStore(sync.async);
+    slow = delayedAuditStore(sync.async);
     discardId = sync.record({
       at: new Date('2026-10-01T12:00:00.000Z'),
       operator: OPERATOR,

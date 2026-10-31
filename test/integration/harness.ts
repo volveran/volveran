@@ -16,7 +16,7 @@ import type { SamplerControl, SamplerTestHooks, SamplingRun } from '../../src/se
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
-import { startServer } from '../../src/server/server.js';
+import { startServer, type ServerOptions } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
 import { brokerUsers, eventually, management, testBroker } from '../broker/client.js';
@@ -108,6 +108,8 @@ export interface StartAppOptions {
   checkoutTiming?: Partial<CheckoutTiming>;
   endedCheckoutRetentionMs?: number;
   checkoutTestHooks?: CheckoutTestHooks;
+  /** Wraps the audit store the app's callers talk to (delayedAuditStore in test/support/). */
+  wrapAuditStore?: ServerOptions['wrapAuditStore'];
   /** The queue sampler's clock and "sample now" (samplerHooks). */
   samplerTestHooks?: SamplerTestHooks;
   /** The audit store's directory (kept by the caller); default in memory. */
@@ -147,6 +149,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTiming: options.checkoutTiming,
       endedCheckoutRetentionMs: options.endedCheckoutRetentionMs,
       checkoutTestHooks: options.checkoutTestHooks,
+      wrapAuditStore: options.wrapAuditStore,
       samplerTestHooks: options.samplerTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,

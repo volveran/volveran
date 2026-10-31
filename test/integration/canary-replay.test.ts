@@ -4,6 +4,7 @@
 // waits for the Operator to continue or stop. The Canary's outcome is on the
 // Checkout view and on its Audit Entry.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { storeSpeeds } from '../support/delayed-audit-store.js';
 import {
   appliedCheckout,
   closedPort,
@@ -31,7 +32,7 @@ const DISCARD = { kind: 'discard', reason: 'duplicate order' };
 /** A work queue dead-lettering through a headers exchange: a Canary from its DLQ cannot be watched. */
 const headers = { dlx: 'canary.headers.dlx', work: 'canary.headers.work', dlq: 'canary.headers.dlq' };
 
-describe('Canary Replay', () => {
+describe.each(storeSpeeds)('Canary Replay (%s)', (_speed, wrapAuditStore) => {
   let app: TestApp;
   const open: string[] = [];
 
@@ -87,6 +88,7 @@ describe('Canary Replay', () => {
       await ch.bindQueue(headers.dlq, headers.dlx, '', { 'x-match': 'any', kind: 'order' });
     });
     app = await startApp({
+      wrapAuditStore,
       profiles: [
         testProfile({ name: 'local' }),
         testProfile({ name: 'quick', canary: { watchWindow: '5s' } }),

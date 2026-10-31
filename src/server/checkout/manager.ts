@@ -27,7 +27,10 @@
 // owner, or the approver of an approved Apply, can stop it the same way
 // (stopApplyBy); the Checkout then ends ('applied'). Every stop checks and
 // sets the request without awaiting, so the first of a stop, the time limit,
-// a Lost Checkout and the Apply's last step wins.
+// a Lost Checkout and the Apply's last step wins. So does every first-wins
+// section here: it claims its state before any audit store call, and none of
+// them makes one (ADR 0013). The Apply's own store calls happen in steps that
+// have already been claimed, and count a step as settled before its outcome is written.
 //
 // An Apply runs at a Replay Rate (the request's, else the Broker Profile's
 // default, capped by its maximum; triage/replay-rate.ts) or with none. It
@@ -68,7 +71,7 @@ import { messageDetail, type Delivery, type MessageDetail } from '../triage/mess
 import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
-import type { AuditStore, ProfileScope } from '../audit/store.js';
+import type { AuditStore, ProfileScope } from '../audit/audit-store.js';
 import { diedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
@@ -316,7 +319,7 @@ export class CheckoutManager {
 
   /** Recognises the held Messages that are Died Again, once, as they are held (their replay ids never change). */
   private async findDiedAgain(checkout: Checkout, auditScope: ProfileScope | undefined): Promise<void> {
-    const trail = replayTrail(this.options.audit.async, auditScope);
+    const trail = replayTrail(this.options.audit, auditScope);
     for (const [handle, m] of checkout.held) {
       const found = await diedAgain(m.properties.headers, trail);
       if (found) checkout.diedAgain.set(handle, found);
@@ -632,7 +635,7 @@ export class CheckoutManager {
    * or lost. `role` is the exporting Operator's Role, recorded in the Audit Entry.
    */
   async exportMessages(id: string, filter: Filter | null, role: Role): Promise<CheckoutExport> {
-    return startExport(this.find(id), filter, { audit: this.options.audit.async, role, beforeLine: this.hooks.beforeExportLine });
+    return startExport(this.find(id), filter, { audit: this.options.audit, role, beforeLine: this.hooks.beforeExportLine });
   }
 
   /** Ends the Checkout: every held Message goes back to the queue untouched, in its original order. */

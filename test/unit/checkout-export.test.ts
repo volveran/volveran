@@ -6,7 +6,7 @@ import type { AuditStore } from '../../src/server/audit/audit-store.js';
 import { AuditStore as SyncAuditStore } from '../../src/server/audit/store.js';
 import { startExport } from '../../src/server/checkout/export.js';
 import type { Checkout } from '../../src/server/checkout/state.js';
-import { slowAuditStore } from './slow-audit-store.js';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 
 const delivery = (messageId: string) => ({
   fields: { exchange: '', routingKey: 'orders', redelivered: false },
@@ -38,7 +38,7 @@ describe('an export on a store that answers late', () => {
 
   beforeEach(() => {
     sync = new SyncAuditStore();
-    slow = slowAuditStore(sync.async);
+    slow = delayedAuditStore(sync.async);
   });
   afterEach(() => sync.close());
 

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { AuditStore as SyncAuditStore, type NewAuditEntry } from '../../src/server/audit/store.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
-import { slowAuditStore } from './slow-audit-store.js';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 
 const headers = (replayId?: string) => (replayId ? { 'x-volveran-replay-id': replayId } : {});
 
@@ -39,7 +39,7 @@ describe('replayTrail', () => {
     sync.record(entry({ replayId: 'r1', message: copy() }));
     const discard = sync.record(entry({ action: 'discard', message: { ...copy('r1'), body: Buffer.from('x') } }));
     const restore = sync.record(entry({ action: 'restore', restoreOf: discard, replayId: 'r2' }));
-    const trail = replayTrail(slowAuditStore(sync.async));
+    const trail = replayTrail(delayedAuditStore(sync.async));
 
     expect(await diedAgain(headers('r2'), trail)).toMatchObject({ replayId: 'r2', count: 2, last: { auditEntryId: restore, action: 'restore' } });
   });

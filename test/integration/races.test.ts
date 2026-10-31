@@ -1,6 +1,7 @@
 // Races between a starting Checkout and the broker or another instance,
 // driven deterministically through the Checkout manager's test hooks.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { storeSpeeds } from '../support/delayed-audit-store.js';
 import {
   checkoutConnectionNames,
   closeConnection,
@@ -19,7 +20,7 @@ const checkoutPath = `/api/profiles/local/vhosts/%2F/queues/${QUEUE}/checkouts`;
 
 type Hook = (() => Promise<void>) | null;
 
-describe('races', () => {
+describe.each(storeSpeeds)('races (%s)', (_speed, wrapAuditStore) => {
   let app: TestApp;
   let afterLock: Hook = null;
   let afterCollectWait: Hook = null;
@@ -36,6 +37,7 @@ describe('races', () => {
   beforeAll(async () => {
     app = await startApp({
       profiles: [testProfile({ name: 'local' })],
+      wrapAuditStore,
       checkoutTestHooks: {
         afterLock: async () => afterLock?.(),
         afterCollectWait: async () => afterCollectWait?.(),

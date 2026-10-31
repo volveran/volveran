@@ -9,6 +9,7 @@ import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
+import type { AuditStore as AsyncAuditStore } from './audit/audit-store.js';
 import { AuditStore } from './audit/store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
@@ -63,6 +64,8 @@ export interface ServerOptions {
   endedCheckoutRetentionMs?: number;
   /** Overrides the body retention from VOLVERAN_BODY_RETENTION_DAYS / _MAX_BYTES / _INTERVAL_MINUTES. */
   bodyRetention?: Partial<BodyRetention>;
+  /** Test seam: what the callers on the audit store interface talk to (a delayed store); unset in production. */
+  wrapAuditStore?(store: AsyncAuditStore): AsyncAuditStore;
   /** Test seams of the Checkout manager; unset in production. */
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
@@ -85,6 +88,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   } = await readStartupConfig(options);
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
   const audit = new AuditStore(options.dataDir);
+  const asyncAudit = options.wrapAuditStore?.(audit.async) ?? audit.async;
   // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
   const triageMetrics = new TriageMetrics({
     ruleStates: () => replayRules.states(),
@@ -92,7 +96,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     storedBodyBytes: () => audit.storedBodyBytes(),
   });
   const checkouts = new CheckoutManager({
-    audit,
+    audit: asyncAudit,
     limits,
     enforceApproval: config.mode.kind === 'team',
     timing: { ...config.checkoutTiming, ...options.checkoutTiming },
@@ -112,7 +116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
         }),
       };
-  const restore = new RestoreService(audit.async, (id) => checkouts.isRunning(id));
+  const restore = new RestoreService(asyncAudit, (id) => checkouts.isRunning(id));
   const replayRules = new ReplayRules({
     checkouts,
     state: audit.ruleState,
@@ -156,7 +160,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
   });
   sampler.onRun((finished) => alerting.evaluate(finished));
-  const usage = async () => bodyStoreUsage(await audit.async.storedBodyBytes(), retention);
+  const usage = async () => bodyStoreUsage(await asyncAudit.storedBodyBytes(), retention);
   const app = await buildApp({
     profiles,
     access,
@@ -164,7 +168,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     replayRules,
     notifier,
     alertDestinations,
-    audit: { audit: audit.async, restore, usage },
+    audit: { audit: asyncAudit, restore, usage },
     alertStores: { alerts: audit.alerts, notifications: audit.notifications },
     history: { history: audit.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,

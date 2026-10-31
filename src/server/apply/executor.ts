@@ -19,8 +19,10 @@
 // For every attempted step an Audit Entry is written as `pending` (for a
 // Discard, with the full Message, in a durable commit) before the broker is
 // touched, then updated with the outcome. A crash in between leaves the
-// Message in the queue *and* in the store: a duplicate, never a loss.
-import type { AuditStore } from '../audit/store.js';
+// Message in the queue *and* in the store: a duplicate, never a loss. Both
+// writes are awaited (ADR 0013), and a step counts as settled before its
+// outcome is written, so a stop arriving during that write finds it settled.
+import type { AuditStore } from '../audit/audit-store.js';
 import { messageIdOf } from '../triage/message-view.js';
 import type { ActionDecision, ApplyPlan, Decision } from '../triage/decisions.js';
 import { handlerFor } from './handlers.js';
@@ -108,7 +110,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     let details: AuditDetails;
     try {
       details = handler.audit(decision, message, target);
-      entryId = audit.record({
+      entryId = await audit.record({
         at: new Date(),
         operator: target.operator,
         role: target.role,
@@ -150,11 +152,6 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       result = { status: 'failed', reason: (err as Error).message };
     }
     if (result.status === 'done') run.onDone(handle);
-    try {
-      audit.setOutcome(entryId, uncertain ? 'uncertain' : result.status, result.status === 'failed' ? result.reason : null);
-    } catch {
-      // The entry stays `pending`; the outcome below is still reported.
-    }
     outcome(
       handle,
       decision,
@@ -162,6 +159,11 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
       result.status === 'failed' ? result.reason : null,
       result.status === 'failed' && result.refused === true,
     );
+    try {
+      await audit.setOutcome(entryId, uncertain ? 'uncertain' : result.status, result.status === 'failed' ? result.reason : null);
+    } catch {
+      // The entry stays `pending`; the outcome above is still reported.
+    }
     if (isCanary) await canary.afterStep(outcomes.get(handle)!);
   }
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as amqp from 'amqplib';
 import { AuditStore } from '../../src/server/audit/store.js';
 import { executeApply, type ApplyRun } from '../../src/server/apply/executor.js';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import { AckUncertainError, type ApplyContext } from '../../src/server/apply/types.js';
 import type { BrokerProfile } from '../../src/server/profiles.js';
 import type { ApplyPlan } from '../../src/server/triage/decisions.js';
@@ -49,7 +50,7 @@ describe('Apply executor', () => {
         ack,
         publish: async () => ({ ok: false, reason: 'no broker in unit tests' }),
       },
-      audit,
+      audit: audit.async,
       stopReason: () => null,
       onDone: (handle) => done.push(handle),
       ...overrides,
@@ -215,5 +216,95 @@ describe('Apply executor', () => {
     const [entry] = audit.list();
     expect(entry).toMatchObject({ outcome: 'uncertain', messageId: 'm-1' });
     expect(audit.body(entry!.id)?.toString()).toBe('body-1');
+  });
+
+  // ADR 0013: a missing await shows only when the store takes its time.
+  describe('on a delayed store', () => {
+    it('commits the pending entry and the Discarded copy before acking (ADR 0001)', async () => {
+      const atAck: unknown[] = [];
+      const { outcomes } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async () => {
+          const [entry] = audit.list();
+          atAck.push([entry?.outcome, entry && audit.body(entry.id)?.toString()]);
+        },
+        { audit: delayedAuditStore(audit.async) },
+      );
+
+      await outcomes;
+      expect(atAck).toEqual([['pending', 'body-1']]);
+    });
+
+    it('never acks a Message whose pending entry fails to commit', async () => {
+      const acked: number[] = [];
+      const { outcomes } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async (m) => {
+          acked.push(m.fields.deliveryTag);
+        },
+        {
+          audit: delayedAuditStore(audit.async, async () => {
+            throw new Error('the database went away');
+          }),
+        },
+      );
+
+      expect(await outcomes).toEqual([
+        expect.objectContaining({ status: 'failed', reason: expect.stringMatching(/Audit Entry.*left in the queue.*went away/) }),
+      ]);
+      expect(acked).toEqual([]);
+    });
+
+    it('has every outcome committed by the time the Apply answers', async () => {
+      const { outcomes } = run(
+        { kept: [], steps: [1, 2].map((handle) => ({ handle, decision: DISCARD })) },
+        async () => {},
+        { audit: delayedAuditStore(audit.async) },
+      );
+
+      await outcomes;
+      expect(audit.list().map((e) => e.outcome)).toEqual(['done', 'done']);
+    });
+
+    it('still reports a done step when its outcome cannot be written, leaving the entry pending', async () => {
+      const { outcomes, done } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async () => {},
+        {
+          audit: delayedAuditStore(audit.async, async (call) => {
+            if (call === 'setOutcome') throw new Error('the database went away');
+          }),
+        },
+      );
+
+      expect(await outcomes).toEqual([expect.objectContaining({ status: 'done' })]);
+      expect(done).toEqual([1]);
+      expect(audit.list()[0]).toMatchObject({ outcome: 'pending' });
+    });
+
+    it('counts a step as settled before writing its outcome, so a late stop finds nothing left to stop', async () => {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let writing!: () => void;
+      const reachedWrite = new Promise<void>((resolve) => (writing = resolve));
+      const settled: number[] = [];
+      const { outcomes } = run(
+        { kept: [], steps: [{ handle: 1, decision: DISCARD }] },
+        async () => {},
+        {
+          audit: delayedAuditStore(audit.async, async (call) => {
+            if (call !== 'setOutcome') return;
+            writing();
+            await released;
+          }),
+          onStep: (o) => settled.push(o.handle),
+        },
+      );
+
+      await reachedWrite;
+      expect(settled).toEqual([1]);
+      release();
+      await outcomes;
+    });
   });
 });
