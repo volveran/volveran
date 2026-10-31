@@ -68,7 +68,7 @@ import type { CheckoutLimits } from '../triage/checkout-collection.js';
 import type { Filter } from '../triage/filters.js';
 import { DEFAULT_CHECKOUT_TIMING, remainingMs, type CheckoutTiming } from '../triage/checkout-timing.js';
 import { applyOutlastsCheckout, replayRateFor } from '../triage/replay-rate.js';
-import { messageDetail, type Delivery, type MessageDetail } from '../triage/message-view.js';
+import { messageDetail, type HeldForBadge, type MessageDetail } from '../triage/message-view.js';
 import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
@@ -123,7 +123,7 @@ export interface CheckoutTestHooks {
 }
 
 /** Each held Message's running Replay Rule's badge, in the order given (replay-rules/rules.ts); null when no running rule matches it. */
-export type RuleBadgesOf = (checkout: Checkout, held: ReadonlyArray<{ delivery: Delivery; diedAgainCount: number }>) => Promise<Array<RuleBadge | null>>;
+export type RuleBadgesOf = (checkout: Checkout, held: readonly HeldForBadge[]) => Promise<Array<RuleBadge | null>>;
 
 export interface CheckoutStartOptions extends StartOptions {
   /**
@@ -339,7 +339,7 @@ export class CheckoutManager {
     return { ...view, messages: view.messages.map((row) => ({ ...row, rule: byHandle.get(row.handle) ?? null })) };
   }
 
-  private async ruleBadges(checkout: Checkout, held: ReadonlyArray<{ delivery: Delivery; diedAgainCount: number }>): Promise<Array<RuleBadge | null>> {
+  private async ruleBadges(checkout: Checkout, held: readonly HeldForBadge[]): Promise<Array<RuleBadge | null>> {
     try {
       return (await this.options.ruleBadges?.(checkout, held)) ?? [];
     } catch (err) {

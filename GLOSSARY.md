@@ -132,6 +132,10 @@ _Avoid_: Local mode, dev mode, no-auth mode
 The tool running as a shared service that Operators reach over the network after signing in through single sign-on.
 _Avoid_: Server mode, hosted mode, SSO mode
 
+**Replica**:
+One running Volverán server among those sharing an audit store on PostgreSQL. Until multi-Replica work lands, run exactly one.
+_Avoid_: Pod, node
+
 **Audit Entry**:
 A record of one triage action: which Operator did it, as which broker user, when, on which Broker Profile and queue. For a Discard it includes a full copy of the Message.
 _Avoid_: Log line, history
