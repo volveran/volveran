@@ -450,9 +450,14 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           ]),
         );
         expect(await store.ruleState.firstSeen(KEY, [], t2)).toEqual(new Map());
-        expect(await store.ruleState.firstSeenAt(KEY, 'a')).toEqual(t1);
-        expect(await store.ruleState.firstSeenAt(KEY, 'never')).toBeNull();
-        expect(await store.ruleState.firstSeenAt('local/other', 'a')).toBeNull();
+        expect(await store.ruleState.firstSeenAt(KEY, ['a', 'b', 'a', 'never'])).toEqual(
+          new Map([
+            ['a', t1],
+            ['b', t2],
+          ]),
+        );
+        expect(await store.ruleState.firstSeenAt(KEY, [])).toEqual(new Map());
+        expect(await store.ruleState.firstSeenAt('local/other', ['a'])).toEqual(new Map());
       });
 
       it(`forgets the oldest first-seen times beyond ${FIRST_SEEN_LIMIT}`, async () => {
@@ -461,8 +466,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
         await store.ruleState.firstSeen(KEY, many, after(DAY));
 
-        expect(await store.ruleState.firstSeenAt(KEY, 'a')).toBeNull();
-        expect(await store.ruleState.firstSeenAt(KEY, 'm-0')).toEqual(after(DAY));
+        expect(await store.ruleState.firstSeenAt(KEY, ['a', 'm-0'])).toEqual(new Map([['m-0', after(DAY)]]));
       });
 
       it("counts each Died Again Message whose last Audit Entry is the rule's once, within the window, until a resume clears it", async () => {
@@ -720,6 +724,12 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         };
         await store.alerts.save('local', memory);
         expect(await store.alerts.load('local')).toEqual(memory);
+      });
+
+      it('orders Alerts by the bytes of their rule names, on any database locale', async () => {
+        const named = (rule: string, alertId: string) => ({ ...firing, rule, alertId });
+        await store.alerts.save('local', { alerts: [named('apple', 'a-1'), named('Zebra', 'a-2')], arrivals: [] });
+        expect((await store.alerts.load('local')).alerts.map((a) => a.rule)).toEqual(['Zebra', 'apple']);
       });
 
       it('replaces what is remembered of the profile, and only that profile', async () => {

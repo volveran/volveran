@@ -2,11 +2,9 @@
 // re-sends a firing one, with what arrival conditions remember of each queue.
 // One evaluation's result replaces the profile's rows.
 import type { DatabaseSync } from 'node:sqlite';
-import type { AlertMemory, AlertState } from '../alerts/evaluation.js';
+import type { AlertMemory } from '../alerts/evaluation.js';
 import type { AlertStore } from './audit-store.js';
-
-/** Stands for no vhost, queue or Replay Rule in the tables' keys. */
-const NONE = '';
+import { ALERT_COLUMNS, alertValues, toAlertMemory, type AlertRow, type ArrivalsRow } from './store-rows.js';
 
 export class SqliteAlertStore implements AlertStore {
   constructor(private readonly db: DatabaseSync) {}
@@ -15,24 +13,7 @@ export class SqliteAlertStore implements AlertStore {
   async load(profile: string): Promise<AlertMemory> {
     const alerts = this.db.prepare('SELECT * FROM alerts WHERE profile = ? ORDER BY rule, vhost, queue, replay_rule').all(profile) as unknown as AlertRow[];
     const arrivals = this.db.prepare('SELECT * FROM alert_queue_arrivals WHERE profile = ? ORDER BY vhost, queue').all(profile) as unknown as ArrivalsRow[];
-    return {
-      alerts: alerts.map((r) => ({
-        alertId: r.alert_id,
-        rule: r.rule,
-        vhost: r.vhost === NONE ? null : r.vhost,
-        queue: r.queue === NONE ? null : r.queue,
-        status: r.status as AlertState['status'],
-        condition: r.condition as AlertState['condition'],
-        value: r.value,
-        threshold: r.threshold,
-        since: r.since,
-        lastNotifiedAt: r.last_notified_at,
-        falseSince: r.false_since,
-        replayRule: r.replay_rule === NONE ? null : r.replay_rule,
-        reason: r.reason,
-      })),
-      arrivals: arrivals.map((r) => ({ vhost: r.vhost, queue: r.queue, unsettled: r.unsettled, recent: JSON.parse(r.recent) })),
-    };
+    return toAlertMemory(alerts, arrivals);
   }
 
   /** Replaces what is remembered of the profile, in one commit. */
@@ -41,12 +22,9 @@ export class SqliteAlertStore implements AlertStore {
       this.db.prepare('DELETE FROM alerts WHERE profile = ?').run(profile);
       this.db.prepare('DELETE FROM alert_queue_arrivals WHERE profile = ?').run(profile);
       const alert = this.db.prepare(
-        `INSERT INTO alerts (profile, rule, vhost, queue, replay_rule, alert_id, status, condition, value, threshold, since, last_notified_at, false_since, reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO alerts (${ALERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
-      for (const a of memory.alerts) {
-        alert.run(profile, a.rule, a.vhost ?? NONE, a.queue ?? NONE, a.replayRule ?? NONE, a.alertId, a.status, a.condition, a.value, a.threshold, a.since, a.lastNotifiedAt, a.falseSince, a.reason);
-      }
+      for (const a of memory.alerts) alert.run(...alertValues(profile, a));
       const arrivals = this.db.prepare('INSERT INTO alert_queue_arrivals (profile, vhost, queue, unsettled, recent) VALUES (?, ?, ?, ?, ?)');
       for (const a of memory.arrivals) arrivals.run(profile, a.vhost, a.queue, a.unsettled, JSON.stringify(a.recent));
     });
@@ -76,27 +54,4 @@ export class SqliteAlertStore implements AlertStore {
       throw err;
     }
   }
-}
-
-interface AlertRow {
-  rule: string;
-  vhost: string;
-  queue: string;
-  alert_id: string;
-  status: string;
-  condition: string;
-  value: number | null;
-  threshold: number | null;
-  since: number;
-  last_notified_at: number | null;
-  false_since: number | null;
-  replay_rule: string;
-  reason: string | null;
-}
-
-interface ArrivalsRow {
-  vhost: string;
-  queue: string;
-  unsettled: number;
-  recent: string;
 }

@@ -16,19 +16,27 @@ import type {
 } from './audit-store.js';
 import { createPool, transaction } from './postgres-connection.js';
 import { migrate } from './postgres-migrations.js';
-import { unfinishedAlerts, unfinishedHistory, unfinishedNotifications, unfinishedRuleState } from './postgres-unfinished.js';
+import { PostgresAlertStore } from './postgres-alerts.js';
+import { PostgresHistoryStore } from './postgres-history.js';
+import { PostgresNotificationStore } from './postgres-notifications.js';
+import { PostgresRuleStateStore } from './postgres-rule-state.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
 const numbered = (position: number) => `$${position}`;
 
 export class PostgresAuditStore implements AuditStore {
-  readonly ruleState: RuleStateStore = unfinishedRuleState;
-  readonly history: HistoryStore = unfinishedHistory;
-  readonly notifications: NotificationStore = unfinishedNotifications;
-  readonly alerts: AlertStore = unfinishedAlerts;
+  readonly ruleState: RuleStateStore;
+  readonly history: HistoryStore;
+  readonly notifications: NotificationStore;
+  readonly alerts: AlertStore;
   private closing: Promise<void> | undefined;
 
-  private constructor(private readonly pool: pg.Pool) {}
+  private constructor(private readonly pool: pg.Pool) {
+    this.ruleState = new PostgresRuleStateStore(pool);
+    this.history = new PostgresHistoryStore(pool);
+    this.notifications = new PostgresNotificationStore(pool);
+    this.alerts = new PostgresAlertStore(pool);
+  }
 
   /** Connects to the database at `url` and brings its schema up to date. Refuses a store newer than this version. */
   static async open(url: string): Promise<PostgresAuditStore> {

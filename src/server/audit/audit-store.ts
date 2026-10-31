@@ -265,8 +265,8 @@ export interface RuleStateStore {
   countDiedAgain(ruleKey: string, rule: { profile: string; name: string }, auditEntryIds: readonly number[], now: Date, since: Date): Promise<number>;
   /** Forgets the Died Again Messages counted for the rule's automatic stop (a resume). */
   clearDiedAgain(ruleKey: string): Promise<void>;
-  /** When a pass of the rule first saw `messageId`, without storing anything; null when none has. */
-  firstSeenAt(ruleKey: string, messageId: string): Promise<Date | null>;
+  /** When a pass of the rule first saw each of `messageIds`, without storing anything; an id none has seen is left out. */
+  firstSeenAt(ruleKey: string, messageIds: readonly string[]): Promise<Map<string, Date>>;
 }
 
 /** Depth history: one Sample per dead-letter queue per sampling run, one run per Broker Profile. */

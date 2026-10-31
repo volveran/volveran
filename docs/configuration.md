@@ -11,7 +11,7 @@ Every setting is an environment variable.
 | `VOLVERAN_OPERATOR` | `$USER` | your name, recorded as the Operator; startup fails if neither is set (Docker sets no `USER`) |
 | `VOLVERAN_WEB_ROOT` | `dist/web` | built web app |
 | `VOLVERAN_DATA_DIR` | `./data` (`/data` in the image) | the audit store: Audit Entries and Discarded Messages, written with a durable commit before each Discard's ack |
-| `VOLVERAN_POSTGRES_URL` | unset | keeps the audit store in this PostgreSQL database (`postgres://user:password@postgres.example.com:5432/volveran`) instead of SQLite in `VOLVERAN_DATA_DIR`. The database must exist; Volverán creates its tables in it, so its user needs that right. Not ready for use yet: Audit Entries and their search work, while retention, Replay Rules, depth history, notifications and Alerts do not. |
+| `VOLVERAN_POSTGRES_URL` | unset | keeps the audit store in this PostgreSQL database (`postgres://user:password@postgres.example.com:5432/volveran`) instead of SQLite in `VOLVERAN_DATA_DIR`. The database must exist; Volverán creates its tables in it, so its user needs that right. Not ready for use yet: retention does not work. |
 | `VOLVERAN_CHECKOUT_MAX_MESSAGES` | `1000` | most Messages one Checkout holds (up to 65,535) |
 | `VOLVERAN_CHECKOUT_MAX_MB` | `100` | most body megabytes one Checkout holds |
 | `VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES` | `30` | how long a Checkout may hold Messages before it ends itself (1 to 1440); on quorum queues the broker's `x-consumer-timeout` backstop is set 1 minute later |
