@@ -224,7 +224,7 @@ async function serve(
       app.log.info({ profiles: mapped }, 'Solo Mode ignores the roles of Broker Profiles: the Operator is admin on every profile');
     }
   } else {
-    // Approval (v0.3): the one change for v0.2 users of Protected Profiles in Team Mode.
+    // Approval (v0.3): the one change for Operators of v0.2 Protected Profiles in Team Mode.
     for (const p of profiles.filter((p) => p.protected)) {
       if (p.requireApproval) {
         app.log.info(
