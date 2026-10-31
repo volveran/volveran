@@ -34,7 +34,7 @@ import type { RulePauseEntry, RuleStateStore } from '../audit/audit-store.js';
 import type { CheckoutManager } from '../checkout/manager.js';
 import { OneAtATime } from '../one-at-a-time.js';
 import type { Operator } from '../operator.js';
-import type { BrokerProfile } from '../profiles.js';
+import type { BrokerProfile, QueueRef } from '../profiles.js';
 import { messageIdOf, type HeldForBadge } from '../triage/message-view.js';
 import type { ReplayRule, ReplayRuleView, RuleBadge, RulePass, RuleState } from '../../shared/replay-rules.js';
 import type { Role } from '../../shared/roles.js';
@@ -168,11 +168,11 @@ export class ReplayRules {
   }
 
   /**
-   * The rule badges of Messages held from `vhost`/`queue`, in the order given: for
+   * The rule badges of Messages held from the queue `ref`, in the order given: for
    * each, the first running rule of the profile on that queue that matches it; null
    * when none.
    */
-  async badges(profile: BrokerProfile, vhost: string, queue: string, held: readonly HeldForBadge[]): Promise<Array<RuleBadge | null>> {
+  async badges({ profile, vhost, queue }: QueueRef, held: readonly HeldForBadge[]): Promise<Array<RuleBadge | null>> {
     const onQueue = profile.replayRules.filter((rule) => rule.vhost === vhost && rule.queue === queue);
     const states = await Promise.all(onQueue.map((rule) => this.options.state.state(ruleKey(profile.name, rule.name))));
     const running = onQueue.filter((rule, i) => !(states[i]?.paused ?? rule.startPaused));

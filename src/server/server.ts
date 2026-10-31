@@ -135,7 +135,7 @@ async function serve(
     endedRetentionMs: options.endedCheckoutRetentionMs,
     testHooks: options.checkoutTestHooks,
     // Replay Rules are created below, before any Checkout can start.
-    ruleBadges: (c, held) => replayRules.badges(c.profile, c.vhost, c.queue, held),
+    ruleBadges: (c, held) => replayRules.badges(c, held),
     // Called only once the app below is listening.
     onRuleBadgesError: (err) => app.log.error({ err }, 'The rule badges of a Checkout could not be read'),
     // Called only once the app below is listening.
