@@ -19,7 +19,7 @@ What the interface promises is checked by one contract suite, `auditStoreContrac
 
 - **Keep SQLite synchronous and give PostgreSQL its own code paths**: rejected, every caller would know which store is in use, and the two would drift.
 - **Move SQLite to a worker thread as well, so it does not block the event loop**: rejected for now, it changes how SQLite behaves for the one set-up that must not change, and solves a problem nobody has reported.
-- **A query builder or ORM shared by both stores**: rejected, the queries are few and plain, and the seam belongs at what callers ask for, not at how SQL is written.
+- **A query builder or ORM shared by both stores**: rejected, the queries are few and plain, and the seam belongs at what callers ask for, not at how SQL is written. `audit/audit-entry-sql.ts` is not one: a small helper that holds the one thing the two stores must not let drift, how an Audit Entry's columns are written, searched and read back, taking only the parameter's spelling from each store. The line is that it holds finished statements for Audit Entries and composes nothing else. Each store keeps running them, and everything else stays written out per store.
 - **A `transaction(fn)` on the interface**: rejected, it would hold a pooled connection across awaits in caller code and put the store's concerns back in the callers. A caller that needs two steps to be atomic gets a method that does both.
 
 ## Consequences
