@@ -120,7 +120,6 @@ What shipped:
 These things differ from the plan or remain open:
 
 - **Keep can use up Delivery Budget on quorum queues.** The broker-facts gate for returning Messages at shutdown did not hold: closing a channel straight after `nack` uses up Delivery Budget, and ending a Checkout does that ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). It is a known issue in 0.6.0, not fixed.
-- **`copy-audit-store` changes its source.** An older SQLite store is migrated in place before it is copied.
 - **`node:sqlite` is a release candidate on Node 24**, not stable. The status and what follows from it are [recorded](docs/rabbitmq-behaviour.md#nodejs-runtime-nodesqlite).
 
 ## v1.0: Production hardening
