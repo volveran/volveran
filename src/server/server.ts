@@ -4,7 +4,6 @@
 import { existsSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import pg from 'pg';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
@@ -12,7 +11,6 @@ import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
 import type { AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
-import { asStartupError } from './audit/postgres-connection.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
 import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
@@ -96,8 +94,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   } catch (err) {
     // Nothing else closes the store when startup fails before the app is up.
     await openedStore.close().catch(() => {});
-    // A permission missing on a table only shows when the table is first read.
-    throw postgresUrl && err instanceof pg.DatabaseError ? asStartupError(err, postgresUrl) : err;
+    throw postgresUrl ? PostgresAuditStore.startupFailure(err, postgresUrl) : err;
   }
 }
 

@@ -15,7 +15,7 @@ import type {
   RuleStateStore,
 } from './audit-store.js';
 import { ConfigError } from '../config-error.js';
-import { asStartupError, createPool, transaction, type PostgresTls } from './postgres-connection.js';
+import { asStartupError, createPool, refusalAsStartupError, transaction, type PostgresTls } from './postgres-connection.js';
 import { migrate } from './postgres-migrations.js';
 import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
@@ -74,6 +74,11 @@ export class PostgresAuditStore implements AuditStore {
       await Promise.all(pools.map((pool) => pool.end().catch(() => {})));
       throw asStartupError(err, url);
     }
+  }
+
+  /** A failure of startup after the store opened, as a ConfigError when PostgreSQL refused: a permission missing on a table only shows when it is first read. */
+  static startupFailure(err: unknown, url: string): unknown {
+    return refusalAsStartupError(err, url);
   }
 
   async record(entry: NewAuditEntry): Promise<number> {

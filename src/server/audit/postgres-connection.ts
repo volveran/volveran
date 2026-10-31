@@ -127,6 +127,11 @@ function explain(err: Error & { code?: string }, connectionString: string): stri
   return null;
 }
 
+/** `err`, from startup work on an open store, as asStartupError when PostgreSQL refused it; otherwise `err`. */
+export function refusalAsStartupError(err: unknown, connectionString: string): unknown {
+  return err instanceof pg.DatabaseError ? asStartupError(err, connectionString) : err;
+}
+
 /** `err` as the clear startup error it should be, when it is about PostgreSQL; otherwise `err`. */
 export function asStartupError(err: unknown, connectionString: string): unknown {
   if (err instanceof ConfigError || !(err instanceof Error)) return err;
