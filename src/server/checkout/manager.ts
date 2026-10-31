@@ -32,6 +32,9 @@
 // section here: it claims its state before any audit store call, and none of
 // them makes one (ADR 0013). The Apply's own store calls happen in steps that
 // have already been claimed, and count a step as settled before its outcome is written.
+// An export claims nothing and is no such section: it only reads, from a copy taken
+// before its store call, so what starts or ends meanwhile changes nothing in it, as
+// when it starts while the download is written.
 //
 // An Apply runs at a Replay Rate (the request's, else the Broker Profile's
 // default, capped by its maximum; triage/replay-rate.ts) or with none. It
@@ -667,7 +670,8 @@ export class CheckoutManager {
    * Starts an NDJSON export of the held Messages matching `filter` (every
    * one when null) and records its Audit Entry (export.ts). Changes nothing
    * on the broker. Throws `checkout_not_active` on a Checkout that is over
-   * or lost. `role` is the exporting Operator's Role, recorded in the Audit Entry.
+   * or lost, `apply_in_progress` while it is Applied, both as of the start of the
+   * call. `role` is the exporting Operator's Role, recorded in the Audit Entry.
    */
   async exportMessages(id: string, filter: Filter | null, role: Role): Promise<CheckoutExport> {
     return startExport(this.find(id), filter, { audit: this.options.audit, role, beforeLine: this.hooks.beforeExportLine });

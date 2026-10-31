@@ -86,6 +86,28 @@ describe('An Apply on a delayed store', () => {
     await app?.close();
   });
 
+  it('gives an export the Messages it started with when an Apply starts during its first store call', async () => {
+    const id = await checkoutWith(DISCARD, 2);
+    const { arrived, release } = hold('record');
+    const exporting = fetch(`${app.baseUrl}/api/checkouts/${id}/export`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    await arrived;
+
+    await startApply(id);
+    release();
+
+    const res = await exporting;
+    expect(res.status).toBe(200);
+    const lines = (await res.text()).trim().split('\n').map((line) => JSON.parse(line));
+    expect(lines.map((line) => line.position)).toEqual([1, 2]);
+    expect(lines.map((line) => line.decision.kind)).toEqual(['discard', 'discard']);
+    const settled = await appliedCheckout(app, id);
+    expect(outcomes(settled)).toEqual([[ids(0)[0], 'done'], [ids(1)[0], 'done']]);
+  });
+
   it('touches the broker only once the pending entry and the Discarded copy are committed (ADR 0001)', async () => {
     const id = await checkoutWith(DISCARD, 1);
     const atStep: any[] = [];
