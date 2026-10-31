@@ -17,6 +17,11 @@
 //                           server; none when run from source, see web-root.ts)
 //   VOLVERAN_DATA_DIR       the audit store (Audit Entries, Discarded Messages);
 //                           default ./data, /data in the Docker image
+//   VOLVERAN_POSTGRES_URL   keeps the audit store in this PostgreSQL database
+//                           instead (postgres://...); unset means SQLite
+//   VOLVERAN_POSTGRES_REQUIRE_TLS, VOLVERAN_POSTGRES_CA_FILE
+//                           require TLS to it with a verified certificate, with
+//                           the system's CAs or those in the file
 //   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
 //                           Checkout limits (default 1000 Messages, 100 MB)
 //   VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES
@@ -43,20 +48,52 @@
 //                           metrics/listener.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`) and each
 // Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
+//
+// `main.js check-config` checks all of this and exits, without listening (see
+// check-config.ts). `main.js copy-audit-store` copies the SQLite store in
+// VOLVERAN_DATA_DIR into the empty database at VOLVERAN_POSTGRES_URL and exits (see
+// audit/copy-audit-store.ts).
 import path from 'node:path';
 import { product } from '../shared/product.js';
+import { copyAuditStoreCommand } from './audit/copy-audit-store.js';
+import { checkConfig } from './check-config.js';
 import { ConfigError } from './config-error.js';
 import { startServer } from './server.js';
 import { defaultWebRoot } from './web-root.js';
 
 async function main() {
-  const server = await startServer({
+  const settings = {
     profilesFile: path.resolve(process.env.VOLVERAN_PROFILES_FILE ?? 'profiles.yaml'),
     env: process.env,
     host: process.env.VOLVERAN_HOST ?? '127.0.0.1',
     port: Number(process.env.VOLVERAN_PORT ?? 8080),
+  };
+  const dataDir = path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data');
+  const commands: Record<string, { refusal: string; run(): Promise<string[]> }> = {
+    'check-config': {
+      refusal: 'check-config takes no arguments: it checks the file named by VOLVERAN_PROFILES_FILE',
+      async run() {
+        const { exitCode, lines } = await checkConfig(settings);
+        process.exitCode = exitCode;
+        return lines;
+      },
+    },
+    'copy-audit-store': {
+      refusal: 'copy-audit-store takes no arguments: it copies VOLVERAN_DATA_DIR into VOLVERAN_POSTGRES_URL',
+      run: () => copyAuditStoreCommand(process.env, dataDir),
+    },
+  };
+  const [name, ...args] = process.argv.slice(2);
+  const command = name === undefined ? undefined : commands[name];
+  if (command) {
+    if (args.length > 0) throw new ConfigError(command.refusal);
+    for (const line of await command.run()) console.log(line);
+    return;
+  }
+  const server = await startServer({
+    ...settings,
     webRoot: process.env.VOLVERAN_WEB_ROOT ?? defaultWebRoot(import.meta.url),
-    dataDir: path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'),
+    dataDir,
     logger: true,
   });
   console.log(`${product.name} ${product.version} listening on ${server.url}`);

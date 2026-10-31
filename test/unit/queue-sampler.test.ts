@@ -4,7 +4,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { QueueSampler, type FinishedRun, type SamplerControl } from '../../src/server/history/sampler.js';
 import { parseProfilesFile } from '../../src/server/profiles.js';
 
@@ -28,7 +28,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }
 
-  async function samplerOn(managementUrl: string, store: AuditStore) {
+  async function samplerOn(managementUrl: string, store: SqliteAuditStore) {
     const { profiles } = parseProfilesFile(
       JSON.stringify({ profiles: [{ name: 'local', managementUrl, amqpUrl: 'amqp://127.0.0.1:1', username: 'u', passwordEnv: 'PW', vhosts: ['/'], defaultQueueFilter: '*.dlq' }] }),
       { PW: 'x' },
@@ -41,7 +41,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
       intervalMs: 60_000,
       testHooks: { clock: { now: () => new Date(now), setTimer: () => ({ cancel() {} }) }, sampler: (c) => (control = c) },
     });
-    sampler.start();
+    await sampler.start();
     cleanups.push(() => sampler.stop());
     const finished: FinishedRun[] = [];
     sampler.onRun((run) => void finished.push(run));
@@ -57,11 +57,11 @@ describe('the sampler, when the management API lists a queue with no depth', () 
   const minute = (n: number) => T0 + n * 60_000;
 
   function fresh() {
-    const store = new AuditStore();
+    const store = new SqliteAuditStore();
     cleanups.push(() => store.close());
     return store;
   }
-  const stored = (store: AuditStore) => store.history.samples(REF, 0, Number.MAX_SAFE_INTEGER).map((s) => [s.depth, s.estimatedArrivals]);
+  const stored = async (store: SqliteAuditStore) => (await store.history.samples(REF, 0, Number.MAX_SAFE_INTEGER)).map((s) => [s.depth, s.estimatedArrivals]);
 
   it('records no Sample in that run, which still counts as good, and says which queue had no depth', async () => {
     const state = { messages: 5 as number | undefined };
@@ -73,7 +73,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     expect(run.samplingRun.ok).toBe(true);
     expect(run.samples).toEqual([]);
     expect(run.unknownDepth).toEqual([{ vhost: '/', queue: 'a.dlq' }]);
-    expect(stored(store)).toEqual([[5, null]]);
+    expect(await stored(store)).toEqual([[5, null]]);
   });
 
   it('makes the next Sample\'s arrivals unknown, so the depth coming back is no spike', async () => {
@@ -108,7 +108,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     const store = fresh();
     const { sample } = await samplerOn(await brokerWith(state), store);
     await sample(minute(1));
-    store.history.recordRun('local', { at: minute(2), ok: false, errorCode: 'broker_unreachable', intervalMs: 60_000 }, []);
+    await store.history.recordRun('local', { at: minute(2), ok: false, errorCode: 'broker_unreachable', intervalMs: 60_000 }, []);
     state.messages = 7;
     expect((await sample(minute(3))).samples[0]).toMatchObject({ previousDepth: 5, estimatedArrivals: 2 });
   });

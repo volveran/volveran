@@ -81,7 +81,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     '/api/approvals/:checkoutId/messages/:handle',
     async (req) => {
       const checkout = awaiting(req);
-      return { message: checkouts.message(checkout.id, parseHandle(req.params.handle)) };
+      return { message: await checkouts.message(checkout.id, parseHandle(req.params.handle)) };
     },
   );
 

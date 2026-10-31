@@ -26,7 +26,7 @@ import { brokerCredentials, type BrokerCredentials } from './broker-credentials.
 import { HttpError } from './http-error.js';
 import { ManagementClient } from './management.js';
 import type { Operator } from './operator.js';
-import type { ProfileScope } from './audit/store.js';
+import type { ProfileScope } from './audit/audit-store.js';
 import { profileHasVhost, type BrokerProfile, type QueueRef } from './profiles.js';
 import type { RunMode } from './run-mode.js';
 import { highestRole, roleIncludes, ROLES, type Role } from '../shared/roles.js';

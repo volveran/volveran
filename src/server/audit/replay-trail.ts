@@ -6,13 +6,13 @@
 // Operator may not read.
 import { replayIdOf, type ReplayTrail } from '../triage/died-again.js';
 import type { DiedAgainSource } from '../../shared/checkout.js';
-import type { AuditStore, ProfileScope } from './store.js';
+import type { AuditStore, ProfileScope } from './audit-store.js';
 
 export function replayTrail(audit: AuditStore, profiles?: ProfileScope): ReplayTrail {
-  return (replayId) => {
-    const [entry] = audit.list({ replayId, profiles, limit: 1 });
+  return async (replayId) => {
+    const [entry] = await audit.list({ replayId, profiles, limit: 1 });
     if (!entry) return null;
-    const sent = entry.restoreOf === null ? entry.message : audit.get(entry.restoreOf)?.message;
+    const sent = entry.restoreOf === null ? entry.message : (await audit.get(entry.restoreOf))?.message;
     return {
       auditEntryId: entry.id,
       // Only Replay, Move and Restore record a replay id.

@@ -5,6 +5,7 @@
 // with the Apply's end, the time limit and a Lost Checkout are serialised
 // per Checkout: the first one wins.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { storeSpeeds } from "../support/delayed-audit-store.js";
 import {
   appliedCheckout,
   checkoutConnectionNames,
@@ -267,7 +268,7 @@ describe("Stopping an Apply", () => {
   });
 });
 
-describe("Stop races (Solo Mode)", () => {
+describe.each(storeSpeeds)("Stop races (Solo Mode, %s)", (_speed, wrapAuditStore) => {
   let app: TestApp;
   let beforeApplyStep: Hook = null;
   let beforeTimeLimitEnd: (() => Promise<void>) | null = null;
@@ -321,6 +322,7 @@ describe("Stop races (Solo Mode)", () => {
     await withChannel("/", (ch) => ch.assertQueue(QUEUE, { durable: true }));
     app = await startApp({
       profiles: [testProfile({ name: "local" })],
+      wrapAuditStore,
       checkoutTestHooks: hooks,
     });
   });
@@ -342,6 +344,7 @@ describe("Stop races (Solo Mode)", () => {
     startApp({
       profiles: [testProfile({ name: "local" })],
       checkoutTiming: { timeLimitMs: 1_000, heartbeatWindowMs: 5_000 },
+      wrapAuditStore,
       checkoutTestHooks: hooks,
     });
 

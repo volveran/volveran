@@ -1,6 +1,6 @@
 {
   "name": "volveran",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -22,6 +22,7 @@
     "test:broker": "node scripts/test-broker.mjs run -- vitest run --config vitest.broker-facts.config.ts",
     "test:integration": "node scripts/test-broker.mjs run -- vitest run --config vitest.integration.config.ts",
     "test:smoke": "node scripts/kind-smoke.mjs",
+    "fixture:upgrade": "node scripts/test-broker.mjs run -- node --import tsx test/upgrade/generate-fixture.ts",
     "broker:up": "node scripts/test-broker.mjs up",
     "broker:down": "node scripts/test-broker.mjs down"
   },
@@ -31,12 +32,14 @@
     "amqplib": "^2.2.0",
     "fastify": "^5.12.7",
     "openid-client": "^6.8.8",
+    "pg": "^8.23.1",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@fontsource-variable/atkinson-hyperlegible-mono": "^5.3.0",
     "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
     "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",

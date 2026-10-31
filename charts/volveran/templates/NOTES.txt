@@ -30,7 +30,11 @@ Sign-in only works at the host of that URL, so expose Volverán there.
 WARNING: the host of oidc.redirectUrl ({{ $redirectHost }}) is not a route host ({{ join ", " $routeHosts }}).
 Sign-in will fail: set oidc.redirectUrl to https://<route host>/auth/callback, or add its host to the route.
 {{- end }}
-{{- if not .Values.persistence.enabled }}
+{{- if .Values.postgres.existingSecret }}
+
+Audit store: PostgreSQL, at the URL in Secret {{ .Values.postgres.existingSecret }}. Back it up as you
+back up your other databases.
+{{- else if not .Values.persistence.enabled }}
 
 WARNING: persistence is off, so the audit store is an emptyDir.
 Audit Entries and Discarded Message bodies are lost on every restart
@@ -47,4 +51,5 @@ release is uninstalled; delete it by hand to delete the audit trail.
 {{- end }}
 
 A deploy or pod restart signs every Operator out and ends open Checkouts
-(their Messages return to their queues without costing Delivery Budget).
+(their Messages return to their queues; on a quorum queue, a large Checkout
+can use up Delivery Budget as it ends).

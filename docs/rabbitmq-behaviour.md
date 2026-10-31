@@ -60,6 +60,23 @@ Canary Replay watches for a Canary that dies again without consuming from the de
 
 - A queue bound to a dead-letter exchange with the same binding as the dead-letter queue receives a copy of a Message dead-lettered there, with `x-volveran-replay-id` intact, and the dead-letter queue still receives its own copy. This holds for direct, fanout and topic dead-letter exchanges, from classic and quorum source queues.
 
+## Dead connections
+
+A connection can die without closing: its process is killed, or its host or network is lost. Both are measured with an exclusive, auto-delete lock queue and Messages held after the consumer is cancelled, as a Checkout holds them (ADR 0006). The Messages come back as after any lost connection: on quorum queues `x-delivery-count` increases.
+
+- When a connection's socket drops, as when its process is killed, the broker deletes its lock queue and returns its held Messages within a few seconds (under 100 ms on an idle broker).
+- When a connection goes silent with its socket still open, as when its host or network is lost, the broker keeps its lock queue and held Messages for about three heartbeat intervals, never less than two.
+- A client that asks for no heartbeat gets the broker's default of 60 seconds, so a silent connection keeps its lock queue and held Messages for about three minutes.
+
+## Returning Messages before closing
+
+The delivery-counting table holds only while the channel stays open. A quorum queue takes `nack`s back through its Raft log, and a channel or connection that closes first overtakes the `nack`s still on their way, so those Messages count as closed with the Message unacknowledged. Waiting took about 2 seconds for 100 Messages and 20 seconds for 1,000 on the test broker of a busy machine.
+
+- `nack` with requeue uses no Delivery Budget if the channel stays open until a passive declare counts the Messages as ready, however many times they are returned.
+- Closing the connection straight after `nack` uses up Delivery Budget on every Message.
+- Closing the channel straight after `nack` uses up Delivery Budget on most Messages past the first few dozen.
+- A passive declare's round trip after `nack` is not enough: closing the channel then can still use up Delivery Budget.
+
 ## Watch queue lifetime
 
 - An exclusive, auto-delete queue declared on a connection disappears when that connection closes, whether the client closes it or the socket drops.
@@ -118,3 +135,17 @@ Observed on a broker with the OAuth 2.0 backend only (`auth_backends.1 = rabbit_
 - A token without read permission on a queue is refused `403 ACCESS_REFUSED` on consume and get, and the broker closes the channel. A passive declare of the queue (`checkQueue`) still succeeds.
 - A token without configure permission on a queue is refused `403 ACCESS_REFUSED` on declaring it, and the broker closes the channel.
 - A token without write permission on an exchange is refused `403 ACCESS_REFUSED` on publishing to it (`amq.default` for the default exchange). The broker closes the channel: the publish confirm fails with only "channel closed", and the channel's error carries the refusal, naming the exchange and the permission.
+
+## Node.js runtime: `node:sqlite`
+
+Not a broker fact, but the same kind of gate: the audit store relies on it, and it was checked on 30 October 2026. On Node 24 `node:sqlite` is **[Stability 1.2, release candidate](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)**, since v24.15.0, and it is not stable. Node's [stability index](https://nodejs.org/api/documentation.html#stability-index) says of that stage: "No further breaking changes are anticipated but may still occur", and it is still a stage of Experimental, which semantic versioning does not cover. Node 24.21.0 and the image's 24.22.2 load it and open a database with no flag and no warning. The image's `node:24-slim` is a moving tag, so what is pinned is the major version, not the release.
+
+What this means for SQLite's long-term promise:
+
+**The stored data is not at risk.** The file format belongs to SQLite, not to Node. The risk is to the code that calls it.
+
+**A Node update can break the store's code.** Node may change this API in a release without a major version. Node 26 has already renamed it, still at stability 1.2: `DatabaseSync` and `StatementSync` become deprecated aliases of `Database` and `Statement` ([DEP0210, DEP0211](https://nodejs.org/docs/latest/api/sqlite.html)). So the API should stay behind the audit store interface, the base image should be pinned by digest, and each Node update should run the store's tests.
+
+**Node 24 sets a date.** It is supported until 30 April 2028 ([release schedule](https://github.com/nodejs/Release)), so a promise lasting past that means moving to Node 26 and its new names.
+
+**The compatibility policy should promise SQLite's data and behaviour, not `node:sqlite`.** The one place users meet the API is the online backup command in [the Kubernetes guide](kubernetes.md), which names `DatabaseSync` and so needs changing with Node 26.

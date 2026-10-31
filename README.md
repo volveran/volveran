@@ -130,7 +130,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.5.1
+  ghcr.io/volveran/volveran:0.6.0
 ```
 
 Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audit trail and every Discarded Message. On Docker Desktop, turn on host networking first ([details](docs/configuration.md#why-solo-mode-uses-the-host-network)). With Compose, use [`docker-compose.example.yml`](docker-compose.example.yml).
@@ -140,18 +140,19 @@ Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audi
 **Kubernetes:** a signed Helm chart, also with a [Flux CD example](examples/flux/). See the [Kubernetes guide](docs/kubernetes.md).
 
 ```sh
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.5.1 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.6.0 \
   --namespace volveran -f values.yaml
 ```
 
 ## Where it's going
 
-Not available yet ([roadmap](ROADMAP.md)): PostgreSQL as an audit store, several replicas (Team Mode runs one today), a security review, upgrade guarantees and a stable configuration format.
+Not available yet ([roadmap](ROADMAP.md)): several replicas (Team Mode runs one today), a security review, upgrade guarantees and a stable configuration format.
 
 ## Learn more
 
 - [Observability](docs/observability.md): sizing, Alert Rules, the webhook schema and the metric reference.
 - [Configuration](docs/configuration.md): every setting and the health checks.
+- [PostgreSQL](docs/postgresql.md): keeping the audit store in your own database, with TLS, what happens when it goes away, and sizing.
 - [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
 - [Architecture decisions](docs/adr/).

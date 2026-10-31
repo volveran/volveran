@@ -6,6 +6,52 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-31
+
+An asynchronous audit store, PostgreSQL as an alternative to SQLite, and `check-config`, all on one Replica (see the [roadmap](ROADMAP.md) and the [PostgreSQL guide](docs/postgresql.md)).
+
+**Upgrading from 0.5:**
+
+A profiles file and chart values from 0.5 keep working. PostgreSQL is optional and SQLite stays the default: without `VOLVERAN_POSTGRES_URL` (chart: `postgres.existingSecret`) the audit store stays where it is, and Solo Mode never needs a database server. These are all the things that change on their own:
+
+- **An Apply stops after a failed store write.** Once the audit store fails a write, on either store, an Apply attempts no further step. The Message in progress finishes, and the rest are reported `not-attempted` and go back to their queue, where before each one was tried and failed in turn.
+- **Some gauges can be up to 15 seconds old.** A metrics scrape no longer reads the audit store, so `volveran_replay_rule_paused`, `volveran_alerts_firing` and `volveran_audit_store_body_bytes` come from a reading taken in the background.
+- **The pod rolls once on a chart upgrade.** The chart's ConfigMap gains `version: 1` in the profiles file it renders, and that change rolls the pod, which ends open Checkouts. With `brokerProfiles.existingConfigMap` the file is yours: one without a version is still read as version 1, with a startup warning.
+- **The SQLite store is migrated to schema version 17 at startup.** A store newer than the binary is now refused, so take a backup first if you may want to go back.
+
+If you choose PostgreSQL:
+
+- **`postgres.requireTls` defaults to `true`.** Volverán refuses a server that offers no TLS or a certificate that does not verify. Trust a private CA with `postgres.ca.bundle`, or set `postgres.requireTls: false` to leave TLS to the URL.
+- **`copy-audit-store` migrates its source in place.** An older SQLite store is first brought up to this version's schema, as starting this version on it would, and only then copied. Nothing is deleted from it, but an older version may not read it afterwards, so back up the volume first if you may want to go back.
+
+**Known issue: ending a Checkout through Keep can use up Delivery Budget on quorum queues.** It is not fixed in 0.6.0. Volverán closes the channel straight after returning the Messages, and closing it overtakes `nack`s still on their way: on the test broker most Messages past the first few dozen were counted as delivered ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). This applies however the Checkout ends with Messages still held, including at shutdown and so at the roll above. A Message on a queue with a finite `delivery-limit` can reach the limit sooner than its attempts suggest. Where the guides say Keep costs no Delivery Budget, this note takes precedence for 0.6.0.
+
+### Added
+
+- `check-config`, a mode of the image that checks a profiles file and the environment with the parser and checks startup uses, contacts no broker and exits 0, 1 (startup would refuse this) or 2 (1.0 will refuse a key in this file) ([guide](docs/configuration.md#checking-the-configuration)).
+- The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders, which changes the ConfigMap and so rolls the pod once on upgrade.
+- `VOLVERAN_POSTGRES_URL` keeps the audit store in PostgreSQL instead of SQLite: Audit Entries, Discarded bodies and their retention, Replay Rule state, depth history, notifications and Alerts. It answers as SQLite does, also for a NUL in a message id or other plain text. Without it nothing changes. See the new [PostgreSQL guide](docs/postgresql.md), which includes sizing.
+- `copy-audit-store`, a mode of the image that copies a SQLite store of any released version into an empty PostgreSQL while Volverán is stopped, with ids and Discarded bodies, verifying each table's row count. A non-empty target is refused ([guide](docs/postgresql.md#copying-the-audit-trail)).
+- Volverán sets `synchronous_commit` to `on` on its PostgreSQL connections, whatever the server's default, so a settled Audit Entry is durable.
+- The chart keeps the audit store in PostgreSQL with `postgres.existingSecret`, reading the URL from that Secret, requiring TLS by default (`postgres.requireTls`), and trusting a mounted CA with `postgres.ca`. Then it renders no claim and no data volume. Without it the render does not change.
+- `VOLVERAN_POSTGRES_REQUIRE_TLS` and `VOLVERAN_POSTGRES_CA_FILE` require TLS to PostgreSQL, with a verified certificate.
+- On PostgreSQL, `/readyz` answers `503` while the database cannot be reached. Volverán reconnects by itself when it returns. `/healthz` does not change, and neither depends on a broker.
+
+### Changed
+
+- An Apply attempts no further step once the audit store fails a write, on either store. The Message in progress finishes, and the rest are reported `not-attempted` and go back to their queue, where before each one was tried and failed in turn.
+- Volverán refuses to start on an audit store newer than it understands, naming both versions. Downgrades were never supported, and now cannot damage the store.
+- A metrics scrape no longer reads the audit store. `volveran_replay_rule_paused`, `volveran_alerts_firing` and `volveran_audit_store_body_bytes` come from a reading taken in the background, at most 15 seconds old ([metrics](docs/observability.md#metrics)).
+
+### Deprecated
+
+- 1.0 will refuse unknown keys at the top level of the profiles file and in a Broker Profile, which are ignored today. `check-config` lists them.
+
+### Fixed
+
+- A Checkout that could not start because the audit store failed while it looked for Died Again Messages no longer holds its queue, its Operator and its Messages until a restart.
+- Rule badges no longer drop out of the Messages after a Decision is set, or in an approver's view of an Apply.
+
 ## [0.5.1] - 2026-10-30
 
 A visual design for the web app. Behaviour, labels and keyboard shortcuts are unchanged. Releases now also publish their changelog entry as a GitHub Release.
@@ -197,7 +243,8 @@ First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/volveran/volveran/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/volveran/volveran/releases/tag/v0.6.0
 [0.5.1]: https://github.com/volveran/volveran/releases/tag/v0.5.1
 [0.5.0]: https://github.com/volveran/volveran/releases/tag/v0.5.0
 [0.4.0]: https://github.com/volveran/volveran/releases/tag/v0.4.0

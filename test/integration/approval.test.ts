@@ -5,6 +5,7 @@
 // which starts the Apply on the requester's Checkout (202); its outcomes
 // appear on the requester's Checkout.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { storeSpeeds } from '../support/delayed-audit-store.js';
 import {
   appliedCheckout,
   applyAndWait,
@@ -32,7 +33,7 @@ const ada = { sub: 'ada-sub', email: 'ada@example.com', groups: ['platform'] };
 const vera = { sub: 'vera-sub', email: 'vera@example.com', groups: ['support'] };
 const sam = { sub: 'sam-sub', email: 'sam@example.com', groups: ['staging-team'] };
 
-describe('Approval', () => {
+describe.each(storeSpeeds)('Approval (%s)', (_speed, wrapAuditStore) => {
   let app: TestApp;
   let baseUrl: string;
   /** Checkouts to end after each test: [owner's browser, id]. */
@@ -67,6 +68,7 @@ describe('Approval', () => {
     const port = await closedPort();
     baseUrl = `http://127.0.0.1:${port}`;
     app = await startApp({
+      wrapAuditStore,
       profiles: [
         testProfile({
           name: 'prod',

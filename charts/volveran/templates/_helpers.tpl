@@ -41,7 +41,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 
 {{/* The profiles.yaml file rendered from brokerProfiles.profiles. */}}
 {{- define "volveran.profilesYaml" -}}
-{{- $file := dict "profiles" .Values.brokerProfiles.profiles -}}
+{{- $file := dict "version" 1 "profiles" .Values.brokerProfiles.profiles -}}
 {{- with .Values.brokerProfiles.alertDestinations -}}
 {{- $_ := set $file "alertDestinations" . -}}
 {{- end -}}
@@ -137,6 +137,25 @@ extraEnv, persistence, pod scheduling). Included next to volveran.validate.
 {{- if eq .name "NODE_EXTRA_CA_CERTS" -}}
 {{- fail "extraEnv sets NODE_EXTRA_CA_CERTS: use caBundles.oidcTrust instead, which points it at a mounted bundle" -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- with .Values.postgres.ca.bundle -}}
+{{- if not $.Values.postgres.existingSecret -}}
+{{- fail "postgres.ca.bundle needs postgres.existingSecret: without the Secret holding the URL, the audit store is on SQLite and nothing uses the CA" -}}
+{{- end -}}
+{{- if not $.Values.postgres.requireTls -}}
+{{- fail "postgres.requireTls is false but postgres.ca.bundle is set: a CA is only for TLS, so require it or remove the bundle" -}}
+{{- end -}}
+{{- if not (has . $bundleNames) -}}
+{{- fail (printf "postgres.ca.bundle names %q, which is not in caBundles.bundles: add the bundle there, or leave postgres.ca.bundle empty" .) -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.postgres.existingSecret .Values.persistence.existingClaim -}}
+{{- fail "persistence.existingClaim is set but postgres.existingSecret keeps the audit store in PostgreSQL, so nothing would use the claim: remove one of them" -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if has .name (list "VOLVERAN_POSTGRES_URL" "VOLVERAN_POSTGRES_REQUIRE_TLS" "VOLVERAN_POSTGRES_CA_FILE") -}}
+{{- fail (printf "extraEnv sets %s: use the postgres values instead, so the URL comes from a Secret" .name) -}}
 {{- end -}}
 {{- end -}}
 {{- $selector := include "volveran.selectorLabels" . | fromYaml -}}

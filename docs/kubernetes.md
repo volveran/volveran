@@ -66,7 +66,7 @@ The chart version always equals the Volverán version, and the chart runs the im
 4. Install:
 
    ```sh
-   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.5.1 \
+   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.6.0 \
      --namespace volveran -f values.yaml
    kubectl -n volveran rollout status deployment/volveran
    ```
@@ -99,7 +99,7 @@ The same command with `ghcr.io/volveran/volveran:<version>` verifies the image.
 
 ## Install with Flux CD
 
-[`examples/flux/`](../examples/flux/) is a complete layout to copy into a fleet repository: a namespace enforcing `restricted` pod security, an `OCIRepository` that follows `0.5.x` and only accepts a chart signed by Volverán's release workflow, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, a Secret template encrypted with SOPS and your own age key, and the Flux `Kustomization` that decrypts it. Its [README](../examples/flux/README.md) walks through it.
+[`examples/flux/`](../examples/flux/) is a complete layout to copy into a fleet repository: a namespace enforcing `restricted` pod security, an `OCIRepository` that follows `0.6.x` and only accepts a chart signed by Volverán's release workflow, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, a Secret template encrypted with SOPS and your own age key, and the Flux `Kustomization` that decrypts it. Its [README](../examples/flux/README.md) walks through it.
 
 The OIDC identity the `OCIRepository` matches is the one above:
 
@@ -111,7 +111,7 @@ verify:
       subject: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
 ```
 
-The `ref.semver` range `0.5.x` picks up patch releases on its own and skips pre-releases (`0.5.1-rc.1`); a range such as `>=0.5.0-0` asks for them.
+The `ref.semver` range `0.6.x` picks up patch releases on its own and skips pre-releases (`0.6.1-rc.1`); a range such as `>=0.6.0-0` asks for them.
 
 ## Values
 
@@ -125,6 +125,7 @@ The [chart README](../charts/volveran/README.md#values) lists every value with i
 | `caBundles` | Private CAs mounted under `/etc/volveran/ca/<name>/`, for brokers and the OIDC provider. |
 | `settings`, `extraEnv` | Checkout limits, time limit, heartbeat, body retention, and the depth history's interval and retention; other `VOLVERAN_*` variables. |
 | `persistence` | The audit store claim: size, StorageClass, access mode, or an `existingClaim`. |
+| `postgres` | The audit store on PostgreSQL instead: the Secret holding the URL, required TLS and a CA ([PostgreSQL guide](postgresql.md)). |
 | `httpRoute`, `ingress` | Exposure. Neither is rendered by default. |
 | `metrics` | The Prometheus metrics port, off by default, and an optional `ServiceMonitor`. |
 | `networkPolicy` | Who may reach the pod (`ingressFrom` the web app, `metricsFrom` the metrics port), and optionally where it may connect. |
@@ -153,6 +154,8 @@ The port has no session and listens on the pod's `0.0.0.0`. With `networkPolicy.
 Alert Rules go under each profile (`alerts`) and Alert Destinations under `brokerProfiles.alertDestinations`, or both in the file of an `existingConfigMap`. Nothing notifies anyone until you declare them. Destination URLs and signing secrets go in the Secret named by `alerts.existingSecret`, and Volverán refuses to start when one is not set. The links in notifications use the origin of `oidc.redirectUrl`; set `VOLVERAN_PUBLIC_URL` through `extraEnv` for another. With `networkPolicy.egress` set, allow the destinations. The [observability guide](observability.md#alerts) has Slack, Teams and webhook set-ups.
 
 ## Sizing the audit store
+
+This is for SQLite. On PostgreSQL, see its [sizing](postgresql.md#sizing).
 
 The audit store holds Discarded bodies and, since 0.5, the depth history. A Sample takes about 100 bytes, so 100 dead-letter queues at the default one-minute Samples and 14 days take about 190 MiB ([sizing](observability.md#sizing)). Discarded bodies may take up to `settings.bodyRetentionMaxBytes`, 1 GiB by default, which is also the default `persistence.size`, so raise the claim or lower that limit. A claim can only grow if its StorageClass allows expansion. Set `settings.historyIntervalSeconds` and `settings.historyRetentionDays` with this in mind, and raise `pod.resources` memory with very long or very fine history.
 
@@ -195,7 +198,7 @@ Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --ver
 **A deploy signs everyone out and ends open Checkouts.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
 
 - Sessions live in the Volverán process, so every Operator signs in again afterwards.
-- On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order, without costing Delivery Budget. An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
+- On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order (on a quorum queue, a large Checkout can use up Delivery Budget as it ends; see the [changelog](../CHANGELOG.md)). An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
 - `pod.terminationGracePeriodSeconds` (60 by default) is the time it has for that before `SIGKILL`. Raise it if Checkouts on slow brokers need longer.
 - The `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready.
 
@@ -205,7 +208,7 @@ A change to inline `brokerProfiles.profiles` rolls the pod by itself. A change t
 
 ## Backup and restore of the audit store
 
-The audit store is one SQLite database, `/data/audit.sqlite`, on the chart's PersistentVolumeClaim (`volveran-data` for a release named `volveran`). It holds every Audit Entry, the full copy of every Discarded Message, which Restore republishes, the depth history and the state of Alerts. The claim carries `helm.sh/resource-policy: keep`, so `helm uninstall`, and Flux uninstalling a pruned `HelmRelease`, leave it in place; delete it by hand to delete the audit trail. The keep policy does not survive deleting the namespace, which deletes every claim in it. The Flux example's namespace carries `kustomize.toolkit.fluxcd.io/prune: disabled`, so removing the example's Flux `Kustomization` (which has `prune: true`) uninstalls Volverán but leaves the namespace and the claim; delete the namespace by hand when you mean to. If you manage the namespace some other way, keep it out of anything that prunes it.
+On PostgreSQL, see [backup and restore](postgresql.md#backup-and-restore) there. On SQLite, the audit store is one SQLite database, `/data/audit.sqlite`, on the chart's PersistentVolumeClaim (`volveran-data` for a release named `volveran`). It holds every Audit Entry, the full copy of every Discarded Message, which Restore republishes, the depth history and the state of Alerts. The claim carries `helm.sh/resource-policy: keep`, so `helm uninstall`, and Flux uninstalling a pruned `HelmRelease`, leave it in place; delete it by hand to delete the audit trail. The keep policy does not survive deleting the namespace, which deletes every claim in it. The Flux example's namespace carries `kustomize.toolkit.fluxcd.io/prune: disabled`, so removing the example's Flux `Kustomization` (which has `prune: true`) uninstalls Volverán but leaves the namespace and the claim; delete the namespace by hand when you mean to. If you manage the namespace some other way, keep it out of anything that prunes it.
 
 The database runs in WAL mode, so a copy of the file alone, taken while Volverán runs, can miss recent commits. Use one of these:
 

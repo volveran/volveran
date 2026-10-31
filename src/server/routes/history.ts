@@ -7,7 +7,7 @@
 // longer exists keeps its history until it ages out; one never sampled has an
 // empty history. An `operatorToken` profile answers 409 `history_not_sampled`.
 import type { FastifyInstance } from 'fastify';
-import type { HistoryStore } from '../audit/history.js';
+import type { HistoryStore } from '../audit/audit-store.js';
 import { downsample } from '../history/downsample.js';
 import { historyGaps } from '../history/gaps.js';
 import { isSampled } from '../history/sampler.js';
@@ -55,15 +55,20 @@ export function registerHistoryRoutes(app: FastifyInstance, { history, clock, in
     if (from > to) throw new InvalidRequestError('"from" must not be after "to".');
 
     const ref = { profile: profile.name, vhost, queue };
-    const latest = history.latestSample(ref);
-    const samples = downsample(history.samples(ref, from.getTime(), to.getTime()), MAX_HISTORY_SAMPLES);
-    const gaps = historyGaps(history.runsAround(profile.name, from.getTime(), to.getTime()), {
+    const [latest, stored, runs, takeOuts] = await Promise.all([
+      history.latestSample(ref),
+      history.samples(ref, from.getTime(), to.getTime()),
+      history.runsAround(profile.name, from.getTime(), to.getTime()),
+      history.takeOuts(ref, from.getTime(), to.getTime()),
+    ]);
+    const samples = downsample(stored, MAX_HISTORY_SAMPLES);
+    const gaps = historyGaps(runs, {
       from: from.getTime(),
       to: to.getTime(),
       now: now.getTime(),
       intervalMs,
     });
-    const marks = history.takeOuts(ref, from.getTime(), to.getTime()).map((t): HistoryMark => ({
+    const marks = takeOuts.map((t): HistoryMark => ({
       at: new Date(t.at).toISOString(),
       kind: t.rule === null ? 'apply' : 'rule_pass',
       operator: t.operator,

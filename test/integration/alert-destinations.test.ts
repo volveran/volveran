@@ -4,7 +4,7 @@
 import { createHmac } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { openTestStore } from './test-store.js';
 import { closedPort, makeTempDir, startApp, testProfile, type TestApp } from './harness.js';
 import { startFakeDestination, type FakeDestination } from './fake-destination.js';
 import { teamModeEnv, TestBrowser } from './oidc-provider.js';
@@ -135,12 +135,12 @@ describe('test notifications', () => {
     const res = await test('ops-teams');
     expect(res.body.delivery.outcome).toBe('delivered');
     // Nothing reads outcomes through the API yet (the Alerts view, #81); WAL lets a second connection look.
-    const store = new AuditStore(dataDir);
+    const store = await openTestStore(dataDir);
     try {
-      expect(store.notifications.recent(1)[0]).toMatchObject({ id: res.body.delivery.id, destination: 'ops-teams', outcome: 'delivered', test: true });
-      expect(JSON.stringify(store.notifications.recent())).not.toContain('secret-token');
+      expect((await store.notifications.recent(1))[0]).toMatchObject({ id: res.body.delivery.id, destination: 'ops-teams', outcome: 'delivered', test: true });
+      expect(JSON.stringify(await store.notifications.recent())).not.toContain('secret-token');
     } finally {
-      store.close();
+      await store.close();
     }
   });
 });

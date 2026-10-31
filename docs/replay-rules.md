@@ -12,7 +12,7 @@ Every `every`, plus a few seconds of jitter, a running rule makes a **Rule Pass*
    - **used up**: the filter selects it, but its attempts are used up;
    - **not due**: the filter selects it, but its back-off delay has not passed yet (or the pass already has `maxPerPass` Messages to Replay);
    - **no match**: the filter does not select it.
-3. It Replays up to `maxPerPass` due Messages at the rule's `rate`, Moves the used-up ones to the parking queue when `whenAttemptsUsedUp` says so, and Keeps every other Message in order (no Delivery Budget is used on a quorum queue).
+3. It Replays up to `maxPerPass` due Messages at the rule's `rate`, Moves the used-up ones to the parking queue when `whenAttemptsUsedUp` says so, and Keeps every other Message in order. On a quorum queue, a large Checkout can use up Delivery Budget as it ends (see the [changelog](../CHANGELOG.md)).
 4. It ends the Checkout.
 
 Every Replay and Move is an Audit Entry naming the rule and the pass; search them with the **Rule** filter of the Audit view (`GET /api/audit-entries?rule=<name>`). The Replay rules view shows each rule's state, its next pass and its last 20 passes with their counts.

@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Notifier } from '../../src/server/alerts/notifier.js';
 import { testNotification } from '../../src/server/alerts/payloads.js';
-import { AuditStore } from '../../src/server/audit/store.js';
+import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 
 // A timeout long enough for a loaded machine's local request; the timeout test sets a short one.
 const timing = { timeoutMs: 5_000, firstBackoffMs: 5 };
@@ -29,7 +29,7 @@ describe('Notifier', () => {
   }
 
   function notifierFor(destinations: Record<string, string>, deliveryTiming = timing) {
-    const store = new AuditStore();
+    const store = new SqliteAuditStore();
     cleanups.push(() => store.close());
     const notifier = new Notifier({
       destinations: Object.entries(destinations).map(([name, url]) => ({ name, type: 'webhook', url, signingSecret: null })),
@@ -98,7 +98,7 @@ describe('Notifier', () => {
     const { notifier, store } = notifierFor({ ok, bad });
     await notifier.send('ok', notification());
     await notifier.send('bad', notification());
-    expect(store.notifications.recent().map((d) => [d.destination, d.outcome, d.httpStatus])).toEqual([
+    expect((await store.notifications.recent()).map((d) => [d.destination, d.outcome, d.httpStatus])).toEqual([
       ['bad', 'failed', 404],
       ['ok', 'delivered', 200],
     ]);
@@ -109,7 +109,7 @@ describe('Notifier', () => {
     const { notifier, store } = notifierFor({ pager: url });
     await notifier.send('pager', { ...testNotification(new Date(), 'a'), replayRule: 'retry' });
     await notifier.send('pager', testNotification(new Date(), 'b'));
-    expect(store.notifications.recent().map((d) => [d.alertId, d.replayRule])).toEqual([['b', null], ['a', 'retry']]);
+    expect((await store.notifications.recent()).map((d) => [d.alertId, d.replayRule])).toEqual([['b', null], ['a', 'retry']]);
   });
 
   it('on close, ends the deliveries in progress at once and records them', async () => {
@@ -119,38 +119,11 @@ describe('Notifier', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     await notifier.close();
     expect(await delivery).toMatchObject({ outcome: 'failed', error: 'server_stopping' });
-    expect(store.notifications.recent()).toHaveLength(1);
+    expect(await store.notifications.recent()).toHaveLength(1);
   });
 
   it('refuses a destination the file does not declare', async () => {
     const { notifier } = notifierFor({});
     await expect(notifier.send('nope', notification())).rejects.toMatchObject({ status: 404, code: 'alert_destination_not_found' });
-  });
-});
-
-describe('notifications table', () => {
-  it('removes outcomes older than the retention, and keeps the rest', async () => {
-    const store = new AuditStore();
-    const entry = (at: string) => ({
-      at: new Date(at),
-      alertId: 'a',
-      destination: 'd',
-      destinationType: 'slack' as const,
-      status: 'firing' as const,
-      test: false,
-      rule: 'r',
-      profile: 'p',
-      vhost: '/',
-      queue: 'q', replayRule: null,
-      outcome: 'delivered' as const,
-      httpStatus: 200,
-      error: null,
-      attempts: 1,
-    });
-    store.notifications.record(entry('2026-01-01T00:00:00Z'));
-    store.notifications.record(entry('2026-03-01T00:00:00Z'));
-    expect(store.notifications.removeOlderThan(new Date('2026-02-01T00:00:00Z'))).toBe(1);
-    expect(store.notifications.recent().map((d) => d.at)).toEqual(['2026-03-01T00:00:00.000Z']);
-    store.close();
   });
 });

@@ -17,6 +17,7 @@
 // capability `checkout`.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
+import type { CheckoutView } from '../checkout/view.js';
 import { CheckoutError } from '../checkout/errors.js';
 import { InvalidRequestError } from '../http-error.js';
 import { isRecord } from '../is-record.js';
@@ -56,17 +57,23 @@ export function parseHandle(raw: unknown): number {
  * their diff. 400 for a missing handle or the same handle twice, 404 for a
  * handle the Checkout does not hold.
  */
-export function compareMessages(checkouts: CheckoutManager, id: string, query: unknown): MessageComparison {
+export async function compareMessages(checkouts: CheckoutManager, id: string, query: unknown): Promise<MessageComparison> {
   const { a, b } = isRecord(query) ? query : {};
   if (a === undefined || b === undefined) throw new InvalidRequestError('Name the two Messages to compare with "a" and "b".');
   const [left, right] = [parseHandle(a), parseHandle(b)];
   if (left === right) throw new InvalidRequestError('Compare two different Messages: "a" and "b" are the same handle.');
-  const views = [checkouts.message(id, left), checkouts.message(id, right)] as const;
+  const views = await Promise.all([checkouts.message(id, left), checkouts.message(id, right)]);
   return { left: views[0], right: views[1], diff: diffMessages(views[0], views[1]) };
 }
 
 export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
   const { checkouts, access } = deps;
+  // Every response that shows a Checkout gets its rule badges here, after the route is
+  // done: reading them awaits the store, which a first-wins section must not (ADR 0013).
+  app.addHook('preSerialization', async (_req, _reply, payload: unknown) => {
+    if (!isRecord(payload) || !isRecord(payload.checkout) || !Array.isArray(payload.checkout.messages)) return payload;
+    return { ...payload, checkout: await checkouts.withRuleBadges(payload.checkout as unknown as CheckoutView) };
+  });
   // Registered before the routes, so it covers every route under /api/checkouts/:id.
   app.addHook('preHandler', async (req) => {
     const url = req.routeOptions.url;
@@ -85,7 +92,7 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
       const target = access.queue(operatorOf(req), 'checkout', profile, vhost, queue);
       const auditScope = access.auditScope(operatorOf(req), 'read_audit_entries');
       const checkout = await checkouts.start(target, operatorOf(req), { overrideConsumers, auditScope });
-      return reply.status(201).send({ checkout });
+      return reply.status(201).send({ checkout: checkout });
     },
   );
 
@@ -97,7 +104,7 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
   app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
     const handle = parseHandle(req.params.handle);
     checkoutAccess(deps, req, 'checkout');
-    return { message: checkouts.message(req.params.id, handle) };
+    return { message: await checkouts.message(req.params.id, handle) };
   });
 
   app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', async (req) => {
