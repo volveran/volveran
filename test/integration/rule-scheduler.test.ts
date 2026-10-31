@@ -10,8 +10,10 @@ import {
   deadLetterRoutes,
   eventually,
   fixtureQueues,
+  lockFreed,
   makeTempDir,
   purgeQueues,
+  ranSummary,
   ruleSchedulerHooks,
   startApp,
   testOperator,
@@ -108,7 +110,8 @@ describe('Replay rule scheduler', () => {
     await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
     const passAt = async (minutes: number) => {
       scheduler.set(new Date(t0.getTime() + minutes * MINUTE));
-      return (await scheduler.runPass('local', RULE))!.summary;
+      await lockFreed(dlq);
+      return ranSummary(await scheduler.runPass('local', RULE));
     };
 
     // Attempt 0 waits 10 minutes from its dead-lettering.
@@ -145,7 +148,7 @@ describe('Replay rule scheduler', () => {
 
     const pass = await scheduler.runPass('local', RULE);
 
-    expect(pass!.summary).toMatchObject({ held: 1, usedUp: 1, moved: 1, replayed: 0, failed: 0 });
+    expect(ranSummary(pass)).toMatchObject({ held: 1, usedUp: 1, moved: 1, replayed: 0, failed: 0 });
     expect(await readyIds(dlq)).toEqual([]);
     expect(await readyIds(parking)).toEqual(['used']);
     const { entries } = (await app.get(`/api/audit-entries?rule=${RULE}`)).body;
@@ -166,8 +169,9 @@ describe('Replay rule scheduler', () => {
     const scheduler = ruleSchedulerHooks(new Date(t0.getTime() + 11 * MINUTE));
     const app = await start({ profiles: [testProfile({ name: 'local', replayRules: [rule] })], checkoutTestHooks: scheduler.hooks });
     await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
-    expect((await scheduler.runPass('local', RULE))!.summary).toMatchObject({ replayed: 1 });
+    expect(ranSummary(await scheduler.runPass('local', RULE))).toMatchObject({ replayed: 1 });
     await rejectAll();
+    await lockFreed(dlq);
 
     const started = await app.post(checkoutPath);
     expect(started.status).toBe(201);
@@ -264,7 +268,7 @@ describe('Replay rule scheduler', () => {
     apps.pop();
     release();
     await closed;
-    expect((await running)!.summary).toMatchObject({ replayed: 1 });
+    expect(ranSummary(await running)).toMatchObject({ replayed: 1 });
 
     const again = await start({ profiles, dataDir, checkoutTestHooks: ruleSchedulerHooks().hooks });
     expect((await listed(again)).passes).toMatchObject([{ status: 'ran', summary: { replayed: 1 } }]);
