@@ -15,15 +15,13 @@ import type {
   RuleStateStore,
 } from './audit-store.js';
 import { ConfigError } from '../config-error.js';
-import { asStartupError, createPool, refusalAsStartupError, transaction, type PostgresTls } from './postgres-connection.js';
+import { asStartupError, createPool, numbered, refusalAsStartupError, transaction, type PostgresTls } from './postgres-connection.js';
 import { migrate } from './postgres-migrations.js';
 import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
 import { PostgresNotificationStore } from './postgres-notifications.js';
 import { PostgresRuleStateStore } from './postgres-rule-state.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
-
-const numbered = (position: number) => `$${position}`;
 
 /** Under the chart's readiness probe timeout, so a probe gets an answer and not a timeout. */
 const PING_TIMEOUT_MS = 2_000;

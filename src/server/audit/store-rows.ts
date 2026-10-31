@@ -95,6 +95,9 @@ export interface TakeOutRow {
 }
 
 /** Each Checkout's take-outs, by Decision, from a row per Checkout and action; oldest first. */
+/** How many notification outcomes `recent` answers with unless told otherwise. */
+export const RECENT_LIMIT = 100;
+
 export function toTakeOuts(rows: readonly TakeOutRow[]): TakeOut[] {
   const byCheckout = new Map<string, TakeOut>();
   for (const row of rows) {

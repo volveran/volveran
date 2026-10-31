@@ -82,6 +82,9 @@ export function createPool(connectionString: string, { tls, queryTimeoutMs = QUE
   return pool;
 }
 
+/** PostgreSQL's placeholder for the parameter at this position, from 1. */
+export const numbered = (position: number) => `$${position}`;
+
 /** Runs `work` in one transaction: committed when it resolves, rolled back when it rejects. */
 export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();

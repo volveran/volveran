@@ -3,6 +3,10 @@
 // VOLVERAN_POSTGRES_REQUIRE_TLS and VOLVERAN_POSTGRES_CA_FILE ask for TLS with a
 // verified certificate, with the system's CAs or the ones in that file.
 
+import { readFile } from 'node:fs/promises';
+import { ConfigError } from '../config-error.js';
+import type { PostgresTls } from './postgres-connection.js';
+
 /** Parameters of the URL that say something about TLS of their own, which would override these variables. */
 const TLS_URL_PARAMETERS = ['ssl', 'sslmode', 'sslrootcert'];
 
@@ -29,4 +33,14 @@ export function parsePostgresUrl(env: Record<string, string | undefined>): Postg
     return { ok: false, error: `With VOLVERAN_POSTGRES_REQUIRE_TLS or VOLVERAN_POSTGRES_CA_FILE, leave ${TLS_URL_PARAMETERS.join(', ')} out of VOLVERAN_POSTGRES_URL: they would override them.` };
   }
   return { ok: true, url: value, tls };
+}
+
+/** The TLS settings with the CA file's certificates read. */
+export async function readPostgresTls(tls: { caFile: string | null } | null): Promise<PostgresTls | null> {
+  if (!tls?.caFile) return tls && {};
+  try {
+    return { ca: await readFile(tls.caFile, 'utf8') };
+  } catch (err) {
+    throw new ConfigError(`VOLVERAN_POSTGRES_CA_FILE could not be read: ${(err as Error).message}`);
+  }
 }
