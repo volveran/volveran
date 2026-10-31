@@ -112,10 +112,16 @@ export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient
 
 const NETWORK_ERRORS = new Set(['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE']);
 
+/** Where a connection string points, as `host:port`, to name in a message: it holds no credentials. */
+export function postgresAddress(connectionString: string): string {
+  const { hostname, port } = new URL(connectionString);
+  return `${hostname}:${port || 5432}`;
+}
+
 /** Why PostgreSQL could not be used, in words a platform engineer can act on, or null if `err` is about something else. */
 function explain(err: Error & { code?: string }, connectionString: string): string | null {
   const url = new URL(connectionString);
-  const at = `${url.hostname}:${url.port || 5432}`;
+  const at = postgresAddress(connectionString);
   const user = decodeURIComponent(url.username);
   const { code } = err;
   // A connection attempt to several addresses fails with an empty message.

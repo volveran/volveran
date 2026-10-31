@@ -2,7 +2,8 @@
 // PostgreSQL. The upgrade suite (upgrade.test.ts) proves on every release's store, on
 // PostgreSQL, that the copy works in the app. This holds what the command itself promises.
 import { spawn } from 'node:child_process';
-import { readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -73,11 +74,11 @@ async function seed(dataDir: string): Promise<{ discard: number; restore: number
   const discard = await store.record(entry({ messageId: NUL_ID, message: { body: BODY, properties: { contentType: 'x/y' }, headers: { h: 'v' } } }));
   await store.setOutcome(discard, 'done');
   const restore = await store.record(entry({ action: 'restore', restoreOf: discard, replayId: 'replay-1' }));
-  const highest = await store.record(entry({ action: 'replay', rule: 'rule', rulePassId: 'pass-1', replayId: 'replay-2' }));
-  await store.evictBodies({ now: new Date(), maxAgeMs: Number.MAX_SAFE_INTEGER, maxBodyBytes: BODY.length });
   const key = 'prod/rule';
   await store.ruleState.ensure(key, false);
-  await store.ruleState.setPaused(key, { reason: 'why', by: 'Ada', at: AT });
+  await store.ruleState.pause(key, { reason: 'why', by: 'Ada', at: AT }, { ...entry({ action: 'rule_pause', messageId: 'unused', rule: 'rule' }), message: null });
+  const highest = await store.record(entry({ action: 'replay', rule: 'rule', rulePassId: 'pass-1', replayId: 'replay-2' }));
+  await store.evictBodies({ now: new Date(), maxAgeMs: Number.MAX_SAFE_INTEGER, maxBodyBytes: BODY.length });
   await store.ruleState.recordPass(key, { id: 'pass-1', at: AT.toISOString(), status: 'ran', reason: null, summary: { held: 1, replayed: 1, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, cannotReplay: 0, failed: 0 } });
   await store.ruleState.firstSeen(key, [NUL_ID], AT);
   await store.ruleState.countDiedAgain(key, { profile: 'prod', name: 'rule' }, [highest], AT, new Date(0));
@@ -102,18 +103,30 @@ function run(env: Record<string, string>, args: string[] = []): Promise<{ code: 
   });
 }
 
+/** Every file in the directory, with a hash of what it holds. */
+async function fingerprint(dir: string): Promise<Record<string, string>> {
+  const files = (await readdir(dir)).sort();
+  return Object.fromEntries(await Promise.all(files.map(async (name) => [name, createHash('sha256').update(await readFile(path.join(dir, name))).digest('hex')])));
+}
+
 describe('copy-audit-store', () => {
   let dataDir: string;
+  let scratch: string;
   let target: TestDatabase;
-  const copy = () => run({ VOLVERAN_DATA_DIR: dataDir, VOLVERAN_POSTGRES_URL: target.url });
+  const copy = () => run({ VOLVERAN_DATA_DIR: dataDir, VOLVERAN_POSTGRES_URL: target.url, TMPDIR: scratch });
+  // tsx, which runs the command here, keeps a cache of its own in the same place.
+  const temporaryCopies = async () => (await readdir(scratch)).filter((name) => !name.startsWith('tsx-'));
   const countIn = async (table: string) => Number((await target.query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n);
 
   beforeEach(async () => {
     dataDir = await makeTempDir('copy-store');
+    scratch = await makeTempDir('copy-scratch');
     target = await createTestDatabase();
   });
   afterEach(async () => {
+    await chmod(dataDir, 0o755);
     await rm(dataDir, { recursive: true, force: true });
+    await rm(scratch, { recursive: true, force: true });
     await target.drop();
   });
 
@@ -123,7 +136,7 @@ describe('copy-audit-store', () => {
     expect(out).toMatch(/OK/);
     expect(code).toBe(0);
     for (const table of TABLES) {
-      const rows = table === 'audit_entries' ? 4 : 1;
+      const rows = table === 'audit_entries' ? 5 : 1;
       expect(await countIn(table)).toBe(rows);
       expect(out).toMatch(new RegExp(`^${table}: ${rows} rows`, 'm'));
     }
@@ -194,6 +207,60 @@ describe('copy-audit-store', () => {
     expect(await countIn('audit_message_bodies')).toBeGreaterThan(0);
   });
 
+  it('leaves the source byte-identical after copying an older store, and no temporary copy behind', async () => {
+    await copyFixtureStore(RELEASED_VERSIONS[0], dataDir);
+    const before = await fingerprint(dataDir);
+    expect((await copy()).code).toBe(0);
+    expect(await fingerprint(dataDir)).toEqual(before);
+    expect(await temporaryCopies()).toEqual([]);
+  });
+
+  it('leaves the source byte-identical when the target refuses or the copy fails', async () => {
+    await copyFixtureStore(RELEASED_VERSIONS[0], dataDir);
+    const before = await fingerprint(dataDir);
+    const existing = await PostgresAuditStore.open(target.url);
+    await existing.notifications.record(delivery('already-here'));
+    await existing.close();
+    expect((await copy()).code).toBe(1);
+    expect(await fingerprint(dataDir)).toEqual(before);
+    expect(await temporaryCopies()).toEqual([]);
+  });
+
+  it('leaves a store it refuses as newer byte-identical', async () => {
+    await seed(dataDir);
+    const db = new DatabaseSync(path.join(dataDir, AUDIT_DB_FILE));
+    db.exec('PRAGMA user_version = 9999');
+    db.close();
+    const before = await fingerprint(dataDir);
+    expect((await copy()).code).toBe(1);
+    expect(await fingerprint(dataDir)).toEqual(before);
+    expect(await temporaryCopies()).toEqual([]);
+  });
+
+  it('needs no write access to the source', async () => {
+    await copyFixtureStore(RELEASED_VERSIONS[0], dataDir);
+    await chmod(path.join(dataDir, AUDIT_DB_FILE), 0o444);
+    await chmod(dataDir, 0o555);
+    const { code, out } = await copy();
+    expect(out).toMatch(/OK/);
+    expect(code).toBe(0);
+  });
+
+  it('copies what is still only in the write-ahead log, and leaves the log as it was', async () => {
+    await seed(dataDir);
+    const uncheckpointed = new SqliteAuditStore(dataDir);
+    try {
+      await uncheckpointed.record(entry({ messageId: 'only-in-the-wal' }));
+      const before = await fingerprint(dataDir);
+      expect(before[`${AUDIT_DB_FILE}-wal`]).toBeDefined();
+      expect((await copy()).code).toBe(0);
+      expect(Number((await target.query(`SELECT count(*) AS n FROM audit_entries WHERE message_id = 'only-in-the-wal'`)).rows[0].n)).toBe(1);
+      expect(await fingerprint(dataDir)).toEqual(before);
+    } finally {
+      await uncheckpointed.close();
+    }
+  });
+
   it('refuses a target that already holds rows, and leaves it as it was', async () => {
     await seed(dataDir);
     const existing = await PostgresAuditStore.open(target.url);
@@ -214,7 +281,7 @@ describe('copy-audit-store', () => {
     const { code, out } = await copy();
     expect(code).toBe(1);
     expect(out).toMatch(/not empty/);
-    expect(await countIn('audit_entries')).toBe(4);
+    expect(await countIn('audit_entries')).toBe(5);
   });
 
   it('accepts a target Volverán has only set up, with its tables but no rows', async () => {

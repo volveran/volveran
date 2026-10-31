@@ -92,7 +92,7 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
       const target = access.queue(operatorOf(req), 'checkout', profile, vhost, queue);
       const auditScope = access.auditScope(operatorOf(req), 'read_audit_entries');
       const checkout = await checkouts.start(target, operatorOf(req), { overrideConsumers, auditScope });
-      return reply.status(201).send({ checkout: checkout });
+      return reply.status(201).send({ checkout });
     },
   );
 

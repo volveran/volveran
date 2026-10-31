@@ -31,7 +31,7 @@ export interface AlertingOptions {
 
 export class Alerting {
   private readonly profiles: Map<string, BrokerProfile>;
-  private readonly turns = new OneAtATime();
+  private readonly perProfile = new OneAtATime();
   private stopped = false;
 
   constructor(private readonly options: AlertingOptions) {
@@ -47,7 +47,7 @@ export class Alerting {
   /** No evaluation starts after this, and those in progress have ended when it resolves. */
   async stop(): Promise<void> {
     this.stopped = true;
-    await this.turns.settled();
+    await this.perProfile.settled();
   }
 
   /** After a sampling run. */
@@ -67,10 +67,10 @@ export class Alerting {
   private run(name: string, at: Date, run: FinishedRun | null): Promise<void> {
     const profile = this.profiles.get(name);
     if (!profile || profile.alerts.length === 0 || this.stopped) return Promise.resolve();
-    return this.turns.run(name, () => this.turn(profile, at, run));
+    return this.perProfile.run(name, () => this.evaluateProfile(profile, at, run));
   }
 
-  private async turn(profile: BrokerProfile, at: Date, run: FinishedRun | null): Promise<void> {
+  private async evaluateProfile(profile: BrokerProfile, at: Date, run: FinishedRun | null): Promise<void> {
     const { store, notifier, onError, pausedReplayRules, lastSuccessAt } = this.options;
     const [memory, paused] = await Promise.all([store.load(profile.name), pausedReplayRules(profile.name)]);
     const evaluated = evaluateAlerts({

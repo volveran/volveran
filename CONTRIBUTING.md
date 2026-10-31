@@ -67,6 +67,7 @@ The test helpers find the running broker of the checkout on their own. Environme
 | `VOLVERAN_TEST_OAUTH_AMQP_PORT`, `VOLVERAN_TEST_OAUTH_MGMT_PORT` | random free ports | host ports of the OAuth 2.0 broker |
 | `VOLVERAN_TEST_POSTGRES_PORT` | random free port | host port of PostgreSQL |
 | `VOLVERAN_TEST_KEEP_BROKER` | unset | `1` leaves the broker running after `test:broker` / `test:integration` |
+| `VOLVERAN_TEST_LOCK_FILE` | unset | a path: `test:broker` / `test:integration` wait for this lock file and hold it until their broker is down, so the suites of several worktrees run one at a time. Give every worktree the same path; CI needs none |
 | `VOLVERAN_TEST_RABBITMQ_IMAGE` | `rabbitmq:4.4.0-management` | RabbitMQ image to test against (both brokers) |
 | `VOLVERAN_TEST_POSTGRES_IMAGE` | `postgres:17.6-alpine` | PostgreSQL image to test against |
 | `VOLVERAN_TEST_AUDIT_STORE` | `sqlite` | the store the integration suite runs on: `sqlite` or `postgres` |

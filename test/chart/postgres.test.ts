@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseAllDocuments } from 'yaml';
+import { parse } from 'yaml';
 import { container, env, podSpec, render, renderNotes, renderRefusal, repoRoot, volumeAt } from './render.js';
 
 const version = (JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as { version: string }).version;
@@ -11,14 +11,19 @@ const onPostgres = { postgres: { existingSecret: 'volveran-postgres' } };
 const bundles = [{ name: 'postgres-ca', secret: 'postgres-internal-ca' }];
 
 describe('one replica on SQLite', () => {
-  it('renders exactly as before PostgreSQL existed', () => {
+  // The golden file is 0.5.1's chart rendered with the same values, with only its version
+  // replaced: a change to the ConfigMap or the pod template would roll the pod on upgrade.
+  it("renders 0.5.1's output byte for byte, but for the version", () => {
     const golden = readFileSync(path.join(repoRoot, 'test/chart/golden/single-replica-sqlite.yaml'), 'utf8').replaceAll('<version>', version);
-    const expected = parseAllDocuments(golden).map((doc) => doc.toJS()).filter(Boolean);
-    expect(render().objects).toEqual(expected);
+    expect(render().output).toBe(golden);
   });
 });
 
 describe('postgres', () => {
+  it('writes the format version into the profiles file it renders', () => {
+    expect(parse(render(onPostgres).one('ConfigMap').data!['profiles.yaml']!).version).toBe(1);
+  });
+
   it('reads the URL from the named Secret, under the key url by default', () => {
     expect(env(render(onPostgres), 'VOLVERAN_POSTGRES_URL')).toEqual({
       name: 'VOLVERAN_POSTGRES_URL',

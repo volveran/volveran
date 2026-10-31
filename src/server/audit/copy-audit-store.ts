@@ -3,13 +3,16 @@
 // each identity sequence then continues after the highest id SQLite ever gave. All of it is
 // one transaction, so a failure or a wrong row count leaves the target empty to try again.
 // Tables and columns come from the two schemas, so a future table cannot be left behind.
+// The source is only ever read: an older store is migrated in a temporary copy of it.
 import { existsSync } from 'node:fs';
+import { chmod, copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type pg from 'pg';
 import { ConfigError } from '../config-error.js';
 import { PostgresAuditStore } from './postgres-audit-store.js';
-import { asStartupError, createPool, numbered, transaction, type PostgresTls } from './postgres-connection.js';
+import { asStartupError, createPool, numbered, postgresAddress, transaction, type PostgresTls } from './postgres-connection.js';
 import { parsePostgresUrl, readPostgresTls } from './postgres-url.js';
 import { AUDIT_DB_FILE, SqliteAuditStore } from './sqlite-audit-store.js';
 
@@ -34,15 +37,30 @@ const quoted = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const rowBytes = (values: readonly unknown[]) =>
   values.reduce<number>((sum, value) => sum + (typeof value === 'string' ? value.length : value instanceof Uint8Array ? value.byteLength : 8), 0);
 
-/** Brings the store up to this version's schema, as starting this version on it would. */
-async function migrateSource(file: string, dataDir: string): Promise<void> {
-  if (!existsSync(file)) throw new ConfigError(`No SQLite audit store at ${file}. Set VOLVERAN_DATA_DIR to the directory that holds it.`);
+/**
+ * Copies the store into `scratch`, with its write-ahead log so that nothing committed is missed,
+ * and brings the copy up to this version's schema, as starting this version on it would.
+ * Returns the copy's file. The shared-memory file is left out: SQLite rebuilds it from the log.
+ */
+async function migratedCopy(file: string, scratch: string): Promise<string> {
+  const copied = path.join(scratch, AUDIT_DB_FILE);
   try {
-    await new SqliteAuditStore(dataDir).close();
+    await copyFile(file, copied);
+    await chmod(copied, 0o600);
+    if (existsSync(`${file}-wal`)) {
+      await copyFile(`${file}-wal`, `${copied}-wal`);
+      await chmod(`${copied}-wal`, 0o600);
+    }
+  } catch (err) {
+    throw new ConfigError(`Could not copy the SQLite audit store at ${file} to ${scratch}: ${(err as Error).message}`);
+  }
+  try {
+    await new SqliteAuditStore(scratch).close();
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     throw new ConfigError(`Could not read the SQLite audit store at ${file}: ${(err as Error).message}`);
   }
+  return copied;
 }
 
 /** The source's tables and each one's columns; `audit_entries` first, as other tables refer to it. */
@@ -125,17 +143,25 @@ async function continueIds(source: DatabaseSync, client: pg.PoolClient): Promise
   }
 }
 
-/** Copies the SQLite store in `dataDir` into the database at `postgresUrl`, verifying row counts, or throws having changed nothing there but its empty schema. */
+/** Copies the SQLite store in `dataDir` into the database at `postgresUrl`, verifying row counts, or throws having changed nothing there but its empty schema. The source is left as it was. */
 export async function copyAuditStore({ dataDir, postgresUrl, tls }: CopyAuditStoreOptions): Promise<CopiedTable[]> {
   const file = path.join(dataDir, AUDIT_DB_FILE);
-  await migrateSource(file, dataDir);
-  // Sets up the target as startup would: refuses another encoding or a newer schema, and says why it cannot connect.
-  await (await PostgresAuditStore.open(postgresUrl, tls)).close();
+  if (!existsSync(file)) throw new ConfigError(`No SQLite audit store at ${file}. Set VOLVERAN_DATA_DIR to the directory that holds it.`);
+  const scratch = await mkdtemp(path.join(tmpdir(), 'volveran-copy-audit-store-'));
+  try {
+    const copied = await migratedCopy(file, scratch);
+    // Sets up the target as startup would: refuses another encoding or a newer schema, and says why it cannot connect.
+    await (await PostgresAuditStore.open(postgresUrl, tls)).close();
+    return await copyInto(copied, postgresUrl, tls);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
 
+async function copyInto(file: string, postgresUrl: string, tls: PostgresTls | null): Promise<CopiedTable[]> {
   const source = new DatabaseSync(file, { readOnly: true });
   // A copy takes as long as the store is big, so no statement has a time limit.
   const pool = createPool(postgresUrl, { tls, queryTimeoutMs: null, max: 1 });
-  const { hostname, port } = new URL(postgresUrl);
   try {
     // One snapshot of the source, so what is counted is what was copied.
     source.exec('BEGIN');
@@ -144,7 +170,7 @@ export async function copyAuditStore({ dataDir, postgresUrl, tls }: CopyAuditSto
       await refuseOtherSchema(client, tables);
       // Two copies at once: the second waits here, then finds the first one's rows.
       await client.query(`LOCK TABLE ${[...tables.keys()].map(quoted).join(', ')} IN ACCESS EXCLUSIVE MODE`);
-      await refuseNonEmpty(client, tables.keys(), `${hostname}:${port || 5432}`);
+      await refuseNonEmpty(client, tables.keys(), postgresAddress(postgresUrl));
       for (const [table, shape] of tables) await copyRows(source, client, table, shape);
       await continueIds(source, client);
       return verifyCounts(source, client, tables.keys());
@@ -163,5 +189,5 @@ export async function copyAuditStoreCommand(env: Record<string, string | undefin
   if (!settings.ok) throw new ConfigError(settings.error);
   if (settings.url === null) throw new ConfigError('copy-audit-store needs VOLVERAN_POSTGRES_URL, the database to copy into.');
   const copied = await copyAuditStore({ dataDir, postgresUrl: settings.url, tls: await readPostgresTls(settings.tls) });
-  return [...copied.map(({ table, rows }) => `${table}: ${rows} rows, verified`), 'OK: copied, and the SQLite store is still there. Set VOLVERAN_POSTGRES_URL on Volverán and start it.'];
+  return [...copied.map(({ table, rows }) => `${table}: ${rows} rows, verified`), 'OK: copied, and the SQLite store was not changed. Set VOLVERAN_POSTGRES_URL on Volverán and start it.'];
 }

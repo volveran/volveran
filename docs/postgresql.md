@@ -137,7 +137,7 @@ It reads the store in `VOLVERAN_DATA_DIR` and the target from `VOLVERAN_POSTGRES
 
 ```sh
 docker run --rm \
-  -v volveran-data:/data \
+  -v volveran-data:/data:ro \
   -e VOLVERAN_POSTGRES_URL \
   ghcr.io/volveran/volveran:<version> node dist/server/main.js copy-audit-store
 ```
@@ -150,11 +150,11 @@ What it does, and what it refuses:
 
 - **A target with rows in any of Volverán's tables is refused**, so two audit trails cannot be merged by accident. A database where Volverán has only created its tables counts as empty. One it has run on for a while does not: create a new database.
 - **Everything is one transaction.** On any failure, or if a row count differs, nothing is committed: fix the cause and run it again. The exit status is `1`, with one line saying why, as in the [table above](#when-it-cannot-start).
-- **An older store is first brought up to this version's schema**, in place, as starting this version on it would. So run the version you will run on PostgreSQL, and take a [backup of the volume](kubernetes.md#backup-and-restore-of-the-audit-store) first if you may want to go back to an older version. A store newer than this version is refused. A path with no store is refused too, and creates nothing.
+- **The source is only read.** It stays byte for byte as it was, also on a refusal or a failure, and its volume can be mounted read-only. The store is copied, with its write-ahead log, to the system's temporary directory (`TMPDIR`, or `/tmp`), and what is read is that copy, which is removed afterwards. An older store is brought up to this version's schema there, as starting this version on it would, so run the version you will run on PostgreSQL. A store newer than this version is refused. A path with no store is refused too, and creates nothing.
 - **Row ids continue** after the highest SQLite ever gave, including ones retention has since removed, so no id means two things.
-- **SQLite keeps its data.** Nothing is deleted from it, and the rules above for going back apply: what happens after the move is only in PostgreSQL.
+- **SQLite keeps its data**, so you can go back to it by the rules above: what happens after the move is only in PostgreSQL.
 
-The volume needs no more free space than a migration takes. Size the database as [above](#sizing). Bodies are sent in batches, so memory stays small, but a large store takes a while. Nothing times out.
+The temporary directory needs room for the store, plus what a migration adds. Size the database as [above](#sizing). Bodies are sent in batches, so memory stays small, but a large store takes a while. Nothing times out.
 
 ### On Kubernetes
 
@@ -208,10 +208,17 @@ The chart refuses `persistence.existingClaim` together with `postgres.existingSe
              volumeMounts:
                - name: data
                  mountPath: /data
+                 readOnly: true
+               # Holds a temporary copy of the store, so it needs room for all of it.
+               - name: tmp
+                 mountPath: /tmp
          volumes:
            - name: data
              persistentVolumeClaim:
                claimName: volveran-data
+               readOnly: true
+           - name: tmp
+             emptyDir: {}
    ```
 
    ```sh

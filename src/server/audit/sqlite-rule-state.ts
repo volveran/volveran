@@ -13,7 +13,8 @@
 //   stop. Only the stop's window is kept; a resume clears them.
 import type { DatabaseSync } from 'node:sqlite';
 import type { RulePass, RuleState } from '../../shared/replay-rules.js';
-import { FIRST_SEEN_LIMIT, PASS_HISTORY, type RuleStateStore } from './audit-store.js';
+import { insertEntry } from './audit-entry-sql.js';
+import { FIRST_SEEN_LIMIT, PASS_HISTORY, type RulePauseEntry, type RuleStateStore } from './audit-store.js';
 import { toPass, toRuleState, type PassRow, type RuleStateRow } from './store-rows.js';
 
 export class SqliteRuleStateStore implements RuleStateStore {
@@ -37,8 +38,35 @@ export class SqliteRuleStateStore implements RuleStateStore {
     return row ? toRuleState(row) : null;
   }
 
-  /** Pauses the rule (`reason`, `by`, `at`) or, with null, lets it run again. */
-  async setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): Promise<void> {
+  /** Pauses the rule (`reason`, `by`, `at`) and writes its Audit Entry, done, as one unit of work. */
+  async pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<void> {
+    this.inTransaction(() => {
+      this.setPaused(ruleKey, pause);
+      this.writeDoneEntry(entry);
+    });
+  }
+
+  /** Lets the rule run again, forgets the Died Again Messages counted for its automatic stop, and writes its Audit Entry, done, as one unit of work. */
+  async resume(ruleKey: string, entry: RulePauseEntry): Promise<void> {
+    this.inTransaction(() => {
+      this.setPaused(ruleKey, null);
+      this.db.prepare('DELETE FROM replay_rule_died_again WHERE rule_key = ?').run(ruleKey);
+      this.writeDoneEntry(entry);
+    });
+  }
+
+  private inTransaction(work: () => void): void {
+    this.db.exec('BEGIN');
+    try {
+      work();
+      this.db.exec('COMMIT');
+    } catch (err) {
+      if (this.db.isTransaction) this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): void {
     this.db
       .prepare(
         `INSERT INTO replay_rule_state (rule_key, paused, paused_reason, paused_by, paused_at) VALUES (?, ?, ?, ?, ?)
@@ -46,6 +74,12 @@ export class SqliteRuleStateStore implements RuleStateStore {
            paused_by = excluded.paused_by, paused_at = excluded.paused_at`,
       )
       .run(ruleKey, pause ? 1 : 0, pause?.reason ?? null, pause?.by ?? null, pause?.at.getTime() ?? null);
+  }
+
+  private writeDoneEntry(entry: RulePauseEntry): void {
+    const { sql, values } = insertEntry(entry, () => '?');
+    const { lastInsertRowid } = this.db.prepare(sql).run(...values);
+    this.db.prepare(`UPDATE audit_entries SET outcome = 'done' WHERE id = ?`).run(lastInsertRowid);
   }
 
   /** Keeps `pass` in the rule's history, dropping the oldest beyond PASS_HISTORY. */
@@ -149,11 +183,6 @@ export class SqliteRuleStateStore implements RuleStateStore {
       if (this.db.isTransaction) this.db.exec('ROLLBACK');
       throw err;
     }
-  }
-
-  /** Forgets the Died Again Messages counted for the rule's automatic stop (a resume). */
-  async clearDiedAgain(ruleKey: string): Promise<void> {
-    this.db.prepare('DELETE FROM replay_rule_died_again WHERE rule_key = ?').run(ruleKey);
   }
 
   /** When a pass of the rule first saw each of `messageIds`, without storing anything; an id none has seen is left out. */

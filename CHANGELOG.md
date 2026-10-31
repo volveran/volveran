@@ -16,22 +16,21 @@ A profiles file and chart values from 0.5 keep working. PostgreSQL is optional a
 
 - **An Apply stops after a failed store write.** Once the audit store fails a write, on either store, an Apply attempts no further step. The Message in progress finishes, and the rest are reported `not-attempted` and go back to their queue, where before each one was tried and failed in turn.
 - **Some gauges can be up to 15 seconds old.** A metrics scrape no longer reads the audit store, so `volveran_replay_rule_paused`, `volveran_alerts_firing` and `volveran_audit_store_body_bytes` come from a reading taken in the background.
-- **The pod rolls once on a chart upgrade.** The chart's ConfigMap gains `version: 1` in the profiles file it renders, and that change rolls the pod, which ends open Checkouts. With `brokerProfiles.existingConfigMap` the file is yours: one without a version is still read as version 1, with a startup warning.
+- **The chart's SQLite users see a version warning at startup.** On SQLite the chart renders the same profiles file as 0.5.1, so the file does not roll the pod, though a new image tag does, as on any upgrade. That file has no version. It is read as version 1 with a warning, harmless until 1.0. The chart writes `version: 1` only with `postgres.existingSecret`. With `brokerProfiles.existingConfigMap` the file is yours, and the same applies to it.
 - **The SQLite store is migrated to schema version 17 at startup.** A store newer than the binary is now refused, so take a backup first if you may want to go back.
 
 If you choose PostgreSQL:
 
 - **`postgres.requireTls` defaults to `true`.** Volverán refuses a server that offers no TLS or a certificate that does not verify. Trust a private CA with `postgres.ca.bundle`, or set `postgres.requireTls: false` to leave TLS to the URL.
-- **`copy-audit-store` migrates its source in place.** An older SQLite store is first brought up to this version's schema, as starting this version on it would, and only then copied. Nothing is deleted from it, but an older version may not read it afterwards, so back up the volume first if you may want to go back.
 
-**Known issue: ending a Checkout through Keep can use up Delivery Budget on quorum queues.** It is not fixed in 0.6.0. Volverán closes the channel straight after returning the Messages, and closing it overtakes `nack`s still on their way: on the test broker most Messages past the first few dozen were counted as delivered ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). This applies however the Checkout ends with Messages still held, including at shutdown and so at the roll above. A Message on a queue with a finite `delivery-limit` can reach the limit sooner than its attempts suggest. Where the guides say Keep costs no Delivery Budget, this note takes precedence for 0.6.0.
+**Known issue: ending a Checkout through Keep can use up Delivery Budget on quorum queues.** It is not fixed in 0.6.0. Volverán closes the channel straight after returning the Messages, and closing it overtakes `nack`s still on their way: on the test broker most Messages past the first few dozen were counted as delivered ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). This applies however the Checkout ends with Messages still held, including at shutdown and so whenever the pod rolls. A Message on a queue with a finite `delivery-limit` can reach the limit sooner than its attempts suggest. Where the guides say Keep costs no Delivery Budget, this note takes precedence for 0.6.0.
 
 ### Added
 
 - `check-config`, a mode of the image that checks a profiles file and the environment with the parser and checks startup uses, contacts no broker and exits 0, 1 (startup would refuse this) or 2 (1.0 will refuse a key in this file) ([guide](docs/configuration.md#checking-the-configuration)).
-- The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders, which changes the ConfigMap and so rolls the pod once on upgrade.
+- The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders only on PostgreSQL.
 - `VOLVERAN_POSTGRES_URL` keeps the audit store in PostgreSQL instead of SQLite: Audit Entries, Discarded bodies and their retention, Replay Rule state, depth history, notifications and Alerts. It answers as SQLite does, also for a NUL in a message id or other plain text. Without it nothing changes. See the new [PostgreSQL guide](docs/postgresql.md), which includes sizing.
-- `copy-audit-store`, a mode of the image that copies a SQLite store of any released version into an empty PostgreSQL while Volverán is stopped, with ids and Discarded bodies, verifying each table's row count. A non-empty target is refused ([guide](docs/postgresql.md#copying-the-audit-trail)).
+- `copy-audit-store`, a mode of the image that copies a SQLite store of any released version into an empty PostgreSQL while Volverán is stopped, with ids and Discarded bodies, verifying each table's row count. The source is left byte for byte as it was: an older store is migrated in a temporary copy. A non-empty target is refused ([guide](docs/postgresql.md#copying-the-audit-trail)).
 - Volverán sets `synchronous_commit` to `on` on its PostgreSQL connections, whatever the server's default, so a settled Audit Entry is durable.
 - The chart keeps the audit store in PostgreSQL with `postgres.existingSecret`, reading the URL from that Secret, requiring TLS by default (`postgres.requireTls`), and trusting a mounted CA with `postgres.ca`. Then it renders no claim and no data volume. Without it the render does not change.
 - `VOLVERAN_POSTGRES_REQUIRE_TLS` and `VOLVERAN_POSTGRES_CA_FILE` require TLS to PostgreSQL, with a verified certificate.
@@ -40,6 +39,7 @@ If you choose PostgreSQL:
 ### Changed
 
 - An Apply attempts no further step once the audit store fails a write, on either store. The Message in progress finishes, and the rest are reported `not-attempted` and go back to their queue, where before each one was tried and failed in turn.
+- A Checkout's `endReason` has one more value, `start-failed`, for a Checkout whose search for Died Again Messages failed, which used to say `operator`. The API answers an error for such a start, so no view shows it today.
 - Volverán refuses to start on an audit store newer than it understands, naming both versions. Downgrades were never supported, and now cannot damage the store.
 - A metrics scrape no longer reads the audit store. `volveran_replay_rule_paused`, `volveran_alerts_firing` and `volveran_audit_store_body_bytes` come from a reading taken in the background, at most 15 seconds old ([metrics](docs/observability.md#metrics)).
 

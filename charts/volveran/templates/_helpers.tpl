@@ -39,9 +39,16 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- .Values.brokerProfiles.existingConfigMap | default (printf "%s-profiles" (include "volveran.fullname" .)) -}}
 {{- end -}}
 
-{{/* The profiles.yaml file rendered from brokerProfiles.profiles. */}}
+{{/*
+The profiles.yaml file rendered from brokerProfiles.profiles. On SQLite it has no
+version: adding one would change the ConfigMap's checksum, which rolls the pod on
+upgrade and ends open Checkouts. Volverán then logs a warning, harmless until 1.0.
+*/}}
 {{- define "volveran.profilesYaml" -}}
-{{- $file := dict "version" 1 "profiles" .Values.brokerProfiles.profiles -}}
+{{- $file := dict "profiles" .Values.brokerProfiles.profiles -}}
+{{- if .Values.postgres.existingSecret -}}
+{{- $_ := set $file "version" 1 -}}
+{{- end -}}
 {{- with .Values.brokerProfiles.alertDestinations -}}
 {{- $_ := set $file "alertDestinations" . -}}
 {{- end -}}

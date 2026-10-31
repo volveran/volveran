@@ -14,8 +14,10 @@
 // `run` passes the ports to the command as VOLVERAN_TEST_AMQP_PORT,
 // VOLVERAN_TEST_MGMT_PORT, VOLVERAN_TEST_OIDC_PORT, VOLVERAN_TEST_OAUTH_AMQP_PORT,
 // VOLVERAN_TEST_OAUTH_MGMT_PORT and VOLVERAN_TEST_POSTGRES_PORT, and tears the broker down afterwards (also on
-// Ctrl-C) unless VOLVERAN_TEST_KEEP_BROKER=1.
+// Ctrl-C) unless VOLVERAN_TEST_KEEP_BROKER=1. With VOLVERAN_TEST_LOCK_FILE set, `run` waits
+// for that lock first and holds it until the broker is down.
 import { spawn, spawnSync } from 'node:child_process';
+import { acquireLock } from './test-broker-lock.mjs';
 import { composeFile, publishedPorts, repoRoot, testBrokerSettings } from './test-broker-env.mjs';
 
 const settings = testBrokerSettings(repoRoot, process.env);
@@ -85,8 +87,10 @@ if (command === 'up') {
     process.exit(2);
   }
   const keep = process.env.VOLVERAN_TEST_KEEP_BROKER === '1';
+  const releaseLock = process.env.VOLVERAN_TEST_LOCK_FILE ? await acquireLock(process.env.VOLVERAN_TEST_LOCK_FILE) : () => {};
   const finish = (status) => {
     if (!keep) down();
+    releaseLock();
     process.exit(status);
   };
   const started = await up();

@@ -51,6 +51,9 @@ function entry(overrides: Partial<NewAuditEntry> = {}): NewAuditEntry {
   };
 }
 
+/** The Audit Entry of a pause or resume of the rule `local/r`: no Message. */
+const ruleEntry = (action: 'rule_pause' | 'rule_resume', overrides: Partial<NewAuditEntry> = {}) => ({ ...entry({ action, messageId: null, checkoutId: null, rule: 'r', ...overrides }), message: null });
+
 export function auditStoreContract(name: string, open: () => Promise<OpenedAuditStore>): void {
   // Some of these write thousands of rows; a database over a network takes its time.
   describe(`the audit store contract: ${name}`, { timeout: 60_000 }, () => {
@@ -295,7 +298,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await store.ruleState.firstSeenAt(key, [NUL, 'a\0'])).toEqual(new Map([[NUL, AT]]));
 
         await store.ruleState.ensure(key, false);
-        await store.ruleState.setPaused(key, { reason: NUL, by: NUL, at: AT });
+        await store.ruleState.pause(key, { reason: NUL, by: NUL, at: AT }, ruleEntry('rule_pause'));
         expect(await store.ruleState.state(key)).toMatchObject({ paused: true, pausedReason: NUL, pausedBy: NUL });
         await store.ruleState.recordPass(key, { id: NUL, at: AT.toISOString(), status: 'failed', reason: NUL, summary: null });
         expect(await store.ruleState.passes(key)).toMatchObject([{ id: NUL, reason: NUL }]);
@@ -595,7 +598,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       it('starts a rule as declared, and keeps the stored state after that, across a restart', async () => {
         expect(await store.ruleState.state(KEY)).toBeNull();
         expect(await store.ruleState.ensure(KEY, true)).toEqual({ paused: true, pausedReason: null, pausedBy: null, pausedAt: null });
-        await store.ruleState.setPaused(KEY, null);
+        await store.ruleState.resume(KEY, ruleEntry('rule_resume'));
 
         await reopen();
 
@@ -610,11 +613,38 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
 
       it('remembers why, by whom and when a rule was paused, until it runs again', async () => {
-        await store.ruleState.setPaused(KEY, { reason: 'stop', by: 'ana', at: AT });
+        await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
         expect(await store.ruleState.state(KEY)).toEqual({ paused: true, pausedReason: 'stop', pausedBy: 'ana', pausedAt: AT.toISOString() });
 
-        await store.ruleState.setPaused(KEY, null);
+        await store.ruleState.resume(KEY, ruleEntry('rule_resume'));
         expect(await store.ruleState.state(KEY)).toEqual({ paused: false, pausedReason: null, pausedBy: null, pausedAt: null });
+      });
+
+      it('writes the Audit Entry of a pause and of a resume, done, with the state', async () => {
+        await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
+        await store.ruleState.resume(KEY, ruleEntry('rule_resume'));
+
+        const entries = await store.list();
+        expect(entries.map((e) => [e.action, e.outcome, e.rule])).toEqual([
+          ['rule_resume', 'done', 'r'],
+          ['rule_pause', 'done', 'r'],
+        ]);
+      });
+
+      it('changes nothing on a pause or a resume whose Audit Entry cannot be written', async () => {
+        const unwritable = { operator: { id: null as unknown as string, displayName: 'ana' } };
+        await store.ruleState.ensure(KEY, false);
+        await expect(store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause', unwritable))).rejects.toThrow();
+        expect((await store.ruleState.state(KEY))!.paused).toBe(false);
+
+        const died = await store.record(entry({ action: 'replay', rule: 'r', messageId: 'died' }));
+        const rule = { profile: 'local', name: 'r' };
+        expect(await store.ruleState.countDiedAgain(KEY, rule, [died], AT, new Date(0))).toBe(1);
+        await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
+        await expect(store.ruleState.resume(KEY, ruleEntry('rule_resume', unwritable))).rejects.toThrow();
+        expect((await store.ruleState.state(KEY))!.paused).toBe(true);
+        expect(await store.ruleState.countDiedAgain(KEY, rule, [], AT, new Date(0))).toBe(1);
+        expect((await store.list()).filter((e) => e.action === 'rule_resume')).toEqual([]);
       });
 
       it(`keeps the last ${PASS_HISTORY} passes of a rule, newest first, and a skipped pass without counts`, async () => {
@@ -681,7 +711,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await count([ours[0]!, ours[0]!, ours[1]!], 5)).toBe(2);
         // At 30 minutes, a 27-minute window leaves out the one first seen at 0 but keeps the one seen at 5.
         expect(await count([], 30, 27)).toBe(1);
-        await store.ruleState.clearDiedAgain(KEY);
+        await store.ruleState.resume(KEY, ruleEntry('rule_resume'));
         expect(await count([], 31)).toBe(0);
       });
     });
