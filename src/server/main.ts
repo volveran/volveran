@@ -50,9 +50,12 @@
 // Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
 //
 // `main.js check-config` checks all of this and exits, without listening (see
-// check-config.ts).
+// check-config.ts). `main.js copy-audit-store` copies the SQLite store in
+// VOLVERAN_DATA_DIR into the empty database at VOLVERAN_POSTGRES_URL and exits (see
+// audit/copy-audit-store.ts).
 import path from 'node:path';
 import { product } from '../shared/product.js';
+import { copyAuditStoreCommand } from './audit/copy-audit-store.js';
 import { checkConfig } from './check-config.js';
 import { ConfigError } from './config-error.js';
 import { startServer } from './server.js';
@@ -73,6 +76,14 @@ async function main() {
     const { exitCode, lines } = await checkConfig(settings);
     for (const line of lines) console.log(line);
     process.exitCode = exitCode;
+    return;
+  }
+  if (command === 'copy-audit-store') {
+    if (args.length > 0) {
+      throw new ConfigError('copy-audit-store takes no arguments: it copies VOLVERAN_DATA_DIR into VOLVERAN_POSTGRES_URL');
+    }
+    const lines = await copyAuditStoreCommand(process.env, path.resolve(process.env.VOLVERAN_DATA_DIR ?? 'data'));
+    for (const line of lines) console.log(line);
     return;
   }
   const server = await startServer({

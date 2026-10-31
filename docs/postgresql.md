@@ -125,6 +125,100 @@ Restore into an empty database of the same version or later, and point the URL a
 
 ## Moving from SQLite
 
-Setting the URL on an existing install starts on an empty database: it does not carry over what SQLite holds, and that stays untouched on its volume. Going back to SQLite is only a matter of removing the URL, though what was written to PostgreSQL stays there.
+Setting the URL on an existing install starts on an empty database: it does not carry over what SQLite holds, and that stays untouched on its volume. To carry it over, [copy it](#copying-the-audit-trail) first. Going back to SQLite is only a matter of removing the URL, though what was written to PostgreSQL stays there.
 
-<!-- #104 describes copying an existing store here: the `copy-audit-store` command, while Volverán is stopped, into an empty database, verifying row counts. -->
+## Copying the audit trail
+
+`copy-audit-store` copies a SQLite store into an empty PostgreSQL, so the record has no seam in it: Audit Entries with their ids and replay ids, Discarded bodies (Restore works on them as before), Replay Rule state, depth history, notifications and Alerts. It works on a store of any released version.
+
+**Volverán must be stopped.** Nothing can tell whether it is running, and anything it writes after the copy starts stays behind in SQLite.
+
+It reads the store in `VOLVERAN_DATA_DIR` and the target from `VOLVERAN_POSTGRES_URL`, with `VOLVERAN_POSTGRES_REQUIRE_TLS` and `VOLVERAN_POSTGRES_CA_FILE` as [above](#tls). It takes no arguments and needs no profiles file.
+
+```sh
+docker run --rm \
+  -v volveran-data:/data \
+  -e VOLVERAN_POSTGRES_URL \
+  ghcr.io/volveran/volveran:<version> node dist/server/main.js copy-audit-store
+```
+
+From a checkout, `npm run build`, then `node dist/server/main.js copy-audit-store`. It prints each table's row count once PostgreSQL's matches SQLite's, then `OK`. It never prints the password.
+
+Then start Volverán with the URL set.
+
+What it does, and what it refuses:
+
+- **A target with rows in any of Volverán's tables is refused**, so two audit trails cannot be merged by accident. A database where Volverán has only created its tables counts as empty. One it has run on for a while does not: create a new database.
+- **Everything is one transaction.** On any failure, or if a row count differs, nothing is committed: fix the cause and run it again. The exit status is `1`, with one line saying why, as in the [table above](#when-it-cannot-start).
+- **An older store is first brought up to this version's schema**, in place, as starting this version on it would. So run the version you will run on PostgreSQL, and take a [backup of the volume](kubernetes.md#backup-and-restore-of-the-audit-store) first if you may want to go back to an older version. A store newer than this version is refused. A path with no store is refused too, and creates nothing.
+- **Row ids continue** after the highest SQLite ever gave, including ones retention has since removed, so no id means two things.
+- **SQLite keeps its data.** Nothing is deleted from it, and the rules above for going back apply: what happens after the move is only in PostgreSQL.
+
+The volume needs no more free space than a migration takes. Size the database as [above](#sizing). Bodies are sent in batches, so memory stays small, but a large store takes a while. Nothing times out.
+
+### On Kubernetes
+
+The chart refuses `persistence.existingClaim` together with `postgres.existingSecret`, because a release on PostgreSQL mounts no volume. So run the copy as a Job of its own, while the release is still on SQLite and stopped, and only then switch the release over.
+
+1. Create the database and the Secret, as [above](#connect-with-the-chart).
+2. Stop Volverán: with Flux, `flux suspend helmrelease volveran -n volveran` first, then `kubectl -n volveran scale deployment/volveran --replicas=0`. The claim is `ReadWriteOnce` by default, so the Job could not mount it otherwise.
+3. Run the Job below and read its log. Use the image version of the release you are upgrading to, and the name of your claim (`<release fullname>-data`; `kubectl -n volveran get pvc`).
+
+   ```yaml
+   apiVersion: batch/v1
+   kind: Job
+   metadata:
+     name: volveran-copy-audit-store
+     namespace: volveran
+   spec:
+     backoffLimit: 0
+     template:
+       spec:
+         restartPolicy: Never
+         automountServiceAccountToken: false
+         securityContext:
+           runAsNonRoot: true
+           runAsUser: 1000
+           runAsGroup: 1000
+           fsGroup: 1000
+           seccompProfile:
+             type: RuntimeDefault
+         containers:
+           - name: copy
+             image: ghcr.io/volveran/volveran:<version>
+             args: ["node", "dist/server/main.js", "copy-audit-store"]
+             securityContext:
+               readOnlyRootFilesystem: true
+               allowPrivilegeEscalation: false
+               capabilities:
+                 drop: ["ALL"]
+             env:
+               - name: VOLVERAN_DATA_DIR
+                 value: /data
+               - name: VOLVERAN_POSTGRES_URL
+                 valueFrom:
+                   secretKeyRef:
+                     name: volveran-postgres
+                     key: url
+               - name: VOLVERAN_POSTGRES_REQUIRE_TLS
+                 value: "true"
+               # With a private CA, mount it and name it:
+               # - name: VOLVERAN_POSTGRES_CA_FILE
+               #   value: /ca/ca.crt
+             volumeMounts:
+               - name: data
+                 mountPath: /data
+         volumes:
+           - name: data
+             persistentVolumeClaim:
+               claimName: volveran-data
+   ```
+
+   ```sh
+   kubectl -n volveran wait --for=condition=complete --timeout=1h job/volveran-copy-audit-store
+   kubectl -n volveran logs job/volveran-copy-audit-store
+   kubectl -n volveran delete job volveran-copy-audit-store
+   ```
+
+   A NetworkPolicy of your own that limits egress in the namespace must let this pod reach PostgreSQL too.
+4. Set `postgres.existingSecret` and upgrade (with Flux: commit it and `flux resume helmrelease volveran -n volveran`). The claim stays in the cluster, untouched, until you delete it.

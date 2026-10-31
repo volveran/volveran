@@ -5,19 +5,23 @@ import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
+import { copyAuditStore } from '../../src/server/audit/copy-audit-store.js';
 import { copyFixtureStore, RELEASED_VERSIONS, upgradeFixtures } from '../support/upgrade-fixtures.js';
 import { fixtureAppOptions, upgradeChecks } from '../support/upgrade-checks.js';
 import { makeTempDir, startApp, type TestApp } from './harness.js';
-import { storeUnderTest } from './test-store.js';
+import { storeEnv } from './test-store.js';
 import { product } from '../../src/shared/product.js';
 
-// The fixtures are SQLite stores: on PostgreSQL there is nothing to start on until they are copied there (#104).
-describe.runIf(storeUnderTest() === 'sqlite').each(upgradeFixtures)('upgrading from $version', (fixture) => {
+// On PostgreSQL the same checks run after `copy-audit-store` moved the fixture there, so a
+// store of any release is proved to work the same after the move.
+describe.each(upgradeFixtures)('upgrading from $version', (fixture) => {
   let app: TestApp;
   let dataDir: string;
   beforeEach(async () => {
     dataDir = await makeTempDir('upgrade');
     await copyFixtureStore(fixture.version, dataDir);
+    const store = await storeEnv(dataDir);
+    if (store) await copyAuditStore({ dataDir, postgresUrl: store.env.VOLVERAN_POSTGRES_URL!, tls: null });
     app = await startApp(await fixtureAppOptions(fixture, dataDir));
   });
   afterEach(async () => {
