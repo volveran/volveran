@@ -34,4 +34,16 @@ describe('the connection to PostgreSQL', () => {
     // A ROLLBACK on the same silent connection would take a second timeout.
     expect(Date.now() - startedAt).toBeLessThan(2 * queryTimeoutMs);
   });
+
+  it('commits durably on every connection, whatever the database is set to', async () => {
+    database = await createTestDatabase();
+    await database.query(`ALTER DATABASE ${new URL(database.url).pathname.slice(1)} SET synchronous_commit = off`);
+    pool = createPool(database.url);
+
+    const clients = await Promise.all([pool.connect(), pool.connect()]);
+    const answers = await Promise.all(clients.map((client) => client.query<{ synchronous_commit: string }>('SHOW synchronous_commit')));
+    for (const client of clients) client.release();
+
+    expect(answers.map(({ rows }) => rows[0]!.synchronous_commit)).toEqual(['on', 'on']);
+  });
 });

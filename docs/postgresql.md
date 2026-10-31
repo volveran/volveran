@@ -81,7 +81,7 @@ Volverán prints one line saying why and exits with status 1, so the pod restart
 
 ## When the database goes away
 
-Nothing is settled without its Audit Entry ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)):
+Nothing is settled without its Audit Entry ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)), and Volverán sets `synchronous_commit` to `on` on its connections, whatever the server's default:
 
 - **An Apply stops.** If a Message's Audit Entry cannot be written, that Message is reported `failed` and the rest `not-attempted`, and all of them go back to their queue (on a quorum queue, a large Checkout can use up Delivery Budget as it ends; see the [changelog](../CHANGELOG.md)). If the database goes while a step is in progress, that step finishes, since its `pending` Audit Entry is already committed. The entry stays `pending`, because its outcome could not be written. Look at the Message in question: it was settled, and Apply's result in the web app says so.
 - **`/readyz` answers `503`**, within 2 seconds even if the database has vanished without closing its connections, so traffic goes elsewhere or the Service has no endpoints. The change is logged once. `/healthz` keeps answering `200`, so the pod is not restarted. Neither ever depends on a broker.

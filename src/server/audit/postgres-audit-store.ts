@@ -1,6 +1,7 @@
 // The audit store interface on PostgreSQL (ADR 0013). The pool is bounded, and a call
 // of several statements runs on one connection, in one transaction (`transaction`).
-// A commit is durable when its promise resolves, as ADR 0001 needs of `record`.
+// A commit is durable when its promise resolves, as ADR 0001 needs of `record`:
+// every connection sets `synchronous_commit` to `on` (createPool).
 import type pg from 'pg';
 import { insertEntry, searchEntries, toEntry, type EntryRow } from './audit-entry-sql.js';
 import type {

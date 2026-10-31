@@ -76,6 +76,12 @@ export function createPool(connectionString: string, { tls, queryTimeoutMs = QUE
     Client: StoreClient,
     ...(tls && { ssl: { rejectUnauthorized: true, ca: tls.ca } }),
   });
+  // ADR 0001 needs a commit durable when it answers, whatever the database or role is set
+  // to. This is queued ahead of anything the connection is asked. If it fails, the
+  // connection goes, so nothing commits on it with the setting in doubt.
+  pool.on('connect', (client) => {
+    client.query('SET synchronous_commit = on').catch(() => client.end().catch(() => {}));
+  });
   // A connection lost while idle. The pool drops it and the next call makes a new one or
   // rejects; without a listener, the event would stop the process.
   pool.on('error', () => {});
