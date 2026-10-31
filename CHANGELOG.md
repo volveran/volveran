@@ -39,6 +39,7 @@ If you choose PostgreSQL:
 ### Changed
 
 - An Apply attempts no further step once the audit store fails a write, on either store. The Message in progress finishes, and the rest are reported `not-attempted` and go back to their queue, where before each one was tried and failed in turn.
+- A Checkout's `endReason` has one more value, `start-failed`, for a Checkout whose search for Died Again Messages failed, which used to say `operator`. The API answers an error for such a start, so no view shows it today.
 - Volverán refuses to start on an audit store newer than it understands, naming both versions. Downgrades were never supported, and now cannot damage the store.
 - A metrics scrape no longer reads the audit store. `volveran_replay_rule_paused`, `volveran_alerts_firing` and `volveran_audit_store_body_bytes` come from a reading taken in the background, at most 15 seconds old ([metrics](docs/observability.md#metrics)).
 

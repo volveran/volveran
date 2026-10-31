@@ -228,6 +228,8 @@ function endedBecause(reason: EndReason | null, requester: string): string {
       return 'the Checkout ended when Volverán shut down';
     case 'applied':
       return 'the Checkout was Applied';
+    case 'start-failed':
+      return 'the Checkout could not start';
     case null:
       return 'the Checkout is over';
   }

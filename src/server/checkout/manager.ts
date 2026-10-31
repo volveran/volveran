@@ -267,7 +267,7 @@ export class CheckoutManager {
     } catch (err) {
       // It holds Messages by now, so they go back as at any end. If it was lost
       // during the search that has been done, and the queue may be someone else's.
-      await this.finish(checkout, 'operator');
+      await this.finish(checkout, 'start-failed');
       throw err;
     }
     this.checkouts.set(checkout.id, checkout);
