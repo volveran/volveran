@@ -17,5 +17,5 @@ auditStoreContract(
       cleanup: () => database.drop(),
     };
   },
-  ['Audit Entries', 'search', 'replay trail', 'closing', 'a store newer than the binary'],
+  ['Audit Entries', 'plain text', 'search', 'replay trail', 'retention', 'closing', 'a store newer than the binary'],
 );

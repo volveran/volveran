@@ -11,7 +11,7 @@ All notable changes to Volverán are recorded here. The format is based on
 - `check-config`, a mode of the image that checks a profiles file and the environment with the parser and checks startup uses, contacts no broker and exits 0, 1 (startup would refuse this) or 2 (1.0 will refuse a key in this file) ([guide](docs/configuration.md#checking-the-configuration)).
 - The profiles file has a format version, `version: 1`. A file without it is still read as version 1, with a startup warning; any other version is refused. The chart writes it into the file it renders, which changes the ConfigMap and so rolls the pod once on upgrade.
 
-- `VOLVERAN_POSTGRES_URL` keeps Audit Entries in PostgreSQL instead of SQLite, the first part of the PostgreSQL audit store. It is not ready for use yet: retention, Replay Rules, depth history, notifications and Alerts follow. Without it nothing changes.
+- `VOLVERAN_POSTGRES_URL` keeps Audit Entries in PostgreSQL instead of SQLite, the first part of the PostgreSQL audit store. Discard, Restore and body retention work on it, with a NUL in plain text kept as on SQLite. It is not ready for use yet: Replay Rules, depth history, notifications and Alerts follow. Without it nothing changes.
 
 ### Changed
 
