@@ -17,6 +17,21 @@ describe('loadConfig', () => {
     });
   });
 
+  it('keeps the audit store on SQLite without a PostgreSQL URL, and on PostgreSQL with one', () => {
+    expect(loadConfig({ VOLVERAN_OPERATOR: 'ana' }, '127.0.0.1')).toMatchObject({ config: { postgresUrl: null } });
+    for (const url of ['postgres://volveran:pw@db:5432/volveran', 'postgresql://db/volveran']) {
+      expect(loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_URL: url }, '127.0.0.1')).toMatchObject({ config: { postgresUrl: url } });
+    }
+  });
+
+  it('refuses a PostgreSQL URL it cannot use, without repeating what could be a password', () => {
+    for (const url of ['', 'db.example.com/volveran', 'mysql://user:hunter2@db/volveran']) {
+      const result = loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_POSTGRES_URL: url }, '127.0.0.1');
+      expect(result).toEqual({ ok: false, error: expect.stringContaining('VOLVERAN_POSTGRES_URL') });
+      expect(JSON.stringify(result)).not.toContain('hunter2');
+    }
+  });
+
   it('reports the first setting that is wrong', () => {
     expect(loadConfig({ VOLVERAN_OPERATOR: 'ana', VOLVERAN_BODY_RETENTION_DAYS: 'never' }, '127.0.0.1')).toEqual({
       ok: false,

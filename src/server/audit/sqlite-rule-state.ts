@@ -81,7 +81,7 @@ export class SqliteRuleStateStore implements RuleStateStore {
       this.db
         .prepare(
           `DELETE FROM replay_rule_passes WHERE rule_key = ? AND id NOT IN (
-             SELECT id FROM replay_rule_passes WHERE rule_key = ? ORDER BY at DESC, rowid DESC LIMIT ?)`,
+             SELECT id FROM replay_rule_passes WHERE rule_key = ? ORDER BY at DESC, seq DESC LIMIT ?)`,
         )
         .run(ruleKey, ruleKey, PASS_HISTORY);
       this.db.exec('COMMIT');
@@ -94,7 +94,7 @@ export class SqliteRuleStateStore implements RuleStateStore {
   /** The rule's kept passes, newest first. */
   async passes(ruleKey: string): Promise<RulePass[]> {
     const rows = this.db
-      .prepare('SELECT * FROM replay_rule_passes WHERE rule_key = ? ORDER BY at DESC, rowid DESC')
+      .prepare('SELECT * FROM replay_rule_passes WHERE rule_key = ? ORDER BY at DESC, seq DESC')
       .all(ruleKey) as unknown as PassRow[];
     return rows.map((r) => ({
       id: r.id,

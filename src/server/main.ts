@@ -17,6 +17,8 @@
 //                           server; none when run from source, see web-root.ts)
 //   VOLVERAN_DATA_DIR       the audit store (Audit Entries, Discarded Messages);
 //                           default ./data, /data in the Docker image
+//   VOLVERAN_POSTGRES_URL   keeps the audit store in this PostgreSQL database
+//                           instead (postgres://...); unset means SQLite
 //   VOLVERAN_CHECKOUT_MAX_MESSAGES, VOLVERAN_CHECKOUT_MAX_MB
 //                           Checkout limits (default 1000 Messages, 100 MB)
 //   VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES

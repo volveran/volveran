@@ -17,7 +17,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { fromAmqpJson, toAmqpJson } from './amqp-json.js';
+import { insertEntry, searchEntries, toEntry, type EntryRow } from './audit-entry-sql.js';
 import type {
   AlertStore,
   AuditEntry,
@@ -33,9 +33,8 @@ import { SqliteAlertStore } from './sqlite-alerts.js';
 import { SqliteHistoryStore } from './sqlite-history.js';
 import { SqliteNotificationStore } from './sqlite-notifications.js';
 import { SqliteRuleStateStore } from './sqlite-rule-state.js';
-import type { AuditAction, AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
-import type { Filter } from '../../shared/filters.js';
-import type { Role } from '../../shared/roles.js';
+import { refuseNewerStore } from './store-version.js';
+import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
 /** Append-only: each entry runs once, in order, recorded in PRAGMA user_version. */
 const MIGRATIONS: string[] = [
@@ -228,6 +227,29 @@ const MIGRATIONS: string[] = [
   // the Replay Rule of a notification. Rows from before stay NULL.
   `ALTER TABLE sampling_runs ADD COLUMN interval_ms INTEGER;
    ALTER TABLE notifications ADD COLUMN replay_rule TEXT;`,
+  // v17 (#99): passes of the same moment are ordered by an explicit sequence, as on PostgreSQL, not by rowid.
+  `CREATE TABLE replay_rule_passes_v17 (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+     id TEXT NOT NULL UNIQUE,
+     rule_key TEXT NOT NULL,
+     at INTEGER NOT NULL,
+     status TEXT NOT NULL,
+     reason TEXT,
+     held INTEGER,
+     replayed INTEGER,
+     moved INTEGER,
+     used_up INTEGER,
+     not_due INTEGER,
+     no_match INTEGER,
+     failed INTEGER,
+     cannot_replay INTEGER
+   );
+   INSERT INTO replay_rule_passes_v17 (id, rule_key, at, status, reason, held, replayed, moved, used_up, not_due, no_match, failed, cannot_replay)
+     SELECT id, rule_key, at, status, reason, held, replayed, moved, used_up, not_due, no_match, failed, cannot_replay
+     FROM replay_rule_passes ORDER BY rowid;
+   DROP TABLE replay_rule_passes;
+   ALTER TABLE replay_rule_passes_v17 RENAME TO replay_rule_passes;
+   CREATE INDEX replay_rule_passes_rule ON replay_rule_passes (rule_key, at);`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -247,7 +269,12 @@ export class SqliteAuditStore implements AuditStore {
     if (dataDir) mkdirSync(dataDir, { recursive: true });
     this.db = new DatabaseSync(dataDir ? path.join(dataDir, AUDIT_DB_FILE) : ':memory:');
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
-    this.migrate();
+    try {
+      this.migrate();
+    } catch (err) {
+      this.db.close();
+      throw err;
+    }
     this.ruleState = new SqliteRuleStateStore(this.db);
     this.history = new SqliteHistoryStore(this.db);
     this.notifications = new SqliteNotificationStore(this.db);
@@ -256,48 +283,11 @@ export class SqliteAuditStore implements AuditStore {
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
   async record(entry: NewAuditEntry): Promise<number> {
-    const { message, destination } = entry;
+    const { message } = entry;
+    const { sql, values } = insertEntry(entry, () => '?');
     this.db.exec('BEGIN');
     try {
-      const result = this.db
-        .prepare(
-          `INSERT INTO audit_entries (created_at, operator_id, operator_name, broker_user, profile, vhost, queue,
-             message_id, action, reason, destination_exchange, destination_routing_key, destination_queue,
-             outcome, checkout_id, message_properties, message_headers, body_bytes, replay_id, restore_of, operator_role,
-             approver_id, approver_name,
-             filter, message_count, rate, rule, rule_pass_id, canary)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          entry.at.getTime(),
-          entry.operator.id,
-          entry.operator.displayName,
-          entry.brokerUser,
-          entry.profile,
-          entry.vhost,
-          entry.queue,
-          entry.messageId,
-          entry.action,
-          entry.reason,
-          destination?.exchange ?? null,
-          destination?.routingKey ?? null,
-          destination?.queue ?? null,
-          entry.checkoutId,
-          message ? JSON.stringify(toAmqpJson(message.properties)) : null,
-          message ? JSON.stringify(toAmqpJson(message.headers)) : null,
-          message?.body ? message.body.length : null,
-          entry.replayId ?? null,
-          entry.restoreOf ?? null,
-          entry.role ?? null,
-          entry.approver?.id ?? null,
-          entry.approver?.displayName ?? null,
-          entry.filter ? JSON.stringify(entry.filter) : null,
-          entry.messageCount ?? null,
-          entry.rate ?? null,
-          entry.rule ?? null,
-          entry.rulePassId ?? null,
-          entry.canary ? 1 : 0,
-        );
+      const result = this.db.prepare(sql).run(...values);
       const id = Number(result.lastInsertRowid);
       if (message?.body) {
         this.db.prepare('INSERT INTO audit_message_bodies (entry_id, body) VALUES (?, ?)').run(id, message.body);
@@ -321,46 +311,17 @@ export class SqliteAuditStore implements AuditStore {
 
   /** The entries matching `query` (every entry by default), newest first. */
   async list(query: AuditQuery = {}): Promise<AuditEntry[]> {
-    const where: string[] = [];
-    const params: Array<string | number> = [];
-    const match = (sql: string, ...values: Array<string | number>) => {
-      where.push(sql);
-      params.push(...values);
-    };
-    if (query.queue !== undefined) match('(queue = ? OR destination_queue = ?)', query.queue, query.queue);
-    if (query.messageId !== undefined) match('message_id = ?', query.messageId);
-    if (query.action !== undefined) match('action = ?', query.action);
-    if (query.checkoutId !== undefined) match('checkout_id = ?', query.checkoutId);
-    if (query.replayId !== undefined) match('replay_id = ?', query.replayId);
-    if (query.profile !== undefined) match('profile = ?', query.profile);
-    const scope = query.profiles;
-    if (scope && 'only' in scope) {
-      match(scope.only.length ? `profile IN (${scope.only.map(() => '?').join(', ')})` : '0', ...scope.only);
-    } else if (scope?.except.length) {
-      match(`profile NOT IN (${scope.except.map(() => '?').join(', ')})`, ...scope.except);
-    }
-    if (query.operator !== undefined) match('(operator_id = ? OR operator_name = ?)', query.operator, query.operator);
-    if (query.restoreOf !== undefined) match('restore_of = ?', query.restoreOf);
-    if (query.rule !== undefined) match('rule = ?', query.rule);
-    if (query.from !== undefined) match('created_at >= ?', query.from.getTime());
-    if (query.to !== undefined) match('created_at <= ?', query.to.getTime());
-    let sql = 'SELECT * FROM audit_entries';
-    if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
-    sql += ' ORDER BY created_at DESC, id DESC';
-    if (query.limit !== undefined) {
-      sql += ' LIMIT ?';
-      params.push(query.limit);
-    }
+    const { sql, values } = searchEntries(query, () => '?');
     return this.db
       .prepare(sql)
-      .all(...params)
-      .map((row) => toEntry(row as unknown as Row));
+      .all(...values)
+      .map((row) => toEntry(row as unknown as EntryRow));
   }
 
   /** One entry, or null. */
   async get(id: number): Promise<AuditEntry | null> {
     const row = this.db.prepare('SELECT * FROM audit_entries WHERE id = ?').get(id);
-    return row ? toEntry(row as unknown as Row) : null;
+    return row ? toEntry(row as unknown as EntryRow) : null;
   }
 
   /** The stored body of entry `id`'s Message, byte for byte; null when none is stored. */
@@ -385,7 +346,7 @@ export class SqliteAuditStore implements AuditStore {
            SELECT id, created_at,
                   SUM(body_bytes) OVER (ORDER BY created_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS newer_bytes
            FROM audit_entries WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL
-         ) WHERE created_at < ? OR newer_bytes > ?`,
+         ) AS stored WHERE created_at < ? OR newer_bytes > ?`,
       )
       .all(now.getTime() - maxAgeMs, maxBodyBytes)
       .map((row) => Number((row as { id: number }).id));
@@ -422,6 +383,7 @@ export class SqliteAuditStore implements AuditStore {
 
   private migrate() {
     const version = Number((this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+    refuseNewerStore(version, MIGRATIONS.length);
     for (let v = version; v < MIGRATIONS.length; v++) {
       this.db.exec('BEGIN');
       try {
@@ -434,88 +396,4 @@ export class SqliteAuditStore implements AuditStore {
       }
     }
   }
-}
-
-interface Row {
-  id: number;
-  created_at: number;
-  operator_id: string;
-  operator_name: string;
-  broker_user: string;
-  profile: string;
-  vhost: string;
-  queue: string;
-  message_id: string | null;
-  action: AuditAction;
-  reason: string | null;
-  destination_exchange: string | null;
-  destination_routing_key: string | null;
-  destination_queue: string | null;
-  outcome: AuditOutcome;
-  outcome_reason: string | null;
-  checkout_id: string | null;
-  message_properties: string | null;
-  message_headers: string | null;
-  body_bytes: number | null;
-  replay_id: string | null;
-  restore_of: number | null;
-  body_expired_at: number | null;
-  operator_role: Role | null;
-  approver_id: string | null;
-  approver_name: string | null;
-  filter: string | null;
-  message_count: number | null;
-  rate: number | null;
-  rule: string | null;
-  rule_pass_id: string | null;
-  canary: number;
-  canary_outcome: AuditCanaryOutcome | null;
-}
-
-function toEntry(row: Row): AuditEntry {
-  return {
-    id: row.id,
-    at: new Date(row.created_at),
-    operatorId: row.operator_id,
-    operatorName: row.operator_name,
-    role: row.operator_role,
-    approverId: row.approver_id,
-    approverName: row.approver_name,
-    brokerUser: row.broker_user,
-    profile: row.profile,
-    vhost: row.vhost,
-    queue: row.queue,
-    messageId: row.message_id,
-    action: row.action,
-    reason: row.reason,
-    destination:
-      row.destination_routing_key === null
-        ? null
-        : {
-            exchange: row.destination_exchange ?? '',
-            routingKey: row.destination_routing_key,
-            queue: row.destination_queue,
-          },
-    outcome: row.outcome,
-    outcomeReason: row.outcome_reason,
-    checkoutId: row.checkout_id,
-    replayId: row.replay_id,
-    restoreOf: row.restore_of,
-    bodyExpiredAt: row.body_expired_at === null ? null : new Date(row.body_expired_at),
-    filter: row.filter === null ? null : (JSON.parse(row.filter) as Filter),
-    messageCount: row.message_count,
-    rate: row.rate,
-    rule: row.rule,
-    rulePassId: row.rule_pass_id,
-    canary: row.canary === 1,
-    canaryOutcome: row.canary_outcome,
-    message:
-      row.message_properties === null
-        ? null
-        : {
-            properties: fromAmqpJson(JSON.parse(row.message_properties)) as Record<string, unknown>,
-            headers: fromAmqpJson(JSON.parse(row.message_headers ?? '{}')) as Record<string, unknown>,
-            bodyBytes: row.body_bytes,
-          },
-  };
 }
