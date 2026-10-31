@@ -16,8 +16,7 @@
 //    when the rule says `whenAttemptsUsedUp: { moveTo }` (an ordinary Move,
 //    its Audit Entry naming the rule). It Applies at the rule's Replay Rate,
 //    with no Approval or confirmation; the Apply ends the Checkout, which
-//    Keeps every other Message in order (no Delivery Budget used on a quorum
-//    queue). With nothing to do it just ends the Checkout.
+//    Keeps every other Message in order. With nothing to do it just ends the Checkout.
 //
 // The result is the pass's counts, and what the automatic stop looks at: the
 // Audit Entries its Died Again Messages last came from, and how its publishes

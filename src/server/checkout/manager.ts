@@ -5,7 +5,8 @@
 //
 // Ending a Checkout nack-requeues every held Message one at a time in queue
 // order, then the overflow, before closing the channel: on quorum queues that
-// costs no Delivery Budget and keeps the order. A closed channel or
+// keeps the order, and costs no Delivery Budget only for what the queue has
+// taken back when the channel closes (ADR 0006). A closed channel or
 // connection (a crash, the network, a quorum consumer timeout arriving as a
 // channel close) makes it a Lost Checkout: the broker has returned
 // everything, at the cost of one delivery on quorum queues.
@@ -695,8 +696,9 @@ export class CheckoutManager {
     try {
       if (channel) {
         // Keep = basic.nack(requeue), one at a time in queue order: unlike
-        // reject or closing with unacked deliveries it uses up no Delivery
-        // Budget, and a quorum queue puts them back in the order returned.
+        // reject it uses up no Delivery Budget by itself, and a quorum queue
+        // puts them back in the order returned. Closing straight after can
+        // overtake the nacks, which does use it up (ADR 0006).
         for (const m of checkout.held.values()) channel.nack(m, false, true);
         for (const m of checkout.overflow) channel.nack(m, false, true);
         await channel.close();

@@ -23,7 +23,7 @@ These follow from Volverán's design and are not values:
   to delete the audit trail.
 
 A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues
-without costing Delivery Budget; `pod.terminationGracePeriodSeconds` gives that time to finish.
+(on a quorum queue, a large Checkout can use up Delivery Budget as it ends); `pod.terminationGracePeriodSeconds` gives that time to finish.
 
 ## Install
 

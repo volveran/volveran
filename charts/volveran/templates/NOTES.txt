@@ -51,4 +51,5 @@ release is uninstalled; delete it by hand to delete the audit trail.
 {{- end }}
 
 A deploy or pod restart signs every Operator out and ends open Checkouts
-(their Messages return to their queues without costing Delivery Budget).
+(their Messages return to their queues; on a quorum queue, a large Checkout
+can use up Delivery Budget as it ends).

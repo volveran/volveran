@@ -59,7 +59,7 @@ app/
 
 ## Upgrades
 
-`ref.semver: "0.6.x"` installs every 0.6 patch release once it is published and signed. To move to a new minor version, change the range after reading the [changelog](../../CHANGELOG.md). A deploy signs everyone out and ends open Checkouts (their Messages go back to their queues without costing Delivery Budget), so `flux suspend helmrelease volveran -n volveran` holds upgrades back during triage work and `flux resume` releases them.
+`ref.semver: "0.6.x"` installs every 0.6 patch release once it is published and signed. To move to a new minor version, change the range after reading the [changelog](../../CHANGELOG.md). A deploy signs everyone out and ends open Checkouts (their Messages go back to their queues; on a quorum queue, a large Checkout can use up Delivery Budget as it ends), so `flux suspend helmrelease volveran -n volveran` holds upgrades back during triage work and `flux resume` releases them.
 
 ## Removing it
 
