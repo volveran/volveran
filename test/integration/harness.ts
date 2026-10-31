@@ -18,7 +18,6 @@ import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-ru
 import type { RulePass, RulePassSummary } from '../../src/shared/replay-rules.js';
 import { startServer, type ServerOptions } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
-import { lockQueueName } from '../../src/server/triage/checkout-lock.js';
 import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
 import { brokerUsers, eventually, management, testBroker } from '../broker/client.js';
 import { storeEnv } from './test-store.js';
@@ -439,22 +438,6 @@ export function ranSummary(pass: RulePass | null): RulePassSummary {
   if (!pass) throw new Error('Expected a Rule Pass, but none ran: the rule is paused or a pass of it is running');
   if (pass.status !== 'ran') throw new Error(`Expected a Rule Pass to run, but it was ${pass.status}: ${pass.reason}`);
   return pass.summary!;
-}
-
-/**
- * Waits until the broker has deleted the lock queue of `queue`. The broker does that
- * shortly after the connection holding it closes, so a Checkout's end can return while
- * the next start would still be refused with `checkout_in_progress` (about 50 ms here).
- */
-export async function lockFreed(queue: string, vhost = '/'): Promise<void> {
-  await eventually(
-    async () => {
-      const { status } = await management(`/queues/${encodeURIComponent(vhost)}/${encodeURIComponent(lockQueueName(queue))}`);
-      if (status !== 404) throw new Error(`The lock queue of "${queue}" is still there (management API answered ${status})`);
-    },
-    15_000,
-    20,
-  );
 }
 
 /**

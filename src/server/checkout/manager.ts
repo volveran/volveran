@@ -98,7 +98,7 @@ import {
   operatorHasCheckout,
 } from './errors.js';
 import { startExport, type CheckoutExport } from './export.js';
-import { openCheckout, type StartOptions } from './open.js';
+import { closeCheckoutConnection, openCheckout, type StartOptions } from './open.js';
 import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
 import { approvalSummary, pacedSteps, queueInfo, view as checkoutView, type ApprovalSummary, type CheckoutView } from './view.js';
 
@@ -237,6 +237,7 @@ export class CheckoutManager {
       limitedBy: null,
       connection: undefined,
       channel: undefined,
+      onlyConsumer: false,
       held: new Map(),
       overflow: [],
       heldBytes: 0,
@@ -259,7 +260,7 @@ export class CheckoutManager {
       });
     } catch (err) {
       this.release(checkout);
-      await checkout.connection?.close().catch(() => {});
+      await closeCheckoutConnection(checkout);
       throw err;
     }
     try {
@@ -697,7 +698,7 @@ export class CheckoutManager {
     checkout.status = 'ended';
     checkout.endReason = reason;
     this.cancelApprovalRequest(checkout);
-    const { channel, connection } = checkout;
+    const { channel } = checkout;
     try {
       if (channel) {
         // Keep = basic.nack(requeue), one at a time in queue order: unlike
@@ -711,8 +712,8 @@ export class CheckoutManager {
     } catch {
       // The channel is already gone: the broker has returned everything.
     }
-    // Closing the connection deletes the lock queue: the queue is free again.
-    await connection?.close().catch(() => {});
+    // With the lock queue deleted, the queue is free again.
+    await closeCheckoutConnection(checkout);
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);
