@@ -76,7 +76,6 @@ The delivery-counting table holds only while the channel stays open. A quorum qu
 - Closing the connection straight after `nack` uses up Delivery Budget on every Message.
 - Closing the channel straight after `nack` uses up Delivery Budget on most Messages past the first few dozen.
 - A passive declare's round trip after `nack` is not enough: closing the channel then can still use up Delivery Budget.
-- A quorum queue's passive declare can go on counting the consumers of a channel or connection after its close has answered, for up to about 200 ms on a broker short of CPU.
 
 ## Watch queue lifetime
 

@@ -257,9 +257,10 @@ const OWN_CONSUMERS_POLL_MS = 20;
 
 /**
  * Waits until a passive declare counts no consumer of a queue the Checkout was
- * alone on. A quorum queue goes on counting a closed channel's consumers for a
- * moment (docs/rabbitmq-behaviour.md, "Returning Messages before closing"), and
- * the next start would refuse with `queue_has_consumers`. Anyone who began
+ * alone on. A quorum queue can go on counting the consumers of a channel after
+ * its close has answered (measured with 200 Messages on a broker at 0.25 CPU: 7
+ * ends in 120, clearing within 100 ms; too rare to pin as a broker fact), and the
+ * next start would refuse with `queue_has_consumers`. Anyone who began
  * consuming meanwhile only costs this wait, as does a queue that has gone.
  */
 async function ownConsumersGone(connection: amqp.ChannelModel, queue: string): Promise<void> {
