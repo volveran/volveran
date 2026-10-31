@@ -80,6 +80,7 @@ The delivery-counting table holds only while the channel stays open. A quorum qu
 ## Watch queue lifetime
 
 - An exclusive, auto-delete queue declared on a connection disappears when that connection closes, whether the client closes it or the socket drops.
+- It disappears shortly after the close, not at once: a declare right after `connection.close` resolves can still get `405 RESOURCE_LOCKED`. Deleting the queue on its own connection first frees the name by the time `queue.delete-ok` arrives.
 
 ## Publishing
 

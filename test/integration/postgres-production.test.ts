@@ -126,6 +126,16 @@ describe('refusing to start on PostgreSQL', () => {
     expect((err as Error).message).not.toContain('volveran-test-pass');
     return err as ConfigError;
   };
+  /**
+   * Closing a pool answers before its backends have left pg_stat_activity (up to about
+   * 200 ms on a database short of CPU), so this waits for them, and fails on one that stays.
+   */
+  const connectionsClosed = () =>
+    eventually(async () => {
+      const dbName = new URL(database.url).pathname.slice(1);
+      const { rows } = await database.query('SELECT COUNT(*) AS others FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [dbName]);
+      expect(rows[0].others).toBe('0');
+    }, 5_000, 50);
   const withUser = (url: string, user: string, password: string) => {
     const u = new URL(url);
     u.username = user;
@@ -188,9 +198,7 @@ describe('refusing to start on PostgreSQL', () => {
       env: { ...teamModeEnv(baseUrl), VOLVERAN_OIDC_ISSUER: dead, VOLVERAN_POSTGRES_URL: database.url },
     });
     await expect(refused).rejects.toBeDefined();
-    const dbName = new URL(database.url).pathname.slice(1);
-    const { rows } = await database.query('SELECT COUNT(*) AS others FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [dbName]);
-    expect(rows[0].others).toBe('0');
+    await connectionsClosed();
   });
 
   it('closes its connections when the port is taken', async () => {
@@ -199,9 +207,7 @@ describe('refusing to start on PostgreSQL', () => {
     const { port } = taken.address() as net.AddressInfo;
     await expect(startApp({ profiles: profiles(), port, env: { VOLVERAN_POSTGRES_URL: database.url } })).rejects.toBeDefined();
     await new Promise((resolve) => taken.close(resolve));
-    const dbName = new URL(database.url).pathname.slice(1);
-    const { rows } = await database.query('SELECT COUNT(*) AS others FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [dbName]);
-    expect(rows[0].others).toBe('0');
+    await connectionsClosed();
   });
 
   it('prints one clear line and no stack trace from the process itself', async () => {

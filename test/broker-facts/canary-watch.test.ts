@@ -79,4 +79,27 @@ describe.concurrent('Watch queue lifetime', () => {
       await eventually(async () => expect(await passiveDeclare(watch)).toMatch(/404 \(NOT-FOUND\)/), 10_000, 200);
     });
   });
+
+  // The lag of a close alone varies from run to run (often none), so only the delete is checked.
+  describe('It disappears shortly after the close, not at once: a declare right after `connection.close` resolves can still get `405 RESOURCE_LOCKED`. Deleting the queue on its own connection first frees the name by the time `queue.delete-ok` arrives.', () => {
+    it('a declare from another open connection right after the delete takes the name', async () => {
+      const other = await connect();
+      try {
+        const q = uniqueName('fact-lock');
+        for (let i = 0; i < 20; i++) {
+          const owner = await connect();
+          const ownerCh = await openChannel(owner);
+          await ownerCh.assertQueue(q, { exclusive: true, autoDelete: true, durable: false });
+          await ownerCh.deleteQueue(q);
+          await owner.close();
+          const ch = await openChannel(other);
+          await ch.assertQueue(q, { exclusive: true, autoDelete: true, durable: false });
+          await ch.deleteQueue(q);
+          await ch.close();
+        }
+      } finally {
+        await other.close();
+      }
+    });
+  });
 });

@@ -47,6 +47,19 @@ describe('live consumers', () => {
     expect((await app.get('/api/session')).body.checkoutId).toBeNull();
   });
 
+  it.each(queues)('ends a Checkout of %s in bounded time when a consumer arrived during it, and the next start is refused', async (queue) => {
+    await seedMessages('/', queue, 2);
+    const { id } = (await startCheckout(queue)).body.checkout;
+    detach.push(await attachConsumer('/', queue));
+
+    const asked = Date.now();
+    expect((await app.delete(`/api/checkouts/${id}`)).status).toBe(200);
+    expect(Date.now() - asked).toBeLessThan(10_000);
+    open.pop();
+
+    expect((await startCheckout(queue)).body.error.code).toBe('queue_has_consumers');
+  });
+
   it.each(queues)('checks out %s despite a live consumer when the Operator overrides the warning', async (queue) => {
     await seedMessages('/', queue, 3);
     detach.push(await attachConsumer('/', queue));

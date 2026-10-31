@@ -126,6 +126,7 @@ export async function openCheckout(
   }
   // Exact, unlike the management API's count; the lock queue is not a consumer of the queue.
   if (consumers > 0 && !options.overrideConsumers) throw hasConsumers(checkout, consumers);
+  checkout.onlyConsumer = consumers === 0;
   checkout.readyAtStart = ready;
   const { take, limitedBy } = checkoutSize({ ready, maxMessages: checkout.limits.maxMessages });
   checkout.limitedBy = limitedBy;
@@ -248,4 +249,52 @@ async function takeLock(checkout: Checkout, connection: amqp.ChannelModel, manag
     throw new CheckoutError('checkout_failed', `Cannot declare the Checkout lock queue "${lockQueue}": ${(err as Error).message}`);
   }
   await channel.close().catch(() => {});
+}
+
+/** The longest an end waits for the broker to stop counting its consumers; they have cleared within 200 ms on a starved broker. */
+const OWN_CONSUMERS_GONE_MS = 3_000;
+const OWN_CONSUMERS_POLL_MS = 20;
+
+/**
+ * Waits until a passive declare counts no consumer of a queue the Checkout was
+ * alone on. A quorum queue can go on counting the consumers of a channel after
+ * its close has answered (measured with 200 Messages on a broker at 0.25 CPU: 7
+ * ends in 120, clearing within 100 ms; too rare to pin as a broker fact), and the
+ * next start would refuse with `queue_has_consumers`. Anyone who began
+ * consuming meanwhile only costs this wait, as does a queue that has gone.
+ */
+async function ownConsumersGone(connection: amqp.ChannelModel, queue: string): Promise<void> {
+  try {
+    const channel = await connection.createChannel();
+    channel.on('error', () => {});
+    const deadline = Date.now() + OWN_CONSUMERS_GONE_MS;
+    while ((await channel.checkQueue(queue)).consumerCount > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, OWN_CONSUMERS_POLL_MS));
+    }
+    await channel.close();
+  } catch {
+    // The queue or the connection is gone: there is nothing to wait for.
+  }
+}
+
+/**
+ * Closes the Checkout's connection, deleting its lock queue first. The broker
+ * deletes an exclusive queue only some time after answering the connection's
+ * close (docs/rabbitmq-behaviour.md, "Watch queue lifetime"), so a close alone
+ * would leave the queue refusing the next Checkout. A connection that does not
+ * own the lock is refused the delete, and it stays with its holder.
+ */
+export async function closeCheckoutConnection(checkout: Checkout): Promise<void> {
+  const { connection } = checkout;
+  if (!connection) return;
+  // Before the lock goes: while it is held, no start can read the count.
+  if (checkout.onlyConsumer) await ownConsumersGone(connection, checkout.queue);
+  try {
+    const channel = await connection.createChannel();
+    channel.on('error', () => {});
+    await channel.deleteQueue(lockQueueName(checkout.queue));
+  } catch {
+    // The connection is going anyway: the broker deletes the lock queue with it.
+  }
+  await connection.close().catch(() => {});
 }

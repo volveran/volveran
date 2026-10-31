@@ -11,7 +11,6 @@ import {
   makeTempDir,
   deadLetterRoutes,
   fixtureQueues,
-  lockFreed,
   management,
   purgeQueues,
   ranSummary,
@@ -80,7 +79,6 @@ describe('Replay rule automatic stop', () => {
     await purgeQueues('/', route.dlqs.filter((q) => q !== dlq));
     const passAt = async (minutes: number) => {
       scheduler.set(new Date(t0.getTime() + minutes * MINUTE));
-      await lockFreed(dlq);
       return scheduler.runPass('local', RULE);
     };
 
@@ -158,7 +156,6 @@ describe('Replay rule automatic stop', () => {
     });
     const passAt = async (minutes: number) => {
       scheduler.set(new Date(t0.getTime() + minutes * MINUTE));
-      await lockFreed(dlq);
       return ranSummary(await scheduler.runPass('local', RULE));
     };
 
