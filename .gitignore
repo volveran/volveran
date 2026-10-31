@@ -5,6 +5,7 @@ data/
 .test-tmp/
 *.sqlite
 *.sqlite-*
+!test/fixtures/upgrade/**/*.sqlite
 .env
 .claude/
 /profiles.yaml

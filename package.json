@@ -22,6 +22,7 @@
     "test:broker": "node scripts/test-broker.mjs run -- vitest run --config vitest.broker-facts.config.ts",
     "test:integration": "node scripts/test-broker.mjs run -- vitest run --config vitest.integration.config.ts",
     "test:smoke": "node scripts/kind-smoke.mjs",
+    "fixture:upgrade": "node scripts/test-broker.mjs run -- node --import tsx test/upgrade/generate-fixture.ts",
     "broker:up": "node scripts/test-broker.mjs up",
     "broker:down": "node scripts/test-broker.mjs down"
   },
