@@ -20,6 +20,7 @@ import { startServer, type ServerOptions } from '../../src/server/server.js';
 import type { CheckoutLimits } from '../../src/server/triage/checkout-collection.js';
 import type { CheckoutTiming } from '../../src/server/triage/checkout-timing.js';
 import { brokerUsers, eventually, management, testBroker } from '../broker/client.js';
+import { storeEnv } from './test-store.js';
 
 export * from '../broker/client.js';
 
@@ -137,6 +138,9 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
     if (p.passwordEnv === passwordEnvFor(p.name)) env[p.passwordEnv] = brokerUsers.admin.password;
   }
   Object.assign(env, options.env);
+  // A test that names its store keeps it; any other runs on the store under test.
+  const store = options.env && 'VOLVERAN_POSTGRES_URL' in options.env ? null : await storeEnv(options.dataDir);
+  Object.assign(env, store?.env);
 
   let server;
   try {
@@ -156,6 +160,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {
+    await store?.release();
     await rm(dir, { recursive: true, force: true });
     throw err;
   }
@@ -178,6 +183,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
     delete: (urlPath) => request('DELETE', urlPath),
     async close() {
       await server.close();
+      await store?.release();
       await rm(dir, { recursive: true, force: true });
     },
   };
@@ -212,13 +218,16 @@ export interface SpawnServerOptions {
 export async function spawnServer(options: SpawnServerOptions): Promise<{ child: ChildProcess; url: string }> {
   const profilesFile = path.join(options.dir, 'profiles.yaml');
   await writeFile(profilesFile, stringify({ profiles: options.profiles }));
+  const dataDir = options.dataDir ?? path.join(options.dir, 'data');
+  const store = 'VOLVERAN_POSTGRES_URL' in options.env ? null : await storeEnv(dataDir);
   const child = spawn(process.execPath, ['--import', 'tsx', options.script], {
     cwd: repoRoot,
     env: {
       PATH: process.env.PATH,
       VOLVERAN_PROFILES_FILE: profilesFile,
       VOLVERAN_PORT: '0',
-      VOLVERAN_DATA_DIR: options.dataDir ?? path.join(options.dir, 'data'),
+      VOLVERAN_DATA_DIR: dataDir,
+      ...store?.env,
       ...options.env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

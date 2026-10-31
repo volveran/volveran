@@ -27,6 +27,8 @@ export interface Config {
   metricsPort: number | null;
   /** The audit store on PostgreSQL (VOLVERAN_POSTGRES_URL); null keeps it on SQLite. */
   postgresUrl: string | null;
+  /** TLS required by VOLVERAN_POSTGRES_REQUIRE_TLS or VOLVERAN_POSTGRES_CA_FILE; null leaves it to the URL. */
+  postgresTls: { caFile: string | null } | null;
 }
 
 /** Reads the configuration from `env`; `host` is the listen address (Solo Mode accepts loopback only). */
@@ -64,6 +66,7 @@ export function loadConfig(
       historyRetentionMs: historyRetention.retentionMs,
       metricsPort: metricsPort.port,
       postgresUrl: postgres.url,
+      postgresTls: postgres.tls,
     },
   };
 }

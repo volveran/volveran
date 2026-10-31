@@ -126,6 +126,18 @@ describe('check-config', () => {
     expect(out).toContain('needs Team Mode');
   });
 
+  it('refuses a PostgreSQL CA file it cannot read, and contacts no database', async () => {
+    const file = await write(`version: 1\n${profile()}`);
+    const { status, out } = await checkConfig(file, {
+      ...baseEnv,
+      VOLVERAN_POSTGRES_URL: 'postgres://volveran:hunter2@127.0.0.1:1/volveran',
+      VOLVERAN_POSTGRES_CA_FILE: path.join(dir, 'missing-ca.crt'),
+    });
+    expect(status).toBe(1);
+    expect(out).toContain('VOLVERAN_POSTGRES_CA_FILE could not be read');
+    expect(out).not.toContain('hunter2');
+  });
+
   it('exits 2 and lists the top-level and profile-level keys 1.0 will refuse', async () => {
     const file = await write(`version: 1\nalertDestination: []\n${profile(['    requireAproval: false'])}`);
     const { status, out } = await checkConfig(file);

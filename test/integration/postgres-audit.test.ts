@@ -307,13 +307,14 @@ describe('Replay Rules, depth history and Alerts on PostgreSQL', () => {
 describe('the audit store on SQLite', () => {
   it('refuses to start on a store newer than this version', async () => {
     const dataDir = await makeTempDir('sqlite-newer');
-    const app = await startApp({ profiles: [testProfile({ name: 'local' })], dataDir });
+    const onSqlite = { profiles: [testProfile({ name: 'local' })], dataDir, env: { VOLVERAN_POSTGRES_URL: undefined } };
+    const app = await startApp(onSqlite);
     await app.close();
     const db = new DatabaseSync(path.join(dataDir, AUDIT_DB_FILE));
     db.exec('PRAGMA user_version = 100000');
     db.close();
 
-    await expect(startApp({ profiles: [testProfile({ name: 'local' })], dataDir })).rejects.toBeInstanceOf(ConfigError);
+    await expect(startApp(onSqlite)).rejects.toBeInstanceOf(ConfigError);
     await rm(dataDir, { recursive: true, force: true });
   });
 });

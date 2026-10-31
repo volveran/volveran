@@ -14,7 +14,8 @@ import type {
   NotificationStore,
   RuleStateStore,
 } from './audit-store.js';
-import { createPool, transaction } from './postgres-connection.js';
+import { ConfigError } from '../config-error.js';
+import { asStartupError, createPool, transaction, type PostgresTls } from './postgres-connection.js';
 import { migrate } from './postgres-migrations.js';
 import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
@@ -24,12 +25,27 @@ import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
 const numbered = (position: number) => `$${position}`;
 
+/** Under the chart's readiness probe timeout, so a probe gets an answer and not a timeout. */
+const PING_TIMEOUT_MS = 2_000;
+
+/** TEXT holds every string Volverán keeps only on UTF8: another encoding could reject one in the middle of an Apply. */
+async function refuseOtherEncodings(pool: pg.Pool): Promise<void> {
+  const { rows } = await pool.query<{ encoding: string; database: string }>(
+    'SELECT pg_encoding_to_char(encoding) AS encoding, datname AS database FROM pg_database WHERE datname = current_database()',
+  );
+  const { encoding, database } = rows[0]!;
+  if (encoding !== 'UTF8') {
+    throw new ConfigError(`The PostgreSQL database "${database}" is encoded in ${encoding}, and Volverán needs UTF8: a Message's headers or an Operator's reason could be refused. Create the database with ENCODING 'UTF8'.`);
+  }
+}
+
 export class PostgresAuditStore implements AuditStore {
   readonly ruleState: RuleStateStore;
   readonly history: HistoryStore;
   readonly notifications: NotificationStore;
   readonly alerts: AlertStore;
   private closing: Promise<void> | undefined;
+  private pinging: Promise<void> | undefined;
 
   private constructor(private readonly pool: pg.Pool) {
     this.ruleState = new PostgresRuleStateStore(pool);
@@ -38,16 +54,26 @@ export class PostgresAuditStore implements AuditStore {
     this.alerts = new PostgresAlertStore(pool);
   }
 
-  /** Connects to the database at `url` and brings its schema up to date. Refuses a store newer than this version. */
-  static async open(url: string): Promise<PostgresAuditStore> {
-    const pool = createPool(url);
+  /**
+   * Connects to the database at `url` and brings its schema up to date. Refuses a store
+   * newer than this version, and says clearly (a ConfigError) why it cannot use the database.
+   */
+  static async open(url: string, tls?: PostgresTls | null): Promise<PostgresAuditStore> {
+    const pools: pg.Pool[] = [];
     try {
-      await migrate(pool);
+      const pool = createPool(url, { tls });
+      pools.push(pool);
+      await refuseOtherEncodings(pool);
+      // A migration may take long, or wait long for the advisory lock.
+      const migrating = createPool(url, { tls, queryTimeoutMs: null, max: 1 });
+      pools.push(migrating);
+      await migrate(migrating);
+      await migrating.end();
+      return new PostgresAuditStore(pool);
     } catch (err) {
-      await pool.end();
-      throw err;
+      await Promise.all(pools.map((pool) => pool.end().catch(() => {})));
+      throw asStartupError(err, url);
     }
-    return new PostgresAuditStore(pool);
   }
 
   async record(entry: NewAuditEntry): Promise<number> {
@@ -115,6 +141,20 @@ export class PostgresAuditStore implements AuditStore {
       'SELECT COALESCE(SUM(body_bytes), 0) AS bytes FROM audit_entries WHERE body_bytes IS NOT NULL AND body_expired_at IS NULL',
     );
     return Number(rows[0]!.bytes);
+  }
+
+  /** Answers within its timeout whatever the database does. Probes that come together share one query. */
+  ping(): Promise<void> {
+    this.pinging ??= new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`PostgreSQL did not answer within ${PING_TIMEOUT_MS} ms`)), PING_TIMEOUT_MS);
+      this.pool.query('SELECT 1').then(
+        () => resolve(),
+        (err: Error) => reject(err),
+      ).finally(() => clearTimeout(timer));
+    }).finally(() => {
+      this.pinging = undefined;
+    });
+    return this.pinging;
   }
 
   async close(): Promise<void> {

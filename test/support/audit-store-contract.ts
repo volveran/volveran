@@ -1042,6 +1042,10 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
     });
 
     part('closing', () => {
+      it('answers a ping while it is open', async () => {
+        await expect(store.ping()).resolves.toBeUndefined();
+      });
+
       it('closes more than once', async () => {
         await store.close();
         await expect(store.close()).resolves.toBeUndefined();

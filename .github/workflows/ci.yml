@@ -1,6 +1,6 @@
 # Lint, unit tests, the Helm chart (lint, rendering suite, kubeconform), the
 # kind smoke test (pushes and pull requests only) and
-# the broker-facts suite. Pushes and pull requests test
+# the broker-facts suite and the integration suite on both audit stores. Pushes and pull requests test
 # against the pinned RabbitMQ image (test/broker/docker-compose.yml, which
 # runs it twice: the main test broker and the OAuth 2.0 one). The
 # weekly run tests both against the latest rabbitmq:4-management, so a RabbitMQ
@@ -109,8 +109,12 @@ jobs:
         run: docker pull rabbitmq:4-management
       - name: Broker-facts suite
         run: npm run test:broker
-      - name: Integration suite
+      - name: Integration suite on SQLite
         run: npm run test:integration
+      - name: Integration suite on PostgreSQL
+        run: npm run test:integration
+        env:
+          VOLVERAN_TEST_AUDIT_STORE: postgres
       - name: Open an issue when a broker fact stops holding
         if: failure() && github.event_name == 'schedule'
         env:
