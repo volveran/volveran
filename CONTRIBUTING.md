@@ -32,7 +32,18 @@ docker build -t volveran .   # the image, as the release workflow builds it
    - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `0.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
    - On a release that finishes a roadmap version: `ROADMAP.md` (not checked).
 
-**Audit store contract.** `auditStoreContract` in `test/support/audit-store-contract.ts` holds what any audit store must do ([ADR 0013](docs/adr/0013-audit-store-interface.md)). It takes the implementation as a parameter and uses only the interface, so a new store method gets its test there, with nothing about a particular database. `test/unit/audit-store-contract.test.ts` runs it on SQLite; what only SQLite has, its migrations, is in `test/unit/sqlite-audit-store.test.ts`.
+After the release's image is published, add its upgrade fixture (see **Upgrade suite** below) and commit it. `test/integration/upgrade.test.ts` fails at the next version bump if it is missing.
+
+**Upgrade suite.** `test/integration/upgrade.test.ts` starts the current version on a real audit store and profiles file of every release and checks, through the HTTP API, that Audit Entries, Discarded bodies and Replay Rule state are readable and that Restore works (`upgradeChecks` in `test/support/upgrade-checks.ts`). It runs with the integration suite, in CI too. Each release has `test/fixtures/upgrade/<version>/`, written once by that release's image and never edited by hand. To add one for a new release:
+
+1. Add the version to `RELEASED_VERSIONS` in `test/support/upgrade-fixtures.ts`.
+2. Run `npm run fixture:upgrade -- <version>`. It starts the test broker, runs `ghcr.io/volveran/volveran:<version>` in the broker's network, plays the scenario through its API, stops it cleanly and copies out what it wrote. If the release adds something the store or profiles file should hold, add it to the scenario for that version and up (`test/upgrade/generate-fixture.ts`), and a check to `upgradeChecks`.
+3. Look through the new files for anything secret (`strings audit.sqlite`): they should hold only the scenario's made-up data, with passwords and webhook URLs in the environment.
+4. Run `npx vitest run --config vitest.integration.config.ts test/integration/upgrade.test.ts` with the broker up, and commit the directory.
+
+Another store can reuse this: copy a fixture with `copyFixtureStore`, start on it with `fixtureAppOptions`, and run `upgradeChecks`.
+
+**Audit store contract.** `auditStoreContract` in `test/support/audit-store-contract.ts` holds what any audit store must do ([ADR 0013](docs/adr/0013-audit-store-interface.md)). It takes the implementation as a parameter and uses only the interface, so a new store method gets its test there, with nothing about a particular database. `test/unit/audit-store-contract.test.ts` runs it on SQLite; what only SQLite has, its migrations, the upgrade suite checks on real stores.
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
