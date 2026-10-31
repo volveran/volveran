@@ -8,9 +8,11 @@ import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import { copyFixtureStore, RELEASED_VERSIONS, upgradeFixtures } from '../support/upgrade-fixtures.js';
 import { fixtureAppOptions, upgradeChecks } from '../support/upgrade-checks.js';
 import { makeTempDir, startApp, type TestApp } from './harness.js';
+import { storeUnderTest } from './test-store.js';
 import { product } from '../../src/shared/product.js';
 
-describe.each(upgradeFixtures)('upgrading from $version', (fixture) => {
+// The fixtures are SQLite stores: on PostgreSQL there is nothing to start on until they are copied there (#104).
+describe.runIf(storeUnderTest() === 'sqlite').each(upgradeFixtures)('upgrading from $version', (fixture) => {
   let app: TestApp;
   let dataDir: string;
   beforeEach(async () => {
