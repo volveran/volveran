@@ -249,7 +249,7 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 - The only route is `/metrics`, on its own port, at `VOLVERAN_HOST`'s address. In Solo Mode that is loopback.
 - It needs no session, so keep the port away from anything but your scraper. The web app's port never serves metrics.
 - A scrape never contacts a broker and never waits on the audit store. What it shows from the store (`volveran_replay_rule_paused`, `volveran_alerts_firing`, `volveran_audit_store_body_bytes`) is read in the background, every 15 seconds and whenever Volverán changes one of them itself, and keeps its last value while the store cannot be read and the Replica is still the Background Leader.
-- Metric and label names stay stable within a minor version.
+- Metric and label names are a public contract: from 1.0 they stay through every 1.x version, and new ones may be added ([compatibility policy](compatibility.md)).
 - Counters are held in memory and start again from zero after a restart, which `rate()` handles. A counter has no series until the first thing it counts.
 
 ### Several Replicas
@@ -280,7 +280,7 @@ A change of leader shows. A leader that goes silently leaves the shared gauges a
 | `volveran_alerts_firing` | gauge | `profile`, `rule` | Alerts of the Alert Rule firing now; 0 for a rule with none. Pending Alerts are not counted. |
 | `volveran_alert_notifications_total` | counter | `destination`, `outcome` | Notifications of Alerts, by Alert Destination and `outcome`: `delivered` or `failed` once its attempts are over. Test notifications are not counted. |
 | `volveran_background_leader` | gauge | | 1 if this Replica is the Background Leader, 0 if not. |
-| `volveran_forwarding_failures_total` | counter | `reason` | Requests between Replicas that failed, on the Replica that saw it. `reason` is `unreachable` (the connection failed or dropped before an answer began), `timed_out` (no answer began in time), `no_address` (no live Background Leader to send it to) or `refused` (this Replica's internal port refused it: another `VOLVERAN_FORWARDING_SECRET`, or something that should not reach the port). An Operator who goes away is not counted, nor an answer cut short once it has begun. |
+| `volveran_forwarding_failures_total` | counter | `reason` | Requests between Replicas that failed, on the Replica that saw it. `reason` is `unreachable` (the connection failed or dropped before an answer began), `timed_out` (no answer began in time), `no_address` (no live Background Leader to send it to), `refused` (this Replica's internal port refused it: another `VOLVERAN_FORWARDING_SECRET`, or something that should not reach the port) or `protocol_mismatch` (the other Replica speaks another forwarding protocol version, as can happen during a [rolling update](compatibility.md#during-a-rolling-update)). An Operator who goes away is not counted, nor an answer cut short once it has begun. |
 | `volveran_audit_store_errors_total` | counter | | Calls to the audit store that failed, whatever came of them: many are tried again. A write refused because this Replica is no longer the Background Leader is not counted. |
 
 A paused rule's `reason` can be free text typed by an Operator, so a pause and resume with new words starts a new series. Alert on `max by (profile, rule) (volveran_replay_rule_paused) == 1`, not on one reason.

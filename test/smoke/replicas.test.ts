@@ -8,6 +8,7 @@ import { TestBrowser } from '../integration/oidc-provider.js';
 import {
   connectFromPod,
   connectFromProbe,
+  askForwardingPort,
   crash,
   deadLetterOrder,
   eventually,
@@ -19,7 +20,7 @@ import {
   type PortForward,
   type VolveranPod,
 } from './cluster.js';
-import { appNamespace, depsNamespace, forwardingPort, helmInstallArgs, kubectl, ports, releaseName, replicasValues, smokeDir } from './kind-env.mjs';
+import { appNamespace, depsNamespace, forwardingPort, forwardingSecret, helmInstallArgs, kubectl, kubernetesVersion, ports, releaseName, replicasValues, smokeDir } from './kind-env.mjs';
 
 const operator = { sub: 'smoke-operator', email: 'operator@example.com', name: 'Smoke Operator', groups: ['smoke-triage'] };
 const checkoutPath = `/api/profiles/smoke/vhosts/%2F/queues/orders.dlq/checkouts`;
@@ -113,6 +114,10 @@ afterAll(async () => {
 describe('two Replicas on kind', () => {
   let discarded: { checkoutId: string; entryId: number; payload: string };
 
+  it('run on the Kubernetes version docs/compatibility.md supports', () => {
+    expect(JSON.parse(kubectl(['version', '-o', 'json'])).serverVersion.gitVersion).toBe(kubernetesVersion);
+  });
+
   it('run Ready in a namespace that enforces the restricted Pod Security Standard, with a rolling update and no claim', async () => {
     const labels = JSON.parse(kubectl(['get', 'namespace', appNamespace, '-o', 'json'])).metadata.labels;
     expect(labels['pod-security.kubernetes.io/enforce']).toBe('restricted');
@@ -136,6 +141,12 @@ describe('two Replicas on kind', () => {
       expect(connectFromProbe(namespace, a!.ip, forwardingPort)).toBe('closed');
       expect(connectFromProbe(namespace, b!.ip, forwardingPort)).toBe('closed');
     }
+  });
+
+  it('refuse another forwarding protocol version from each other, and serve their own', async () => {
+    const [a, b] = await readyPods(2);
+    expect(askForwardingPort(a!, b!.ip, forwardingPort, forwardingSecret, '2')).toEqual({ status: 400, protocol: '1' });
+    expect(askForwardingPort(a!, b!.ip, forwardingPort, forwardingSecret, '1')).toEqual({ status: 200, protocol: null });
   });
 
   it('serve one session through either pod', async () => {

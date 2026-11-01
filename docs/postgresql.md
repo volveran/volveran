@@ -4,7 +4,7 @@ By default the audit store is SQLite on one volume. Setting a connection URL kee
 
 SQLite stays the default, and Solo Mode never needs a database server. Several Replicas need it: see [Running several Replicas](replicas.md).
 
-Tested against PostgreSQL 17. Volverán uses no extensions.
+Tested against PostgreSQL 17, the only version supported ([compatibility policy](compatibility.md#supported-versions)). Volverán uses no extensions.
 
 ## Set up the database
 

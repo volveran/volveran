@@ -22,6 +22,9 @@ export const kubeContext = `kind-${clusterName}`;
  * ~/.kube/config; VOLVERAN_SMOKE_KUBECONFIG overrides it.
  */
 export const kubeconfig = env.VOLVERAN_SMOKE_KUBECONFIG || path.join(repoRoot, '.test-tmp', `${clusterName}.kubeconfig`);
+/** The one Kubernetes version the smoke test runs, and so the one docs/compatibility.md supports. kind's own default would move with kind. */
+export const kubernetesVersion = 'v1.37.0';
+export const kubernetesNodeImage = `kindest/node:${kubernetesVersion}@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`;
 /** The kubectl flags that select the smoke cluster. */
 export const kubectlFlags = ['--kubeconfig', kubeconfig, '--context', kubeContext];
 

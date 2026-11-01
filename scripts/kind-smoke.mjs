@@ -25,6 +25,7 @@ import {
   image,
   kubeconfig,
   kubeContext,
+  kubernetesNodeImage,
   kubectl,
   oidc,
   postgresUrl,
@@ -147,7 +148,7 @@ try {
   }
   if (!clusterExists()) {
     step(`create the kind cluster ${clusterName}`);
-    sh('kind', ['create', 'cluster', '--name', clusterName, '--kubeconfig', kubeconfig, '--wait', '5m']);
+    sh('kind', ['create', 'cluster', '--name', clusterName, '--image', kubernetesNodeImage, '--kubeconfig', kubeconfig, '--wait', '5m']);
   }
 
   step(`build ${imageRef} and load it into kind`);

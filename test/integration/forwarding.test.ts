@@ -14,6 +14,7 @@ const startPath = `/api/profiles/dev/vhosts/%2F/queues/${QUEUE}/checkouts`;
 const profile = () => testProfile({ name: 'dev', roles: { operator: ['ops'] } });
 const encoded = (operator: object) => Buffer.from(JSON.stringify(operator)).toString('base64url');
 const OPERATOR_HEADER = 'x-volveran-forwarded-operator';
+const PROTOCOL = { 'x-volveran-forwarding-protocol': '1' };
 
 async function resetQueue(): Promise<void> {
   await withChannel('/', async (ch) => {
@@ -115,7 +116,7 @@ describe('a Checkout through either Replica', () => {
   it("checks the Role on the owner from the groups it was forwarded with", async () => {
     const id = await startOn(replicas.a);
     const res = await fetch(`${replicas.a.forwardingUrl}/api/checkouts/${id}`, {
-      headers: { authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: encoded({ id: ana.sub, displayName: ana.email, groups: ['nobody'] }) },
+      headers: { ...PROTOCOL, authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: encoded({ id: ana.sub, displayName: ana.email, groups: ['nobody'] }) },
     });
     expect(res.status).toBe(403);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('no_role_on_profile');
@@ -138,7 +139,7 @@ describe('a Checkout through either Replica', () => {
     });
 
     it('answers a request with the secret and an Operator', async () => {
-      const res = await send({ authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: anaHeader() });
+      const res = await send({ ...PROTOCOL, authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: anaHeader() });
       expect(res.status).toBe(200);
     });
 
@@ -146,8 +147,8 @@ describe('a Checkout through either Replica', () => {
       ['nothing', () => ({})],
       ['an Operator without the secret', () => ({ [OPERATOR_HEADER]: anaHeader() })],
       ['the wrong secret', () => ({ authorization: 'Bearer wrong', [OPERATOR_HEADER]: anaHeader() })],
-      ['the secret without an Operator', () => ({ authorization: `Bearer ${replicas.forwardingSecret}` })],
-      ['the secret with an unreadable Operator', () => ({ authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: 'not-json' })],
+      ['the secret without an Operator', () => ({ ...PROTOCOL, authorization: `Bearer ${replicas.forwardingSecret}` })],
+      ['the secret with an unreadable Operator', () => ({ ...PROTOCOL, authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: 'not-json' })],
     ])('refuses %s', async (_, headers) => {
       const res = await send(headers());
       expect(res.status).toBe(401);
@@ -156,7 +157,7 @@ describe('a Checkout through either Replica', () => {
     });
 
     it('serves only the API', async () => {
-      const res = await send({ authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: anaHeader() }, '/auth/login');
+      const res = await send({ ...PROTOCOL, authorization: `Bearer ${replicas.forwardingSecret}`, [OPERATOR_HEADER]: anaHeader() }, '/auth/login');
       expect(res.status).toBe(401);
     });
 

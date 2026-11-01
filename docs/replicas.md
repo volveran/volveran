@@ -50,6 +50,8 @@ A NetworkPolicy cannot close one port alone, so this one object also says what h
 
 The secret crosses the pod network in clear, and Replicas send it to the address the audit store names, so write access to the store can capture it ([threat model](threat-model.md), N3). Changing the secret means restarting all Replicas together: during a rolling update, old and new pods refuse each other's forwarded requests, so a Checkout on another pod cannot be served until it ends.
 
+Forwarded requests also carry a protocol version, for Replicas of two versions side by side: see [during a rolling update](compatibility.md#during-a-rolling-update).
+
 ## What failover protects
 
 | When | What happens |
@@ -77,9 +79,9 @@ Shared gauges are absent for up to 20 s at a silent takeover, and on PostgreSQL 
 
 Nothing is promised beyond this. Numbers higher than three, and clusters other than the ones below, have not been run.
 
-**On a real cluster** (`npm run test:smoke`, in CI on every push): kind with one node, kindnet enforcing NetworkPolicy, PostgreSQL without TLS and one RabbitMQ, in a namespace enforcing the `restricted` Pod Security Standard. All pods share the node, so the loss of a node, a zone or a network was not tested, and neither was topology spread having any effect.
+**On a real cluster** (`npm run test:smoke`, in CI on every push): kind with one node running Kubernetes 1.37, kindnet enforcing NetworkPolicy, PostgreSQL without TLS and one RabbitMQ, in a namespace enforcing the `restricted` Pod Security Standard. All pods share the node, so the loss of a node, a zone or a network was not tested, and neither was topology spread having any effect.
 
-- **Two Replicas:** the internal port opens from one Replica to the other and is closed from an unlabelled pod in the same namespace and from another namespace, while the web port stays open, with `networkPolicy.enabled` false. A session is served by either pod. A Discard is started on one pod, and decided and Applied through the other. A live Checkout outlives deleting the other pod. Killing the owner's process with `SIGKILL` shows the Lost Checkout through the survivor, keeps the Audit Entries and the Discarded body, and gives the Message back. A rolling `helm upgrade` keeps at least one pod ready and keeps sessions, and a Checkout on a replaced pod says `shutdown`.
+- **Two Replicas:** the internal port opens from one Replica to the other and is closed from an unlabelled pod in the same namespace and from another namespace, while the web port stays open, with `networkPolicy.enabled` false. A session is served by either pod. A Discard is started on one pod, and decided and Applied through the other. A live Checkout outlives deleting the other pod. Killing the owner's process with `SIGKILL` shows the Lost Checkout through the survivor, keeps the Audit Entries and the Discarded body, and gives the Message back. A rolling `helm upgrade` keeps at least one pod ready and keeps sessions, and a Checkout on a replaced pod says `shutdown`. A pod refuses another forwarding protocol version from the other, and serves its own.
 - **Three Replicas:** one Background Leader across the pods; a Checkout started on one pod, decided through the second and read through the third; `SIGKILL` of its owner shows the Lost Checkout through both others.
 
 **In-process** (`startTwoReplicas`, on a real broker and PostgreSQL, two Replicas only): every forwarded route, Approvals, exports, Restore races, sign-in and refresh, Samples, Alerts and Rule Passes with failover, and shutdown.
