@@ -20,8 +20,9 @@
 // nobody may be there (BACKGROUND_REQUEST_HEADER).
 //
 // A session's OperatorToken is live in each process that has served it, because
-// a Checkout's connections listen to it. Each one refreshes on its own; making
-// that safe across Replicas is #114.
+// a Checkout's connections listen to it. Each refreshes when its token comes due,
+// holding the session's lock in the store: a Replica that finds a later token there
+// takes it, as if it had refreshed, so the provider sees each refresh token once.
 import { randomBytes } from 'node:crypto';
 import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -33,7 +34,8 @@ import { groupsAtSignIn } from './groups-claim.js';
 import { HttpError } from './http-error.js';
 import { isLoopback } from './is-loopback.js';
 import { attachOperator, notSignedIn, teamOperator, type Operator } from './operator.js';
-import { OperatorToken, RefreshRefused, type TokenGrant } from './operator-token.js';
+import { grantExpiresAt, OperatorToken, RefreshRefused, type TokenGrant } from './operator-token.js';
+import { forwardedSession } from './replicas/forwarding.js';
 import type { OidcSettings } from './run-mode.js';
 import type { TokenSeal } from './token-seal.js';
 
@@ -161,30 +163,57 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
     return seal.seal(JSON.stringify(tokens), sessionId);
   };
 
+  /** The grant a session store holds; null when its seal cannot be opened here. */
+  const openTokens = (sessionId: string, sealed: string, now: number): TokenGrant | null => {
+    const opened = seal.open(sealed, sessionId);
+    if (opened === null) return null;
+    const tokens = JSON.parse(opened) as SealedTokens;
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.expiresAt === null ? undefined : (tokens.expiresAt - now) / 1000,
+    };
+  };
+
   return {
     async register(app) {
       await app.register(fastifyCookie, { secret: sessionSecret });
 
       /** The session's token in this process: it refreshes itself until the session ends, and keeps the store up to date. */
-      const liveToken = (sessionId: string, grant: TokenGrant, expiresAt: number, operatorId: string, restored: boolean): OperatorToken =>
-        new OperatorToken(
+      const liveToken = (sessionId: string, grant: TokenGrant, expiresAt: number, operatorId: string, restored: boolean): OperatorToken => {
+        const token: OperatorToken = new OperatorToken(
           grant,
           options.refreshBrokerTokens
             ? {
+                sessionId,
                 refresh: async (refreshToken) => {
-                  // Signed out on another Replica since this one last served the session.
-                  if (!(await sessions.session(sessionId, Date.now()))) {
-                    dropLive(sessionId);
-                    throw new RefreshRefused('the session has ended');
-                  }
-                  const fresh = await refreshGrant(refreshToken);
+                  let fresh: TokenGrant | undefined;
                   try {
-                    await sessions.setTokens(sessionId, sealTokens(sessionId, fresh, fresh.refreshToken ?? refreshToken, Date.now()));
+                    const found = await sessions.refreshTokens(sessionId, Date.now(), async (sealed) => {
+                      const now = Date.now();
+                      const stored = openTokens(sessionId, sealed, now);
+                      if (stored === null) throw new Error("the session's stored tokens could not be read");
+                      // Another Replica got here first. Otherwise this process's refresh token is the one to
+                      // send: it is the stored one, or a newer one that could not be saved.
+                      const storedUntil = grantExpiresAt(stored, now);
+                      if (storedUntil !== undefined && (token.expiresAt === undefined || storedUntil > token.expiresAt)) {
+                        fresh = stored;
+                        return null;
+                      }
+                      fresh = await refreshGrant(refreshToken);
+                      return sealTokens(sessionId, fresh, fresh.refreshToken ?? refreshToken, Date.now());
+                    });
+                    if (!found) {
+                      // Signed out on another Replica since this one last served the session.
+                      dropLive(sessionId);
+                      throw new RefreshRefused('the session has ended');
+                    }
                   } catch (err) {
+                    if (fresh === undefined) throw err;
                     // The grant is good, and this process carries on with it. After a restart the Operator may have to sign in again.
                     app.log.error({ err, operator: operatorId }, "The Operator's refreshed tokens could not be saved");
                   }
-                  return fresh;
+                  return fresh!;
                 },
                 until: expiresAt,
                 refreshPastExpiry: restored,
@@ -196,24 +225,20 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
                       : "Could not refresh the Operator's access token; trying again",
                   ),
               }
-            : {},
+            : { sessionId },
         );
+        return token;
+      };
 
       /** The session as this process serves it, made live the first time it is seen here. */
       const goLive = (sessionId: string, stored: StoredSession, now: number): LiveSession | null => {
         const known = live.get(sessionId);
         if (known) return known;
-        const opened = seal.open(stored.tokens, sessionId);
-        if (opened === null) {
+        const grant = openTokens(sessionId, stored.tokens, now);
+        if (grant === null) {
           app.log.warn({ operator: stored.operator.id }, "A session's tokens could not be read: VOLVERAN_SESSION_ENCRYPTION_KEY has changed, or differs between Replicas. The Operator must sign in again");
           return null;
         }
-        const tokens = JSON.parse(opened) as SealedTokens;
-        const grant: TokenGrant = {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresIn: tokens.expiresAt === null ? undefined : (tokens.expiresAt - now) / 1000,
-        };
         const session: LiveSession = {
           operator: { ...stored.operator, brokerToken: liveToken(sessionId, grant, stored.expiresAt, stored.operator.id, true) },
           expiresAt: stored.expiresAt,
@@ -253,6 +278,15 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
         }
         await touch(req, sessionId, stored, now);
         return goLive(sessionId, stored, now)?.operator ?? null;
+      });
+      // A forwarded Operator comes with their session's id, not its tokens: this Replica uses the session's token from the store.
+      app.addHook('onRequest', async (req) => {
+        const sessionId = forwardedSession(req.raw);
+        if (!sessionId || !req.operator) return;
+        const now = Date.now();
+        const stored = await sessions.session(sessionId, now);
+        const session = stored && goLive(sessionId, stored, now);
+        if (session?.operator.id === req.operator.id) req.operator = { ...req.operator, brokerToken: session.operator.brokerToken };
       });
       app.addHook('onRequest', async (req) => {
         if (underApi(req) && !req.operator) throw notSignedIn();

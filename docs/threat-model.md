@@ -34,7 +34,7 @@ Tested on 2026-11-01 at commit `953fdc6` (`integration/v1.0`), before the fixes 
 ## Trust boundaries
 
 1. **Browser to web port.** TLS ends at the proxy in front of Volverán. In Team Mode the signed, `HttpOnly`, `SameSite=Lax` session cookie is the credential. In Solo Mode there is no credential, only the loopback address.
-2. **Replica to Replica (forwarding).** A separate internal port, plain HTTP, with a shared secret sent as a bearer token and the Operator's identity base64url-encoded beside it. The receiver takes that identity and its groups as stated, so everything rests on the secret and on who can reach the port. The chart does not yet deploy this port or a NetworkPolicy for it (#121).
+2. **Replica to Replica (forwarding).** A separate internal port, plain HTTP, with a shared secret sent as a bearer token and the Operator's identity base64url-encoded beside it, and the id of their session, by which the receiver finds their access token in the store (no token crosses, and the id alone is no cookie, which must be signed with the session secret). The receiver takes that identity and its groups as stated, so everything rests on the secret and on who can reach the port. The chart does not yet deploy this port or a NetworkPolicy for it (#121).
 3. **Replica to audit store.** The store is trusted. In particular, a Replica sends the forwarding secret to whatever address the `replicas` table names (finding N3).
 4. **Replica to broker.** Shared credentials, or the Operator's token on `operatorToken` profiles (ADR 0008).
 5. **Replica to OIDC provider.** Authorization code flow with PKCE, `state` and `nonce`. Plain http is refused except for a provider on loopback (tested).

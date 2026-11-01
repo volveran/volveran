@@ -407,9 +407,18 @@ export interface SessionStore {
   addSession(id: string, session: StoredSession, now: number): Promise<void>;
   /** The session, or null. */
   session(id: string, now: number): Promise<StoredSession | null>;
-  /** Replaces the session's sealed tokens; does nothing if it has gone. */
-  setTokens(id: string, tokens: string): Promise<void>;
-  /** Moves the session's idle expiry; does nothing if it has gone. */
+  /**
+   * Refreshes the session's sealed tokens, one caller at a time on any Replica: `refresh`
+   * runs holding the session's lock, given the tokens as they are now, and what it answers
+   * replaces them (null leaves them). When it throws nothing changes, and this throws the
+   * same. False, without calling it, when the session has gone. It may wait for the
+   * provider, so it never holds up the store's other calls: `refresh` must not call the store.
+   */
+  refreshTokens(id: string, now: number, refresh: (tokens: string) => Promise<string | null>): Promise<boolean>;
+  /**
+   * Moves the session's idle expiry; does nothing if it has gone. It answers without waiting
+   * for a refresh in progress, and may then do nothing: the Operator's next request tries again.
+   */
   touchSession(id: string, idleExpiresAt: number): Promise<void>;
   removeSession(id: string): Promise<void>;
   /**
