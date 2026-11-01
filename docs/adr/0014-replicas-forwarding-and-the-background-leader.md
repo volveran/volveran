@@ -6,6 +6,18 @@ This ADR will supersede [ADR 0003](0003-single-replica-on-kubernetes.md) once th
 
 To be written with Replica registration and forwarding (#108, #121): a Checkout's held Messages live in one process's AMQP connection, so a request reaching another Replica has to go to that one.
 
+## When an Owner Replica goes
+
+**A live lease that cannot be reached is not a loss.** The request answers 503 `replica_unreachable` with `tryAgain`, and nothing is reported lost. A Replica's lease is renewed every 5 s and holds for 15 s.
+
+**A lease that has run out is a Lost Checkout.** Any Replica asked about the Checkout then answers for it from its Live Checkout record, through the same routes and owner and Role checks as an owner answering for a Checkout that is over. So a route that forwards needs nothing more for this. A record saying the Checkout had ended stays ended.
+
+**The lease and the Messages do not move together.** The socket of a killed process drops at once. A lost host's connection holds the lock queue and Messages for about three heartbeats ([RabbitMQ behaviour](../rabbitmq-behaviour.md#dead-connections)), so AMQP connections ask for a heartbeat of 5 s: about 15 s, against about three minutes at the broker's default. A Lost Checkout's reason says the queue can stay locked until then, rather than that the Messages are back. A profile's `amqpUrl` may name its own `heartbeat`, which then holds, and the wait with it.
+
+**A Replica whose lease runs out gives its Checkouts up.** It may be alive and only cut off from the store, or have stalled. The others already report its Checkouts lost, so it closes their connections and marks them lost itself: otherwise the report would be false, the queue would stay locked, and a renewal could bring a lost Checkout back. So a store outage longer than a lease costs the Checkouts of every Replica, at one delivery each on quorum queues.
+
+**The Background Leader clears up.** Audit Entries left `pending` by a gone Replica's Checkouts become `uncertain`, since the step may or may not have happened; `done` means settled, and a Message with no entry never left the queue. The lease and records are removed once they have been readable as long as a Checkout that is over (15 minutes).
+
 ## The Background Leader
 
 Some work must run once however many Replicas there are: retention and the sampler now; Alerts and Replay Rule scheduling after them. One Replica at a time, the Background Leader, runs all of it. One leader for everything was chosen over a lease per job because it is much simpler and the load is small.

@@ -18,11 +18,18 @@ export interface ReplicaLeaseOptions {
   /** After each renewal in the background, whether it succeeded or not. Must not reject. */
   afterRenewal(): Promise<void>;
   onError(err: unknown): void;
+  /**
+   * The lease has run out without a renewal, by a store this Replica cannot reach or a stall of
+   * its own, so the others now take it to be gone. Called at every renewal time until renewed.
+   */
+  onRanOut(): void;
 }
 
 export class ReplicaLease {
   private timer: NodeJS.Timeout | undefined;
   private renewing: Promise<void> | null = null;
+  /** When the last renewal to succeed runs out. */
+  private holdsUntil = 0;
 
   constructor(private readonly options: ReplicaLeaseOptions) {}
 
@@ -30,6 +37,8 @@ export class ReplicaLease {
   async start(): Promise<void> {
     await this.renew();
     this.timer = setInterval(() => {
+      // Here, and not after a renewal fails: a renewal can hang, and one after a stall comes too late.
+      if (Date.now() >= this.holdsUntil) this.options.onRanOut();
       this.renewing ??= this.renewInBackground().finally(() => {
         this.renewing = null;
       });
@@ -42,9 +51,11 @@ export class ReplicaLease {
     await this.renewing;
   }
 
-  private renew(): Promise<void> {
+  private async renew(): Promise<void> {
     const { store, replicaId, forwardingAddress, timing } = this.options;
-    return store.renewLease({ replicaId, forwardingAddress, expiresAt: Date.now() + timing.holdsForMs });
+    const expiresAt = Date.now() + timing.holdsForMs;
+    await store.renewLease({ replicaId, forwardingAddress, expiresAt });
+    this.holdsUntil = expiresAt;
   }
 
   private async renewInBackground(): Promise<void> {
