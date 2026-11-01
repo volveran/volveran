@@ -50,7 +50,8 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
-import { attachOperator } from './operator.js';
+import { sendSecurityHeaders } from './security-headers.js';
+import { attachOperator, type Operator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
 import { requestOriginCheck, type RequestOriginCheck } from './request-origin.js';
 
@@ -260,6 +261,7 @@ async function serve(
     webRoot: options.webRoot,
     logger: options.logger ?? false,
     onRouteRegistered: options.onRouteRegistered,
+    publicUrl: config.publicUrl,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -451,6 +453,8 @@ interface AppOptions {
   liveCheckouts: LiveCheckouts | null;
   /** Refuses what a malicious page sends through an Operator's browser. */
   originCheck: RequestOriginCheck;
+  /** Where Volverán is reached from outside, if known. */
+  publicUrl: string | null;
   /** How long a forwarded end of a Checkout may take to answer. */
   endWithinMs: number;
 }
@@ -482,8 +486,9 @@ function refusal(statusCode: number): { code: string; message: string } {
   }
 }
 
-async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, publicUrl, endWithinMs }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: logger && { ...(logger === true ? {} : logger), serializers: { req: requestLogLine } } });
+  sendSecurityHeaders(app.server, publicUrl);
 
   // Before any route, so none is missed.
   if (onRouteRegistered) {
@@ -527,9 +532,9 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => {
-    if (!liveCheckouts || checkouts.owns(req.params.id)) return null;
-    const owner = await liveCheckouts.ownerOf(req.params.id);
+  const ownerOfCheckout = async (id: string) => {
+    if (!liveCheckouts || checkouts.owns(id)) return null;
+    const owner = await liveCheckouts.ownerOf(id);
     if (!owner) return null;
     if ('address' in owner) return owner.address;
     // Answered here from now on. A profile no longer configured leaves it unknown here.
@@ -537,6 +542,7 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
     if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
     return null;
   };
+  const ownerOf = (req: FastifyRequest<{ Params: { id: string } }>) => ownerOfCheckout(req.params.id);
   const checkoutDeps = {
     checkouts,
     access: profileAccess,
@@ -557,7 +563,11 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
-  registerApprovalRoutes(app, checkoutDeps);
+  registerApprovalRoutes(app, {
+    ...checkoutDeps,
+    toOwnerOfApproval: forwarder ? forwarder.toOwner((req: FastifyRequest<{ Params: { checkoutId: string } }>) => ownerOfCheckout(req.params.checkoutId)) : {},
+    ...(liveCheckouts && { waitingElsewhere: (approver: Operator) => liveCheckouts.waitingElsewhere(approver.id) }),
+  });
   registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
   registerHistoryRoutes(app, history, profileAccess);

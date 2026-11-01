@@ -528,6 +528,15 @@ export class CheckoutManager {
     return this.view(checkout);
   }
 
+  /**
+   * Resolves once the other Replicas can read Checkout `id` as it is now, or that was tried, so
+   * the approvers' list agrees with an answer about a request. Never rejects. Call it after a
+   * first-wins section, never in one (ADR 0013).
+   */
+  async recorded(id: string): Promise<void> {
+    await this.options.liveCheckouts?.written(id);
+  }
+
   /** How many Checkouts are active now, and how many of those wait for Approval. */
   counts(): { active: number; waitingApproval: number } {
     const active = [...this.checkouts.values()].filter((c) => c.status === 'active');

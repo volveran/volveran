@@ -21,6 +21,7 @@ import {
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
+import type { ApprovalSummary } from '../../src/shared/checkout.js';
 
 /** An empty store, and a way back to what it holds once it is closed. */
 export interface OpenedAuditStore {
@@ -1188,6 +1189,53 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         await store.replicas.updateCheckout('c-1', { status, approval: null });
         expect(await store.replicas.runningOwner('c-1', NOW)).toBeNull();
         expect(await store.replicas.runningOwner('nobody', NOW)).toBeNull();
+      });
+
+      describe('waiting Approvals', () => {
+        const approval: ApprovalSummary = {
+          checkoutId: 'c-1',
+          requester: 'ana@example.com',
+          profile: 'local',
+          vhost: '/',
+          queue: 'orders.dlq',
+          queueType: 'quorum',
+          requestedAt: new Date(NOW).toISOString(),
+          waitingMs: 0,
+          endsAt: new Date(NOW + 60_000).toISOString(),
+          remainingMs: 60_000,
+          decisionSummary: [{ kind: 'discard', count: 2 }],
+          decisionSummaryText: '2 Discard',
+          rate: null,
+          canary: null,
+        };
+
+        it('lists an active Checkout that waits, with what the approvers see', async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval });
+          expect(await store.replicas.waitingApprovals(NOW)).toMatchObject([{ id: 'c-1', ownerReplica: 'r-1', approval }]);
+        });
+
+        it('leaves out a Checkout that waits for none', async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.waitingApprovals(NOW)).toEqual([]);
+        });
+
+        it.each(['starting', 'ended', 'lost'] as const)('leaves out a Checkout that is %s', async (status) => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval });
+          expect(await store.replicas.waitingApprovals(NOW)).toEqual([]);
+        });
+
+        it("leaves out a Checkout whose owner's lease is over, exactly at its time", async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval });
+          expect(await store.replicas.waitingApprovals(NOW + 999)).toHaveLength(1);
+          expect(await store.replicas.waitingApprovals(NOW + 1000)).toEqual([]);
+        });
       });
 
       it("removing a Replica removes its lease and records, and no other's", async () => {
