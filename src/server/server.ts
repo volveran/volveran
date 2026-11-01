@@ -207,6 +207,7 @@ async function serve(
     lastSuccessAt: (profile) => sampler.latest().profiles.find((p) => p.profile === profile)?.lastSuccessAt ?? null,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
+    onLeaseLost: () => app.log.info('Alerting wrote nothing: this Replica is no longer the Background Leader'),
   });
   sampler.onRun(async (finished) => {
     await alerting.evaluate(finished);
@@ -272,6 +273,7 @@ async function serve(
     clock: leaderClock,
     timing: options.leaderTestHooks?.timing,
     jobs: [
+      alerting,
       retentionJob({
         store: auditStore,
         retention,
@@ -288,23 +290,25 @@ async function serve(
   await leader.start();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
-  // then every held Message goes back to its queue (an Apply in progress
+  // then the leader stops, while Alerting can still tell of what a last pass paused; then
+  // every held Message goes back to its queue (an Apply in progress
   // finishes first) before the audit store closes and the process exits.
   let metricsListener: MetricsListener | undefined;
   app.addHook('onClose', async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
-    await leader.stop();
     await sampler.stop();
-    // Before the notifier: a last pass can pause its rule, which sends a notification.
+    // Before the leader and the notifier: a last pass can pause its rule, which sends a notification.
     await replayRules.stop();
-    await alerting.stop();
+    await leader.stop();
     await notifier.close();
+    await alerting.drained();
     await checkouts.endAll();
     await auditStore.close();
   });
   try {
-    await alerting.start();
+    // Alerting has started by now, if this Replica is the leader. On takeover a failure is only logged, and tried again.
+    alerting.throwStartFailure();
     // The sampler before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
     await sampler.start();
     // Replay Rules: give each its state and schedule the running ones.

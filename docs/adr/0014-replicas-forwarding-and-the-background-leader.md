@@ -24,7 +24,10 @@ Some work must run once however many Replicas there are: retention now; the samp
 
 **Moving work onto the leader.** Add a `LeaderJob` to the list in `server.ts`. Its `start(fence)` may be called again after `stop()` in one process, so it must hold no state that assumes one start. `start` may do a first run before it answers: startup waits for it, while renewal does not. Writes that must not come from a former leader take a `fence` parameter on their store method, with a test in the contract suite ([ADR 0013](0013-audit-store-interface.md)); PostgreSQL's implementation runs in `fenced`, and SQLite's calls `check` right before writing. A job treats `LeaderLeaseLost` as no failure: it wrote nothing, and the leader will find out at its next claim.
 
+**Alerts, at least once.** A leader stores an evaluation's result and its notifications in one fenced write, and only then sends them, so a stalled former leader sends nothing for a result the store refuses. A notification is forgotten when its delivery has ended, delivered or out of attempts. One still there when a new leader starts is sent again: that may be twice, and it is never lost to a change of leader. Storing them is why a firing Alert need not be sent again to be safe. On SQLite they are in memory, like the lease, so a single Replica keeps what it has always done: a crash between storing and sending loses that notification, and a restart sends nothing again.
+
 ## Consequences
 
 - Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`.
 - A job failing to start is logged and the leader stays leader without it. A job that should not run without another must say so itself.
+- Alerting does not sit out a term over a failed start, because it is what tells people about problems: it runs anyway, and first retries what the start could not do. A Replica that fails it while starting up fails its startup, as one always has, and the lease moves.

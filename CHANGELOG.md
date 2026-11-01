@@ -16,7 +16,8 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Added
 
-- A Background Leader: one Replica holds a lease in the audit store and runs retention, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
+- A Background Leader: one Replica holds a lease in the audit store and runs retention and Alerts, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
+- With several Replicas, one notification goes out per Alert. A firing Alert survives a change of leader without being sent again as new. On PostgreSQL a notification in flight when the leader goes is sent again by the next, so it may arrive twice ([guide](docs/observability.md)). (#117)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Security

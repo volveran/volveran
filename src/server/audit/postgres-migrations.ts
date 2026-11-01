@@ -185,6 +185,13 @@ export const MIGRATIONS: readonly string[] = [
      term BIGINT NOT NULL,
      expires_at BIGINT NOT NULL
    );`,
+  // Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
+  `CREATE TABLE alert_unsent_notifications (
+     id BIGSERIAL PRIMARY KEY,
+     profile TEXT NOT NULL,
+     destination TEXT NOT NULL,
+     notification TEXT NOT NULL
+   );`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

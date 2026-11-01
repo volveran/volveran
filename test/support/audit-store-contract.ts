@@ -3,6 +3,7 @@
 // and looks at nothing but the interface, so nothing here knows which database answers.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AlertMemory } from '../../src/server/alerts/evaluation.js';
+import { testNotification } from '../../src/server/alerts/payloads.js';
 import { ConfigError } from '../../src/server/config-error.js';
 import {
   FIRST_SEEN_LIMIT,
@@ -931,6 +932,23 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       const arrivals: AlertMemory['arrivals'][number] = { vhost: '/', queue: 'orders.dlq', unsettled: 2, recent: [{ at: 1000, count: 2 }] };
       const NOTHING: AlertMemory = { alerts: [], arrivals: [] };
 
+      it('keeps the notifications of an evaluation with its result, until told they ended', async () => {
+        const first = testNotification(new Date(1000), 'first');
+        const second = testNotification(new Date(1000), 'second');
+        const ids = await store.alerts.save('local', { alerts: [firing], arrivals: [] }, [
+          { destination: 'pager', notification: first },
+          { destination: 'chat', notification: second },
+        ]);
+
+        expect(await store.alerts.unsent()).toEqual([
+          { id: ids[0], profile: 'local', destination: 'pager', notification: first },
+          { id: ids[1], profile: 'local', destination: 'chat', notification: second },
+        ]);
+
+        await store.alerts.ended(ids[0]!);
+        expect((await store.alerts.unsent()).map((u) => u.id)).toEqual([ids[1]]);
+      });
+
       it('remembers nothing of a profile at first', async () => {
         expect(await store.alerts.load('local')).toEqual(NOTHING);
       });
@@ -1195,6 +1213,28 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
         expect(await store.body(id)).not.toBeNull();
         expect((await store.history.lastRuns('p')).last).not.toBeNull();
+      });
+
+      it('refuses Alert state from a lease another has taken since, and does none of it', async () => {
+        const memory: AlertMemory = { alerts: [], arrivals: [{ vhost: '/', queue: 'orders.dlq', unsettled: 1, recent: [] }] };
+        await store.alerts.save('p', memory);
+        const stale = (await lease().claim('a', NOW, LEASE))!;
+        await lease().claim('b', NOW + LEASE, LEASE);
+
+        const outgoing = [{ destination: 'pager', notification: testNotification(new Date(NOW), 'in-flight') }];
+        await expect(store.alerts.save('p', { alerts: [], arrivals: [] }, outgoing, stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.alerts.keepOnly(new Map(), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect(await store.alerts.load('p')).toEqual(memory);
+        expect(await store.alerts.unsent()).toEqual([]);
+      });
+
+      it('lets Alert state through for the lease as it is held', async () => {
+        const fence = (await lease().claim('a', NOW, LEASE))!;
+        const memory: AlertMemory = { alerts: [], arrivals: [{ vhost: '/', queue: 'orders.dlq', unsettled: 1, recent: [] }] };
+        await store.alerts.save('p', memory, [], fence);
+        await store.alerts.keepOnly(new Map([['p', []]]), fence);
+        expect(await store.alerts.load('p')).toEqual(memory);
       });
 
       it('refuses a write for a lease given up', async () => {

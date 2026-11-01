@@ -283,7 +283,7 @@ export class SqliteAuditStore implements AuditStore {
     this.ruleState = new SqliteRuleStateStore(this.db);
     this.history = new SqliteHistoryStore(this.db, this.leaderLease);
     this.notifications = new SqliteNotificationStore(this.db, this.leaderLease);
-    this.alerts = new SqliteAlertStore(this.db);
+    this.alerts = new SqliteAlertStore(this.db, this.leaderLease);
   }
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
