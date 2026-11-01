@@ -130,7 +130,20 @@ const onProfile = (method: Row['method'], route: string, reach: readonly Persona
   }),
 });
 
-const MATRIX: Row[] = [
+const ALIAS = /^\/api\//;
+const VERSIONED = '/api/v1/';
+
+/** The same row under /api/v1, where the API is served: /api is its alias, and both must answer alike. */
+const versioned = (row: Row): Row => ({
+  ...row,
+  route: row.route.replace(ALIAS, VERSIONED),
+  request: async () => {
+    const { path: urlPath, body } = (await row.request?.()) ?? { path: row.route };
+    return { path: urlPath.replace(ALIAS, VERSIONED), body };
+  },
+});
+
+const ROWS: Row[] = [
   // Answer without a session in both modes.
   { method: 'GET', route: '/healthz', reach: EVERYONE, reached: { status: 200 } },
   { method: 'GET', route: '/readyz', reach: EVERYONE, reached: { status: 200 } },
@@ -210,6 +223,8 @@ const MATRIX: Row[] = [
   onWaiting('POST', '/api/approvals/:checkoutId/apply/stop', { status: 403, code: 'not_checkout_owner' }),
   onWaiting('POST', '/api/approvals/:checkoutId/apply/continue', { status: 403, code: 'not_checkout_owner' }),
 ];
+
+const MATRIX: Row[] = [...ROWS, ...ROWS.filter((row) => ALIAS.test(row.route)).map(versioned)];
 
 /** The refusal of a Persona outside `row.reach`. */
 function refusal(row: Row, persona: Persona): { status: number; code: string } {

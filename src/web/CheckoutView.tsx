@@ -131,7 +131,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   );
 
   useEffect(() => {
-    const end = () => navigator.sendBeacon(`/api/checkouts/${encodeURIComponent(id)}/end`);
+    const end = () => navigator.sendBeacon(`/api/v1/checkouts/${encodeURIComponent(id)}/end`);
     window.addEventListener('pagehide', end);
     return () => window.removeEventListener('pagehide', end);
   }, [id]);

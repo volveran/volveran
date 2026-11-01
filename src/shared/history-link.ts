@@ -20,7 +20,7 @@ export interface AuditLinkSearch {
 const HISTORY_PREFIX = '#/history/';
 const MAP_PREFIX = '#/dead-letter-map/';
 const AUDIT_PREFIX = '#/audit?';
-const AUDIT_API_PREFIX = '/api/audit-entries?';
+const AUDIT_API_PREFIX = '/api/v1/audit-entries?';
 const AUDIT_FIELDS = ['profile', 'queue', 'checkoutId'] as const;
 
 /** The link to a queue's history view. */

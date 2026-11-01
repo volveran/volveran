@@ -28,6 +28,7 @@ import { diffMessages } from '../triage/message-diff.js';
 import type { MessageComparison } from '../../shared/message-diff.js';
 import { operatorOf } from '../operator.js';
 import type { Capability, ProfileAccess, ProfileAccessCheck } from '../profile-access.js';
+import { aliasOf } from './api-prefix.js';
 
 export interface CheckoutRouteDeps {
   checkouts: CheckoutManager;
@@ -83,8 +84,8 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
   });
   // Registered before the routes, so it covers every route under /api/checkouts/:id.
   app.addHook('preHandler', async (req) => {
-    const url = req.routeOptions.url;
-    if (url !== '/api/checkouts/:id' && !url?.startsWith('/api/checkouts/:id/')) return;
+    const url = aliasOf(req.routeOptions.url);
+    if (url !=='/api/checkouts/:id' && !url?.startsWith('/api/checkouts/:id/')) return;
     checkouts.checkOwner((req.params as { id: string }).id, operatorOf(req));
   });
 

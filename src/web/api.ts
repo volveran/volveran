@@ -135,10 +135,10 @@ export async function signOut(): Promise<void> {
 }
 
 export const api = {
-  session: () => getJson<Session>('/api/session'),
-  profiles: () => getJson<{ profiles: Profile[] }>('/api/profiles').then((b) => b.profiles),
+  session: () => getJson<Session>('/api/v1/session'),
+  profiles: () => getJson<{ profiles: Profile[] }>('/api/v1/profiles').then((b) => b.profiles),
   vhosts: (profile: string) =>
-    getJson<{ vhosts: Array<{ name: string }> }>(`/api/profiles/${segment(profile)}/vhosts`).then((b) =>
+    getJson<{ vhosts: Array<{ name: string }> }>(`/api/v1/profiles/${segment(profile)}/vhosts`).then((b) =>
       b.vhosts.map((v) => v.name),
     ),
   queues: (profile: string, vhost: string, opts: { search: string; onlyDeadLetterQueues: boolean }) => {
@@ -146,41 +146,41 @@ export const api = {
     if (opts.search.trim()) params.set('search', opts.search.trim());
     if (opts.onlyDeadLetterQueues) params.set('onlyDeadLetterQueues', 'true');
     const qs = params.size > 0 ? `?${params}` : '';
-    return getJson<QueueList>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`);
+    return getJson<QueueList>(`/api/v1/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues${qs}`);
   },
   /** A queue's depth history from `from` to `to` (ISO 8601); `history_not_sampled` on an `operatorToken` profile. */
   queueHistory: (profile: string, vhost: string, queue: string, range: { from: string; to: string }) =>
     getJson<QueueHistory>(
-      `/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/history?${new URLSearchParams(range)}`,
+      `/api/v1/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/history?${new URLSearchParams(range)}`,
     ),
   deadLetterMap: (profile: string, vhost: string) =>
-    getJson<DeadLetterMap>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/dead-letter-map`),
+    getJson<DeadLetterMap>(`/api/v1/profiles/${segment(profile)}/vhosts/${segment(vhost)}/dead-letter-map`),
   moveDestinations: (profile: string, vhost: string) =>
-    getJson<MoveDestinations>(`/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
+    getJson<MoveDestinations>(`/api/v1/profiles/${segment(profile)}/vhosts/${segment(vhost)}/move-destinations`),
   /** `overrideConsumers` starts it even though other consumers read the queue (error `queue_has_consumers` otherwise). */
   startCheckout: (profile: string, vhost: string, queue: string, opts: { overrideConsumers?: boolean } = {}) =>
     getJson<{ checkout: Checkout }>(
-      `/api/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/checkouts`,
+      `/api/v1/profiles/${segment(profile)}/vhosts/${segment(vhost)}/queues/${segment(queue)}/checkouts`,
       'POST',
       { overrideConsumers: opts.overrideConsumers === true },
     ).then((b) => b.checkout),
   /** Keeps the Checkout alive (the page still shows it) and returns its state. `over`: it has ended, and the page goes on asking as long as it stays open. */
   heartbeat: (id: string, { over = false }: { over?: boolean } = {}) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/heartbeat`, 'POST', undefined, over ? onItsOwn : {}).then((b) => b.checkout),
-  checkout: (id: string) => getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`).then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}/heartbeat`, 'POST', undefined, over ? onItsOwn : {}).then((b) => b.checkout),
+  checkout: (id: string) => getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}`).then((b) => b.checkout),
   message: (id: string, handle: number) =>
-    getJson<{ message: MessageDetail }>(`/api/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),
+    getJson<{ message: MessageDetail }>(`/api/v1/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),
   /** Two held Messages side by side, with their diff. */
   compare: (id: string, a: number, b: number) =>
-    getJson<MessageComparison>(`/api/checkouts/${segment(id)}/compare?a=${a}&b=${b}`),
+    getJson<MessageComparison>(`/api/v1/checkouts/${segment(id)}/compare?a=${a}&b=${b}`),
   endCheckout: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`, 'DELETE').then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}`, 'DELETE').then((b) => b.checkout),
   /** The handles of the held Messages matching `filter`. */
   matching: (id: string, filter: FilterClause[]) =>
-    getJson<{ handles: number[]; count: number }>(`/api/checkouts/${segment(id)}/matching`, 'POST', { filter }),
+    getJson<{ handles: number[]; count: number }>(`/api/v1/checkouts/${segment(id)}/matching`, 'POST', { filter }),
   /** Gives the Messages `handles` a Decision (Keep clears it); nothing reaches the broker until Apply. */
   setDecisions: (id: string, handles: number[], decision: Decision) =>
-    getJson<{ checkout: Checkout; rejected: Rejection[] }>(`/api/checkouts/${segment(id)}/decisions`, 'POST', {
+    getJson<{ checkout: Checkout; rejected: Rejection[] }>(`/api/v1/checkouts/${segment(id)}/decisions`, 'POST', {
       handles,
       decision,
     }),
@@ -189,37 +189,37 @@ export const api = {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(search)) if (value?.trim()) params.set(key, value.trim());
     const qs = params.size > 0 ? `?${params}` : '';
-    return getJson<{ entries: AuditEntry[] }>(`/api/audit-entries${qs}`).then((b) => b.entries);
+    return getJson<{ entries: AuditEntry[] }>(`/api/v1/audit-entries${qs}`).then((b) => b.entries);
   },
-  auditStore: () => getJson<AuditStoreUsage>('/api/audit-store'),
+  auditStore: () => getJson<AuditStoreUsage>('/api/v1/audit-store'),
   /** The Replay Rules of a Broker Profile, with the last pass of each. */
-  alerts: () => getJson<AlertsOverview>('/api/alerts'),
+  alerts: () => getJson<AlertsOverview>('/api/v1/alerts'),
 
-  alertRules: (profile: string) => getJson<{ rules: AlertRuleView[] }>(`/api/profiles/${segment(profile)}/alert-rules`).then((b) => b.rules),
+  alertRules: (profile: string) => getJson<{ rules: AlertRuleView[] }>(`/api/v1/profiles/${segment(profile)}/alert-rules`).then((b) => b.rules),
 
   testAlertDestination: (name: string) =>
-    getJson<{ delivery: NotificationDelivery }>(`/api/alert-destinations/${segment(name)}/test`, 'POST', {}).then((b) => b.delivery),
+    getJson<{ delivery: NotificationDelivery }>(`/api/v1/alert-destinations/${segment(name)}/test`, 'POST', {}).then((b) => b.delivery),
 
   replayRules: (profile: string) =>
-    getJson<{ rules: ReplayRuleView[] }>(`/api/profiles/${segment(profile)}/replay-rules`).then((b) => b.rules),
+    getJson<{ rules: ReplayRuleView[] }>(`/api/v1/profiles/${segment(profile)}/replay-rules`).then((b) => b.rules),
   /** Runs one pass of a rule now (`admin`) and returns it once it has ended. */
   runReplayRule: (profile: string, name: string) =>
-    getJson<{ pass: RulePass }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/run`, 'POST', {}).then(
+    getJson<{ pass: RulePass }>(`/api/v1/profiles/${segment(profile)}/replay-rules/${segment(name)}/run`, 'POST', {}).then(
       (b) => b.pass,
     ),
   /** Pauses a rule (`operator`+) with a reason; returns its new state. */
   pauseReplayRule: (profile: string, name: string, reason: string) =>
-    getJson<{ state: RuleState }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/pause`, 'POST', { reason }).then(
+    getJson<{ state: RuleState }>(`/api/v1/profiles/${segment(profile)}/replay-rules/${segment(name)}/pause`, 'POST', { reason }).then(
       (b) => b.state,
     ),
   /** Resumes a paused rule (`admin`); returns its new state. */
   resumeReplayRule: (profile: string, name: string) =>
-    getJson<{ state: RuleState }>(`/api/profiles/${segment(profile)}/replay-rules/${segment(name)}/resume`, 'POST', {}).then(
+    getJson<{ state: RuleState }>(`/api/v1/profiles/${segment(profile)}/replay-rules/${segment(name)}/resume`, 'POST', {}).then(
       (b) => b.state,
     ),
   /** Republishes the Discarded Message of Audit Entry `id`; returns the Restore's own Audit Entry. */
   restore: (id: number, options: RestoreOptions) =>
-    getJson<{ entry: AuditEntry }>(`/api/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(
+    getJson<{ entry: AuditEntry }>(`/api/v1/audit-entries/${id}/restore`, 'POST', { confirm: true, ...options }).then(
       (b) => b.entry,
     ),
   /**
@@ -227,7 +227,7 @@ export const api = {
    * one) and hands the file to the browser. Recorded as an Audit Entry.
    */
   exportMessages: async (id: string, filter?: FilterClause[]) => {
-    const res = await fetch(`/api/checkouts/${segment(id)}/export`, {
+    const res = await fetch(`/api/v1/checkouts/${segment(id)}/export`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(filter ? { filter } : {}),
@@ -256,7 +256,7 @@ export const api = {
    * `canary` starts with a Canary: true for the first Replay, or `{ handle }`.
    */
   apply: (id: string, confirmQueueName?: string, rate?: number, canary?: CanaryChoice) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply`, 'POST', {
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}/apply`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
       ...(rate !== undefined && { rate }),
@@ -264,48 +264,48 @@ export const api = {
     }).then((b) => b.checkout),
   /** Lets the Apply waiting after its Canary carry out the rest; returns the Checkout. */
   continueApply: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
   /** Stops the running Apply: the step in progress finishes, the rest goes back to the queue. Returns the Checkout. */
   stopApply: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
   /** Asks another Operator to approve the Apply (it needs Approval); freezes the Decisions, the Replay Rate and the Canary. */
   requestApproval: (id: string, confirmQueueName?: string, rate?: number, canary?: CanaryChoice) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'POST', {
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}/approval-request`, 'POST', {
       confirm: true,
       ...(confirmQueueName !== undefined && { confirmQueueName }),
       ...(rate !== undefined && { rate }),
       ...(canary !== undefined && { canary }),
     }).then((b) => b.checkout),
   withdrawApproval: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
   /** Other Operators' Checkouts waiting for an Approval this Operator may give. */
-  approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals', 'GET', undefined, onItsOwn).then((b) => b.approvals),
+  approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/v1/approvals', 'GET', undefined, onItsOwn).then((b) => b.approvals),
   /** A waiting Checkout, read-only; also the Checkout of an Apply this Operator approved. */
   approvalCheckout: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/approvals/${segment(id)}`).then((b) => b.checkout),
   /** The same, for a page that keeps looking while it waits for an approver who may have left. */
   watchApprovalCheckout: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`, 'GET', undefined, onItsOwn).then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/approvals/${segment(id)}`, 'GET', undefined, onItsOwn).then((b) => b.checkout),
   approvalMessage: (id: string, handle: number) =>
-    getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
+    getJson<{ message: MessageDetail }>(`/api/v1/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
   approvalCompare: (id: string, a: number, b: number) =>
-    getJson<MessageComparison>(`/api/approvals/${segment(id)}/compare?a=${a}&b=${b}`),
+    getJson<MessageComparison>(`/api/v1/approvals/${segment(id)}/compare?a=${a}&b=${b}`),
   /** Rejects the Apply of a waiting Checkout: it goes back to its requester's staging with `reason`. */
   reject: (id: string, reason: string) =>
-    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/approvals/${segment(id)}/reject`, 'POST', { reason }).then((b) => b.checkout),
   /**
    * Approves the Apply of a waiting Checkout, which starts it in the
    * background on the requester's Checkout; returns that Checkout
    * `applying`. `confirmQueueName` is the queue name as typed.
    */
   approve: (id: string, confirmQueueName: string) =>
-    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/approve`, 'POST', {
+    getJson<{ checkout: Checkout }>(`/api/v1/approvals/${segment(id)}/approve`, 'POST', {
       confirmQueueName,
     }).then((b) => b.checkout),
   /** The approver stops the Apply they approved; returns the Checkout. */
   stopApprovedApply: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/approvals/${segment(id)}/apply/stop`, 'POST').then((b) => b.checkout),
   /** The approver lets the Apply they approved carry out the rest after its Canary; returns the Checkout. */
   continueApprovedApply: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
+    getJson<{ checkout: Checkout }>(`/api/v1/approvals/${segment(id)}/apply/continue`, 'POST').then((b) => b.checkout),
 };

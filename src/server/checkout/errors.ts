@@ -159,7 +159,7 @@ export function approvalRequired({ id, profile, queue }: Queue & { id: string; p
   return new CheckoutError(
     'approval_required',
     `${profile.name} is a Protected Profile: an Apply of "${queue}" that changes where a Message ends up needs a second Operator's Approval. ` +
-      `Request Approval (POST /api/checkouts/${id}/approval-request) instead of Applying.`,
+      `Request Approval (POST /api/v1/checkouts/${id}/approval-request) instead of Applying.`,
   );
 }
 
