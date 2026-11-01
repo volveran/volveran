@@ -4,6 +4,7 @@
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import type { LeaderControl } from '../../src/server/leader/background-leader.js';
 import { startTcpProxy } from '../support/tcp-proxy.js';
 import { drain, eventually, purgeQueues, readyCount, seedMessages, startApp, testBroker, testProfile, withChannel } from './harness.js';
@@ -64,7 +65,7 @@ describe('a Replica shutting down', () => {
   };
 
   /** Two Replicas whose Apply steps on `a` wait at a gate, and a Checkout there with `count` Discards, whose Apply has reached its first step. */
-  const applyingOnA = async (queue: string, count: number) => {
+  const applyingOnA = async (queue: string, count: number, hooks: CheckoutTestHooks = {}) => {
     const step = gate();
     const reached = gate();
     toOpen.push(step.open);
@@ -73,6 +74,7 @@ describe('a Replica shutting down', () => {
         name === 'a'
           ? {
               checkoutTestHooks: {
+                ...hooks,
                 beforeApplyStep: async () => {
                   reached.open();
                   await step.wait;
@@ -174,20 +176,37 @@ describe('a Replica shutting down', () => {
   });
 
   it('stops a running Apply at a step boundary: the step in progress finishes, the rest goes back through Keep, and the outcome is known', async () => {
-    const { replicas, browser, id, step } = await applyingOnA(QUORUM, 3);
+    // Another Operator's start, held at its lock, keeps the Replica up while its answer is read.
+    const lock = gate();
+    const locked = gate();
+    toOpen.push(lock.open);
+    const { replicas, browser, id, step } = await applyingOnA(QUORUM, 3, {
+      afterLock: async (ref) => {
+        if (ref.queue !== CLASSIC) return;
+        locked.open();
+        await lock.wait;
+      },
+    });
+    await seedMessages('/', CLASSIC, 1);
+    const ben = replicas.browser();
+    await ben.signIn({ sub: 'ben-sub', email: 'ben@example.com', groups: ['ops'] });
+    const held = ben.to(replicas.a).post(startPath(CLASSIC), {});
+    await locked.wait;
     const url = replicas.a.baseUrl;
 
     const stopping = replicas.a.shutdown();
     await eventually(async () => expect((await fetch(`${url}/readyz`)).status).toBe(503));
     step.open();
-    // Its last answers, before it goes.
     const ended = await eventually(async () => {
       const view = await (await asOperator(browser, url, `/api/checkouts/${id}`)).json();
+      expect(view.checkout?.status).toBe('ended');
       expect(view.checkout?.lastApply).toBeTruthy();
       return view.checkout;
     });
+    lock.open();
     await stopping;
 
+    expect((await held).body.error.code).toBe('replica_shutting_down');
     expect(ended.endReason).toBe('shutdown');
     const outcomes = ended.lastApply.outcomes as Array<{ status: string; reason: string | null }>;
     expect(outcomes.map((o) => o.status)).toEqual(['done', 'not-attempted', 'not-attempted']);
@@ -321,7 +340,8 @@ describe('one Replica shutting down', () => {
     await seedMessages('/', QUORUM, 1_000);
     const { checkout } = (await app.post(startPath(QUORUM, 'local'))).body;
     expect(checkout.heldCount).toBe(1_000);
-    await app.post(`/api/checkouts/${checkout.id}/decisions`, { handles: 'all', decision: DISCARD });
+    const decided = await app.post(`/api/checkouts/${checkout.id}/decisions`, { handles: checkout.messages.map((m: { handle: number }) => m.handle), decision: DISCARD });
+    expect(decided.status).toBe(200);
     expect((await app.post(`/api/checkouts/${checkout.id}/apply`, { confirm: true })).status).toBe(202);
     await reached.wait;
 
@@ -363,6 +383,9 @@ describe('one Replica shutting down', () => {
 
         proxy.silence();
         expect(await settledWithin(app.close(), 25_000)).toBe(true);
+
+        // The broker's heartbeat check: until then the Messages would land in the next test.
+        await eventually(async () => expect(await readyCount('/', queue)).toBe(3), 30_000);
       } finally {
         await proxy.close();
       }
