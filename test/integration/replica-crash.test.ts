@@ -310,7 +310,7 @@ describe('a Replica that cannot read who owns a Checkout', () => {
     }
   });
 
-  it('does not show an Operator the internal port refusing a path it does not take as being signed out', async () => {
+  it('forwards a path spelt another way, as the route it reached', async () => {
     const replicas = await startTwoReplicas({ profiles: [profile()] });
     try {
       const browser = replicas.browser();
@@ -318,7 +318,8 @@ describe('a Replica that cannot read who owns a Checkout', () => {
       await seedMessages('/', QUEUE, 1);
       const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
       const answer = await browser.to(replicas.b).get(`/%61pi/checkouts/${id}`);
-      expect([answer.status, answer.body.error.code]).toEqual([503, 'replica_unreachable']);
+      expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+      expect(answer.body.checkout.id).toBe(id);
       await browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
     } finally {
       await replicas.close();

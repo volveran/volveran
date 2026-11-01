@@ -17,7 +17,7 @@ All notable changes to Volverán are recorded here. The format is based on
 - On a gone Replica's Checkout whose Broker Profile has left the file, any Replica answers 404 `profile_not_found`, not `checkout_not_found`.
 - An Operator is told `503 replica_unreachable`, to try again, when the internal port refuses a forwarded request or the store cannot say which Replica owns a Checkout, rather than a 401 or a 500. New header on that refusal: `x-volveran-forwarding-refused`.
 - An Operator can start a Checkout of another queue as soon as one ends, on the Replica that held it as on any other, while its Messages go back.
-- `returnTo` given twice no longer answers 500 at sign-in.
+- `returnTo` given twice no longer answers 500 at sign-in, and a path spelt `/%61pi/...` is forwarded as the route it reached.
 - Text about returning Messages no longer promises their order on a large Checkout of a quorum queue, which the queue does not keep.
 - Forwarded requests carry a protocol version. A Replica refuses another version before reading anything else of the request, and the Operator is told to try again. New `reason` on `volveran_forwarding_failures_total`: `protocol_mismatch`. (#130)
 - With several Replicas, the metrics add up: the gauges of shared state (queue depth, set-up warnings, sampling, Alerts firing, Replay Rule state, stored body bytes) come from the Background Leader only, and counters stay per Replica. New metrics: `volveran_background_leader`, `volveran_forwarding_failures_total` and `volveran_audit_store_errors_total` ([guide](docs/observability.md#several-replicas)). A single Replica shows the same gauges as before, though on PostgreSQL they go away if it loses the store for longer than its lease. (#120)

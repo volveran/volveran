@@ -107,7 +107,8 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
         host: hostname.replace(/^\[|\]$/g, ''),
         port,
         method: req.raw.method,
-        path: req.raw.url,
+        // A route that forwards is under /api, however the request spelt that (`/%61pi/...`), and the internal port takes only that spelling.
+        path: req.raw.url?.replace(/^\/[^/?]*/, '/api'),
         // A kept connection can die between requests, which would read as an unreachable Replica.
         agent: false,
         headers: {
