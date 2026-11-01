@@ -13,6 +13,13 @@ import type { OperatorToken } from './operator-token.js';
 import type { BrokerProfile } from './profiles.js';
 
 /**
+ * Seconds. A host or network lost keeps a connection's lock queue and held Messages for about
+ * three heartbeats (docs/rabbitmq-behaviour.md, "Dead connections"): 15 s, against three minutes
+ * at the broker's default. A profile's amqpUrl may name its own `heartbeat`, which then holds.
+ */
+export const AMQP_HEARTBEAT_SECONDS = 5;
+
+/**
  * The returned connection already has an `error` listener (amqplib emits
  * `error` before `close` when the broker closes a connection, and an
  * unlistened `error` would crash the process); callers react to `close`.
@@ -27,6 +34,7 @@ export async function openAmqpConnection(
   url.username = encodeURIComponent(credentials.username);
   url.password = encodeURIComponent(credentials.password);
   url.pathname = '/' + encodeURIComponent(vhost);
+  if (!url.searchParams.has('heartbeat')) url.searchParams.set('heartbeat', String(AMQP_HEARTBEAT_SECONDS));
   let conn: amqp.ChannelModel;
   try {
     conn = await amqp.connect(url.toString(), {

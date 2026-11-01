@@ -1,10 +1,10 @@
 // Replicas on SQLite: there is only ever one, so nothing registers and this stays empty in
 // a running app. It holds to the same contract as PostgreSQL, in this process's memory.
-import type { LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
+import type { LiveCheckoutRecord, LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
 
 export class MemoryReplicaStore implements ReplicaStore {
   private readonly leases = new Map<string, ReplicaLeaseRow>();
-  private readonly checkouts = new Map<string, NewLiveCheckout>();
+  private readonly checkouts = new Map<string, LiveCheckoutRecord>();
 
   async renewLease(lease: ReplicaLeaseRow): Promise<void> {
     this.leases.set(lease.replicaId, lease);
@@ -16,12 +16,12 @@ export class MemoryReplicaStore implements ReplicaStore {
   }
 
   async addCheckout(checkout: NewLiveCheckout): Promise<void> {
-    this.checkouts.set(checkout.id, checkout);
+    this.checkouts.set(checkout.id, { ...checkout, endReason: checkout.endReason ?? null, lostReason: checkout.lostReason ?? null });
   }
 
   async updateCheckout(id: string, update: LiveCheckoutUpdate): Promise<void> {
     const checkout = this.checkouts.get(id);
-    if (checkout) this.checkouts.set(id, { ...checkout, ...update });
+    if (checkout) this.checkouts.set(id, { ...checkout, ...update, endReason: update.endReason ?? null, lostReason: update.lostReason ?? null });
   }
 
   async removeCheckout(id: string): Promise<void> {
@@ -33,6 +33,27 @@ export class MemoryReplicaStore implements ReplicaStore {
     if (!checkout) return null;
     const lease = this.leases.get(checkout.ownerReplica);
     return { ownerReplica: checkout.ownerReplica, forwardingAddress: lease?.forwardingAddress ?? null, ownerLeaseLive: lease !== undefined && lease.expiresAt > now };
+  }
+
+  async checkoutRecord(id: string): Promise<LiveCheckoutRecord | null> {
+    return this.checkouts.get(id) ?? null;
+  }
+
+  async checkoutsOfGoneReplicas(now: number): Promise<LiveCheckoutRecord[]> {
+    return [...this.checkouts.values()].filter((checkout) => {
+      const lease = this.leases.get(checkout.ownerReplica);
+      return lease !== undefined && lease.expiresAt <= now;
+    });
+  }
+
+  async removeGoneReplicas(before: number): Promise<number> {
+    let removed = 0;
+    for (const [replicaId, lease] of this.leases) {
+      if (lease.expiresAt > before) continue;
+      await this.removeReplica(replicaId);
+      removed++;
+    }
+    return removed;
   }
 
   async activeCheckoutOf(operatorId: string, now: number): Promise<string | null> {
