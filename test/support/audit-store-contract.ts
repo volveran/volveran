@@ -1109,6 +1109,11 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         profile: 'local',
         vhost: '/',
         queue: 'orders.dlq',
+        queueType: 'quorum',
+        deliveryLimit: 20,
+        readyAtStart: 3,
+        startedAt: NOW,
+        endsAt: NOW + 60_000,
         status: 'active',
         approval: null,
         ...overrides,
@@ -1193,6 +1198,63 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         await store.replicas.removeReplica('r-1');
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
         expect((await store.replicas.checkoutRoute('c-2', NOW))?.ownerLeaseLive).toBe(true);
+      });
+
+      it('reads a record back whole, with why it ended or was lost', async () => {
+        expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
+        await store.replicas.addCheckout(live());
+        expect(await store.replicas.checkoutRecord('c-1')).toEqual({ ...live(), endReason: null, lostReason: null });
+        await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null, endReason: 'operator' });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'ended', endReason: 'operator', lostReason: null });
+        await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'the broker closed it' });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', endReason: null, lostReason: 'the broker closed it' });
+      });
+
+      it("finds the records of Replicas whose lease is over, whatever their status, and no other's", async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2', NOW + 5000));
+        await store.replicas.addCheckout(live());
+        await store.replicas.addCheckout(live({ id: 'c-2', status: 'ended' }));
+        await store.replicas.addCheckout(live({ id: 'c-3', ownerReplica: 'r-2' }));
+        expect(await store.replicas.checkoutsOfGoneReplicas(NOW + 999)).toEqual([]);
+        const gone = await store.replicas.checkoutsOfGoneReplicas(NOW + 1000);
+        expect(gone.map((c) => c.id).sort()).toEqual(['c-1', 'c-2']);
+      });
+
+      it('removes the leases over by a time and their records, and no others', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2', NOW + 5000));
+        await store.replicas.addCheckout(live());
+        await store.replicas.addCheckout(live({ id: 'c-2', ownerReplica: 'r-2' }));
+        expect(await store.replicas.removeGoneReplicas(NOW + 999)).toBe(0);
+        expect(await store.replicas.checkoutRecord('c-1')).not.toBeNull();
+        expect(await store.replicas.removeGoneReplicas(NOW + 1000)).toBe(1);
+        expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
+        expect(await store.replicas.checkoutRoute('c-2', NOW)).not.toBeNull();
+        // Its lease is gone too: a Replica coming back starts a new one.
+        await store.replicas.addCheckout(live({ id: 'c-4' }));
+        expect((await store.replicas.checkoutRoute('c-4', NOW))?.forwardingAddress).toBeNull();
+      });
+    });
+
+    describe('entries left by a Replica that has gone', () => {
+      const entryOf = (checkoutId: string) => entry({ checkoutId });
+
+      it("makes a Checkout's pending entries uncertain, with the reason, and leaves the rest as they are", async () => {
+        const pending = await store.record(entryOf('c-1'));
+        const done = await store.record(entryOf('c-1'));
+        await store.setOutcome(done, 'done');
+        const failed = await store.record(entryOf('c-1'));
+        await store.setOutcome(failed, 'failed', 'channel closed');
+        const other = await store.record(entryOf('c-2'));
+
+        expect(await store.settleInterrupted('c-1', 'its Replica stopped')).toBe(1);
+
+        expect(await store.get(pending)).toMatchObject({ outcome: 'uncertain', outcomeReason: 'its Replica stopped' });
+        expect(await store.get(done)).toMatchObject({ outcome: 'done', outcomeReason: null });
+        expect(await store.get(failed)).toMatchObject({ outcome: 'failed', outcomeReason: 'channel closed' });
+        expect(await store.get(other)).toMatchObject({ outcome: 'pending' });
+        expect(await store.settleInterrupted('c-1', 'its Replica stopped')).toBe(0);
       });
     });
 

@@ -38,6 +38,7 @@ export function view(c: Checkout): CheckoutView {
     heartbeatWindowMs: c.timing.heartbeatWindowMs,
     status: statusOf(c),
     lostReason: c.lostReason,
+    ownerGone: c.ownerGone,
     endReason: c.endReason,
     readyAtStart: c.readyAtStart,
     heldCount: c.held.size,

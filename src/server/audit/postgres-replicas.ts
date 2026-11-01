@@ -1,8 +1,49 @@
 // Replicas on PostgreSQL: their leases and Live Checkout records, read by every Replica. A
 // record can outlive its owner's lease: that is how a Checkout's loss can be noticed.
 import type pg from 'pg';
-import type { LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
+import type { EndReason, CheckoutQueueType } from '../../shared/checkout.js';
+import type { LiveCheckoutRecord, LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
 import { transaction } from './postgres-connection.js';
+
+interface RecordRow {
+  id: string;
+  owner_replica: string;
+  operator_id: string;
+  operator_name: string;
+  profile: string;
+  vhost: string;
+  queue: string;
+  status: LiveCheckoutRecord['status'];
+  approval: string | null;
+  queue_type: CheckoutQueueType;
+  delivery_limit: number | null;
+  ready_at_start: number;
+  // pg reads BIGINT as text.
+  started_at: string;
+  ends_at: string;
+  end_reason: EndReason | null;
+  lost_reason: string | null;
+}
+
+function recordOf(row: RecordRow): LiveCheckoutRecord {
+  return {
+    id: row.id,
+    ownerReplica: row.owner_replica,
+    operator: { id: row.operator_id, displayName: row.operator_name },
+    profile: row.profile,
+    vhost: row.vhost,
+    queue: row.queue,
+    status: row.status,
+    approval: row.approval === null ? null : (JSON.parse(row.approval) as LiveCheckoutRecord['approval']),
+    queueType: row.queue_type,
+    deliveryLimit: row.delivery_limit,
+    readyAtStart: row.ready_at_start,
+    startedAt: Number(row.started_at),
+    endsAt: Number(row.ends_at),
+    endReason: row.end_reason,
+    lostReason: row.lost_reason,
+  };
+}
 
 export class PostgresReplicaStore implements ReplicaStore {
   constructor(private readonly pool: pg.Pool) {}
@@ -24,14 +65,14 @@ export class PostgresReplicaStore implements ReplicaStore {
 
   async addCheckout(c: NewLiveCheckout): Promise<void> {
     await this.pool.query(
-      `INSERT INTO live_checkouts (id, owner_replica, operator_id, operator_name, profile, vhost, queue, status, approval)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [c.id, c.ownerReplica, c.operator.id, c.operator.displayName, c.profile, c.vhost, c.queue, c.status, c.approval && JSON.stringify(c.approval)],
+      `INSERT INTO live_checkouts (id, owner_replica, operator_id, operator_name, profile, vhost, queue, status, approval, queue_type, delivery_limit, ready_at_start, started_at, ends_at, end_reason, lost_reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      [c.id, c.ownerReplica, c.operator.id, c.operator.displayName, c.profile, c.vhost, c.queue, c.status, c.approval && JSON.stringify(c.approval), c.queueType, c.deliveryLimit, c.readyAtStart, c.startedAt, c.endsAt, c.endReason ?? null, c.lostReason ?? null],
     );
   }
 
-  async updateCheckout(id: string, { status, approval }: LiveCheckoutUpdate): Promise<void> {
-    await this.pool.query('UPDATE live_checkouts SET status = $2, approval = $3 WHERE id = $1', [id, status, approval && JSON.stringify(approval)]);
+  async updateCheckout(id: string, { status, approval, endReason, lostReason }: LiveCheckoutUpdate): Promise<void> {
+    await this.pool.query('UPDATE live_checkouts SET status = $2, approval = $3, end_reason = $4, lost_reason = $5 WHERE id = $1', [id, status, approval && JSON.stringify(approval), endReason ?? null, lostReason ?? null]);
   }
 
   async removeCheckout(id: string): Promise<void> {
@@ -47,6 +88,27 @@ export class PostgresReplicaStore implements ReplicaStore {
     const row = rows[0];
     if (!row) return null;
     return { ownerReplica: row.owner_replica, forwardingAddress: row.forwarding_address, ownerLeaseLive: row.lease_expires_at !== null && row.lease_expires_at > now };
+  }
+
+  async checkoutRecord(id: string): Promise<LiveCheckoutRecord | null> {
+    const { rows } = await this.pool.query<RecordRow>('SELECT * FROM live_checkouts WHERE id = $1', [id]);
+    return rows[0] ? recordOf(rows[0]) : null;
+  }
+
+  async checkoutsOfGoneReplicas(now: number): Promise<LiveCheckoutRecord[]> {
+    const { rows } = await this.pool.query<RecordRow>(
+      'SELECT c.* FROM live_checkouts c JOIN replicas r ON r.id = c.owner_replica WHERE r.lease_expires_at <= $1',
+      [now],
+    );
+    return rows.map(recordOf);
+  }
+
+  async removeGoneReplicas(before: number): Promise<number> {
+    return transaction(this.pool, async (client) => {
+      await client.query('DELETE FROM live_checkouts WHERE owner_replica IN (SELECT id FROM replicas WHERE lease_expires_at <= $1)', [before]);
+      const { rowCount } = await client.query('DELETE FROM replicas WHERE lease_expires_at <= $1', [before]);
+      return rowCount ?? 0;
+    });
   }
 
   async activeCheckoutOf(operatorId: string, now: number): Promise<string | null> {

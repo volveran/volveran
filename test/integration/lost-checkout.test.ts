@@ -20,12 +20,14 @@ import {
   seedMessages,
   spawnServer,
   startApp,
+  testBroker,
   testProfile,
   uniqueName,
   waitForReady,
   withChannel,
   type TestApp,
 } from './harness.js';
+import { startTcpProxy } from '../support/tcp-proxy.js';
 
 const checkoutPath = (queue: string) => `/api/profiles/local/vhosts/%2F/queues/${encodeURIComponent(queue)}/checkouts`;
 
@@ -184,6 +186,30 @@ describe('Lost Checkout', () => {
       expect((await readyMessages(queue)).map((m) => m.id)).toEqual([0, 1].map((i) => `${queue}-${i}`));
       expect((await backstopApp.get(`/api/audit-entries?checkoutId=${checkout.id}`)).body.entries).toEqual([]);
     });
+  });
+
+  describe('when the host or network goes silent, the socket still open', () => {
+    it('returns every Message and frees the queue within the heartbeats, far sooner than at the broker default of about three minutes', async () => {
+      const queue = 'orders.dlq';
+      await seedMessages('/', queue, 3);
+      const proxy = await startTcpProxy(testBroker.amqpPort);
+      const silent = await startApp({ profiles: [testProfile({ name: 'local', amqpUrl: `amqp://127.0.0.1:${proxy.port}` })] });
+      try {
+        const { checkout } = (await silent.post(checkoutPath(queue))).body;
+        expect(checkout.heldCount).toBe(3);
+
+        proxy.silence();
+
+        await eventually(async () => expect(await readyCount('/', queue)).toBe(3), 30_000);
+        // This side's own heartbeat check sees it too, so the Operator is told.
+        await eventually(async () => {
+          expect((await silent.get(`/api/checkouts/${checkout.id}`)).body.checkout.status).toBe('lost');
+        }, 30_000);
+      } finally {
+        await silent.close();
+        await proxy.close();
+      }
+    }, 90_000);
   });
 
   describe('when the process is killed', () => {

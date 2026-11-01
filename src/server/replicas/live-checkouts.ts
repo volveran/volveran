@@ -5,18 +5,20 @@
 // Checkout run in order, and only the latest state is written; a write that fails is tried
 // again after the next lease renewal. Until then only the record's status is behind: where
 // to forward to does not change.
-import type { LiveCheckoutUpdate, NewLiveCheckout, ReplicaStore } from '../audit/audit-store.js';
+import type { LiveCheckoutRecord, LiveCheckoutUpdate, NewLiveCheckout, ReplicaStore } from '../audit/audit-store.js';
 import type { LiveCheckoutListener } from '../checkout/manager.js';
 import type { Checkout } from '../checkout/state.js';
 import { approvalSummary } from '../checkout/view.js';
 import { OneAtATime } from '../one-at-a-time.js';
-import { replicaUnreachable } from './forwarding.js';
+import { ownerGoneReason } from './owner-gone.js';
 
 function stateOf(checkout: Checkout): LiveCheckoutUpdate {
   const { approvalRequest } = checkout;
   return {
     status: checkout.status,
     approval: approvalRequest && checkout.status === 'active' ? approvalSummary({ ...checkout, approvalRequest }) : null,
+    endReason: checkout.endReason,
+    lostReason: checkout.lostReason,
   };
 }
 
@@ -42,6 +44,11 @@ export class LiveCheckouts implements LiveCheckoutListener {
       profile: checkout.profile.name,
       vhost: checkout.vhost,
       queue: checkout.queue,
+      queueType: checkout.queueType,
+      deliveryLimit: checkout.deliveryLimit,
+      readyAtStart: checkout.readyAtStart,
+      startedAt: checkout.startedAt.getTime(),
+      endsAt: checkout.endsAt.getTime(),
       ...stateOf(checkout),
     };
     this.known.add(checkout.id);
@@ -61,12 +68,19 @@ export class LiveCheckouts implements LiveCheckoutListener {
     if (this.known.has(id)) this.write(id, null);
   }
 
-  /** Where to forward a request about Checkout `id`; null when no other Replica owns it. */
-  async ownerAddress(id: string): Promise<string | null> {
+  /**
+   * Whose request about Checkout `id` this is. Null when no other Replica owns it. A live lease
+   * means forwarding, and answering that fails is `replica_unreachable`: nothing is known to be
+   * lost. With the lease over the owner is taken to be gone: what is left is the record, with
+   * a Checkout still going at the last write now lost (a Checkout that had ended stays ended).
+   */
+  async ownerOf(id: string): Promise<{ address: string } | { gone: LiveCheckoutRecord } | null> {
     const route = await this.store.checkoutRoute(id, Date.now());
     if (!route || route.ownerReplica === this.replicaId) return null;
-    if (route.forwardingAddress === null || !route.ownerLeaseLive) throw replicaUnreachable();
-    return route.forwardingAddress;
+    if (route.forwardingAddress !== null && route.ownerLeaseLive) return { address: route.forwardingAddress };
+    const record = await this.store.checkoutRecord(id);
+    if (!record) return null;
+    return { gone: record.status === 'active' ? { ...record, status: 'lost', approval: null, lostReason: ownerGoneReason(record.queueType) } : record };
   }
 
   /** The id of an Operator's active Checkout on a Replica that is alive. */
