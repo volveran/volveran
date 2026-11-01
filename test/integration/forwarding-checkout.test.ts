@@ -403,9 +403,12 @@ describe('a Checkout whose Owner Replica has died', () => {
       const other = browser.to(replicas.b);
       await eventually(async () => expect((await other.post(`/api/checkouts/${id}/matching`, { filter: [] })).status).toBe(200));
 
-      expect((await other.post(`/api/checkouts/${id}/decisions`, { handles: messages.map((m: { handle: number }) => m.handle), decision: DISCARD })).body.rejected).toHaveLength(1);
-      for (const rest of ['/apply', '/export']) {
-        const refused = await other.post(`/api/checkouts/${id}${rest}`, { confirm: true });
+      for (const [rest, body] of [
+        ['/decisions', { handles: messages.map((m: { handle: number }) => m.handle), decision: DISCARD }],
+        ['/apply', { confirm: true }],
+        ['/export', {}],
+      ] as const) {
+        const refused = await other.post(`/api/checkouts/${id}${rest}`, body);
         expect(refused.status).toBe(409);
         expect(refused.body.error.code).toBe('checkout_not_active');
       }
