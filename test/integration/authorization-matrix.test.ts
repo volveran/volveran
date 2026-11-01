@@ -125,7 +125,7 @@ const onProfile = (method: Row['method'], route: string, reach: readonly Persona
   reach,
   reached,
   request: () => ({
-    path: route.replace(':profile', 'prod').replace(':vhost', '%2F').replace(':queue', OWN_QUEUE).replace(':name', 'no-such-rule'),
+    path: route.replaceAll(':profile', 'prod').replaceAll(':vhost', '%2F').replaceAll(':queue', OWN_QUEUE).replaceAll(':name', 'no-such-rule'),
     body: method === 'POST' ? {} : undefined,
   }),
 });

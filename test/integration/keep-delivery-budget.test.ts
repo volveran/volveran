@@ -23,6 +23,8 @@ const idsOf = (from: number, count: number) => Array.from({ length: count }, (_,
 
 describe('Keep on a quorum queue', () => {
   beforeEach(() => purgeQueues('/', [queue]));
+  // Keep returns Messages to a queue the rest of the suite shares.
+  afterAll(() => purgeQueues('/', [queue]));
 
   describe('with the default wait', () => {
     let app: TestApp;

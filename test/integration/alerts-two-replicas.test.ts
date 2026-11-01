@@ -1,7 +1,7 @@
 // Alerts with two Replicas (#92): what an on-call engineer is sent, and what an Operator
 // sees, whichever Replica is the Background Leader and however it stops being one.
 // The store's part is in the audit store contract.
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LEADER_LEASE_MS } from '../../src/server/leader/background-leader.js';
 import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import { deadLetter, deadLetterRoutes, eventually, fixtureQueues, leaderHooks, purgeQueues, samplerHooks, startApp, testProfile } from './harness.js';
@@ -22,13 +22,10 @@ describe('Alerts with two Replicas', () => {
   let samplers: Record<ReplicaName, ReturnType<typeof samplerHooks>>;
   let leaders: Record<ReplicaName, ReturnType<typeof leaderHooks>>;
 
-  beforeAll(async () => {
-    destination = await startFakeDestination();
-  });
-  afterAll(() => destination.close());
   beforeEach(async () => {
-    destination.received.length = 0;
-    destination.answerWith();
+    // One per test: what is left of a crashed Replica still closes in-process, and its
+    // notifier can go on retrying for seconds, which a killed process would not.
+    destination = await startFakeDestination();
     // Different times: a Sample is one per profile and time.
     samplers = { a: samplerHooks(), b: samplerHooks(new Date(Date.now() + 1000)) };
     leaders = { a: leaderHooks(), b: leaderHooks() };
@@ -43,6 +40,7 @@ describe('Alerts with two Replicas', () => {
   afterEach(async () => {
     await replicas?.close();
     replicas = undefined;
+    await destination.close();
     await purgeQueues('/', fixtureQueues);
   });
 

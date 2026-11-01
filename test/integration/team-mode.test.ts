@@ -1,7 +1,7 @@
 // Team Mode (ADR 0002): Operators sign in through an OIDC provider (the mock
 // provider of test/broker/docker-compose.yml), every API route needs a
 // session, and the Operator is the signed-in identity.
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applyAndWait, closedPort, purgeQueues, readyCount, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, testOidc } from './oidc-provider.js';
 
@@ -202,6 +202,8 @@ describe('Checkout in Team Mode', () => {
   beforeAll(async () => {
     ({ app, baseUrl } = await startTeamApp());
   });
+  // Queues are shared across the suite: these tests count what they seed, so they start from empty.
+  beforeEach(() => purgeQueues('/', ['orders.dlq', 'payments.dlq']));
   afterEach(async () => {
     for (const { browser, id } of open.splice(0)) await browser.request('DELETE', `/api/checkouts/${id}`);
     await purgeQueues('/', ['orders.dlq', 'payments.dlq']);
