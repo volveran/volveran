@@ -40,15 +40,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{/*
-The profiles.yaml file rendered from brokerProfiles.profiles. On SQLite it has no
-version: adding one would change the ConfigMap's checksum, which rolls the pod on
-upgrade and ends open Checkouts. Volverán then logs a warning, harmless until 1.0.
+The profiles.yaml file rendered from brokerProfiles.profiles, with its format version.
 */}}
 {{- define "volveran.profilesYaml" -}}
-{{- $file := dict "profiles" .Values.brokerProfiles.profiles -}}
-{{- if .Values.postgres.existingSecret -}}
-{{- $_ := set $file "version" 1 -}}
-{{- end -}}
+{{- $file := dict "profiles" .Values.brokerProfiles.profiles "version" 1 -}}
 {{- with .Values.brokerProfiles.alertDestinations -}}
 {{- $_ := set $file "alertDestinations" . -}}
 {{- end -}}

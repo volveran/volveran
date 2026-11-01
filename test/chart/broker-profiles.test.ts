@@ -21,7 +21,7 @@ const podAnnotations = (chart: Rendered) => chart.one('Deployment').spec.templat
 describe('Broker Profiles', () => {
   it('renders the inline profiles as profiles.yaml, in the same shape as the profiles YAML', () => {
     const configMap = render().one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [prod] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [prod] });
   });
 
   it('leaves alertDestinations out of profiles.yaml unless given, and writes them when given', () => {
@@ -30,7 +30,7 @@ describe('Broker Profiles', () => {
       { name: 'pager', type: 'webhook', urlEnv: 'VOLVERAN_HOOK_URL', signingSecretEnv: 'VOLVERAN_HOOK_SECRET' },
     ];
     const configMap = render({ brokerProfiles: { alertDestinations: destinations } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ alertDestinations: destinations, profiles: [prod] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, alertDestinations: destinations, profiles: [prod] });
   });
 
   it('refuses a malformed Alert Destination, and a URL written into one', () => {
@@ -100,19 +100,19 @@ describe('Broker Profiles', () => {
   it('accepts roles, and writes them into profiles.yaml', () => {
     const roles = { viewer: ['support'], operator: ['oncall', 'sre'], admin: ['platform'] };
     const configMap = render({ brokerProfiles: { profiles: [{ ...prod, roles }] } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, roles }] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [{ ...prod, roles }] });
   });
 
   it('accepts requireApproval, and writes it into profiles.yaml', () => {
     const configMap = render({ brokerProfiles: { profiles: [{ ...prod, requireApproval: false }] } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, requireApproval: false }] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [{ ...prod, requireApproval: false }] });
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, requireApproval: 'sometimes' }] } })).toMatch(/requireApproval/);
   });
 
   it('accepts replayRate, writes it into profiles.yaml, and refuses a rate that is not a number', () => {
     const replayRate = { default: 5, max: 50 };
     const configMap = render({ brokerProfiles: { profiles: [{ ...prod, replayRate }] } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, replayRate }] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [{ ...prod, replayRate }] });
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { max: 'fast' } }] } })).toMatch(/replayRate/);
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, replayRate: { min: 1 } }] } })).toMatch(/replayRate/);
   });
@@ -120,7 +120,7 @@ describe('Broker Profiles', () => {
   it('accepts canary with a watchWindow and requiredAbove, writes it into profiles.yaml, and refuses one that is not a duration or an unknown key', () => {
     const canary = { watchWindow: '45s', requiredAbove: 20 };
     const configMap = render({ brokerProfiles: { profiles: [{ ...prod, canary }] } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, canary }] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [{ ...prod, canary }] });
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { watchWindow: 30 } }] } })).toMatch(/watchWindow/);
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { window: '30s' } }] } })).toMatch(/canary/);
     expect(renderRefusal({ brokerProfiles: { profiles: [{ ...prod, canary: { requiredAbove: -1 } }] } })).toMatch(/requiredAbove/);
@@ -142,7 +142,7 @@ describe('Broker Profiles', () => {
       startPaused: true,
     };
     const configMap = render({ brokerProfiles: { profiles: [{ ...prod, replayRules: [rule] }] } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [{ ...prod, replayRules: [rule] }] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [{ ...prod, replayRules: [rule] }] });
     const keep = { ...rule, whenAttemptsUsedUp: 'keep' };
     expect(() => render({ brokerProfiles: { profiles: [{ ...prod, replayRules: [keep] }] } })).not.toThrow();
 
@@ -156,7 +156,7 @@ describe('Broker Profiles', () => {
     const { username: _u, passwordEnv: _p, ...rest } = prod;
     const tokenProfile = { ...rest, credentials: 'operatorToken', tokenUsernameClaim: 'preferred_username' };
     const configMap = render({ brokerProfiles: { profiles: [tokenProfile] } }).one('ConfigMap');
-    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ profiles: [tokenProfile] });
+    expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [tokenProfile] });
     expect(parse(render({ brokerProfiles: { profiles: [{ ...prod, credentials: 'shared' }] } }).one('ConfigMap').data!['profiles.yaml']!))
       .toEqual({ profiles: [{ ...prod, credentials: 'shared' }] });
   });
