@@ -53,6 +53,18 @@ describe('the profiles file schema', () => {
   });
 });
 
+describe('The OpenAPI description', () => {
+  it('is attached to the GitHub Release', () => {
+    const jobs = (parse(workflow) as { jobs: Record<string, { steps: Array<{ run?: string }> }> }).jobs;
+    const create = jobs['github-release']!.steps.map((step) => step.run ?? '').find((run) => run.includes('gh release create'));
+    expect(create).toMatch(/gh release create[^\n]*(\\\n[^\n]*)*openapi\.json/);
+  });
+
+  it('names the file the repository holds', () => {
+    expect(JSON.parse(read('openapi.json'))).toHaveProperty('paths');
+  });
+});
+
 describe('release quick start', () => {
   it('publishes the image the docs name', () => {
     expect(workflow).toContain(image);

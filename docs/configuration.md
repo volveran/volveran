@@ -102,6 +102,12 @@ A session ends when its Operator has done nothing for `VOLVERAN_SESSION_IDLE_MIN
 - **`credentials: operatorToken`.** A session that has ended stops refreshing its access token, so a Checkout's connections close when the token expires. Keep the page open during a long Apply, as its heartbeat keeps the session.
 - **After an upgrade.** A session from before this setting, or after the timeout is shortened, takes the new timeout at its next request.
 
+## The HTTP API
+
+The API is served under `/api/v1`. `/api`, where it lived before 1.0, is an alias through 1.x, with the same routes, checks and answers, so scripts written for 0.x keep working. An answer that holds a link, such as `auditUrl` in a queue's history, names `/api/v1` under either.
+
+Each [GitHub Release](https://github.com/volveran/volveran/releases) has an OpenAPI 3.1 description of the API for that version, `openapi.json`.
+
 ## The audit store volume
 
 The volume at `/data` holds the audit store (`audit.sqlite`): every Audit Entry and the full copy of every Discarded Message. Keep it across upgrades and back it up; it is the only thing Volverán writes, so the rest of the container stays `--read-only`. The image runs as the numeric user `1000:1000` (the `node` user), so Kubernetes can verify `runAsNonRoot`. A named volume (`volveran-data` above) is writable by it out of the box; to bind-mount a host directory instead, make it writable by uid 1000.

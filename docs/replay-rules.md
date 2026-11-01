@@ -15,7 +15,7 @@ Every `every`, plus a few seconds of jitter, a running rule makes a **Rule Pass*
 3. It Replays up to `maxPerPass` due Messages at the rule's `rate`, Moves the used-up ones to the parking queue when `whenAttemptsUsedUp` says so, and Keeps every other Message in order.
 4. It ends the Checkout.
 
-Every Replay and Move is an Audit Entry naming the rule and the pass; search them with the **Rule** filter of the Audit view (`GET /api/audit-entries?rule=<name>`). The Replay rules view shows each rule's state, its next pass and its last 20 passes with their counts.
+Every Replay and Move is an Audit Entry naming the rule and the pass; search them with the **Rule** filter of the Audit view (`GET /api/v1/audit-entries?rule=<name>`). The Replay rules view shows each rule's state, its next pass and its last 20 passes with their counts.
 
 ### Attempts and back-off
 
@@ -47,8 +47,8 @@ A pass looks only at the Messages at the head of the queue: it holds at most `ma
 
 A paused rule runs no scheduled passes and stays paused across restarts. The Replay rules view shows why it paused, who paused it (a person, or the rule itself) and when.
 
-- **Pause** (`operator` or `admin`): from the Replay rules view, with a reason, or `POST /api/profiles/:profile/replay-rules/:name/pause` with `{ "reason": "…" }`. Use it during an incident to stop automatic Replay without a configuration change. A pass in progress stops at its next step: the step under way finishes, and the Messages it had not reached go back to the queue, counted as Not due in that pass.
-- **Resume** (`admin`): from the view, or `POST /api/profiles/:profile/replay-rules/:name/resume`. Resuming clears the automatic stop's count, so the rule starts with a fresh window.
+- **Pause** (`operator` or `admin`): from the Replay rules view, with a reason, or `POST /api/v1/profiles/:profile/replay-rules/:name/pause` with `{ "reason": "…" }`. Use it during an incident to stop automatic Replay without a configuration change. A pass in progress stops at its next step: the step under way finishes, and the Messages it had not reached go back to the queue, counted as Not due in that pass.
+- **Resume** (`admin`): from the view, or `POST /api/v1/profiles/:profile/replay-rules/:name/resume`. Resuming clears the automatic stop's count, so the rule starts with a fresh window.
 - Pausing a paused rule, or resuming a running one, answers `409` (`replay_rule_paused`, `replay_rule_running`).
 - **Run now** (`admin`) still runs one pass of a paused rule, so you can check a fix before resuming; only a pause that comes after it began stops it. A pass run that way can pause a running rule like any other.
 
