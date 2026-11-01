@@ -497,6 +497,8 @@ export interface ReplicaStore {
   checkoutsOfGoneReplicas(now: number): Promise<LiveCheckoutRecord[]>;
   /** Removes each lease over by `before` and the records of its Replica, as one unit of work. Answers how many leases. */
   removeGoneReplicas(before: number): Promise<number>;
+  /** Every `active` record with an Approval waiting whose owner's lease is live. */
+  waitingApprovals(now: number): Promise<LiveCheckoutRecord[]>;
   /** The id of the Operator's `active` Checkout whose owner's lease is live, or null. */
   activeCheckoutOf(operatorId: string, now: number): Promise<string | null>;
   /** The Owner Replica of Checkout `id` while it is `active` or `applying` and its owner's lease is live, or null. */
