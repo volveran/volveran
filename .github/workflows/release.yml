@@ -246,4 +246,4 @@ jobs:
           prerelease=()
           case "$version" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "Volverán $version" \
-            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}" profiles.schema.json
+            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}" profiles.schema.json openapi.json

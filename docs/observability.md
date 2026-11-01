@@ -35,7 +35,7 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 
 The queue list shows a 24-hour depth chart next to each dead-letter queue. A queue's history view (the link on the chart, or `h` on the focused queue) shows depth and estimated arrivals over the last hour, 24 hours, 7 days or the whole retention, the time of the latest Sample, gaps, and marks for the Applies and Rule Passes that took Messages out, linked to their Audit Entries. Any Role on the profile may read it, as with the queue list. Link to one with `#/history/<profile>/<vhost>/<queue>`.
 
-`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 buckets of Samples, each with its last depth and summed arrivals; `arrivalsPartlyUnknown` says some of its Samples, not all, had unknown arrivals, and the view hatches it like an unknown stretch.
+`GET /api/v1/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 buckets of Samples, each with its last depth and summed arrivals; `arrivalsPartlyUnknown` says some of its Samples, not all, had unknown arrivals, and the view hatches it like an unknown stretch.
 
 ```json
 { "from": "2026-10-29T10:00:00.000Z", "to": "2026-10-30T10:00:00.000Z", "retentionDays": 14,
@@ -43,7 +43,7 @@ The queue list shows a 24-hour depth chart next to each dead-letter queue. A que
   "samples": [{ "at": "2026-10-30T09:59:30.000Z", "depth": 400, "estimatedArrivals": 12, "arrivalsPartlyUnknown": false }],
   "gaps": [{ "from": "2026-10-30T03:00:00.000Z", "to": "2026-10-30T03:20:00.000Z", "errorCode": "…" }],
   "marks": [{ "at": "2026-10-30T08:00:00.000Z", "kind": "apply", "operator": "ana", "rule": null, "checkoutId": "…",
-              "counts": { "discard": 2, "replay": 40, "move": 0 }, "auditUrl": "/api/audit-entries?…" }] }
+              "counts": { "discard": 2, "replay": 40, "move": 0 }, "auditUrl": "/api/v1/audit-entries?…" }] }
 ```
 
 The queue list's response gains, on each dead-letter queue, `depthSeries` (`{ from, to, points: [[ms, depth]], gaps }`, on sampled profiles) and `firingAlerts`.
@@ -75,7 +75,7 @@ Each vhost has a **Dead-letter Map**: which queues dead-letter into which, throu
 
 The Dead-letter Map view (`#/dead-letter-map/<profile>/<vhost>`) draws queues with their depth and set-up warnings, losses, chains and cycles, searches for one queue and shows the part connected to it, opens a queue's history or a Checkout, and lists the same graph as text to read or copy. Any Role on the profile may see it.
 
-`GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map` answers `{ nodes, edges, cycles }`:
+`GET /api/v1/profiles/:profile/vhosts/:vhost/dead-letter-map` answers `{ nodes, edges, cycles }`:
 
 | Part | Fields |
 | --- | --- |
@@ -134,7 +134,7 @@ kubectl -n volveran create secret generic volveran-alerts \
 
 **Delivery.** Each delivery has a 5-second timeout and up to 3 attempts with a growing wait. Redirects are not followed, so a webhook that moved counts as failed with its 3xx status. Deliveries never hold up sampling or each other. The outcome is kept in the audit store for `VOLVERAN_HISTORY_RETENTION_DAYS`, without the URL.
 
-**Testing one.** An `admin` on any Broker Profile (anyone in Solo Mode) can send a clearly labelled test notification from the Alerts view, or with `POST /api/alert-destinations/:name/test`, which answers `{ delivery }` once the delivery has ended (`404 alert_destination_not_found` for an undeclared name, `403 role_required` without the Role).
+**Testing one.** An `admin` on any Broker Profile (anyone in Solo Mode) can send a clearly labelled test notification from the Alerts view, or with `POST /api/v1/alert-destinations/:name/test`, which answers `{ delivery }` once the delivery has ended (`404 alert_destination_not_found` for an undeclared name, `403 role_required` without the Role).
 
 ### Alert Rules
 
@@ -236,8 +236,8 @@ function isFromVolveran(secret, rawBody, headers, maxAgeSeconds = 300) {
 
 The Alerts view shows the firing and pending Alerts on the profiles you have a Role on, the selected profile's Alert Rules with their destinations, and the recent notifications with whether each was delivered and why not. A firing Alert also shows on its queue in the queue list. An `admin` can send a test notification from here.
 
-- `GET /api/alerts` answers `{ alerts, notifications, destinations }`, with the latest 100 notifications you may see, and `403 no_role` with no Role anywhere. Test notifications belong to no profile, so only those who may send one see them.
-- `GET /api/profiles/:profile/alert-rules` answers `{ rules }`. Any Role on the profile may read it.
+- `GET /api/v1/alerts` answers `{ alerts, notifications, destinations }`, with the latest 100 notifications you may see, and `403 no_role` with no Role anywhere. Test notifications belong to no profile, so only those who may send one see them.
+- `GET /api/v1/profiles/:profile/alert-rules` answers `{ rules }`. Any Role on the profile may read it.
 - Destinations appear as names and types, never URLs or secrets.
 
 Silencing, on-call schedules and grouping are out of scope. If you need them, route through Alertmanager with the [metrics](#metrics), or through the generic webhook into your paging tool.

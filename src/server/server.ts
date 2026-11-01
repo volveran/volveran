@@ -42,6 +42,7 @@ import { endAnswersWithinMs, type CheckoutTiming } from './triage/checkout-timin
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
+import { serveApiUnderVersionToo } from './routes/api-prefix.js';
 import { registerAlertDestinationRoutes } from './routes/alert-destinations.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
@@ -227,7 +228,7 @@ async function serve(
       tellLeader: async (profile: string, rule: string, by: Operator) => {
         try {
           const address = await leaderAddress();
-          if (address) await forwarder.tell(address, `/api/profiles/${encodeURIComponent(profile)}/replay-rules/${encodeURIComponent(rule)}/changed`, by, TELL_LEADER_WITHIN_MS);
+          if (address) await forwarder.tell(address, `/api/v1/profiles/${encodeURIComponent(profile)}/replay-rules/${encodeURIComponent(rule)}/changed`, by, TELL_LEADER_WITHIN_MS);
         } catch (err) {
           app.log.info({ err, profile, rule }, 'The Background Leader could not be told of a Replay rule pause or resume; it will read it from the store');
         }
@@ -573,6 +574,7 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
       for (const m of [method].flat()) onRouteRegistered({ method: m, url });
     });
   }
+  serveApiUnderVersionToo(app);
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {
