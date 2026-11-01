@@ -36,7 +36,7 @@ import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
-import type { CheckoutTiming } from './triage/checkout-timing.js';
+import { endAnswersWithinMs, type CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
@@ -230,6 +230,7 @@ async function serve(
   const app = await buildApp({
     forwarder: config.forwarding && createForwarder(config.forwarding.secret),
     liveCheckouts,
+    endWithinMs: endAnswersWithinMs({ ...config.checkoutTiming, ...options.checkoutTiming }, limits.maxMessages),
     profiles,
     access,
     checkouts,
@@ -429,9 +430,11 @@ interface AppOptions {
   /** With other Replicas: how requests reach them. */
   forwarder: Forwarder | null;
   liveCheckouts: LiveCheckouts | null;
+  /** How long a forwarded end of a Checkout may take to answer. */
+  endWithinMs: number;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   // Before any route, so none is missed.
@@ -464,20 +467,22 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const toOwner =
-    forwarder && liveCheckouts
-      ? forwarder.toOwner(async (req: FastifyRequest<{ Params: { id: string } }>) => {
-          if (checkouts.owns(req.params.id)) return null;
-          const owner = await liveCheckouts.ownerOf(req.params.id);
-          if (!owner) return null;
-          if ('address' in owner) return owner.address;
-          // Answered here from now on. A profile no longer configured leaves it unknown here.
-          const profile = profiles.find((p) => p.name === owner.gone.profile);
-          if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
-          return null;
-        })
-      : {};
-  const checkoutDeps = { checkouts, access: profileAccess, toOwner };
+  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => {
+    if (!liveCheckouts || checkouts.owns(req.params.id)) return null;
+    const owner = await liveCheckouts.ownerOf(req.params.id);
+    if (!owner) return null;
+    if ('address' in owner) return owner.address;
+    // Answered here from now on. A profile no longer configured leaves it unknown here.
+    const profile = profiles.find((p) => p.name === owner.gone.profile);
+    if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
+    return null;
+  };
+  const checkoutDeps = {
+    checkouts,
+    access: profileAccess,
+    toOwner: forwarder ? forwarder.toOwner(ownerOf) : {},
+    toOwnerToEnd: forwarder ? forwarder.toOwner(ownerOf, { answerWithinMs: endWithinMs }) : {},
+  };
   registerSessionRoutes(app, {
     mode: access.kind,
     checkouts,
