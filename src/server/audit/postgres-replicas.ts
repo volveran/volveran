@@ -142,6 +142,15 @@ export class PostgresReplicaStore implements ReplicaStore {
     });
   }
 
+  async waitingApprovals(now: number): Promise<LiveCheckoutRecord[]> {
+    const { rows } = await this.pool.query<RecordRow>(
+      `SELECT c.* FROM live_checkouts c JOIN replicas r ON r.id = c.owner_replica
+       WHERE c.status = 'active' AND c.approval IS NOT NULL AND r.lease_expires_at > $1`,
+      [now],
+    );
+    return rows.map(recordOf);
+  }
+
   async activeCheckoutOf(operatorId: string, now: number): Promise<string | null> {
     const { rows } = await this.pool.query<{ id: string }>(
       `SELECT c.id FROM live_checkouts c JOIN replicas r ON r.id = c.owner_replica
