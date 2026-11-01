@@ -76,7 +76,7 @@ Only what is run is supported. A version that is not listed may work, but nothin
 |---|---|---|
 | RabbitMQ | 4.4 | The broker-facts and integration suites on `rabbitmq:4.4.0-management` on every change, and the kind smoke test |
 | PostgreSQL | 17 | The integration suite and contract suite on `postgres:17.6-alpine` on every change, and the kind smoke test |
-| Kubernetes | 1.37 | The kind smoke test on `kindest/node:v1.37.0` on every change, under the `restricted` Pod Security Standard |
+| Kubernetes | 1.33 to 1.37 | The kind smoke test on `kindest/node` v1.33.12, v1.34.11, v1.35.8, v1.36.4 and v1.37.0 on every change, under the `restricted` Pod Security Standard |
 | Node | 24 | The image is built on `node:24-alpine`, pinned by digest, and CI runs every suite on the latest Node 24. You run Node only by building from source |
 
 - **Later RabbitMQ 4 versions.** A weekly run takes the suites to the latest `rabbitmq:4-management` and opens an issue if they fail. It warns of a release that breaks something, and a version joins this table only once the pinned image moves to it. As of this writing that tag is also 4.4.0.

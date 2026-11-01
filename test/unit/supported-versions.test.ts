@@ -39,7 +39,7 @@ describe('The supported versions', () => {
   it('of Kubernetes are what the smoke test pins, by digest', () => {
     expect(kubernetesVersion).toBe('v1.37.0');
     expect(kubernetesNodeImage).toMatch(/^kindest\/node:v1\.37\.0@sha256:[0-9a-f]{64}$/);
-    expect(supported('Kubernetes')).toBe('1.37');
+    expect(supported('Kubernetes')).toBe('1.33 to 1.37');
     expect(read('scripts/kind-smoke.mjs')).toContain("'--image', kubernetesNodeImage");
   });
 

@@ -10,7 +10,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Changed
 
-- A written [compatibility policy](docs/compatibility.md) names the public contracts, what a minor version may change, how something is deprecated, the supported upgrades and the versions tested: RabbitMQ 4.4, PostgreSQL 17, Kubernetes 1.37 and Node 24. `engines` in `package.json` now says Node 24, not 24 or later, as nothing later is tested. A test fails when a contract changes without being recorded, and when a 1.x migration does more than add. (#130)
+- A written [compatibility policy](docs/compatibility.md) names the public contracts, what a minor version may change, how something is deprecated, the supported upgrades and the versions tested: RabbitMQ 4.4, PostgreSQL 17, Kubernetes 1.33 to 1.37 and Node 24. `engines` in `package.json` now says Node 24, not 24 or later, as nothing later is tested. A test fails when a contract changes without being recorded, and when a 1.x migration does more than add. (#130)
 - The chart writes `version: 1` into the profiles file on SQLite as well, so Volverán does not warn of its absence. This changes the ConfigMap's checksum, so the upgrade to 1.0 rolls a single SQLite pod once and ends its open Checkouts.
 - A Restore that a crash left `pending` becomes `uncertain` at the next try, once two minutes old, and answers 409 `restore_interrupted` rather than `already_restored`. It is not republished ([guide](docs/replicas.md)).
 - A refresh of an Operator's token gives the provider 10 s, and signing out or the sweep no longer waits for one in progress.
