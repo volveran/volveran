@@ -131,6 +131,7 @@ These things differ from the plan or remain open:
 
 - Editing a Message before Replay, with both versions kept in the Audit Entry.
 - Masking sensitive fields in the UI.
+- Encrypting stored Discarded bodies.
 - Protobuf and Avro decoding.
 - SAML sign-in.
 - Triage of stream queues.

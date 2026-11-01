@@ -128,7 +128,7 @@ The maintainer enabled private vulnerability reporting, and `GET repos/volveran/
 
 A Replica sends `Authorization: Bearer <secret>` to whatever address the `replicas` table names. Setting `forwarding_address` to a listener of ours and requesting another Replica's Checkout delivered the real secret and the Operator's identity to that listener, and the Operator received the listener's forged answer as the Checkout. So write access to the store, which should not by itself reach any broker, becomes the ability to act as any `admin` on every Broker Profile, for anyone who can then reach the forwarding port. The secret also crosses the pod network in clear on every forwarded request, so anything that can read that traffic gets the same. Signing each request (an HMAC over method, path, operator and time) rather than sending the secret would stop both.
 
-**Since #121, narrowed and not fixed.** The chart's NetworkPolicy (N4) limits "can then reach the forwarding port" to pods with the release's labels, and `networkPolicy.egress`, when set, limits where a Replica can send the secret to. But egress stays open unless the engineer restricts it, so a store writer can still capture the secret and answer Operators with a forged Checkout, and a holder of the secret with such a pod can use it. The traffic is still in clear. It stays Medium, with no owner: signing is not done.
+**Since #121, narrowed and not fixed.** The chart's NetworkPolicy (N4) limits "can then reach the forwarding port" to pods with the release's labels, and `networkPolicy.egress`, when set, limits where a Replica can send the secret to. But egress stays open unless the engineer restricts it, so a store writer can still capture the secret and answer Operators with a forged Checkout, and a holder of the secret with such a pod can use it. The traffic is still in clear. It stays Medium. Signing is not done; what remains is accepted by the maintainer ([Accepted risks](#accepted-risks)).
 
 ### N4. The forwarding port accepts every `/api/` route and any identity. Medium
 
@@ -136,7 +136,7 @@ The listener refuses non-`/api/` paths, but does not limit itself to the routes 
 
 **Since #121, the port is closed by default; the finding stays for whoever gets past that.** `networkPolicy.enabled` is still `false` by default, so with `replicaCount` above 1 the chart renders a NetworkPolicy regardless, with no value to turn it off, that admits only the release's other pods to this port ([ADR 0014](adr/0014-replicas-forwarding-and-the-background-leader.md#forwarding)). `extraEnv` may not set the forwarding variables, so one Replica has no such port at all. Tested on kind with kindnet, with `networkPolicy.enabled` false: from a pod without the labels, in the same namespace or another, the port does not connect, while one Replica connects to the other and the web port stays open.
 
-What remains, Medium: the policy needs a CNI that enforces it, which the chart cannot check, and the guide says to try it. Anyone able to create pods in the namespace can give them the labels and reach the port, and still needs the secret. The listener still takes every `/api/` route and any identity from a holder of the secret, and rotation still needs all Replicas restarted together. Outside the chart, closing the port is the installer's job ([configuration](configuration.md)).
+What remains, Medium: the policy needs a CNI that enforces it, which the chart cannot check, and the guide says to try it. Anyone able to create pods in the namespace can give them the labels and reach the port, and still needs the secret. The listener still takes every `/api/` route and any identity from a holder of the secret, and rotation still needs all Replicas restarted together. Outside the chart, closing the port is the installer's job ([configuration](configuration.md)). This is accepted by the maintainer ([Accepted risks](#accepted-risks)).
 
 ### N5. Open redirect after sign-in through a tab in `returnTo`. Medium. Fixed by #123
 
@@ -159,7 +159,7 @@ So this did **not** take the service down, which is why it is not high. Throughp
 - Sessions on PostgreSQL store the session id in clear, as the primary key, equal to the id in the cookie. A dump alone does not give a session, because the cookie's signature needs the session secret (tested: 401), but a dump plus that secret does. Hashing the id would remove this. Operator identity and groups are in clear in the same row.
 - `/api/profiles` shows broker URLs and the name of the password variable to a signed-in Operator (seen as `admin`; other Roles not compared), and `broker_unreachable` names the management URL. No password appears in any answer tested.
 - Groups are fixed at sign-in, so losing a group takes effect only at the next sign-in, up to 12 hours later (documented in `operator.ts`, not tested for the full period). The session idle timeout (#125) shortens this for abandoned sessions only.
-- From the note on #127, not retested beyond the counts here: `npm audit` moderates (4 in the root lockfile, 10 in `tools/lint`), the unpinned `# syntax=` line in the `Dockerfile`, `corepack` and `yarn` left in the image, test images pinned by tag. They need fixing or accepting before 1.0.
+- From the note on #127: the `# syntax=` line in the `Dockerfile` is now pinned by digest, and `corepack` and `yarn` are gone from the image. `npm audit` moderates and test images pinned by tag are under [Accepted risks](#accepted-risks), as proposed.
 
 ## Accepted risks
 
@@ -168,14 +168,21 @@ Decided in #92:
 - **A Broker Profile without `roles` keeps everyone `admin` (ADR 0007).** Tested: an Operator in no group got 403 on a profile with `roles`, 200 on one without, and could start a Checkout there. The startup warning is logged. Changing this would lock people out on upgrade.
 - **The metrics port has no sign-in.** Tested: `/metrics` answers 200 without a session, other paths 404, `POST` 404, no password in the output. It shows operational data such as dead-letter queue depth, and per the metric reference, names of queues in its labels; it holds no Message content. It listens on Volverán's address, on its own port, and is off unless set. With a NetworkPolicy, `networkPolicy.metricsFrom` admits the scraper alone, but the policy is off by default, so close the port if the network is shared.
 
+Accepted by the maintainer:
+
+- **Discarded bodies and Audit Entries are not encrypted by Volverán.** Seen in clear in `audit_message_bodies`, so anyone with read access to the store reads production Messages; #92 seals tokens only. Mitigation: protect the store with its own access control and disk encryption, and keep bodies only as long as retention says. Encrypting them is on the [roadmap](../ROADMAP.md) under "Later".
+- **Solo Mode's protection is the loopback address.** Anyone on the same machine who can reach the port acts as the Operator, with no sign-in. Mitigation: it refuses to listen elsewhere, and refuses a foreign Host or Origin (#123); use Team Mode on a shared machine.
+- **Whoever writes the profiles file, or reads the environment, has every credential.** Both are trusted. Mitigation: passwords come from the environment, from a Secret, so the file need not hold them; restrict who can read and write both.
+- **No login throttling in Volverán.** Authentication belongs to the provider, so throttle there. Mitigation: the sign-ins in progress are capped (N6).
+- **Silent re-sign-in after an idle timeout.** The idle timeout ends Volverán's session, not the provider's: while that one lasts, the web app's return to sign-in can sign an abandoned browser back in with no prompt, and the browser's own page does this by itself on its next request. Mitigation: shorten the provider's session.
+- **What remains of N3 after #121.** Write access to the store can still capture the forwarding secret and answer Operators with a forged Checkout, and the secret still crosses the pod network in clear. Mitigation: the always-rendered NetworkPolicy limits who reaches the port, `networkPolicy.egress` limits where a Replica can send the secret, and the store has its own access control.
+- **What remains of N4 after #121.** The policy needs a CNI that enforces it, anyone able to create pods in the namespace can give them the labels, the port takes every `/api/` route and any identity from a holder of the secret, and rotating the secret restarts all Replicas together. Mitigation: use an enforcing CNI and try the port from another pod ([guide](replicas.md)), and treat creating pods in the namespace as the same trust as the secret.
+
 Proposed, **awaiting a maintainer's decision**:
 
-- Discarded bodies and Audit Entries are not encrypted by Volverán: seen in clear in `audit_message_bodies`. Anyone with read access to the store reads production Messages. #92 seals tokens only; protect the store with its own access control and disk encryption.
-- Solo Mode's protection is the loopback address: anyone on the same machine who can reach the port acts as the Operator, with no sign-in.
-- Whoever writes the profiles file, or reads the environment, has every credential. Both are trusted.
-- No login throttling in Volverán: authentication belongs to the provider. See N6 for what this leaves.
 - Dependabot's alerts on `glob` and `minimatch` stay open: 3 moderate in `npm audit`, reached through `@fastify/static`, which needs `glob` 13 even at its latest version, while the fixes are in 14 and in `minimatch` 11. `@fastify/static` calls `glob` at startup on the built web app's own directory, with no pattern or signal from a request, so from reading its code nothing a client sends reaches either. The alerts on `fast-uri` are fixed by updating it.
-- The idle timeout ends Volverán's session, not the provider's: while that one lasts, the web app's return to sign-in can sign an abandoned browser back in with no prompt. The browser's own page does this by itself on its next request. Shorten the provider's session to close it.
+- `npm audit` in `tools/lint`: 10 moderate, in the lint tooling's own dependencies. They run on a developer's or CI's own code and are not in the image.
+- Test images (`test/broker/`, `test/smoke/deps.yaml`) are pinned by tag, not digest: they run only in tests, and the weekly broker run follows a moving tag on purpose. A moved tag could change what a test run sees, not what a release contains.
 
 ## OWASP ASVS Level 2
 
@@ -190,7 +197,7 @@ Against ASVS 4.0.3, by area. "Tested" means as above. "Suite" means the project'
 | V5 Validation and encoding | Partly | Tested: path traversal into static files serves nothing outside the web root. A vhost or queue of `../users` reaches no other management API path. Export's filename is sanitised. Message content comes back as JSON, and is exported as `application/x-ndjson`. Read: no `dangerouslySetInnerHTML`, `innerHTML` or `eval` in `src/web`. Rendering of hostile content: tested in the suite and once by hand in Firefox, with the views left out stated under #124. N5 fixed |
 | V6 Cryptography | Met for what it does | Read: AES-256-GCM, new IV each time, HKDF-derived key, bound to the row. Tested: tokens and sign-ins unreadable in the database. No key rotation path: a changed key signs people out |
 | V7 Errors and logging | Met since #125 | Generic errors, and the query kept out of logs. Audit Entries are the security log, and N4 limits their trust. Tested: wrong broker password and a bad PostgreSQL URL appear in no answer or log |
-| V8 Data protection | Partly | Bodies in clear (proposed accepted risk). `Cache-Control: no-store` is the default since #124; the web app's static files replace it with their own |
+| V8 Data protection | Partly | Bodies in clear (accepted risk). `Cache-Control: no-store` is the default since #124; the web app's static files replace it with their own |
 | V9 Communications | Partly, not tested | TLS ends at the proxy. PostgreSQL TLS has its own settings. The forwarding port is plain HTTP (N3). Not tested here |
 | V10 Malicious code | Partly | #127's scans and pinning. The image gate counts findings with no fix (N1, fixed by #141) |
 | V11 Business logic | Suite | Four-eyes Approval, the Delivery Budget and first-wins races have their own tests. Not reviewed further here |
