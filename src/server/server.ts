@@ -161,6 +161,12 @@ async function serve(
     onRuleBadgesError: (err) => app.log.error({ err }, 'The rule badges of a Checkout could not be read'),
     // Called only once the app below is listening.
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
+    // Called only once the app below is listening.
+    onReturnWaitRanOut: (checkout, waited) =>
+      app.log.warn(
+        { checkoutId: checkout.id, queue: checkout.queue, ...waited },
+        'A Checkout stopped waiting for its quorum queue to take its Messages back, so some may have used up Delivery Budget',
+      ),
     onApplyEnded: (checkout, outcomes) => {
       triageMetrics.applyEnded(checkout.profile.name, outcomes);
       // Never rejects, and an Apply's end should not wait for a reading.

@@ -54,6 +54,17 @@ export function consumerTimeoutMs(timing: CheckoutTiming): number {
 }
 
 /**
+ * How long a Checkout's end waits for a quorum queue to take `returned` Messages
+ * back: twice the 20 ms per Message measured on a busy machine
+ * (docs/rabbitmq-behaviour.md, "Returning Messages before closing"), and at least 5
+ * seconds. So 40 seconds at the default limit of 1,000 Messages, which fits the
+ * 60 seconds the chart gives SIGTERM.
+ */
+export function returnWaitMs(returned: number): number {
+  return Math.max(5 * SECOND, returned * 40);
+}
+
+/**
  * How long ending a Checkout may take to answer, so the Replica forwarding it can tell a
  * slow end from an unreachable owner. An Apply in progress finishes first, which the time
  * limit bounds, and then the Messages go back, for which this allows 45 ms each and at
