@@ -18,7 +18,7 @@
 #     -e VOLVERAN_OIDC_CLIENT_SECRET -e VOLVERAN_OIDC_REDIRECT_URL=... \
 #     -e VOLVERAN_SESSION_SECRET ... volveran
 
-FROM node:24-slim AS build
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -26,7 +26,7 @@ COPY tsconfig.json tsconfig.server.json tsconfig.web.json vite.config.ts ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
-FROM node:24-slim
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 WORKDIR /app
 ENV NODE_ENV=production \
     VOLVERAN_PROFILES_FILE=/config/profiles.yaml \
@@ -36,6 +36,9 @@ ENV NODE_ENV=production \
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+# The base image's npm is not used at runtime, and its bundled packages are where
+# the image scan's findings come from (security.yml).
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Owned by 1000:1000 (node), so a new named volume mounted here is writable by it.
 RUN mkdir /data && chown 1000:1000 /data
 VOLUME /data
