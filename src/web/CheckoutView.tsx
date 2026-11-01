@@ -95,9 +95,11 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   }, [profile, vhost]);
 
   // The heartbeat also notices a Lost Checkout while the page is open.
+  const over = useRef(false);
+  over.current = checkout?.status === 'ended' || checkout?.status === 'lost';
   usePolling(
     {
-      load: () => api.heartbeat(id),
+      load: () => api.heartbeat(id, { over: over.current }),
       received: (c: Checkout) => {
         setCheckout(c);
         setReceivedAt(Date.now());

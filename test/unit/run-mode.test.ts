@@ -32,8 +32,19 @@ describe('Team Mode settings', () => {
           groupsClaim: 'groups',
         },
         sessionSecret: 'a-session-secret-of-at-least-32-characters',
+        sessionIdleMs: 60 * 60 * 1000,
       },
     });
+  });
+
+  it('reads the session idle timeout from VOLVERAN_SESSION_IDLE_MINUTES', () => {
+    const result = resolveRunMode({ ...teamEnv, VOLVERAN_SESSION_IDLE_MINUTES: '15' }, '0.0.0.0');
+    expect(result.ok && result.mode.kind === 'team' && result.mode.sessionIdleMs).toBe(15 * 60 * 1000);
+  });
+
+  it.each(['0', '721', '1.5', 'soon'])('refuses a session idle timeout of %s', (value) => {
+    const result = resolveRunMode({ ...teamEnv, VOLVERAN_SESSION_IDLE_MINUTES: value }, '0.0.0.0');
+    expect(result).toEqual({ ok: false, error: `VOLVERAN_SESSION_IDLE_MINUTES must be a whole number from 1 to 720, not "${value}".` });
   });
 
   it('listens on any address, since every request needs a signed-in Operator', () => {
