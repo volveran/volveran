@@ -74,6 +74,15 @@ export class LiveCheckouts implements LiveCheckoutListener {
     return this.store.activeCheckoutOf(operatorId, Date.now());
   }
 
+  /**
+   * Whether another Replica is still running Checkout `id`. Its record's status is written
+   * behind, so a record may say running a moment after the end, but never the reverse.
+   */
+  async runningElsewhere(id: string): Promise<boolean> {
+    const owner = await this.store.runningOwner(id, Date.now());
+    return owner !== null && owner !== this.replicaId;
+  }
+
   /** Tries again what could not be written. Never rejects. */
   async writeAgain(): Promise<void> {
     await Promise.all([...this.unwritten.keys()].map((id) => this.flush(id)));

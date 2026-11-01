@@ -174,7 +174,7 @@ async function serve(
           seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
         }),
       };
-  const restore = new RestoreService(auditStore, (id) => checkouts.isRunning(id));
+  const restore = new RestoreService(auditStore, async (id) => checkouts.isRunning(id) || ((await liveCheckouts?.runningElsewhere(id)) ?? false));
   const replayRules = new ReplayRules({
     checkouts,
     state: auditStore.ruleState,

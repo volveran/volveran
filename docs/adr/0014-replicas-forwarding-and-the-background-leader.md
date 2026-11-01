@@ -24,6 +24,12 @@ Some work must run once however many Replicas there are: retention now; the samp
 
 **Moving work onto the leader.** Add a `LeaderJob` to the list in `server.ts`. Its `start(fence)` may be called again after `stop()` in one process, so it must hold no state that assumes one start. `start` may do a first run before it answers: startup waits for it, while renewal does not. Writes that must not come from a former leader take a `fence` parameter on their store method, with a test in the contract suite ([ADR 0013](0013-audit-store-interface.md)); PostgreSQL's implementation runs in `fenced`, and SQLite's calls `check` right before writing. A job treats `LeaderLeaseLost` as no failure: it wrote nothing, and the leader will find out at its next claim.
 
+## Restore
+
+A Message must not be republished twice by two clicks on two Replicas, so the guard is one store method, `claimRestore`: it writes the Restore's `pending` Audit Entry unless an earlier Restore of that Discard is anything but `failed`. PostgreSQL holds the Discard's row for the transaction. That needs no migration, where a unique index could refuse a store that already holds two Restores of one Discard. A Restore that crashed before reporting back keeps the body, as it does on one Replica: republishing again could duplicate the Message.
+
+"Is this Discard still running" asks the Live Checkout records as well as this process: a record that is `active` or `applying` under a live lease refuses the Restore. A Replica that has lost its lease cannot finish the step, so its record no longer counts.
+
 ## Consequences
 
 - Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`.

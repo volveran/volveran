@@ -26,9 +26,11 @@ import type {
   BodyEviction, LeaseFence,
   HistoryStore,
   NewAuditEntry,
+  NewRestoreEntry,
   NotificationStore,
   RuleStateStore,
   ReplicaStore,
+  RestoreClaim,
   SessionStore,
 } from './audit-store.js';
 import { MemoryLeaderLease } from './memory-leader-lease.js';
@@ -306,6 +308,15 @@ export class SqliteAuditStore implements AuditStore {
       if (this.db.isTransaction) this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  /** No await before `record` writes, so nothing comes between the look and the write. */
+  async claimRestore(entry: NewRestoreEntry): Promise<RestoreClaim> {
+    const earlier = this.db
+      .prepare("SELECT * FROM audit_entries WHERE restore_of = ? AND outcome <> 'failed' ORDER BY id DESC LIMIT 1")
+      .get(entry.restoreOf) as EntryRow | undefined;
+    if (earlier) return { claimed: false, earlier: toEntry(earlier) };
+    return { claimed: true, id: await this.record(entry) };
   }
 
   async setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): Promise<void> {

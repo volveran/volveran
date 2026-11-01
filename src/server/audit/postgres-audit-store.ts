@@ -12,8 +12,10 @@ import type {
   BodyEviction, LeaderLeaseStore, LeaseFence,
   HistoryStore,
   NewAuditEntry,
+  NewRestoreEntry,
   NotificationStore,
   ReplicaStore,
+  RestoreClaim,
   RuleStateStore,
   SessionStore,
 } from './audit-store.js';
@@ -99,6 +101,21 @@ export class PostgresAuditStore implements AuditStore {
       const body = entry.message?.body;
       if (body) await client.query('INSERT INTO audit_message_bodies (entry_id, body) VALUES ($1, $2)', [id, body]);
       return id;
+    });
+  }
+
+  async claimRestore(entry: NewRestoreEntry): Promise<RestoreClaim> {
+    const { sql, values } = insertEntry(entry, numbered);
+    return transaction(this.pool, async (client) => {
+      // Holding the Discard's row makes claims of one body wait for each other, each then seeing what the last committed.
+      await client.query('SELECT id FROM audit_entries WHERE id = $1 FOR UPDATE', [entry.restoreOf]);
+      const { rows: earlier } = await client.query<EntryRow>(
+        "SELECT * FROM audit_entries WHERE restore_of = $1 AND outcome <> 'failed' ORDER BY id DESC LIMIT 1",
+        [entry.restoreOf],
+      );
+      if (earlier[0]) return { claimed: false, earlier: toEntry(earlier[0]) };
+      const { rows } = await client.query<{ id: number }>(`${sql} RETURNING id`, values);
+      return { claimed: true, id: rows[0]!.id };
     });
   }
 

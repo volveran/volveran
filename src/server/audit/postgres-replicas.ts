@@ -57,4 +57,13 @@ export class PostgresReplicaStore implements ReplicaStore {
     );
     return rows[0]?.id ?? null;
   }
+
+  async runningOwner(id: string, now: number): Promise<string | null> {
+    const { rows } = await this.pool.query<{ owner_replica: string }>(
+      `SELECT c.owner_replica FROM live_checkouts c JOIN replicas r ON r.id = c.owner_replica
+       WHERE c.id = $1 AND c.status IN ('active', 'applying') AND r.lease_expires_at > $2`,
+      [id, now],
+    );
+    return rows[0]?.owner_replica ?? null;
+  }
 }
