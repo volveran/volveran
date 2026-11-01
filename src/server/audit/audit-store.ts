@@ -398,13 +398,18 @@ export interface ReplicaLeaseRow {
 
 /** What a Live Checkout record says that changes as the Checkout goes on. */
 export interface LiveCheckoutUpdate {
-  status: Exclude<CheckoutStatus, 'awaiting_approval'>;
+  /** `starting`: claimed, and not yet a Checkout anyone can use. */
+  status: Exclude<CheckoutStatus, 'awaiting_approval'> | 'starting';
   /** The Approval the Checkout waits for, as the approvers' list shows it; null when it waits for none. */
   approval: ApprovalSummary | null;
   /** Why it ended; left out or null unless it has. */
   endReason?: EndReason | null;
   /** Why it was lost; left out or null unless it was. */
   lostReason?: string | null;
+  /** Learned from the broker after the claim. Left out, the record keeps what it has; `deliveryLimit` goes with `queueType`. */
+  queueType?: CheckoutQueueType;
+  deliveryLimit?: number | null;
+  readyAtStart?: number;
 }
 
 /** A Live Checkout record: where a Checkout is, and enough to list it. */
@@ -431,6 +436,13 @@ export interface LiveCheckoutRecord extends NewLiveCheckout {
   lostReason: string | null;
 }
 
+/** The Checkout that holds an Operator's one place. */
+export interface OperatorHolding {
+  id: string;
+  vhost: string;
+  queue: string;
+}
+
 /** Where a request about a Checkout goes. */
 export interface LiveCheckoutRoute {
   ownerReplica: string;
@@ -449,8 +461,13 @@ export interface ReplicaStore {
   /** The Replica has gone for good: removes its lease and every record it owns, as one unit of work. */
   removeReplica(replicaId: string): Promise<void>;
 
-  addCheckout(checkout: NewLiveCheckout): Promise<void>;
-  /** Does nothing if the record has gone. */
+  /**
+   * Adds the record unless the Operator already has a `starting` or `active` Checkout on a
+   * Replica whose lease is live: then adds nothing and answers that one. One whose owner's
+   * lease is over no longer counts, and becomes `lost` in the same unit of work.
+   */
+  claimCheckout(checkout: NewLiveCheckout, now: number): Promise<OperatorHolding | null>;
+  /** Does nothing if the record has gone. A `lost` record does not become `active` again: its Operator may hold another by now. */
   updateCheckout(id: string, update: LiveCheckoutUpdate): Promise<void>;
   removeCheckout(id: string): Promise<void>;
   /** The record's route, or null when there is no record. */

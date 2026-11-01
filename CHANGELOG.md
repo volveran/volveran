@@ -20,6 +20,7 @@ All notable changes to Volverán are recorded here. The format is based on
 - With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout view and heartbeat work through any of them, on an internal port that requires the shared secret. Nothing changes without them, or on SQLite. (#108)
 - With Replicas, when an Owner Replica dies its Operators see a Lost Checkout with the reason through any other Replica, within the 15 s its lease holds, and an Apply it was running leaves `uncertain` Audit Entries for what is not known. While its lease is live but it cannot be reached, requests answer 503 `replica_unreachable`, to try again. A Replica that cannot renew its lease gives up its Checkouts. (#112)
 - AMQP connections ask for a 5 s heartbeat, unless a profile's `amqpUrl` names its own `heartbeat`. A lost host or network now holds a queue's lock and Messages for about 15 s rather than about three minutes. (#112)
+- With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Security
