@@ -470,8 +470,6 @@ export interface LiveCheckoutRoute {
 export interface ReplicaStore {
   /** Takes or extends the Replica's lease. */
   renewLease(lease: ReplicaLeaseRow): Promise<void>;
-  /** The Replica has gone for good: removes its lease and every record it owns, as one unit of work. */
-  removeReplica(replicaId: string): Promise<void>;
 
   /**
    * Adds the record unless the Operator already has a `starting` or `active` Checkout on a

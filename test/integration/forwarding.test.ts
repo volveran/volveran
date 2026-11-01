@@ -190,7 +190,7 @@ describe('a Checkout through either Replica', () => {
     }
   });
 
-  it('removes what a Replica shutting down leaves behind', async () => {
+  it('ends the lease of a Replica shutting down and keeps its records for the others to answer from', async () => {
     const twoMore = await startTwoReplicas({ profiles: [profile()] });
     try {
       const own = twoMore.browser();
@@ -199,9 +199,8 @@ describe('a Checkout through either Replica', () => {
       const { id } = (await own.to(twoMore.a).post(startPath, {})).body.checkout as { id: string };
       await twoMore.a.shutdown();
       const view = await own.to(twoMore.b).get(`/api/checkouts/${id}`);
-      expect(view.status).toBe(404);
-      expect((await twoMore.database.query('SELECT 1 FROM replicas')).rows).toHaveLength(1);
-      expect((await twoMore.database.query('SELECT 1 FROM live_checkouts')).rows).toHaveLength(0);
+      expect([view.status, view.body.checkout.endReason]).toEqual([200, 'shutdown']);
+      expect((await twoMore.database.query('SELECT 1 FROM live_checkouts WHERE id = $1', [id])).rows).toHaveLength(1);
     } finally {
       await twoMore.close();
     }

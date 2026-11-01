@@ -166,7 +166,7 @@ ingress:
 
 pod:
   # -- Time for SIGTERM to end every active Checkout before SIGKILL.
-  terminationGracePeriodSeconds: 60
+  terminationGracePeriodSeconds: 90
   # -- Sized for the default Checkout limit (100 MB of held Message bodies).
   resources:
     requests:

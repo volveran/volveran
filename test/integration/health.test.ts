@@ -1,15 +1,15 @@
 // Health endpoints for Kubernetes probes: /healthz (the process serves HTTP)
-// and /readyz (startup has finished; Fastify answers 503 once shutdown
-// starts). Both sit outside /api/, answer without a session, never depend on
+// and /readyz (startup has finished; 503 from the moment shutdown starts).
+// Both sit outside /api/, answer without a session, never depend on
 // a broker and reveal nothing about Broker Profiles, queues or Operators.
 import type { ChildProcess } from 'node:child_process';
 import { rm } from 'node:fs/promises';
-import { connect, type Socket } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { product } from '../../src/shared/product.js';
 import {
   brokerUsers,
   closedPort,
+  eventually,
   makeTempDir,
   purgeQueues,
   seedMessages,
@@ -100,22 +100,8 @@ describe('/readyz during shutdown', () => {
     await purgeQueues('/', [QUEUE]);
   });
 
-  /** Raw HTTP/1.1 on one socket, so a request can be sent on a connection that shutdown has not closed yet. */
-  function rawClient(baseUrl: string) {
-    const url = new URL(baseUrl);
-    const socket: Socket = connect(Number(url.port), url.hostname);
-    let received = '';
-    socket.on('data', (chunk: Buffer) => (received += chunk.toString()));
-    return {
-      send: (request: string) => socket.write(request),
-      received: () => received,
-      destroy: () => socket.destroy(),
-    };
-  }
-
-  it('answers 503 once shutdown has begun, revealing nothing', async () => {
-    // A Checkout start that waits at its lock keeps one connection busy, so
-    // shutdown cannot close it while the probe is sent on it.
+  it('answers 503 once shutdown has begun, revealing nothing, while /healthz stays 200', async () => {
+    // A Checkout start that waits at its lock keeps shutdown from finishing while the probe is sent.
     let locked!: () => void;
     const isLocked = new Promise<void>((resolve) => (locked = resolve));
     let release!: () => void;
@@ -129,32 +115,20 @@ describe('/readyz during shutdown', () => {
       },
     });
     await seedMessages('/', QUEUE, 1);
-    const client = rawClient(app.baseUrl);
-    const statuses = () => [...client.received().matchAll(/HTTP\/1\.1 (\d{3}) /g)].map((m) => Number(m[1]));
     let closing: Promise<void> | undefined;
     try {
-      client.send(
-        `POST /api/profiles/secret-profile/vhosts/%2F/queues/${QUEUE}/checkouts HTTP/1.1\r\n` +
-          'Host: volveran\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}',
-      );
+      const starting = app.post(`/api/profiles/secret-profile/vhosts/%2F/queues/${QUEUE}/checkouts`, {});
       await isLocked;
       closing = app.close();
-      // Shutdown has begun once the server stops accepting connections.
-      await expect
-        .poll(() => fetch(app.baseUrl + '/healthz').then(() => 'accepted', () => 'refused'), { timeout: 5_000 })
-        .toBe('refused');
-      client.send('GET /readyz HTTP/1.1\r\nHost: volveran\r\n\r\n');
+      await eventually(async () => expect((await app.get('/readyz')).status).toBe(503));
+      const answer = await fetch(`${app.baseUrl}/readyz`);
+      const text = await answer.text();
+      expect(JSON.parse(text)).toEqual({ status: 'unavailable' });
+      for (const leak of ['secret-profile', 'dlq', testOperator, product.version]) expect(text).not.toContain(leak);
+      expect((await app.get('/healthz')).status).toBe(200);
       release();
-
-      await expect.poll(statuses, { timeout: 5_000 }).toEqual([201, 503]);
-      // The 503 comes from Fastify itself, not the route; it is the last response on the connection.
-      const shutdownResponse = () => client.received().slice(client.received().lastIndexOf('HTTP/1.1 503 '));
-      await expect.poll(shutdownResponse, { timeout: 5_000 }).toMatch(/\r\n\r\n\{.*\}$/s);
-      for (const leak of ['secret-profile', 'dlq', testOperator, product.version]) {
-        expect(shutdownResponse()).not.toContain(leak);
-      }
+      await starting;
     } finally {
-      client.destroy();
       release?.();
       await (closing ?? app.close());
     }

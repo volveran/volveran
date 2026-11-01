@@ -56,13 +56,6 @@ export class PostgresReplicaStore implements ReplicaStore {
     );
   }
 
-  async removeReplica(replicaId: string): Promise<void> {
-    await transaction(this.pool, async (client) => {
-      await client.query('DELETE FROM live_checkouts WHERE owner_replica = $1', [replicaId]);
-      await client.query('DELETE FROM replicas WHERE id = $1', [replicaId]);
-    });
-  }
-
   async claimCheckout(c: NewLiveCheckout, now: number): Promise<OperatorHolding | null> {
     // The unique index decides between claims at once. A claim that finds a holder which then
     // goes before it can be read (ended, or never started) has nothing to answer, so tries again.

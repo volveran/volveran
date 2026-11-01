@@ -26,8 +26,12 @@ All notable changes to Volverán are recorded here. The format is based on
 - With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
+- A Replica shutting down reports not ready at once, refuses new Checkouts with `503` `replica_shutting_down`, and stops an Apply at its next step: the rest go back as Keep, reported `not-attempted`. Its Operators see through any Replica that the Checkout ended because the Replica shut down, where the other answered `checkout_not_found`. Before, an Apply in progress ran to its end. (#119)
+- **The chart's `pod.terminationGracePeriodSeconds` default goes from 60 to 90**, to cover that at the default limits. A value you set stays, and should allow about 70 seconds at 1,000 Messages plus 40 ms for each one above. (#119)
+
 ### Fixed
 
+- Stopping with a live Checkout no longer hangs when the broker connection has just dropped or the broker has gone silent: closing a channel or connection now has a time limit of 5 s. (#119)
 - Ending a Checkout through Keep no longer uses up Delivery Budget on quorum queues, however it ends, including at shutdown. (#134) It now waits for the queue to take the Messages back before closing the channel, which took about 20 seconds per 1,000 Messages on a busy machine, so ending a large Checkout answers later. The wait stops after 40 ms per Message returned, at least 5 seconds (40 seconds at the default limit of 1,000 Messages), and logs a warning; another consumer on the queue can cause that, and any Message not yet taken back then costs one delivery. If you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, raise `pod.terminationGracePeriodSeconds` to match.
 
 ### Security
