@@ -24,7 +24,8 @@
 // cancel an Apply), and an Operator's end waits for it. The time
 // limit stays a hard bound: it asks the Apply to attempt no further step
 // (the rest is reported not attempted), and the Checkout then ends
-// ('time-limit'). Shutdown does the same (endAll, 'shutdown'). The broker can still cut it short (Lost Checkout). The
+// ('time-limit'). Shutdown does the same (endAll, 'shutdown'), and so does a lease that
+// ran out (endAllOnLeaseRanOut, 'lease-ran-out'). The broker can still cut it short (Lost Checkout). The
 // owner, or the approver of an approved Apply, can stop it the same way
 // (stopApplyBy); the Checkout then ends ('applied'). Every stop checks and
 // sets the request without awaiting, so the first of a stop, the time limit,
@@ -78,7 +79,6 @@ import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
 import type { AuditStore, LiveCheckoutRecord, OperatorHolding, ProfileScope } from '../audit/audit-store.js';
 import { diedAgain } from '../triage/died-again.js';
-import type { CheckoutQueueType } from '../../shared/checkout.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import { canaryFor } from './canary.js';
@@ -202,6 +202,7 @@ export interface ApplyActor {
 function stopperText(stop: ApplyStop): string {
   if (stop.stoppedBy) return stop.stoppedBy;
   if (stop.endReason === 'time-limit') return 'the time limit';
+  if (stop.endReason === 'lease-ran-out') return "the Replica's lease running out";
   return stop.endReason === 'shutdown' ? 'the Replica shutting down' : 'the Checkout ending';
 }
 
@@ -830,12 +831,18 @@ export class CheckoutManager {
   }
 
   /**
-   * This Replica's lease has run out, so other Replicas report its Checkouts lost: it makes
-   * that true, closing their connections, and the broker returns their Messages. An Apply
-   * attempts no further step, as on any Lost Checkout. Nothing awaits.
+   * This Replica's lease has run out, so the others no longer forward to it: it ends its
+   * Checkouts through Keep, which needs only the broker, so no delivery is counted and no
+   * Message drops, however long the store is away. An Apply attempts no further step. A start
+   * still under way cannot finish without the store, and a call at the next renewal time finds
+   * one that did. Nothing awaits.
    */
-  loseAll(reason: (queueType: CheckoutQueueType) => string): void {
-    for (const checkout of [...this.locks.values()]) this.markLost(checkout, reason(checkout.queueType));
+  endAllOnLeaseRanOut(): void {
+    for (const checkout of [...this.checkouts.values()]) {
+      if (checkout.status !== 'active') continue;
+      this.stopApply(checkout, { reason: STOP_REASONS.leaseRanOut, endReason: 'lease-ran-out', stoppedBy: null });
+      void this.end(checkout.id, 'lease-ran-out').catch(() => {});
+    }
   }
 
   /** From the first call of endAll: this Replica is on its way out. */

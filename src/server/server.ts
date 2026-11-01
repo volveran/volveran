@@ -32,7 +32,6 @@ import { readStartupConfig, type StartupConfig } from './startup-config.js';
 import { createForwarder, replicaUnreachable, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
 import { goneReplicasJob } from './replicas/gone-replicas-job.js';
 import { LiveCheckouts } from './replicas/live-checkouts.js';
-import { ownLeaseRanOutReason } from './replicas/owner-gone.js';
 import { DEFAULT_REPLICA_LEASE_TIMING, ReplicaLease, type ReplicaLeaseTiming } from './replicas/replica-lease.js';
 import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
@@ -468,7 +467,7 @@ async function serve(
         forwardingAddress: forwarding.address,
         timing: replicaLeaseTiming,
         afterRenewal: () => liveCheckouts.writeAgain(),
-        onRanOut: () => checkouts.loseAll(ownLeaseRanOutReason),
+        onRanOut: () => checkouts.endAllOnLeaseRanOut(),
         onError: (err) => app.log.error({ err }, "This Replica's lease could not be renewed; trying again"),
       });
       await lease.start();

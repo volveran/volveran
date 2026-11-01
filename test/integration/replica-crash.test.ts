@@ -265,26 +265,89 @@ describe('an Owner Replica that cannot renew its lease', () => {
 
       const onOwner = await eventually(async () => {
         const view = await browser.to(replicas.a).get(`/api/checkouts/${id}`);
-        expect(view.body.checkout.status).toBe('lost');
+        expect(view.body.checkout.status).toBe('ended');
         return view.body.checkout;
       });
-      expect(onOwner.lostReason).toMatch(/could not renew its lease/);
+      expect(onOwner.endReason).toBe('lease-ran-out');
       await eventually(async () => expect(await readyCount('/', QUEUE)).toBe(2));
       const onOther = await eventually(async () => {
         const view = await browser.to(replicas.b).get(`/api/checkouts/${id}`);
-        expect(view.body.checkout?.status).toBe('lost');
+        expect(view.body.checkout?.status).toBe('ended');
         return view.body.checkout;
       });
+      expect(onOther.endReason).toBe('lease-ran-out');
       expect(onOther.messages).toEqual([]);
 
       // Its lease back, it does not take back what it gave up.
       renewals = true;
       await sleep(leaseTiming.renewEveryMs * 3);
-      expect((await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('lost');
-      expect((await browser.to(replicas.b).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('lost');
+      expect((await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('ended');
+      expect((await browser.to(replicas.b).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('ended');
     } finally {
       await replicas.close();
       await purgeQueues('/', [QUEUE]);
+    }
+  });
+
+  it('uses up no Delivery Budget and drops no Message on a quorum queue when the store goes away', async () => {
+    const quorum = uniqueName('replica-outage-quorum');
+    // At a limit of 0 any return that counts a delivery drops the Message, so all of them still being there is the proof.
+    await withChannel('/', (ch) => ch.assertQueue(quorum, { durable: true, arguments: { 'x-queue-type': 'quorum', 'x-delivery-limit': 0 } }));
+    let reachable = true;
+    // Every write about Replicas fails, as in an outage of the whole store; the rest of the store is not used by this Checkout.
+    const cutOff = (store: AuditStore): AuditStore =>
+      new Proxy(store, {
+        get(target, property) {
+          if (property !== 'replicas') {
+            const value = target[property as keyof AuditStore] as unknown;
+            return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          }
+          return new Proxy(target.replicas, {
+            get(replicas, method) {
+              const value = replicas[method as keyof typeof replicas] as unknown;
+              if (typeof value !== 'function') return value;
+              return (...args: unknown[]) => (reachable ? (value as (...a: unknown[]) => unknown).apply(replicas, args) : Promise.reject(new Error('the store cannot be reached')));
+            },
+          });
+        },
+      });
+    const replicas = await startTwoReplicas({
+      profiles: [profile()],
+      replicaLeaseTiming: leaseTiming,
+      perReplica: (name) => (name === 'a' ? { wrapAuditStore: cutOff } : {}),
+    });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', quorum, 3);
+      const started = await browser.to(replicas.a).post(startPath(quorum), {});
+      expect(started.status, JSON.stringify(started.body)).toBe(201);
+      const { id } = started.body.checkout as { id: string };
+
+      reachable = false;
+      await eventually(async () => expect(await readyCount('/', quorum)).toBe(3), 20_000);
+      reachable = true;
+
+      const onOwner = await eventually(async () => {
+        const view = await browser.to(replicas.a).get(`/api/checkouts/${id}`);
+        expect(view.body.checkout.status).toBe('ended');
+        return view.body.checkout;
+      });
+      expect(onOwner.endReason).toBe('lease-ran-out');
+
+      const counts = await withChannel('/', async (ch) => {
+        const found: Array<number | undefined> = [];
+        for (let i = 0; i < 3; i++) {
+          const message = await ch.get(quorum);
+          if (!message) throw new Error(`Only ${i} Messages came back`);
+          found.push(message.properties.headers?.['x-delivery-count'] as number | undefined);
+        }
+        return found;
+      });
+      expect(counts).toEqual([undefined, undefined, undefined]);
+    } finally {
+      await replicas.close();
+      await withChannel('/', (ch) => ch.deleteQueue(quorum));
     }
   });
 });

@@ -233,6 +233,8 @@ function endedBecause(reason: EndReason | null, requester: string): string {
       return `${requester} ended the Checkout`;
     case 'shutdown':
       return 'the Checkout ended when its Replica shut down';
+    case 'lease-ran-out':
+      return 'the Checkout ended when its Replica could not renew its lease';
     case 'applied':
       return 'the Checkout was Applied';
     case 'start-failed':

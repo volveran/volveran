@@ -22,7 +22,7 @@ export type CheckoutStatus = 'active' | 'awaiting_approval' | 'applying' | 'ende
  * shut down, it reached its time limit, or the browser stopped sending
  * heartbeats.
  */
-export type EndReason = 'operator' | 'applied' | 'shutdown' | 'time-limit' | 'no-heartbeat' | 'start-failed';
+export type EndReason = 'operator' | 'applied' | 'shutdown' | 'time-limit' | 'no-heartbeat' | 'start-failed' | 'lease-ran-out';
 
 export interface CheckoutLimits {
   /** Most Messages one Checkout holds (default 1,000). */

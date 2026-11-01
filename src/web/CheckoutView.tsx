@@ -624,6 +624,8 @@ function endedLine(c: Checkout): string {
       return `This Checkout was Applied; the Messages not done are back in the queue ${returnOrder(c.queueType)}.`;
     case 'shutdown':
       return shutdownLine(c.queueType);
+    case 'lease-ran-out':
+      return `This Checkout ended because its Replica could not reach the shared store; ${back}`;
     default:
       return `This Checkout has ended; ${back}`;
   }
