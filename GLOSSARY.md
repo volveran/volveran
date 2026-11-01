@@ -29,7 +29,7 @@ The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica
 The one Replica currently running the sampler, Alerts, Replay Rules and retention.
 
 **Lost Checkout**:
-A Checkout that ended without Volverán ending it, for example because the broker cancelled it. Its Messages are back in the queue and it can no longer be Applied.
+A Checkout that ended without Volverán ending it, for example because the broker cancelled it or its Owner Replica died. Its Messages are back in the queue, or will be once the broker sees the connection gone, and it can no longer be Applied.
 _Avoid_: Expired, timed out, dead Checkout
 
 **Delivery Budget**:

@@ -29,7 +29,8 @@ describe('Alerts with two Replicas', () => {
   beforeEach(async () => {
     destination.received.length = 0;
     destination.answerWith();
-    samplers = { a: samplerHooks(), b: samplerHooks() };
+    // Different times: a Sample is one per profile and time.
+    samplers = { a: samplerHooks(), b: samplerHooks(new Date(Date.now() + 1000)) };
     leaders = { a: leaderHooks(), b: leaderHooks() };
     await purgeQueues('/', fixtureQueues);
     replicas = await startTwoReplicas({

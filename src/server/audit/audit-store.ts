@@ -9,7 +9,7 @@ import type { Notification } from '../alerts/payloads.js';
 import type { ApprovalSummary } from '../checkout/view.js';
 import type { Operator } from '../operator.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
-import type { CheckoutStatus } from '../../shared/checkout.js';
+import type { CheckoutQueueType, CheckoutStatus, EndReason } from '../../shared/checkout.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { RulePass, RuleState } from '../../shared/replay-rules.js';
@@ -227,6 +227,8 @@ export interface AuditStore {
   /** Writes a `pending` entry (and its body, if any) in one durable commit; answers its id. */
   record(entry: NewAuditEntry): Promise<number>;
   setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason?: string | null): Promise<void>;
+  /** The Replica carrying out Checkout `checkoutId` has gone: its entries still `pending` become `uncertain`, with `reason`. Answers how many. */
+  settleInterrupted(checkoutId: string, reason: string): Promise<number>;
   /** Records how the watch of a Canary's entry ended. */
   setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): Promise<void>;
   /** The entries matching `query` (every entry by default), newest first. */
@@ -400,6 +402,10 @@ export interface LiveCheckoutUpdate {
   status: Exclude<CheckoutStatus, 'awaiting_approval'>;
   /** The Approval the Checkout waits for, as the approvers' list shows it; null when it waits for none. */
   approval: ApprovalSummary | null;
+  /** Why it ended; left out or null unless it has. */
+  endReason?: EndReason | null;
+  /** Why it was lost; left out or null unless it was. */
+  lostReason?: string | null;
 }
 
 /** A Live Checkout record: where a Checkout is, and enough to list it. */
@@ -411,6 +417,19 @@ export interface NewLiveCheckout extends LiveCheckoutUpdate {
   profile: string;
   vhost: string;
   queue: string;
+  queueType: CheckoutQueueType;
+  deliveryLimit: number | null;
+  readyAtStart: number;
+  /** Epoch milliseconds. */
+  startedAt: number;
+  /** Epoch milliseconds. */
+  endsAt: number;
+}
+
+/** A Live Checkout record as read: what another Replica can say of the Checkout once its owner has gone. */
+export interface LiveCheckoutRecord extends NewLiveCheckout {
+  endReason: EndReason | null;
+  lostReason: string | null;
 }
 
 /** Where a request about a Checkout goes. */
@@ -437,6 +456,12 @@ export interface ReplicaStore {
   removeCheckout(id: string): Promise<void>;
   /** The record's route, or null when there is no record. */
   checkoutRoute(id: string, now: number): Promise<LiveCheckoutRoute | null>;
+  /** The record, or null when there is none. */
+  checkoutRecord(id: string): Promise<LiveCheckoutRecord | null>;
+  /** Every record whose owner's lease is over at `now`. */
+  checkoutsOfGoneReplicas(now: number): Promise<LiveCheckoutRecord[]>;
+  /** Removes each lease over by `before` and the records of its Replica, as one unit of work. Answers how many leases. */
+  removeGoneReplicas(before: number): Promise<number>;
   /** The id of the Operator's `active` Checkout whose owner's lease is live, or null. */
   activeCheckoutOf(operatorId: string, now: number): Promise<string | null>;
 }
