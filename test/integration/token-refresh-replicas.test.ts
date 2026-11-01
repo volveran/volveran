@@ -160,7 +160,8 @@ describe("Refreshing the Operator's token across two Replicas", () => {
     await sleep(2 * LIFETIME_SECONDS * 1000);
 
     expect(provider.refreshes()).toBeGreaterThan(refreshes);
-    expect((await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('active');
+    const afterCrash = (await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout;
+    expect(afterCrash.status, `${afterCrash.lostReason}; reused refresh tokens: ${provider.reusedRefreshTokens()}; logs: ${JSON.stringify(logs.filter((l) => l.level >= 40).map((l) => [l.msg, l.reason]))}`).toBe('active');
     expect(await checkoutConnections()).toEqual([connection]);
   }, 90_000);
 
