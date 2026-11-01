@@ -1,10 +1,30 @@
 # Several Replicas: forwarding and the Background Leader
 
-This ADR will supersede [ADR 0003](0003-single-replica-on-kubernetes.md) once the chart lets several Replicas run (#121). Until then, run exactly one.
+This ADR supersedes [ADR 0003](0003-single-replica-on-kubernetes.md). What it means for someone running several Replicas is in the [guide](../replicas.md).
 
 ## Forwarding
 
-To be written with Replica registration and forwarding (#108, #121): a Checkout's held Messages live in one process's AMQP connection, so a request reaching another Replica has to go to that one.
+A Checkout's held Messages live in one process's AMQP connection and cannot move, so a request reaching another Replica has to go to that one. A load balancer sends requests anywhere, so the Replica that takes one forwards it.
+
+**Forwarding, not sticky sessions.** Stickiness cannot serve an approver who is not the requester, since their browser holds its own session to some other Replica, and it would lose everyone on a pod when that pod goes.
+
+**Registration in the audit store.** Each process registers a new Replica id with its address and a lease, and each Checkout gets a Live Checkout record naming its owner. The record is routing information: held Messages and Decisions stay in the owner's memory. A route opts in with `toOwner`, so only Checkout routes forward; the Replica that takes a start becomes the owner, with the Operator's live token.
+
+**A separate internal port at the pod's address.** It is plain HTTP and streams, so an export is not buffered. The same app serves it, through `app.routing`, so owner and Role checks run on the owner. It sends the shared secret and the Operator's identity with the session's id, and no token crosses. Only the internal listener can make a request count as forwarded, so those headers mean nothing on the web port. Without `VOLVERAN_FORWARDING_SECRET`, in Team Mode on PostgreSQL, nothing registers, so a single Replica needs no new secret.
+
+**The chart gives each pod its address** from `status.podIP` through the downward API. The chart's headless Service only names the pods; nothing resolves it, since the store has the addresses, and a pod that has lost its DNS entry may still own Checkouts. An IPv6 pod address is not written as the `[host]:port` that the setting needs, so a Replica refuses to start there; nobody has needed it or tested it.
+
+**The internal port is closed by default, by a policy that cannot be turned off.** It accepts any identity from whoever holds the secret ([threat model](../threat-model.md), N4), so it must not be left open to a cluster because someone did not set `networkPolicy.enabled`. Three ways were weighed:
+
+- Refusing `replicaCount` above 1 without `networkPolicy.enabled`, or turning that value on with it. Rejected: the policy that value renders admits nothing to the web port unless `ingressFrom` is set, so scaling up would cut off the Gateway, and the engineer asked for neither.
+- A value to opt out. Rejected: nothing needs it, since a policy of one's own adds to this one rather than fights it.
+- With several Replicas, always rendering the one NetworkPolicy object, which only other pods of the release may pass on the internal port. Chosen. NetworkPolicy can only list what is allowed, so with `networkPolicy.enabled` false the same object lists the web and metrics ports as open to all, which is what they were with no policy. Scaling up changes who reaches the internal port and nothing else.
+
+`extraEnv` may not set the forwarding variables, on one Replica either, so the port cannot be opened beside this. This relies on a CNI that enforces NetworkPolicy, which the chart cannot check, and it says so in the install notes and the guide. Egress does not need the same care unless the engineer restricts it, and then the chart adds the rule between Replicas, since otherwise forwarding would fail only once a Checkout is on another pod. That rule uses the port number, because not every CNI resolves a named port on egress.
+
+**One Replica on any store renders as it did.** Recreate, no internal port, no secret, no budget, and no policy unless asked for: an upgrade must not roll or open anything unasked.
+
+**A rolling update with `maxUnavailable: 0`, and a budget of one.** The replacement is ready before a pod is told to stop, so one always serves. `ScheduleAnyway` spreads pods without leaving a Replica unscheduled on a small cluster.
 
 ## When an Owner Replica goes
 

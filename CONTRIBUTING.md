@@ -13,7 +13,7 @@ npm run test:integration  # same for test/integration/
 npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
 scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
 npm run test:chart:release  # renders the chart from the last release tag and the working tree and fails on a difference not listed in test/chart/release-diff-allow.yaml (needs Helm)
-npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator (needs kind, kubectl, Helm)
+npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator, on one Replica and on several (needs kind, kubectl, Helm)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it
 ```
@@ -103,3 +103,5 @@ The test helpers find the running broker of the checkout on their own. Environme
 | `VOLVERAN_TEST_AUDIT_STORE` | `sqlite` | the store the integration suite runs on: `sqlite` or `postgres` |
 
 **kind smoke test.** `npm run test:smoke` (`scripts/kind-smoke.mjs`) builds the image, loads it into a new kind cluster `volveran-smoke` with RabbitMQ (seeded from `test/broker/`) and the mock OIDC provider over https (`test/smoke/deps.yaml`, certificates in `test/smoke/tls/`), and installs the chart from the checkout into the namespace `volveran-smoke`, which enforces the `restricted` Pod Security Standard, with the chart's NetworkPolicy on (kindnet enforces it, so the pod becoming ready shows the probes get through). `test/smoke/operator.test.ts` then signs in over port-forwards (local ports 18080, 18443 and 18672; `VOLVERAN_SMOKE_APP_PORT`, `VOLVERAN_SMOKE_OIDC_PORT`, `VOLVERAN_SMOKE_MGMT_PORT` change them), checks that the paused Replay rule in the values loaded, Discards a Message, deletes the pod, checks the Audit Entry and body survived, and checks that `helm upgrade` with a changed Broker Profile rolls the pod and keeps the rule paused. A failed step prints the pods, events and logs. The cluster is deleted afterwards; `VOLVERAN_SMOKE_KEEP_CLUSTER=1` keeps it (and reuses it on the next run).
+
+The same cluster then has a second run: the release is replaced by two Replicas on PostgreSQL (`test/smoke/values-replicas.yaml`), and `test/smoke/replicas.test.ts` reaches each pod on a port-forward of its own (local ports from 18080 up). It tries the forwarding port from unlabelled pods, Applies through both pods, deletes the other pod and then `SIGKILL`s the owner with a Checkout live, rolls `helm upgrade` keeping the session, and goes to three Replicas. `VOLVERAN_SMOKE_RUN=single` or `replicas` runs one of the two. With `VOLVERAN_TEST_LOCK_FILE` it takes turns with the broker suites.

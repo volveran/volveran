@@ -66,8 +66,22 @@ these first; these guards give the same answer with --skip-schema-validation
 and carry the explanation a schema error cannot.
 */}}
 {{- define "volveran.validate" -}}
-{{- if ne (int .Values.replicaCount) 1 -}}
-{{- fail (printf "replicaCount must be 1, got %v: Volverán holds Checkouts in one process and writes its audit store from a single writer, so the chart runs exactly one replica (see docs/adr/0003-single-replica-on-kubernetes.md)" .Values.replicaCount) -}}
+{{- if lt (int .Values.replicaCount) 1 -}}
+{{- fail (printf "replicaCount must be at least 1, got %v" .Values.replicaCount) -}}
+{{- end -}}
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{- if not .Values.postgres.existingSecret -}}
+{{- fail (printf "replicaCount above 1 needs postgres.existingSecret, got %v on SQLite: SQLite has a single writer on one volume, so Replicas must share PostgreSQL (see docs/adr/0014-replicas-forwarding-and-the-background-leader.md)" .Values.replicaCount) -}}
+{{- end -}}
+{{- if not .Values.forwarding.existingSecret -}}
+{{- fail "replicaCount above 1 needs forwarding.existingSecret: an existing Secret holding the secret Replicas forward requests under, at least 32 characters (see docs/replicas.md)" -}}
+{{- end -}}
+{{- if eq (int .Values.forwarding.port) 8080 -}}
+{{- fail "forwarding.port must differ from 8080, the web app's container port" -}}
+{{- end -}}
+{{- if and .Values.metrics.enabled (eq (int .Values.forwarding.port) (int .Values.metrics.port)) -}}
+{{- fail (printf "forwarding.port must differ from metrics.port (both are %d)" (int .Values.metrics.port)) -}}
+{{- end -}}
 {{- end -}}
 {{- $oidc := .Values.oidc | default dict -}}
 {{- range $key := list "issuer" "clientId" "redirectUrl" "existingSecret" -}}
@@ -163,6 +177,11 @@ extraEnv, persistence, pod scheduling). Included next to volveran.validate.
 {{- range .Values.extraEnv -}}
 {{- if has .name (list "VOLVERAN_POSTGRES_URL" "VOLVERAN_POSTGRES_REQUIRE_TLS" "VOLVERAN_POSTGRES_CA_FILE") -}}
 {{- fail (printf "extraEnv sets %s: use the postgres values instead, so the URL comes from a Secret" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if has .name (list "VOLVERAN_FORWARDING_SECRET" "VOLVERAN_FORWARDING_PORT" "VOLVERAN_FORWARDING_ADDRESS" "VOLVERAN_POD_IP") -}}
+{{- fail (printf "extraEnv sets %s: use replicaCount and the forwarding values instead, which also add the port and close it to all but other Replicas" .name) -}}
 {{- end -}}
 {{- end -}}
 {{- $selector := include "volveran.selectorLabels" . | fromYaml -}}

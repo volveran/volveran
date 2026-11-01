@@ -1,8 +1,17 @@
 # Values for the volveran chart. Every value is documented in README.md.
-# The chart always runs Team Mode (OIDC sign-in), one replica, Recreate.
+# The chart always runs Team Mode (OIDC sign-in), by default one replica with Recreate.
 
-# -- Must be 1. Volverán runs exactly one replica (docs/adr/0003-single-replica-on-kubernetes.md).
+# -- Above 1 needs postgres.existingSecret and forwarding.existingSecret (docs/replicas.md).
 replicaCount: 1
+
+# How Replicas reach each other, with replicaCount above 1. Unused on one Replica.
+# The chart's NetworkPolicy admits only other Replicas to this port, always.
+forwarding:
+  # -- An existing Secret holding the secret Replicas forward requests under: at least 32 characters.
+  existingSecret: ""
+  secretKey: forwarding-secret
+  # -- The internal port, reached at each pod's address. No route leads to it.
+  port: 8081
 
 image:
   repository: ghcr.io/volveran/volveran
@@ -181,12 +190,15 @@ pod:
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # -- Replaces the chart's own: with several Replicas, ScheduleAnyway over nodes and zones.
+  topologySpreadConstraints: []
   priorityClassName: ""
   # -- Added to the pod's labels; the chart's selector labels cannot be overridden.
   labels: {}
   annotations: {}
 
 # An optional NetworkPolicy for the Volverán pod. See "Network policy" in README.md.
+# With several Replicas one is rendered anyway, to close the forwarding port.
 networkPolicy:
   enabled: false
   # -- NetworkPolicy peers (namespaceSelector, podSelector, ipBlock) admitted to the http port,

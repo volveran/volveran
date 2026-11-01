@@ -34,7 +34,7 @@ Tested on 2026-11-01 at commit `953fdc6` (`integration/v1.0`), before the fixes 
 ## Trust boundaries
 
 1. **Browser to web port.** TLS ends at the proxy in front of Volverán. In Team Mode the signed, `HttpOnly`, `SameSite=Lax` session cookie is the credential. In Solo Mode there is no credential, only the loopback address.
-2. **Replica to Replica (forwarding).** A separate internal port, plain HTTP, with a shared secret sent as a bearer token and the Operator's identity base64url-encoded beside it, and the id of their session, by which the receiver finds their access token in the store (no token crosses, and the id alone is no cookie, which must be signed with the session secret). The receiver takes that identity and its groups as stated, so everything rests on the secret and on who can reach the port. The chart does not yet deploy this port or a NetworkPolicy for it (#121).
+2. **Replica to Replica (forwarding).** A separate internal port, plain HTTP, with a shared secret sent as a bearer token and the Operator's identity base64url-encoded beside it, and the id of their session, by which the receiver finds their access token in the store (no token crosses, and the id alone is no cookie, which must be signed with the session secret). The receiver takes that identity and its groups as stated, so everything rests on the secret and on who can reach the port. With several Replicas, the chart always renders a NetworkPolicy admitting only the release's other pods to this port (N4).
 3. **Replica to audit store.** The store is trusted. In particular, a Replica sends the forwarding secret to whatever address the `replicas` table names (finding N3).
 4. **Replica to broker.** Shared credentials, or the Operator's token on `operatorToken` profiles (ADR 0008).
 5. **Replica to OIDC provider.** Authorization code flow with PKCE, `state` and `nonce`. Plain http is refused except for a provider on loopback (tested).
@@ -126,9 +126,15 @@ Moving base does not settle it by itself: `node:24-trixie-slim` as published has
 
 A Replica sends `Authorization: Bearer <secret>` to whatever address the `replicas` table names. Setting `forwarding_address` to a listener of ours and requesting another Replica's Checkout delivered the real secret and the Operator's identity to that listener, and the Operator received the listener's forged answer as the Checkout. So write access to the store, which should not by itself reach any broker, becomes the ability to act as any `admin` on every Broker Profile, for anyone who can then reach the forwarding port. The secret also crosses the pod network in clear on every forwarded request, so anything that can read that traffic gets the same. Signing each request (an HMAC over method, path, operator and time) rather than sending the secret would stop both.
 
+**Since #121, narrowed and not fixed.** The chart's NetworkPolicy (N4) limits "can then reach the forwarding port" to pods with the release's labels, and `networkPolicy.egress`, when set, limits where a Replica can send the secret to. But egress stays open unless the engineer restricts it, so a store writer can still capture the secret and answer Operators with a forged Checkout, and a holder of the secret with such a pod can use it. The traffic is still in clear. It stays Medium, with no owner: signing is not done.
+
 ### N4. The forwarding port accepts every `/api/` route and any identity. Medium
 
-The listener refuses non-`/api/` paths, but does not limit itself to the routes that forward, and accepts any operator and groups. So one leaked secret and network access are every Role on every profile, and Audit Entries name whoever the holder claims to be. Forged entries cannot be told from real ones. This follows from the design in #92, and may be acceptable once the NetworkPolicy exists, but `networkPolicy.enabled` is `false` by default, so a chart with Replicas should not leave this port open by default (#121). There is also one secret with no overlap, so rotating it means restarting all Replicas together.
+The listener refuses non-`/api/` paths, but does not limit itself to the routes that forward, and accepts any operator and groups. So one leaked secret and network access are every Role on every profile, and Audit Entries name whoever the holder claims to be. Forged entries cannot be told from real ones. This follows from the design in #92. There is also one secret with no overlap, so rotating it means restarting all Replicas together.
+
+**Since #121, the port is closed by default; the finding stays for whoever gets past that.** `networkPolicy.enabled` is still `false` by default, so with `replicaCount` above 1 the chart renders a NetworkPolicy regardless, with no value to turn it off, that admits only the release's other pods to this port ([ADR 0014](adr/0014-replicas-forwarding-and-the-background-leader.md#forwarding)). `extraEnv` may not set the forwarding variables, so one Replica has no such port at all. Tested on kind with kindnet, with `networkPolicy.enabled` false: from a pod without the labels, in the same namespace or another, the port does not connect, while one Replica connects to the other and the web port stays open.
+
+What remains, Medium: the policy needs a CNI that enforces it, which the chart cannot check, and the guide says to try it. Anyone able to create pods in the namespace can give them the labels and reach the port, and still needs the secret. The listener still takes every `/api/` route and any identity from a holder of the secret, and rotation still needs all Replicas restarted together. Outside the chart, closing the port is the installer's job ([configuration](configuration.md)).
 
 ### N5. Open redirect after sign-in through a tab in `returnTo`. Medium. Fixed by #123
 
@@ -192,5 +198,5 @@ Against ASVS 4.0.3, by area. "Tested" means as above. "Suite" means the project'
 ## What was not done
 
 - No browser: cross-site cookie behaviour, DNS rebinding and tab stripping were each stopped one step short, as stated above. Rendering of hostile content was run once by hand in Firefox (#124), which states what it left out.
-- No fuzzing, no load test beyond N6, no review of the Helm chart's forwarding set-up, which does not exist yet (#121).
+- No fuzzing, no load test beyond N6. The chart's forwarding set-up was tested as N4 states, on kindnet alone.
 - Not rechecked at later commits. Forwarding covers only the Checkout view and heartbeat so far, and #109, #111 and #114 widen it: review the boundary again before release.
