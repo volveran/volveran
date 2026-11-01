@@ -248,9 +248,19 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 
 - The only route is `/metrics`, on its own port, at `VOLVERAN_HOST`'s address. In Solo Mode that is loopback.
 - It needs no session, so keep the port away from anything but your scraper. The web app's port never serves metrics.
-- A scrape never contacts a broker and never waits on the audit store. What it shows from the store (`volveran_replay_rule_paused`, `volveran_alerts_firing`, `volveran_audit_store_body_bytes`) is read in the background, every 15 seconds and whenever Volverán changes one of them itself, and keeps its last value while the store cannot be read.
+- A scrape never contacts a broker and never waits on the audit store. What it shows from the store (`volveran_replay_rule_paused`, `volveran_alerts_firing`, `volveran_audit_store_body_bytes`) is read in the background, every 15 seconds and whenever Volverán changes one of them itself, and keeps its last value while the store cannot be read and the Replica is still the Background Leader.
 - Metric and label names stay stable within a minor version.
 - Counters are held in memory and start again from zero after a restart, which `rate()` handles. A counter has no series until the first thing it counts.
+
+### Several Replicas
+
+Scrape every Replica. The metrics add up across them, so a dashboard can sum them:
+
+- **Shared state comes from the Background Leader only.** Queue depth, set-up warnings, sampling, `volveran_alerts_firing`, `volveran_replay_rule_paused` and `volveran_audit_store_body_bytes` describe what all Replicas share, so one copy is exported. The others show their `HELP` and `TYPE` with no series.
+- **What a process holds or counts stays per Replica.** Every counter, `volveran_checkouts_active` and `volveran_approvals_waiting`. After a change of leader, a former leader keeps the arrivals it counted, and they simply stop rising.
+- **`volveran_background_leader` says which Replica leads:** `volveran_background_leader == 1` names its `instance` or `pod`, for when Samples or Alerts are missing. Its log also says when it becomes the leader and when it stops.
+
+A change of leader shows. A leader that goes silently leaves the shared gauges absent for up to 20 seconds, until another takes the lease, so give alerts on them a `for` longer than that. The new leader shows the sampling metrics, Replay Rule state, Alerts and body bytes at once, and queue depth and set-up warnings from its first run, one sampling interval later. A stalled leader that has not yet noticed its lease ran out can export alongside the new one for a moment. Replicas that lose the store also lose the lease, within 15 seconds: on PostgreSQL, the shared gauges then go away with it until the store is back, while the counters below go on rising.
 
 ### Metric reference
 
@@ -269,6 +279,9 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 | `volveran_audit_store_body_bytes` | gauge | | Bytes of Discarded Message bodies kept in the audit store. |
 | `volveran_alerts_firing` | gauge | `profile`, `rule` | Alerts of the Alert Rule firing now; 0 for a rule with none. Pending Alerts are not counted. |
 | `volveran_alert_notifications_total` | counter | `destination`, `outcome` | Notifications of Alerts, by Alert Destination and `outcome`: `delivered` or `failed` once its attempts are over. Test notifications are not counted. |
+| `volveran_background_leader` | gauge | | 1 if this Replica is the Background Leader, 0 if not. |
+| `volveran_forwarding_failures_total` | counter | `reason` | Requests between Replicas that failed, on the Replica that saw it. `reason` is `unreachable` (the connection failed or dropped before an answer began), `timed_out` (no answer began in time), `no_address` (no live Background Leader to send it to) or `refused` (this Replica's internal port refused it: another `VOLVERAN_FORWARDING_SECRET`, or something that should not reach the port). An Operator who goes away is not counted, nor an answer cut short once it has begun. |
+| `volveran_audit_store_errors_total` | counter | | Calls to the audit store that failed, whatever came of them: many are tried again. A write refused because this Replica is no longer the Background Leader is not counted. |
 
 A paused rule's `reason` can be free text typed by an Operator, so a pause and resume with new words starts a new series. Alert on `max by (profile, rule) (volveran_replay_rule_paused) == 1`, not on one reason.
 
@@ -281,7 +294,7 @@ Dead-letter queue metrics come from the latest Samples, so they move once per sa
 
 ### Example alerts
 
-Prometheus Operator rules for a deep dead-letter queue, a fast arrival rate, a lost broker and failed notifications. Adjust the thresholds and labels to your queues and your Prometheus's `ruleSelector`.
+Prometheus Operator rules for a deep dead-letter queue, a fast arrival rate, a lost broker, failed notifications and partial failure of Replicas. Adjust the thresholds and labels to your queues and your Prometheus's `ruleSelector`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -332,6 +345,28 @@ spec:
             severity: critical
           annotations:
             summary: '{{ $labels.queue }} on {{ $labels.profile }} has the set-up warning {{ $labels.code }}'
+        - alert: VolveranNoBackgroundLeader
+          # Past a takeover, which takes up to 20 s.
+          expr: sum(volveran_background_leader) == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: 'No Replica is the Background Leader: no Samples, Alerts, Rule Passes or retention'
+        - alert: VolveranForwardingFailing
+          expr: sum by (instance, reason) (rate(volveran_forwarding_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: '{{ $labels.instance }} cannot reach other Replicas ({{ $labels.reason }}): Operators get a 503 for Checkouts held there'
+        - alert: VolveranStoreErrors
+          expr: rate(volveran_audit_store_errors_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: '{{ $labels.instance }} is getting errors from the audit store: see its log'
 ```
 
 ### ServiceMonitor set-up
