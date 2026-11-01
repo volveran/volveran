@@ -122,11 +122,64 @@ describe('scanning', () => {
     expect(imageScan(securityJob('released-image'))?.with?.['image']).toBe('ghcr.io/volveran/volveran:latest');
   });
 
+  it.each([
+    ['the image from the checkout', () => securityJob('image')],
+    ['the released image', () => securityJob('released-image')],
+    ['a release', () => load('.github/workflows/release.yml').jobs['check']],
+  ])('counts findings with no fix on %s, apart from the reviewed list', (_name, job) => {
+    const scan = imageScan(job());
+    expect(scan?.with?.['only-fixed']).toBeUndefined();
+    expect(scan?.with?.['config']).toBe('.grype.yaml');
+    expect(job()?.steps.some((s) => s.uses?.startsWith('actions/checkout@'))).toBe(true);
+  });
+
   it('checks a release in the job every push waits for', () => {
     const check = load('.github/workflows/release.yml').jobs['check'];
     expect(runs(check)).toContain('npm audit --audit-level=high');
     expect(runs(check)).toContain('docker build');
     expect(imageScan(check)?.with).toMatchObject({ 'fail-build': true, 'severity-cutoff': 'high' });
+  });
+});
+
+/**
+ * What is wrong with the image scan's reviewed list: anything but a rule for
+ * one vulnerability with its stated reason. A rule on a package, a fix state or
+ * a whole class would hide findings nobody reviewed.
+ */
+function unreviewedIgnores(config: { ignore?: unknown[] | null } & Record<string, unknown>): string[] {
+  const problems = ['only-fixed', 'only-notfixed', 'ignore-wontfix'].filter((key) => key in config);
+  for (const rule of config.ignore ?? []) {
+    const { vulnerability, reason, ...rest } = rule as Record<string, unknown>;
+    if (typeof vulnerability !== 'string' || !/^(CVE|GHSA)-/.test(vulnerability)) problems.push(JSON.stringify(rule));
+    else if (typeof reason !== 'string' || reason.trim() === '') problems.push(`${vulnerability}: no reason`);
+    else if (Object.keys(rest).length > 0) problems.push(`${vulnerability}: wider than one vulnerability`);
+  }
+  return problems;
+}
+
+describe('the reviewed list of the image scan', () => {
+  it('recognises a rule without a reason, or wider than one vulnerability', () => {
+    const config = {
+      ignore: [
+        { vulnerability: 'CVE-2026-1', reason: 'Checked: not loaded by the process' },
+        { vulnerability: 'CVE-2026-2' },
+        { vulnerability: 'CVE-2026-3', reason: 'Checked', package: { name: 'musl' } },
+        { 'fix-state': 'wont-fix', reason: 'Nothing to do' },
+      ],
+    };
+    expect(unreviewedIgnores(config)).toEqual([
+      'CVE-2026-2: no reason',
+      'CVE-2026-3: wider than one vulnerability',
+      '{"fix-state":"wont-fix","reason":"Nothing to do"}',
+    ]);
+  });
+
+  it('recognises settings that hide findings by their fix state', () => {
+    expect(unreviewedIgnores({ 'only-fixed': true, 'ignore-wontfix': 'high' })).toEqual(['only-fixed', 'ignore-wontfix']);
+  });
+
+  it('names one reviewed vulnerability per rule, and nothing else', () => {
+    expect(unreviewedIgnores(parse(read('.grype.yaml')) as Record<string, unknown>)).toEqual([]);
   });
 });
 

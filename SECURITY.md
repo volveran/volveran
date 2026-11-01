@@ -29,4 +29,12 @@ Volverán's own code, its image and its Helm chart. A vulnerability in RabbitMQ,
 
 ## How known vulnerabilities are found
 
-CodeQL, `npm audit` and an image scan run on every pull request and every week, and the image last released is scanned every week ([`security.yml`](.github/workflows/security.yml)). A release does not go out with a known high finding in its dependencies or image. Dependabot proposes updates to dependencies, GitHub Actions and the base image, which are pinned by commit and by digest.
+CodeQL, `npm audit` and an image scan run on every pull request and every week, and the image last released is scanned every week ([`security.yml`](.github/workflows/security.yml)). A release does not go out with a high or critical finding known to `npm audit` or to the image scan, whether or not a fix exists, unless it is on the reviewed list in [`.grype.yaml`](.grype.yaml), where each has a stated reason from checking whether Volverán can reach it. That list is empty today.
+
+What this does not promise:
+
+- "Known" means known to these tools on the day they ran. A clean scan is not proof that nothing is vulnerable, and a finding can appear after a release: the weekly scan of the released image looks for those, but a release already published stays as it is until the next one.
+- Medium and low findings do not stop a release. They stay visible in the scan's log.
+- The scan runs on the amd64 image, built in the release's first job. The arm64 image, and the image pushed by the later job, are built from the same Dockerfile and pins but are not scanned themselves.
+
+Dependabot proposes updates to dependencies, GitHub Actions and the base image, which are pinned by commit and by digest.
