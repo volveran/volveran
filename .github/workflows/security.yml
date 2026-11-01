@@ -5,9 +5,9 @@
 # appear, and opens an issue when any of it fails. The release workflow repeats
 # npm audit and the image scan before it pushes anything.
 #
-# The cut-off is high. The image scan counts only findings with a fix available:
-# a Debian package with no fix yet is nothing a pull request could act on, and
-# would keep the check red. Everything below the cut-off stays visible in the log.
+# The cut-off is high. The image scan counts findings with a fix and without one,
+# apart from the reviewed list in .grype.yaml, where each has a stated reason.
+# Everything below the cut-off stays visible in the log.
 name: Security
 
 on:
@@ -60,7 +60,7 @@ jobs:
           image: volveran:scan
           fail-build: true
           severity-cutoff: high
-          only-fixed: true
+          config: .grype.yaml
           output-format: table
 
   released-image:
@@ -68,12 +68,14 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      # For .grype.yaml; the image comes from the registry.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: ghcr.io/volveran/volveran:latest
           fail-build: true
           severity-cutoff: high
-          only-fixed: true
+          config: .grype.yaml
           output-format: table
 
   report:
