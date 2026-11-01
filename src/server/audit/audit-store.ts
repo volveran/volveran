@@ -300,6 +300,8 @@ export interface LeaderLeaseStore {
   claim(holder: string, now: number, durationMs: number): Promise<LeaderLeaseGrant | null>;
   /** Gives the lease up, free for the next claim; does nothing unless `holder` has it. */
   release(holder: string): Promise<void>;
+  /** Who last claimed it, even if that has run out; null when given up or never claimed. */
+  currentHolder(): Promise<string | null>;
 }
 
 /** The Audit Entry of a pause or resume of a Replay Rule, which has no Message. */
@@ -311,10 +313,20 @@ export interface RuleStateStore {
   ensure(ruleKey: string, startPaused: boolean): Promise<RuleState>;
   /** The rule's state; null when it has never started. */
   state(ruleKey: string): Promise<RuleState | null>;
-  /** Pauses the rule (`reason`, `by`, `at`) and writes its Audit Entry, done, as one unit of work. */
-  pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<void>;
-  /** Lets the rule run again, forgets the Died Again Messages counted for its automatic stop, and writes its Audit Entry, done, as one unit of work. */
-  resume(ruleKey: string, entry: RulePauseEntry): Promise<void>;
+  /**
+   * Pauses the rule (`reason`, `by`, `at`), clears its next pass and writes its Audit Entry, done, as one unit
+   * of work. Does none of it, and answers false, when the rule is paused already, however many Replicas ask at once.
+   */
+  pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<boolean>;
+  /**
+   * Lets the rule run again, forgets the Died Again Messages counted for its automatic stop, and writes its Audit
+   * Entry, done, as one unit of work. Does none of it, and answers false, when the rule is running already.
+   */
+  resume(ruleKey: string, entry: RulePauseEntry): Promise<boolean>;
+  /** When the leader will next pass the rule; null while none is scheduled. */
+  nextPass(ruleKey: string): Promise<Date | null>;
+  /** Writes the rule's next pass, refused for a former leader. A paused rule keeps none, whatever the leader last read. */
+  setNextPass(ruleKey: string, at: Date | null, fence?: LeaseFence): Promise<void>;
   /** Keeps `pass` in the rule's history, dropping the oldest beyond PASS_HISTORY. */
   recordPass(ruleKey: string, pass: RulePass): Promise<void>;
   /** The rule's kept passes, newest first. */
@@ -395,9 +407,18 @@ export interface SessionStore {
   addSession(id: string, session: StoredSession, now: number): Promise<void>;
   /** The session, or null. */
   session(id: string, now: number): Promise<StoredSession | null>;
-  /** Replaces the session's sealed tokens; does nothing if it has gone. */
-  setTokens(id: string, tokens: string): Promise<void>;
-  /** Moves the session's idle expiry; does nothing if it has gone. */
+  /**
+   * Refreshes the session's sealed tokens, one caller at a time on any Replica: `refresh`
+   * runs holding the session's lock, given the tokens as they are now, and what it answers
+   * replaces them (null leaves them). When it throws nothing changes, and this throws the
+   * same. False, without calling it, when the session has gone. It may wait for the
+   * provider, so it never holds up the store's other calls: `refresh` must not call the store.
+   */
+  refreshTokens(id: string, now: number, refresh: (tokens: string) => Promise<string | null>): Promise<boolean>;
+  /**
+   * Moves the session's idle expiry; does nothing if it has gone. It answers without waiting
+   * for a refresh in progress, and may then do nothing: the Operator's next request tries again.
+   */
   touchSession(id: string, idleExpiresAt: number): Promise<void>;
   removeSession(id: string): Promise<void>;
   /**
@@ -480,6 +501,8 @@ export interface LiveCheckoutRoute {
 export interface ReplicaStore {
   /** Takes or extends the Replica's lease. */
   renewLease(lease: ReplicaLeaseRow): Promise<void>;
+  /** The Replica's internal address while its lease is live at `now`, else null. */
+  liveAddress(replicaId: string, now: number): Promise<string | null>;
 
   /**
    * Adds the record unless the Operator already has a `starting` or `active` Checkout on a

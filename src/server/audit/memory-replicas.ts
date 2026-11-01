@@ -10,6 +10,11 @@ export class MemoryReplicaStore implements ReplicaStore {
     this.leases.set(lease.replicaId, lease);
   }
 
+  async liveAddress(replicaId: string, now: number): Promise<string | null> {
+    const lease = this.leases.get(replicaId);
+    return lease && lease.expiresAt > now ? lease.forwardingAddress : null;
+  }
+
   async claimCheckout(claim: NewLiveCheckout, now: number): Promise<OperatorHolding | null> {
     for (const checkout of this.checkouts.values()) {
       if (checkout.operator.id !== claim.operator.id || (checkout.status !== 'starting' && checkout.status !== 'active')) continue;

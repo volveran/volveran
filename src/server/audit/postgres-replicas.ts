@@ -103,6 +103,11 @@ export class PostgresReplicaStore implements ReplicaStore {
     await this.pool.query('DELETE FROM live_checkouts WHERE id = $1', [id]);
   }
 
+  async liveAddress(replicaId: string, now: number): Promise<string | null> {
+    const { rows } = await this.pool.query<{ forwarding_address: string }>('SELECT forwarding_address FROM replicas WHERE id = $1 AND lease_expires_at > $2', [replicaId, now]);
+    return rows[0]?.forwarding_address ?? null;
+  }
+
   async checkoutRoute(id: string, now: number): Promise<LiveCheckoutRoute | null> {
     const { rows } = await this.pool.query<{ owner_replica: string; forwarding_address: string | null; lease_expires_at: number | null }>(
       `SELECT c.owner_replica, r.forwarding_address, r.lease_expires_at
