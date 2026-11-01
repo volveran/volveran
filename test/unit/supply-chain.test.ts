@@ -20,6 +20,16 @@ function unpinnedActions(workflow: string): string[] {
     .filter((uses) => !uses.startsWith('./') && !/^[^\s@]+@[0-9a-f]{40} # v\d\S*$/.test(uses));
 }
 
+describe('the Dockerfile', () => {
+  const dockerfile = readFileSync(path.join(root, 'Dockerfile'), 'utf8');
+  it('pins its syntax image by digest', () => {
+    expect(dockerfile.split('\n')[0]).toMatch(/^# syntax=docker\/dockerfile:1@sha256:[0-9a-f]{64}$/);
+  });
+  it('leaves no package manager in the image', () => {
+    for (const tool of ['npm', 'npx', 'corepack', 'yarn', 'yarnpkg']) expect(dockerfile).toContain(`/usr/local/bin/${tool}`);
+  });
+});
+
 /** Every `FROM` of an outside image that is not `image:tag@sha256:<digest>`. */
 function unpinnedBaseImages(dockerfile: string): string[] {
   const stages = new Set<string>();
