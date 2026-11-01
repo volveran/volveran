@@ -47,15 +47,26 @@ From a checkout, `npm run build`, then `node dist/server/main.js check-config`. 
 
 | Exit status | Meaning |
 |---|---|
-| `0` | Volverán would start with this, and 1.0 will read the file. There may be warnings |
+| `0` | Volverán would start with this. There may be warnings |
 | `1` | Startup would refuse this. The first problem is printed; fix it and run again to see the next |
-| `2` | Volverán would start with this, ignoring keys that 1.0 will refuse. Each is listed |
 
-To accept unknown keys for now, treat `2` as a pass in your pipeline. A misspelt key is why it fails by default: `protekted: true` leaves a profile unprotected without a word.
-
-It prints one finding a line, on stdout, starting `error:`, `refused in 1.0:` or `warning:`, then a summary. It names keys and variables, never their values. Warnings are a file without a version and a password variable that is not set, which startup also accepts (using that profile reports `password_not_set`).
+It prints one finding a line, on stdout, starting `error:` or `warning:`, then a summary. It names keys and variables, never their values. Warnings are a file without a version and a password variable that is not set, which startup also accepts (using that profile reports `password_not_set`).
 
 It uses the same parser and checks as startup, so the two cannot disagree. It contacts no broker, opens no audit store and listens on nothing, which also means it cannot tell whether a broker is reachable, a password is right, or (in Team Mode) the OIDC issuer answers.
+
+### Unknown keys
+
+A key the profiles file does not have is refused at every level, at startup and by `check-config`, and the refusal names its path, for example `profiles[0] ("prod").protekted is not a key of a Broker Profile`. Otherwise `protekted: true` would leave a profile unprotected without a word. Releases before 1.0 ignored unknown keys at the top level and in a Broker Profile, so try your file with `check-config` before upgrading. On 0.6, `check-config` exits `2` and lists those keys.
+
+### The schema of the profiles file
+
+Each [GitHub Release](https://github.com/volveran/volveran/releases) has a JSON Schema of the file for that version, `profiles.schema.json`, for your editor or pipeline. In an editor using the YAML language server, put this at the top of the file:
+
+```yaml
+# yaml-language-server: $schema=https://github.com/volveran/volveran/releases/download/v<version>/profiles.schema.json
+```
+
+The parser stays the authority. The schema checks the shape of the file and its keys, and never refuses a file the parser reads. It cannot see some things the parser refuses: a duration out of range, a name used twice, a variable that is not set, or a reference to another part of the file. `check-config` has the final word.
 
 ### The version of the profiles file
 

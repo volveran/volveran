@@ -119,6 +119,10 @@ export interface StartAppOptions {
   bodyRetention?: Partial<BodyRetention>;
   /** Collects the app's log lines (parsed JSON) here; default no logging. */
   logs?: Array<Record<string, any>>;
+  /** The directory of the built web app; default API only. */
+  webRoot?: string;
+  /** Told of each route the app registers. */
+  onRouteRegistered?: ServerOptions['onRouteRegistered'];
 }
 
 /**
@@ -157,6 +161,8 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       samplerTestHooks: options.samplerTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,
+      webRoot: options.webRoot,
+      onRouteRegistered: options.onRouteRegistered,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {

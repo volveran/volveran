@@ -73,6 +73,8 @@ export interface ServerOptions {
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
   samplerTestHooks?: SamplerTestHooks;
+  /** Test seam: told of each route as it is registered (the authorization matrix); unset in production. */
+  onRouteRegistered?(route: { method: string; url: string }): void;
 }
 
 export interface RunningServer {
@@ -218,6 +220,7 @@ async function serve(
     history: { history: auditStore.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
+    onRouteRegistered: options.onRouteRegistered,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -375,10 +378,18 @@ interface AppOptions {
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
+  onRouteRegistered: ServerOptions['onRouteRegistered'];
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
+
+  // Before any route, so none is missed.
+  if (onRouteRegistered) {
+    app.addHook('onRoute', ({ method, url }) => {
+      for (const m of [method].flat()) onRouteRegistered({ method: m, url });
+    });
+  }
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HttpError) {

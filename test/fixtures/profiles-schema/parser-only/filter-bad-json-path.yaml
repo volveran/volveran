@@ -1,0 +1,15 @@
+profiles:
+  - name: dev
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    username: guest
+    passwordEnv: PASSWORD
+    replayRules:
+      - name: r
+        vhost: /
+        queue: q
+        every: 5m
+        backoff: { initial: 1m, max: 1h }
+        maxAttempts: 1
+        stopWhen: { diedAgain: 1, within: 1m }
+        filter: { kind: json-path, path: "$[" }

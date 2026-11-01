@@ -4,7 +4,7 @@
 # Version check: the tag must be `v<version>` for the version in package.json,
 # and the chart's `version` and `appVersion` (charts/volveran/Chart.yaml) must
 # be that same version (scripts/check-release-version.mjs). The check, lint,
-# unit tests and chart checks run before anything is pushed. A pre-release tag
+# unit tests, chart checks and security scans run before anything is pushed. A pre-release tag
 # (v0.2.0-rc.1) needs package.json and Chart.yaml at 0.2.0-rc.1 too; it
 # publishes a pre-release chart version, which Flux `semver` ranges skip unless
 # they ask for pre-releases (e.g. `>=0.2.0-0`).
@@ -48,7 +48,8 @@
 # only from source-controller v1.8.0 (Flux v2.8.0, February 2026) on. Move to
 # v3 once older Flux releases no longer matter.
 # GitHub Release: published last, with the version's CHANGELOG.md entry as its
-# notes; a pre-release tag gets a Release marked as a pre-release.
+# notes and the JSON Schema of the profiles file attached; a pre-release tag gets
+# a Release marked as a pre-release.
 name: Release
 
 on:
@@ -72,15 +73,15 @@ env:
 
 jobs:
   check:
-    name: Version check, lint, unit tests and chart checks
+    name: Version check, lint, unit tests, chart checks and security scans
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: ${{ env.HELM_VERSION }}
       - run: npm ci
@@ -94,6 +95,18 @@ jobs:
         run: helm lint --strict charts/volveran -f test/chart/fixtures/team.yaml
       - name: Chart rendering suite
         run: npm run test:chart
+      # The same checks as security.yml, so a known high finding stops the
+      # release before the image is pushed.
+      - run: npm audit --audit-level=high
+      - run: npm audit --prefix tools/lint --audit-level=high
+      - run: docker build -t volveran:scan .
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: volveran:scan
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
 
   image:
     name: Build and push the image
@@ -107,16 +120,16 @@ jobs:
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE }}
           # latest=auto: `latest` only for tags without a pre-release part.
@@ -127,7 +140,7 @@ jobs:
             org.opencontainers.image.description=Self-hosted dead-letter triage for RabbitMQ
             org.opencontainers.image.licenses=Apache-2.0
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -139,7 +152,7 @@ jobs:
           provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -158,15 +171,15 @@ jobs:
     env:
       IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: ${{ env.HELM_VERSION }}
-      - uses: sigstore/cosign-installer@v4.1.2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: ${{ env.COSIGN_VERSION }}
       # cosign uses the Docker credentials, helm its own registry config.
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -215,7 +228,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Publish the changelog entry as the Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -233,4 +246,4 @@ jobs:
           prerelease=()
           case "$version" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "Volverán $version" \
-            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"
+            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}" profiles.schema.json

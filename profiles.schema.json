@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Volverán profiles file",
+  "description": "The shape of the Broker Profiles file. Volverán's parser is the authority: it also checks what a schema cannot see, such as a duration's range or a name used twice. Use check-config for the final word.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profiles"],
+  "properties": {
+    "version": { "description": "The format of this file. Without it, the file is read as version 1, with a warning.", "const": 1 },
+    "alertDestinations": {
+      "description": "Where notifications go.",
+      "type": ["array", "null"],
+      "items": { "$ref": "#/$defs/alertDestination" }
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/brokerProfile" }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "pattern": "\\S" },
+    "optionalText": { "type": ["string", "null"] },
+    "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "duration": {
+      "description": "A whole number and a unit, or several from the largest unit down: 30s, 5m, 1h30m, 7d.",
+      "type": "string",
+      "pattern": "^\\s*(?=\\S)(\\d+d)?(\\d+h)?(\\d+m)?(\\d+s)?\\s*$"
+    },
+    "replayRate": { "type": "number", "minimum": 0.1, "maximum": 1000 },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "alertDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "urlEnv"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "type": { "enum": ["slack", "teams", "webhook"] },
+        "urlEnv": { "description": "The environment variable holding the URL.", "type": "string", "minLength": 1 },
+        "signingSecretEnv": { "description": "Webhook only: the environment variable holding the signing secret.", "type": "string", "minLength": 1 }
+      },
+      "if": { "required": ["signingSecretEnv"] },
+      "then": { "properties": { "type": { "const": "webhook" } } }
+    },
+    "brokerProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "managementUrl", "amqpUrl"],
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "managementUrl": { "type": "string", "pattern": "^\\s*[Hh][Tt][Tt][Pp][Ss]?:" },
+        "amqpUrl": { "type": "string", "pattern": "^\\s*[Aa][Mm][Qq][Pp][Ss]?:" },
+        "caFile": { "$ref": "#/$defs/optionalText" },
+        "credentials": { "enum": ["shared", "operatorToken", null] },
+        "username": { "$ref": "#/$defs/text" },
+        "passwordEnv": { "description": "The environment variable holding the password.", "$ref": "#/$defs/text" },
+        "tokenUsernameClaim": {
+          "oneOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }]
+        },
+        "vhosts": {
+          "oneOf": [
+            { "const": "all" },
+            { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+          ]
+        },
+        "defaultQueueFilter": { "$ref": "#/$defs/optionalText" },
+        "protected": { "type": "boolean" },
+        "requireApproval": { "type": ["boolean", "null"] },
+        "roles": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "viewer": { "$ref": "#/$defs/groups" },
+            "operator": { "$ref": "#/$defs/groups" },
+            "admin": { "$ref": "#/$defs/groups" }
+          }
+        },
+        "replayRate": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "default": { "oneOf": [{ "$ref": "#/$defs/replayRate" }, { "type": "null" }] },
+            "max": { "oneOf": [{ "$ref": "#/$defs/replayRate" }, { "type": "null" }] }
+          }
+        },
+        "canary": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "watchWindow": { "oneOf": [{ "$ref": "#/$defs/duration" }, { "type": "null" }] },
+            "requiredAbove": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "replayRules": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/replayRule" }
+        },
+        "alerts": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/alertRule" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["credentials"], "properties": { "credentials": { "const": "operatorToken" } } },
+          "then": { "not": { "anyOf": [{ "required": ["username"] }, { "required": ["passwordEnv"] }] } },
+          "else": {
+            "required": ["username", "passwordEnv"],
+            "not": { "required": ["tokenUsernameClaim"] }
+          }
+        },
+        {
+          "if": { "required": ["requireApproval"], "properties": { "requireApproval": { "type": "boolean" } } },
+          "then": { "required": ["protected"], "properties": { "protected": { "const": true } } }
+        }
+      ]
+    },
+    "filterClause": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "enum": ["routing-key", "x-death-reason", "original-queue", "body-text", "failure"] },
+            "value": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "header" },
+            "name": { "type": "string", "minLength": 1 },
+            "value": { "$ref": "#/$defs/optionalText" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "json-path" },
+            "path": { "$ref": "#/$defs/text" },
+            "value": { "$ref": "#/$defs/optionalText" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "died-again" } }
+        }
+      ]
+    },
+    "replayRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "vhost", "queue", "every", "backoff", "maxAttempts", "stopWhen"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "vhost": { "$ref": "#/$defs/text" },
+        "queue": { "$ref": "#/$defs/text" },
+        "filter": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/filterClause" },
+            { "type": "array", "items": { "$ref": "#/$defs/filterClause" } }
+          ]
+        },
+        "every": { "$ref": "#/$defs/duration" },
+        "maxPerPass": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "rate": { "oneOf": [{ "$ref": "#/$defs/replayRate" }, { "type": "null" }] },
+        "backoff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["initial", "max"],
+          "properties": {
+            "initial": { "$ref": "#/$defs/duration" },
+            "multiplier": { "type": ["number", "null"], "minimum": 1, "maximum": 100 },
+            "max": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "whenAttemptsUsedUp": {
+          "oneOf": [
+            { "type": "null" },
+            { "const": "keep" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["moveTo"],
+              "properties": {
+                "moveTo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["queue"],
+                  "properties": { "queue": { "type": "string", "minLength": 1 } }
+                }
+              }
+            }
+          ]
+        },
+        "stopWhen": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["diedAgain", "within"],
+          "properties": {
+            "diedAgain": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "within": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "startPaused": { "type": "boolean" }
+      }
+    },
+    "alertRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "destinations", "when"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "destinations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "when": { "$ref": "#/$defs/condition" },
+        "for": { "$ref": "#/$defs/duration" },
+        "repeatEvery": { "$ref": "#/$defs/duration" }
+      },
+      "if": { "required": ["when"], "properties": { "when": { "required": ["samplingFailing"] } } },
+      "then": { "not": { "required": ["for"] } }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vhost": { "type": "string", "minLength": 1 },
+        "queue": { "type": "string", "minLength": 1 },
+        "queuePattern": { "description": "A glob: * and ? are its only wildcards.", "$ref": "#/$defs/text" },
+        "rule": { "type": "string" },
+        "depthAbove": { "type": "integer", "minimum": 0 },
+        "arrivalsAbove": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count", "within"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 0 },
+            "within": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "anyArrival": { "const": true },
+        "replayRulePaused": { "const": true },
+        "setupWarning": { "enum": ["loses_messages", "may_lose_messages"] },
+        "samplingFailing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["for"],
+          "properties": { "for": { "$ref": "#/$defs/duration" } }
+        }
+      },
+      "oneOf": [
+        { "$ref": "#/$defs/queueCondition" },
+        {
+          "required": ["replayRulePaused"],
+          "not": { "$ref": "#/$defs/anyOtherThanRule" }
+        },
+        {
+          "required": ["setupWarning"],
+          "not": { "anyOf": [{ "$ref": "#/$defs/anyOtherThanRule" }, { "required": ["rule"] }] }
+        },
+        {
+          "required": ["samplingFailing"],
+          "not": { "anyOf": [{ "$ref": "#/$defs/anyOtherThanRule" }, { "required": ["rule"] }] }
+        }
+      ]
+    },
+    "queueCondition": {
+      "required": ["vhost"],
+      "allOf": [
+        { "oneOf": [{ "required": ["queue"] }, { "required": ["queuePattern"] }] },
+        { "oneOf": [{ "required": ["depthAbove"] }, { "required": ["arrivalsAbove"] }, { "required": ["anyArrival"] }] }
+      ],
+      "not": {
+        "anyOf": [
+          { "required": ["rule"] },
+          { "required": ["replayRulePaused"] },
+          { "required": ["setupWarning"] },
+          { "required": ["samplingFailing"] }
+        ]
+      }
+    },
+    "anyOtherThanRule": {
+      "description": "Selection keys, or a queue condition: what setupWarning, samplingFailing and replayRulePaused do not take.",
+      "anyOf": [
+        { "required": ["vhost"] },
+        { "required": ["queue"] },
+        { "required": ["queuePattern"] },
+        { "required": ["depthAbove"] },
+        { "required": ["arrivalsAbove"] },
+        { "required": ["anyArrival"] }
+      ]
+    }
+  }
+}
