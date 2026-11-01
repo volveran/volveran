@@ -213,7 +213,18 @@ export const MIGRATIONS: readonly string[] = [
      ADD COLUMN ends_at BIGINT NOT NULL DEFAULT 0,
      ADD COLUMN end_reason TEXT,
      ADD COLUMN lost_reason TEXT;`,
-  // v6: Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
+  // v6: one Checkout per Operator. Records of crashed Replicas may break it until now: the one
+  // with the latest lease stays, and any left that is out of date goes at the next claim.
+  `UPDATE live_checkouts SET status = 'lost', approval = NULL
+   WHERE status = 'active' AND id NOT IN (
+     SELECT DISTINCT ON (c.operator_id) c.id
+     FROM live_checkouts c LEFT JOIN replicas r ON r.id = c.owner_replica
+     WHERE c.status = 'active'
+     ORDER BY c.operator_id, r.lease_expires_at DESC NULLS LAST
+   );
+   DROP INDEX live_checkouts_operator_id;
+   CREATE UNIQUE INDEX live_checkouts_one_per_operator ON live_checkouts (operator_id) WHERE status IN ('starting', 'active');`,
+  // v7: Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
   `CREATE TABLE alert_unsent_notifications (
      id BIGSERIAL PRIMARY KEY,
      profile TEXT NOT NULL,

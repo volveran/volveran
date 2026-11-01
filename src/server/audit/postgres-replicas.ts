@@ -2,7 +2,7 @@
 // record can outlive its owner's lease: that is how a Checkout's loss can be noticed.
 import type pg from 'pg';
 import type { EndReason, CheckoutQueueType } from '../../shared/checkout.js';
-import type { LiveCheckoutRecord, LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
+import type { LiveCheckoutRecord, LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, OperatorHolding, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
 import { transaction } from './postgres-connection.js';
 
 interface RecordRow {
@@ -63,16 +63,47 @@ export class PostgresReplicaStore implements ReplicaStore {
     });
   }
 
-  async addCheckout(c: NewLiveCheckout): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO live_checkouts (id, owner_replica, operator_id, operator_name, profile, vhost, queue, status, approval, queue_type, delivery_limit, ready_at_start, started_at, ends_at, end_reason, lost_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-      [c.id, c.ownerReplica, c.operator.id, c.operator.displayName, c.profile, c.vhost, c.queue, c.status, c.approval && JSON.stringify(c.approval), c.queueType, c.deliveryLimit, c.readyAtStart, c.startedAt, c.endsAt, c.endReason ?? null, c.lostReason ?? null],
-    );
+  async claimCheckout(c: NewLiveCheckout, now: number): Promise<OperatorHolding | null> {
+    // The unique index decides between claims at once. A claim that finds a holder which then
+    // goes before it can be read (ended, or never started) has nothing to answer, so tries again.
+    for (;;) {
+      const answer = await transaction(this.pool, async (client): Promise<{ holding: OperatorHolding | null } | null> => {
+        await client.query(
+          `UPDATE live_checkouts c SET status = 'lost', approval = NULL
+           WHERE c.operator_id = $1 AND c.status IN ('starting', 'active')
+             AND NOT EXISTS (SELECT 1 FROM replicas r WHERE r.id = c.owner_replica AND r.lease_expires_at > $2)`,
+          [c.operator.id, now],
+        );
+        const added = await client.query(
+          `INSERT INTO live_checkouts (id, owner_replica, operator_id, operator_name, profile, vhost, queue, status, approval, queue_type, delivery_limit, ready_at_start, started_at, ends_at, end_reason, lost_reason)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           ON CONFLICT (operator_id) WHERE status IN ('starting', 'active') DO NOTHING`,
+          [c.id, c.ownerReplica, c.operator.id, c.operator.displayName, c.profile, c.vhost, c.queue, c.status, c.approval && JSON.stringify(c.approval), c.queueType, c.deliveryLimit, c.readyAtStart, c.startedAt, c.endsAt, c.endReason ?? null, c.lostReason ?? null],
+        );
+        if (added.rowCount === 1) return { holding: null };
+        const { rows } = await client.query<OperatorHolding>(
+          `SELECT id, vhost, queue FROM live_checkouts WHERE operator_id = $1 AND status IN ('starting', 'active')`,
+          [c.operator.id],
+        );
+        return rows[0] ? { holding: rows[0] } : null;
+      });
+      if (answer) return answer.holding;
+    }
   }
 
-  async updateCheckout(id: string, { status, approval, endReason, lostReason }: LiveCheckoutUpdate): Promise<void> {
-    await this.pool.query('UPDATE live_checkouts SET status = $2, approval = $3, end_reason = $4, lost_reason = $5 WHERE id = $1', [id, status, approval && JSON.stringify(approval), endReason ?? null, lostReason ?? null]);
+  async updateCheckout(id: string, { status, approval, endReason, lostReason, queueType, deliveryLimit, readyAtStart }: LiveCheckoutUpdate): Promise<void> {
+    await this.pool.query(
+      `UPDATE live_checkouts SET
+         status = CASE WHEN status = 'lost' AND $2 = 'active' THEN status ELSE $2 END,
+         approval = $3,
+         end_reason = $4,
+         lost_reason = CASE WHEN status = 'lost' AND $2 = 'active' THEN lost_reason ELSE $5 END,
+         queue_type = COALESCE($6, queue_type),
+         delivery_limit = CASE WHEN $6::text IS NULL THEN delivery_limit ELSE $7::integer END,
+         ready_at_start = COALESCE($8, ready_at_start)
+       WHERE id = $1`,
+      [id, status, approval && JSON.stringify(approval), endReason ?? null, lostReason ?? null, queueType ?? null, deliveryLimit ?? null, readyAtStart ?? null],
+    );
   }
 
   async removeCheckout(id: string): Promise<void> {
