@@ -39,6 +39,11 @@ All notable changes to Volverán are recorded here. The format is based on
 - A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
 - CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high or critical finding in its dependencies or image, with a fix or without one, unless it is on the reviewed list in `.grype.yaml`.
+- OIDC codes and `state` no longer reach the logs: a request's log line has its path without the query. (#125)
+- An unhandled error answers a generic `internal_error` and logs the detail. A request Volverán cannot take keeps its status rather than answering 500: malformed or empty JSON `400 invalid_request`, a body over the limit `413 body_too_large`, an unsupported media type `415 unsupported_media_type`, a refusal from the static files `403 forbidden`. A sign-in that fails on Volverán's side says only that the provider's answer could not be used, with the reason in the log. (#125)
+- In Team Mode, a session ends after `VOLVERAN_SESSION_IDLE_MINUTES` (default 60) without activity, on both audit stores, as well as 12 hours after sign-in. ([details](docs/configuration.md#session-idle-timeout), #125)
+- The session guard reads the route, so `/%61pi/session` is refused like `/api/session`, and `/%61pi/checkouts/<id>` no longer answers 500 or tells an existing Checkout from an unknown one. (#126)
+- `/auth/login` without a session can no longer add sign-ins in progress without limit: Volverán keeps the newest 10,000.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.
 - GitHub Actions are pinned by commit and the base image by digest, and Dependabot proposes their updates and those of npm dependencies.
 
