@@ -10,6 +10,7 @@ import { startTwoReplicas, type Replica, type ReplicaBrowser, type TwoReplicas }
 
 const LIFETIME_SECONDS = 6;
 const QUEUE = 'token-refresh-replicas.dlq';
+const TARGET = 'token-refresh-replicas.target';
 const QUEUES = '/api/profiles/tokens/vhosts/%2F/queues';
 const CHECKOUTS = `${QUEUES}/${QUEUE}/checkouts`;
 
@@ -80,7 +81,10 @@ describe("Refreshing the Operator's token across two Replicas", () => {
   }
 
   beforeAll(async () => {
-    await withTokenChannel((ch) => ch.assertQueue(QUEUE, { durable: true }));
+    await withTokenChannel(async (ch) => {
+      await ch.assertQueue(QUEUE, { durable: true });
+      await ch.assertQueue(TARGET, { durable: true });
+    });
   });
   afterEach(async () => {
     for (const [browser, id] of open.splice(0)) await browser.request('DELETE', `/api/checkouts/${id}`).catch(() => {});
@@ -89,7 +93,10 @@ describe("Refreshing the Operator's token across two Replicas", () => {
     await withTokenChannel((ch) => ch.purgeQueue(QUEUE));
   });
   afterAll(async () => {
-    await withTokenChannel((ch) => ch.deleteQueue(QUEUE));
+    await withTokenChannel(async (ch) => {
+      await ch.deleteQueue(QUEUE);
+      await ch.deleteQueue(TARGET);
+    });
   });
 
   it('saves a rotated token where the other Replica finds it, after the first has expired', async () => {
@@ -156,6 +163,33 @@ describe("Refreshing the Operator's token across two Replicas", () => {
     expect((await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('active');
     expect(await checkoutConnections()).toEqual([connection]);
   }, 90_000);
+
+  it('checks a Move destination through the Replica that does not own the Checkout, with the token from the store', async () => {
+    await start();
+    await seed(1);
+    const browser = await signedInOn(replicas.b, 'token-replicas-vera');
+    const started = await browser.to(replicas.a).post(CHECKOUTS);
+    expect(started.status, JSON.stringify(started.body)).toBe(201);
+    const { id, messages } = started.body.checkout;
+    open.push([browser, id]);
+
+    const decide = (queue: string) =>
+      browser.to(replicas.b).post(`/api/checkouts/${id}/decisions`, {
+        handles: [messages[0].handle],
+        decision: { kind: 'move', destination: { queue } },
+      });
+
+    // Past the expiry of the sign-in's token, so the check needs a refreshed one.
+    await sleep(LIFETIME_SECONDS * 1000 + 500);
+    const moved = await decide(TARGET);
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    expect(moved.body.rejected).toEqual([]);
+
+    // The check did reach the broker: a queue it does not have is refused.
+    const nowhere = await decide('token-refresh-replicas.no-such-queue');
+    expect(nowhere.status).toBe(422);
+    expect(nowhere.body.error.code).toBe('decision_not_allowed');
+  }, 60_000);
 
   it('prompts the Operator to sign in again on either Replica when the provider refuses the refresh', async () => {
     await start();

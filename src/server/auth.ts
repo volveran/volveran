@@ -29,6 +29,7 @@ import { HttpError } from './http-error.js';
 import { isLoopback } from './is-loopback.js';
 import { attachOperator, notSignedIn, teamOperator, type Operator } from './operator.js';
 import { grantExpiresAt, OperatorToken, RefreshRefused, type TokenGrant } from './operator-token.js';
+import { forwardedSession } from './replicas/forwarding.js';
 import type { OidcSettings } from './run-mode.js';
 import type { TokenSeal } from './token-seal.js';
 
@@ -170,6 +171,7 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
           grant,
           options.refreshBrokerTokens
             ? {
+                sessionId,
                 refresh: async (refreshToken) => {
                   let fresh: TokenGrant | undefined;
                   try {
@@ -209,7 +211,7 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
                       : "Could not refresh the Operator's access token; trying again",
                   ),
               }
-            : {},
+            : { sessionId },
         );
         return token;
       };
@@ -248,6 +250,15 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
           return null;
         }
         return goLive(sessionId, stored, now)?.operator ?? null;
+      });
+      // A forwarded Operator comes with their session's id, not its tokens: this Replica uses the session's token from the store.
+      app.addHook('onRequest', async (req) => {
+        const sessionId = forwardedSession(req.raw);
+        if (!sessionId || !req.operator) return;
+        const now = Date.now();
+        const stored = await sessions.session(sessionId, now);
+        const session = stored && goLive(sessionId, stored, now);
+        if (session?.operator.id === req.operator.id) req.operator = { ...req.operator, brokerToken: session.operator.brokerToken };
       });
       app.addHook('onRequest', async (req) => {
         if (req.url.startsWith('/api/') && !req.operator) throw notSignedIn();

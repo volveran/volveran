@@ -40,6 +40,8 @@ export class RefreshRefused extends Error {
 }
 
 export interface RefreshOptions {
+  /** The session it belongs to, which forwarding names so that the Owner Replica can use the same session's token. */
+  sessionId?: string;
   /** The refresh grant at the provider; throws RefreshRefused when refused, anything else when it may pass. */
   refresh?: (refreshToken: string) => Promise<TokenGrant>;
   /** No refresh after this time (ms since the epoch): the session's end. */
@@ -85,6 +87,10 @@ export class OperatorToken {
   ) {
     this.take(grant, now);
     this.schedule(now);
+  }
+
+  get sessionId(): string | undefined {
+    return this.options.sessionId;
   }
 
   get claims(): Record<string, unknown> {
