@@ -113,6 +113,8 @@ export { checkoutConnectionName, type StartOptions } from './open.js';
  * decides the outcome, so a test can act there deterministically.
  */
 export interface CheckoutTestHooks {
+  /** A Checkout has ended, and its Messages are about to go back. */
+  beforeReturn?(checkout: Checkout): Promise<void>;
   /** A start holds the queue's lock queue; next it reads the ready count and collects. */
   afterLock?(ref: QueueRef): Promise<void>;
   /** A start has stopped waiting for deliveries; next it cancels its consumer. */
@@ -793,6 +795,9 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return this.view(checkout);
     checkout.status = 'ended';
     checkout.endReason = reason;
+    // The Operator is free at once, as every other Replica finds from the record, so the rule
+    // does not depend on the Replica. The queue stays taken until its Messages are back.
+    if (this.byOperator.get(checkout.operator.id) === checkout) this.byOperator.delete(checkout.operator.id);
     this.cancelApprovalRequest(checkout);
     this.options.liveCheckouts?.changed(checkout);
     return this.seenOut(this.returnAndRelease(checkout));
@@ -810,6 +815,7 @@ export class CheckoutManager {
 
   private async returnAndRelease(checkout: Checkout): Promise<CheckoutView> {
     const { channel, connection } = checkout;
+    await this.hooks.beforeReturn?.(checkout);
     try {
       if (channel) {
         await returnMessages(checkout, channel, {

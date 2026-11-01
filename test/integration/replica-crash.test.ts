@@ -84,6 +84,30 @@ describe('an Owner Replica that crashes', () => {
     expect(answer.body.error.message).toMatch(/Replica .* has gone/);
   });
 
+  it('frees the Operator on the owner as soon as the Checkout has ended, as on any other Replica', async () => {
+    const other = uniqueName('replica-free-other');
+    await withChannel('/', (ch) => ch.assertQueue(other, { durable: true }));
+    let holdReturn = () => {};
+    const held = new Promise<void>((resolve) => (holdReturn = resolve));
+    try {
+      await start({ perReplica: () => ({ checkoutTestHooks: { beforeReturn: () => held } }) });
+      await seedMessages('/', QUEUE, 1);
+      const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+      const ending = browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
+      const elsewhere = await eventually(async () => {
+        const started = await browser.to(replicas.a).post(startPath(other), {});
+        expect(started.status, JSON.stringify(started.body)).toBe(201);
+        return started.body.checkout as { id: string };
+      });
+      holdReturn();
+      await ending;
+      await browser.to(replicas.a).request('DELETE', `/api/checkouts/${elsewhere.id}`);
+    } finally {
+      holdReturn();
+      await withChannel('/', (ch) => ch.deleteQueue(other));
+    }
+  });
+
   it('answers a Checkout that had already ended as ended, with its reason', async () => {
     await start();
     await seedMessages('/', QUEUE, 1);
@@ -242,6 +266,60 @@ describe('an Owner Replica that is leased but cannot be reached', () => {
       expect(await readyCount('/', QUEUE)).toBe(0);
       expect((await browser.to(replicas.b).get('/api/session')).body.checkoutId).toBe(id);
       await browser.to(replicas.a).post(`/api/checkouts/${id}/end`);
+    } finally {
+      await replicas.close();
+      await purgeQueues('/', [QUEUE]);
+    }
+  });
+});
+
+describe('a Replica that cannot read who owns a Checkout', () => {
+  it('answers a retryable error, not a 500', async () => {
+    let failing = false;
+    const wrapAuditStore = (store: AuditStore): AuditStore =>
+      new Proxy(store, {
+        get(target, key) {
+          if (key !== 'replicas') {
+            const value = Reflect.get(target, key);
+            return typeof value === 'function' ? value.bind(target) : value;
+          }
+          return new Proxy(target.replicas, {
+            get(on, method) {
+              if (method === 'checkoutRoute' && failing) return () => Promise.reject(new Error('the store cannot be reached'));
+              const value = Reflect.get(on, method);
+              return typeof value === 'function' ? value.bind(on) : value;
+            },
+          });
+        },
+      });
+    const replicas = await startTwoReplicas({ profiles: [profile()], perReplica: (name) => (name === 'b' ? { wrapAuditStore } : {}) });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', QUEUE, 1);
+      const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+      failing = true;
+      const answer = await browser.to(replicas.b).get(`/api/checkouts/${id}`);
+      expect([answer.status, answer.body.error.code, answer.body.error.tryAgain]).toEqual([503, 'replica_unreachable', true]);
+      failing = false;
+      expect((await browser.to(replicas.b).get(`/api/checkouts/${id}`)).status).toBe(200);
+      await browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
+    } finally {
+      await replicas.close();
+      await purgeQueues('/', [QUEUE]);
+    }
+  });
+
+  it('does not show an Operator the internal port refusing a path it does not take as being signed out', async () => {
+    const replicas = await startTwoReplicas({ profiles: [profile()] });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', QUEUE, 1);
+      const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+      const answer = await browser.to(replicas.b).get(`/%61pi/checkouts/${id}`);
+      expect([answer.status, answer.body.error.code]).toEqual([503, 'replica_unreachable']);
+      await browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
     } finally {
       await replicas.close();
       await purgeQueues('/', [QUEUE]);

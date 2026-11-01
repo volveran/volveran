@@ -26,6 +26,8 @@ import type { Operator } from '../operator.js';
 const OPERATOR_HEADER = 'x-volveran-forwarded-operator';
 const SESSION_HEADER = 'x-volveran-forwarded-session';
 const PROTOCOL_HEADER = 'x-volveran-forwarding-protocol';
+/** On a refusal by the internal port. It says nothing of the version, which only a holder of the secret learns. */
+const REFUSED_HEADER = 'x-volveran-forwarding-refused';
 /**
  * Change this when what Replicas say to each other changes meaning: the identity headers, or
  * what a forwarded request may assume of the Replica answering it. The refusal of another version must stay
@@ -80,6 +82,14 @@ export type ForwardingFailure = 'unreachable' | 'timed_out' | 'no_address' | 're
 /** The answer of a Replica that speaks another forwarding protocol. No route answers with this header. */
 function isProtocolRefusal(answer: IncomingMessage): boolean {
   return answer.statusCode === 400 && answer.headers[PROTOCOL_HEADER] !== undefined;
+}
+
+/**
+ * The internal port's refusal: another secret, as during a rotation, or a path it does not take.
+ * An Operator's client would read a 401 as being signed out. REFUSED_HEADER tells it from a route's own 401.
+ */
+function isPortRefusal(answer: IncomingMessage): boolean {
+  return answer.statusCode === 401 && answer.headers[REFUSED_HEADER] !== undefined;
 }
 
 function passedOn(headers: IncomingHttpHeaders): IncomingHttpHeaders {
@@ -173,12 +183,24 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
       return {
         onRequest: async (req, reply) => {
           if (forwardedRequests.has(req.raw)) return;
-          const address = await ownerOf(req as never);
+          let address: string | null;
+          try {
+            address = await ownerOf(req as never);
+          } catch (err) {
+            if (err instanceof HttpError) throw err;
+            // The store could not say who owns it, which a retry may: nothing is known to be lost.
+            req.log.error({ err }, 'Could not read which Replica must answer a request');
+            throw replicaUnreachable();
+          }
           if (address === null) return;
           const answer = await send(req, reply, address, answerWithinMs);
           if (isProtocolRefusal(answer)) {
             answer.resume();
             onFailure('protocol_mismatch');
+            throw replicaUnreachable();
+          }
+          if (isPortRefusal(answer)) {
+            answer.resume();
             throw replicaUnreachable();
           }
           return reply
@@ -248,7 +270,7 @@ export async function startForwardingListener({ host, port, secret, serve, onRef
     const operator = secretHolds ? decodeOperator(req.headers[OPERATOR_HEADER]) : null;
     if (!operator || !req.url?.startsWith('/api/')) {
       onRefused();
-      res.writeHead(401, { 'content-type': 'application/json' });
+      res.writeHead(401, { 'content-type': 'application/json', [REFUSED_HEADER]: '1' });
       res.end(JSON.stringify({ error: { code: 'forwarding_refused', message: 'This port takes only requests forwarded by another Replica.' } }));
       return;
     }
