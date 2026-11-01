@@ -1,5 +1,4 @@
-// The profiles file's format version, and what the parser reports for
-// check-config: the keys 1.0 will refuse, which 0.6 still ignores.
+// The profiles file's format version, and its refusal of unknown keys.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { parseProfilesFile, ProfilesConfigError } from '../../src/server/profiles.js';
@@ -42,8 +41,8 @@ describe('the version of the profiles file', () => {
   });
 });
 
-describe('the keys 1.0 will refuse', () => {
-  it('reports none in a file that uses only known keys', () => {
+describe('unknown keys', () => {
+  it('reads a file that uses every top-level and profile-level key', () => {
     const file = parse(
       [
         'version: 1',
@@ -72,30 +71,27 @@ describe('the keys 1.0 will refuse', () => {
         '    tokenUsernameClaim: preferred_username',
       ].join('\n'),
     );
-    expect(file.unknownKeys).toEqual([]);
+    expect(file.profiles.map((p) => p.name)).toEqual(['a', 'b']);
   });
 
-  it('reports unknown keys at the top level and at profile level, each with its place', () => {
-    const file = parse(`version: 1\nalertDestination: []\n${profile}\n    requireAproval: false\n    Protected: true`);
-    expect(file.unknownKeys).toEqual([
-      'alertDestination',
-      'profiles[0] ("prod").requireAproval',
-      'profiles[0] ("prod").Protected',
-    ]);
+  it('refuses one at the top level, naming it', () => {
+    expect(() => parse(`version: 1\nalertDestination: []\n${profile}`)).toThrow(ProfilesConfigError);
+    expect(() => parse(`version: 1\nalertDestination: []\n${profile}`)).toThrow('profiles.yaml: alertDestination is not a key');
   });
 
-  it('reports none in profiles.example.yaml, which declares its version', () => {
+  it('refuses a misspelt "profiles" as the misspelt key, not as a file with no profiles', () => {
+    expect(() => parse('profile: []')).toThrow('profiles.yaml: profile is not a key');
+  });
+
+  it('refuses a misspelt safety setting on a profile, naming its path', () => {
+    expect(() => parse(`${profile}\n    requireAproval: false`)).toThrow('profiles.yaml: profiles[0] ("prod").requireAproval is not a key');
+    expect(() => parse(`${profile}\n    Protected: true`)).toThrow('profiles[0] ("prod").Protected is not a key');
+  });
+
+  it('reads profiles.example.yaml, which declares its version', () => {
     const text = readFileSync(new URL('../../profiles.example.yaml', import.meta.url), 'utf8');
     const env = Object.fromEntries([...text.matchAll(/\b\w+Env: (\w+)/g)].map((m) => [m[1]!, 'https://example.com/hook']));
-    const file = parseProfilesFile(text, env, 'profiles.example.yaml');
-    expect(file.versionDeclared).toBe(true);
-    expect(file.unknownKeys).toEqual([]);
-  });
-
-  it('still ignores them when reading the file, in 0.6', () => {
-    const file = parse(`${profile}\n    requireAproval: false`);
-    expect(file.profiles[0]!.requireApproval).toBe(false);
-    expect(file.profiles[0]!.protected).toBe(false);
+    expect(parseProfilesFile(text, env, 'profiles.example.yaml').versionDeclared).toBe(true);
   });
 });
 
@@ -132,5 +128,9 @@ describe('startup', () => {
 
   it('refuses an unsupported version', async () => {
     await expect(startupLog(`version: 2\n${profile}`)).rejects.toThrow(/version must be 1/);
+  });
+
+  it('refuses an unknown key, naming its path', async () => {
+    await expect(startupLog(`${profile}\n    protekted: true`)).rejects.toThrow('profiles[0] ("prod").protekted is not a key');
   });
 });

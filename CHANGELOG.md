@@ -6,6 +6,15 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Unknown keys in the profiles file are refused.** This is the deliberate breaking change of 1.0. A key the file does not have stops startup at every level, including the top level, a Broker Profile and a Replay rule's filter clause, where they used to be ignored, and the refusal names its path. A misspelt safety setting such as `requireAproval` can no longer silently leave it at its default. Try your file with `check-config` before upgrading ([guide](docs/configuration.md#unknown-keys)).
+- `check-config` now exits `0` or `1`. It no longer exits `2`: an unknown key is something startup refuses, so it exits `1` and reports the first as an `error:` line, in place of a `refused in 1.0:` line for each.
+
+### Added
+
+- A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
+
 ### Security
 
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
