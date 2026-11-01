@@ -359,8 +359,10 @@ export interface StoredSession {
   operator: Pick<Operator, 'id' | 'displayName' | 'email' | 'name' | 'groups'>;
   /** Sealed. */
   tokens: string;
-  /** Epoch milliseconds. */
+  /** Epoch milliseconds: the end of its fixed lifetime. */
   expiresAt: number;
+  /** Epoch milliseconds: when it ends unless the Operator does something first. */
+  idleExpiresAt: number;
 }
 
 /** A sign-in between /auth/login and /auth/callback. */
@@ -373,7 +375,8 @@ export interface StoredSignIn {
 /**
  * Sessions and sign-ins in progress. In memory on SQLite, so a restart signs everyone
  * out, and shared in the database on PostgreSQL. `now` is epoch milliseconds: what
- * expires at or before it is gone. Adding may remove what has expired.
+ * expires at or before it is gone, a session by either of its expiries. Adding may
+ * remove what has expired.
  */
 export interface SessionStore {
   addSession(id: string, session: StoredSession, now: number): Promise<void>;
@@ -381,8 +384,14 @@ export interface SessionStore {
   session(id: string, now: number): Promise<StoredSession | null>;
   /** Replaces the session's sealed tokens; does nothing if it has gone. */
   setTokens(id: string, tokens: string): Promise<void>;
+  /** Moves the session's idle expiry; does nothing if it has gone. */
+  touchSession(id: string, idleExpiresAt: number): Promise<void>;
   removeSession(id: string): Promise<void>;
-  addSignIn(id: string, signIn: StoredSignIn, now: number): Promise<void>;
+  /**
+   * Adds the sign-in, then removes the ones that expire soonest beyond `keepAtMost`, as anyone
+   * can start one without a session. Sign-ins added at the same moment may pass the limit until the next add.
+   */
+  addSignIn(id: string, signIn: StoredSignIn, now: number, keepAtMost: number): Promise<void>;
   /** The sealed sign-in, removing it, so that of any callers only one gets it; else null. */
   takeSignIn(id: string, now: number): Promise<string | null>;
 }
