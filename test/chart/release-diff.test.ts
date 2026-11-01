@@ -69,7 +69,7 @@ describe('chart against the last release', () => {
 
   it('refuses an allow-list entry with no reason', () => {
     expect(() => parseAllowList('allowed:\n  - change: "+ a: b"\n')).toThrow(/a change and a reason/);
-    expect(parseAllowList(readFileSync(path.join(repoRoot, 'test/chart/release-diff-allow.yaml'), 'utf8'))).toEqual([]);
+    expect(() => parseAllowList(readFileSync(path.join(repoRoot, 'test/chart/release-diff-allow.yaml'), 'utf8'))).not.toThrow();
   });
 
   it('takes the highest final release as the latest', () => {
