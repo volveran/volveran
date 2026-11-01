@@ -27,7 +27,7 @@ export const kubectlFlags = ['--kubeconfig', kubeconfig, '--context', kubeContex
 
 /** Volverán's namespace, which enforces the restricted Pod Security Standard. */
 export const appNamespace = 'volveran-smoke';
-/** RabbitMQ and the mock OIDC provider (their images do not run under restricted). */
+/** RabbitMQ, PostgreSQL and the mock OIDC provider (their images do not run under restricted). */
 export const depsNamespace = 'volveran-smoke-deps';
 export const releaseName = 'volveran';
 /** The image built from this checkout and loaded into kind. */
@@ -54,6 +54,13 @@ export const oidc = {
   clientSecret: 'volveran-test-secret',
 };
 export const sessionSecret = 'smoke-session-secret-0123456789abcdef';
+/** The run with several Replicas: its database, and the two secrets that run adds. */
+export const postgresUrl = `postgres://volveran:volveran-smoke-pass@postgres.${depsNamespace}.svc.cluster.local:5432/volveran`;
+export const sessionEncryptionKey = 'smoke-session-encryption-key-0123456789';
+export const forwardingSecret = 'smoke-forwarding-secret-0123456789abcdef';
+export const forwardingPort = 8081;
+/** The file that makes a release several Replicas on PostgreSQL. */
+export const replicasValues = path.join(smokeDir, 'values-replicas.yaml');
 /** RabbitMQ's administrator from test/broker/definitions.json. */
 export const brokerAdmin = { username: 'volveran-admin', password: 'volveran-admin-pass' };
 
@@ -73,7 +80,7 @@ export function containerImages(manifest) {
   return [...images];
 }
 
-/** The images of RabbitMQ and the mock OIDC provider (test/smoke/deps.yaml), loaded into kind before they start. */
+/** The images of RabbitMQ, PostgreSQL and the mock OIDC provider (test/smoke/deps.yaml), loaded into kind before they start. */
 export function dependencyImages() {
   return containerImages(readFileSync(path.join(smokeDir, 'deps.yaml'), 'utf8'));
 }

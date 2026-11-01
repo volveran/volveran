@@ -1,8 +1,11 @@
 {{- /*
-The single Volverán pod, always in Team Mode. replicas and strategy are fixed:
-one process holds the Checkouts (ADR 0003). The audit store is SQLite on the data
+The Volverán pods, always in Team Mode. The audit store is SQLite on the data
 volume, or, with postgres.existingSecret, PostgreSQL, and then there is no volume.
+One Replica uses Recreate. Several, on PostgreSQL only, use a rolling update that
+keeps every pod serving until its replacement is ready, and reach each other on an
+internal port at the pod's own address (ADR 0014).
 */ -}}
+{{- $several := gt (int .Values.replicaCount) 1 }}
 {{- include "volveran.validate" . }}
 {{- include "volveran.validateOptions" . }}
 apiVersion: apps/v1
@@ -12,9 +15,16 @@ metadata:
   labels:
     {{- include "volveran.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ int .Values.replicaCount }}
   strategy:
+    {{- if $several }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    {{- else }}
     type: Recreate
+    {{- end }}
   selector:
     matchLabels:
       {{- include "volveran.selectorLabels" . | nindent 6 }}
@@ -59,6 +69,21 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.pod.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.pod.topologySpreadConstraints | nindent 8 }}
+      {{- else if $several }}
+      # ScheduleAnyway: a small cluster still runs every Replica, less safely.
+      topologySpreadConstraints:
+        {{- range list "kubernetes.io/hostname" "topology.kubernetes.io/zone" }}
+        - maxSkew: 1
+          topologyKey: {{ . }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "volveran.selectorLabels" $ | nindent 14 }}
+        {{- end }}
+      {{- end }}
       # Restricted Pod Security Standard. 1000:1000 is the image's numeric user.
       securityContext:
         runAsNonRoot: true
@@ -88,6 +113,11 @@ spec:
             {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if $several }}
+            - name: forwarding
+              containerPort: {{ .Values.forwarding.port }}
               protocol: TCP
             {{- end }}
           # Volverán listens only once OIDC discovery has succeeded, so the
@@ -168,6 +198,22 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.oidc.existingSecret | quote }}
                   key: {{ .Values.oidc.sessionEncryptionKeyKey | quote }}
+            {{- end }}
+            {{- if $several }}
+            # Replicas forward requests to a Checkout's owner at its pod address, under this secret.
+            - name: VOLVERAN_FORWARDING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.forwarding.existingSecret | quote }}
+                  key: {{ .Values.forwarding.secretKey | quote }}
+            - name: VOLVERAN_FORWARDING_PORT
+              value: {{ printf "%d" (int64 .Values.forwarding.port) | quote }}
+            - name: VOLVERAN_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: VOLVERAN_FORWARDING_ADDRESS
+              value: {{ printf "$(VOLVERAN_POD_IP):%d" (int64 .Values.forwarding.port) | quote }}
             {{- end }}
             {{- if .Values.metrics.enabled }}
             - name: VOLVERAN_METRICS_PORT

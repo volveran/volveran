@@ -1,11 +1,52 @@
 # What the kind smoke test's Volverán talks to, in their own namespace
-# (neither image runs under the restricted Pod Security Standard):
+# (these images do not run under the restricted Pod Security Standard):
+#   - PostgreSQL, for the run with several Replicas, without TLS or a volume;
 #   - RabbitMQ, seeded from the test broker's definitions and config
 #     (ConfigMap rabbitmq-config, from test/broker/, created by scripts/kind-smoke.mjs);
 #   - the mock OIDC provider of the Team Mode integration tests, serving https
 #     with the keystore in test/smoke/tls/ (Secret oidc-tls). Its issuer follows
 #     the Host header, and without a port in it the provider adds its own,
 #     so the Service keeps port 8080: https://oidc.volveran-smoke-deps.svc.cluster.local:8080/default.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: volveran-smoke-deps
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17.6-alpine
+          # Loaded into kind by scripts/kind-smoke.mjs, never pulled by the node.
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_USER, value: volveran }
+            - { name: POSTGRES_PASSWORD, value: volveran-smoke-pass }
+            - { name: POSTGRES_DB, value: volveran }
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "volveran", "-d", "volveran", "-h", "127.0.0.1"]
+            periodSeconds: 2
+            failureThreshold: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: volveran-smoke-deps
+spec:
+  selector: { app: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: postgres }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

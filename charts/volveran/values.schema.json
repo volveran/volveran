@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Values for the volveran chart",
-  "description": "Validated by helm install, upgrade, lint and template. The template guards in templates/_helpers.tpl give the readable refusals (replicaCount, ADR 0003).",
+  "description": "Validated by helm install, upgrade, lint and template. The template guards in templates/_helpers.tpl give the readable refusals (replicaCount, ADR 0014).",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -9,8 +9,29 @@
       "type": "object"
     },
     "replicaCount": {
-      "description": "Must be 1 (docs/adr/0003-single-replica-on-kubernetes.md). The chart refuses any other value with that explanation.",
-      "type": "integer"
+      "description": "Above 1 needs postgres.existingSecret and forwarding.existingSecret, checked in templates/_helpers.tpl (docs/replicas.md).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "forwarding": {
+      "description": "How Replicas reach each other, with replicaCount above 1.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "description": "An existing Secret holding the secret Replicas forward requests under.",
+          "type": "string"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
     },
     "image": {
       "type": "object",
@@ -536,6 +557,13 @@
         },
         "affinity": {
           "type": "object"
+        },
+        "topologySpreadConstraints": {
+          "description": "Replaces the chart's own spread over nodes and zones, which several Replicas get by default.",
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
         },
         "priorityClassName": {
           "type": "string"

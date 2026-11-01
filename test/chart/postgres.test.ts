@@ -111,10 +111,6 @@ describe('postgres', () => {
   describe.each([false, true])('refusals (skip schema: %s)', (skipSchemaValidation) => {
     const refusal = (values: Record<string, unknown>) => renderRefusal(values, { skipSchemaValidation });
 
-    it('refuses several replicas, also on PostgreSQL', () => {
-      expect(refusal({ ...onPostgres, replicaCount: 2 })).toContain('replicaCount');
-    });
-
     it('refuses a CA bundle that is not listed', () => {
       expect(refusal({ postgres: { existingSecret: 'db', ca: { bundle: 'nope' } } })).toContain('postgres.ca.bundle names "nope"');
     });
