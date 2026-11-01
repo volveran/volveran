@@ -9,6 +9,8 @@ function sweep(entries: Map<string, { expiresAt: number }>, now: number): void {
 export class MemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, StoredSession>();
   private readonly signIns = new Map<string, StoredSignIn>();
+  /** The last refresh of each session being refreshed, which the next waits for. */
+  private readonly refreshing = new Map<string, Promise<void>>();
 
   async addSession(id: string, session: StoredSession, now: number): Promise<void> {
     sweep(this.sessions, now);
@@ -20,9 +22,24 @@ export class MemorySessionStore implements SessionStore {
     return session && session.expiresAt > now ? session : null;
   }
 
-  async setTokens(id: string, tokens: string): Promise<void> {
-    const session = this.sessions.get(id);
-    if (session) this.sessions.set(id, { ...session, tokens });
+  async refreshTokens(id: string, now: number, refresh: (tokens: string) => Promise<string | null>): Promise<boolean> {
+    const run = (this.refreshing.get(id) ?? Promise.resolve()).then(async () => {
+      const session = this.sessions.get(id);
+      if (!session || session.expiresAt <= now) return false;
+      const tokens = await refresh(session.tokens);
+      const current = this.sessions.get(id);
+      if (tokens !== null && current) this.sessions.set(id, { ...current, tokens });
+      return true;
+    });
+    const settled = run.then(
+      () => {},
+      () => {},
+    );
+    this.refreshing.set(id, settled);
+    void settled.then(() => {
+      if (this.refreshing.get(id) === settled) this.refreshing.delete(id);
+    });
+    return run;
   }
 
   async removeSession(id: string): Promise<void> {

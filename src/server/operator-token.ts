@@ -64,6 +64,11 @@ function expiryOf(claims: Record<string, unknown>, grant: TokenGrant, now: numbe
   return typeof exp === 'number' ? exp * 1000 : grant.expiresIn !== undefined ? now + grant.expiresIn * 1000 : undefined;
 }
 
+/** When a grant's access token expires, as an OperatorToken holding it would say. */
+export function grantExpiresAt(grant: TokenGrant, now: number): number | undefined {
+  return expiryOf(claimsOf(grant.accessToken), grant, now);
+}
+
 export class OperatorToken {
   private accessToken!: string;
   private refreshToken: string | undefined;

@@ -377,8 +377,14 @@ export interface SessionStore {
   addSession(id: string, session: StoredSession, now: number): Promise<void>;
   /** The session, or null. */
   session(id: string, now: number): Promise<StoredSession | null>;
-  /** Replaces the session's sealed tokens; does nothing if it has gone. */
-  setTokens(id: string, tokens: string): Promise<void>;
+  /**
+   * Refreshes the session's sealed tokens, one caller at a time on any Replica: `refresh`
+   * runs holding the session's lock, given the tokens as they are now, and what it answers
+   * replaces them (null leaves them). When it throws nothing changes, and this throws the
+   * same. False, without calling it, when the session has gone. It may wait for the
+   * provider, so it never holds up the store's other calls: `refresh` must not call the store.
+   */
+  refreshTokens(id: string, now: number, refresh: (tokens: string) => Promise<string | null>): Promise<boolean>;
   removeSession(id: string): Promise<void>;
   addSignIn(id: string, signIn: StoredSignIn, now: number): Promise<void>;
   /** The sealed sign-in, removing it, so that of any callers only one gets it; else null. */

@@ -1168,15 +1168,105 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await store.sessions.session('s-2', NOW)).not.toBeNull();
       });
 
-      it("replaces a session's tokens and nothing else", async () => {
-        await store.sessions.addSession('s-1', session(), NOW);
-        await store.sessions.setTokens('s-1', 'rotated');
-        expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated' }));
-      });
+      describe('refreshing tokens', () => {
+        /** A promise to settle by hand, and one that says when `refresh` was reached. */
+        const held = (tokens: string) => {
+          let release!: () => void;
+          let reached!: () => void;
+          const released = new Promise<void>((resolve) => (release = resolve));
+          const whenReached = new Promise<void>((resolve) => (reached = resolve));
+          return {
+            release,
+            reached: whenReached,
+            refresh: async () => {
+              reached();
+              await released;
+              return tokens;
+            },
+          };
+        };
 
-      it('does not bring a removed session back when its tokens are set', async () => {
-        await store.sessions.setTokens('s-1', 'rotated');
-        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        it("replaces a session's tokens and nothing else, given the ones it holds", async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const seen: string[] = [];
+          const found = await store.sessions.refreshTokens('s-1', NOW, async (tokens) => {
+            seen.push(tokens);
+            return 'rotated';
+          });
+          expect(found).toBe(true);
+          expect(seen).toEqual(['sealed-tokens']);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated' }));
+        });
+
+        it('leaves the tokens as they are when the refresh answers null', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          expect(await store.sessions.refreshTokens('s-1', NOW, async () => null)).toBe(true);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+        });
+
+        it('leaves the tokens as they are when the refresh throws, and throws the same', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refused = new Error('refused');
+          await expect(
+            store.sessions.refreshTokens('s-1', NOW, async () => {
+              throw refused;
+            }),
+          ).rejects.toBe(refused);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+          expect(await store.sessions.refreshTokens('s-1', NOW, async () => 'rotated')).toBe(true);
+        });
+
+        it('answers false without refreshing a session that has gone or expired', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          let called = false;
+          const refresh = async () => {
+            called = true;
+            return 'rotated';
+          };
+          expect(await store.sessions.refreshTokens('nobody', NOW, refresh)).toBe(false);
+          expect(await store.sessions.refreshTokens('s-1', NOW + 1000, refresh)).toBe(false);
+          expect(called).toBe(false);
+        });
+
+        it('runs refreshes of one session one at a time, the second given what the first saved', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const first = held('rotated-1');
+          const firstDone = store.sessions.refreshTokens('s-1', NOW, first.refresh);
+          await first.reached;
+          const seenBySecond: string[] = [];
+          const secondDone = store.sessions.refreshTokens('s-1', NOW, async (tokens) => {
+            seenBySecond.push(tokens);
+            return null;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          expect(seenBySecond).toEqual([]);
+          first.release();
+          await Promise.all([firstDone, secondDone]);
+          expect(seenBySecond).toEqual(['rotated-1']);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated-1' }));
+        });
+
+        it('does not bring back a session removed during its refresh', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          const removed = store.sessions.removeSession('s-1');
+          refresh.release();
+          await Promise.all([done, removed]);
+          expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        });
+
+        it('keeps answering other calls while many sessions wait on slow refreshes', async () => {
+          const refreshes = Array.from({ length: 30 }, () => held('rotated'));
+          for (const [i] of refreshes.entries()) await store.sessions.addSession(`s-${i}`, session(), NOW);
+          const done = refreshes.map((r, i) => store.sessions.refreshTokens(`s-${i}`, NOW, r.refresh));
+          await refreshes[0]!.reached;
+          await expect(store.sessions.session('s-0', NOW)).resolves.toEqual(session());
+          await expect(store.sessions.addSession('other', session(), NOW)).resolves.toBeUndefined();
+          for (const r of refreshes) r.release();
+          await Promise.all(done);
+        }, 10_000);
       });
 
       it('hands a sign-in in progress to one caller only', async () => {
