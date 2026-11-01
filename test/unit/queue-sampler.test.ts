@@ -4,6 +4,8 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { LeaseFence } from '../../src/server/audit/audit-store.js';
+import { LeaderLeaseLost } from '../../src/server/audit/audit-store.js';
 import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 import { QueueSampler, type FinishedRun, type SamplerControl } from '../../src/server/history/sampler.js';
 import { parseProfilesFile } from '../../src/server/profiles.js';
@@ -28,7 +30,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }
 
-  async function samplerOn(managementUrl: string, store: SqliteAuditStore) {
+  async function samplerOn(managementUrl: string, store: SqliteAuditStore, fence?: LeaseFence, onError?: (err: unknown) => void) {
     const { profiles } = parseProfilesFile(
       JSON.stringify({ profiles: [{ name: 'local', managementUrl, amqpUrl: 'amqp://127.0.0.1:1', username: 'u', passwordEnv: 'PW', vhosts: ['/'], defaultQueueFilter: '*.dlq' }] }),
       { PW: 'x' },
@@ -39,9 +41,10 @@ describe('the sampler, when the management API lists a queue with no depth', () 
       profiles,
       history: store.history,
       intervalMs: 60_000,
+      onError: (_, err) => onError?.(err),
       testHooks: { clock: { now: () => new Date(now), setTimer: () => ({ cancel() {} }) }, sampler: (c) => (control = c) },
     });
-    await sampler.start();
+    await sampler.start(fence);
     cleanups.push(() => sampler.stop());
     const finished: FinishedRun[] = [];
     sampler.onRun((run) => void finished.push(run));
@@ -50,7 +53,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
       await control!.sampleNow();
       return finished.at(-1)!;
     };
-    return { sample, latest: () => control!.latest() };
+    return { sampler, sample, latest: () => control!.latest(), finished };
   }
 
   const T0 = Date.parse('2026-10-30T10:00:00.000Z');
@@ -120,5 +123,32 @@ describe('the sampler, when the management API lists a queue with no depth', () 
     state.messages = undefined;
     await sample(minute(2));
     expect(latest().profiles[0]!.queues.map((q) => [q.queue, q.depth, q.at.getTime()])).toEqual([['a.dlq', 5, minute(1)]]);
+  });
+
+  it('starts again after a stop, reading what is known from the store, and samples as before', async () => {
+    const store = fresh();
+    const { sampler, sample, latest, finished } = await samplerOn(await brokerWith({ messages: 5 }), store);
+    await sample(minute(1));
+    await sampler.stop();
+    expect((await sample(minute(2))).samplingRun.at.getTime()).toBe(minute(1));
+    await sampler.start();
+    expect(latest().profiles[0]!.lastSuccessAt!.getTime()).toBe(minute(1));
+    expect((await sample(minute(3))).samples[0]).toMatchObject({ previousDepth: 5, estimatedArrivals: 0 });
+    expect(finished).toHaveLength(2);
+    expect(await stored(store)).toEqual([[5, null], [5, 0]]);
+  });
+
+  it('records nothing and tells nobody when its fence no longer holds', async () => {
+    const store = fresh();
+    const fence = (await store.leaderLease.claim('old', minute(0), 1_000))!;
+    const errors: unknown[] = [];
+    const { sample, latest, finished } = await samplerOn(await brokerWith({ messages: 5 }), store, fence, (err) => errors.push(err));
+    await sample(minute(1));
+    await store.leaderLease.claim('new', minute(1), 1_000);
+    await sample(minute(2));
+    expect(finished).toHaveLength(1);
+    expect(await stored(store)).toEqual([[5, null]]);
+    expect(latest().profiles[0]!.lastSuccessAt!.getTime()).toBe(minute(1));
+    expect(errors).toEqual([expect.any(LeaderLeaseLost)]);
   });
 });

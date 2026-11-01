@@ -1055,6 +1055,50 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
+    describe('claiming a Restore', () => {
+      const restoreOf = (discard: number) => ({ ...entry({ action: 'restore', restoreOf: discard, checkoutId: null, reason: null }), message: null, restoreOf: discard });
+
+      it('writes the Restore\'s entry, pending, and answers its id', async () => {
+        const discard = await store.record(entry());
+        const claim = await store.claimRestore(restoreOf(discard));
+        expect(claim.claimed).toBe(true);
+        const [restore] = await store.list({ restoreOf: discard });
+        expect(claim).toEqual({ claimed: true, id: restore!.id });
+        expect(restore).toMatchObject({ action: 'restore', outcome: 'pending', restoreOf: discard });
+      });
+
+      it('lets exactly one of many at once have the body', async () => {
+        const discard = await store.record(entry());
+        const claims = await Promise.all(Array.from({ length: 8 }, () => store.claimRestore(restoreOf(discard))));
+        expect(claims.filter((c) => c.claimed)).toHaveLength(1);
+        expect(await store.list({ restoreOf: discard })).toHaveLength(1);
+      });
+
+      it.each(['pending', 'done', 'uncertain'] as const)('refuses while an earlier Restore is %s, naming it', async (outcome) => {
+        const discard = await store.record(entry());
+        const first = await store.claimRestore(restoreOf(discard));
+        if (!first.claimed) throw new Error('the first claim should succeed');
+        if (outcome !== 'pending') await store.setOutcome(first.id, outcome);
+        expect(await store.claimRestore(restoreOf(discard))).toMatchObject({ claimed: false, earlier: { id: first.id, outcome } });
+        expect(await store.list({ restoreOf: discard })).toHaveLength(1);
+      });
+
+      it('claims again after a Restore that failed', async () => {
+        const discard = await store.record(entry());
+        const first = await store.claimRestore(restoreOf(discard));
+        if (!first.claimed) throw new Error('the first claim should succeed');
+        await store.setOutcome(first.id, 'failed', 'no route');
+        expect((await store.claimRestore(restoreOf(discard))).claimed).toBe(true);
+      });
+
+      it("takes no notice of another Discard's Restore", async () => {
+        const one = await store.record(entry());
+        const other = await store.record(entry());
+        await store.claimRestore(restoreOf(one));
+        expect((await store.claimRestore(restoreOf(other))).claimed).toBe(true);
+      });
+    });
+
     describe('Replicas and Live Checkout records', () => {
       const NOW = AT.getTime();
       const lease = (replicaId: string, expiresAt = NOW + 1000) => ({ replicaId, forwardingAddress: `${replicaId}.internal:8081`, expiresAt });
@@ -1127,6 +1171,23 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         await store.replicas.removeCheckout('c-1');
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
         expect(await store.replicas.checkoutRoute('c-2', NOW)).not.toBeNull();
+      });
+
+      it('answers who runs a Checkout while it is active or applying on a live lease', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.runningOwner('c-1', NOW)).toBe('r-1');
+        await store.replicas.updateCheckout('c-1', { status: 'applying', approval: null });
+        expect(await store.replicas.runningOwner('c-1', NOW)).toBe('r-1');
+        expect(await store.replicas.runningOwner('c-1', NOW + 1000)).toBeNull();
+      });
+
+      it.each(['ended', 'lost'] as const)('answers nobody runs a Checkout that is %s, or has no record', async (status) => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.updateCheckout('c-1', { status, approval: null });
+        expect(await store.replicas.runningOwner('c-1', NOW)).toBeNull();
+        expect(await store.replicas.runningOwner('nobody', NOW)).toBeNull();
       });
 
       it("removing a Replica removes its lease and records, and no other's", async () => {
@@ -1429,6 +1490,20 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
         expect(await store.body(id)).not.toBeNull();
         expect((await store.history.lastRuns('p')).last).not.toBeNull();
+      });
+
+      it('records a sampling run for the lease as it is held, and refuses one for a lease another has taken since, recording none of it', async () => {
+        const ref = { profile: 'p', vhost: '/', queue: 'q' };
+        const run = (at: number) => ({ at, ok: true, errorCode: null, intervalMs: 1000 });
+        const sample = (at: number) => ({ vhost: '/', queue: 'q', at, depth: 1, estimatedArrivals: null });
+        const held = (await lease().claim('a', NOW, LEASE))!;
+        await store.history.recordRun('p', run(NOW), [sample(NOW)], held);
+        await lease().claim('b', NOW + LEASE, LEASE);
+
+        await expect(store.history.recordRun('p', run(NOW + 1), [sample(NOW + 1)], held)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect((await store.history.lastRuns('p')).last!.at).toBe(NOW);
+        expect((await store.history.samples(ref, NOW, NOW + 1)).map((s) => s.at)).toEqual([NOW]);
       });
 
       it('refuses a write for a lease given up', async () => {

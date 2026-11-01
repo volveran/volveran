@@ -1,15 +1,14 @@
 // Depth history on PostgreSQL. See sqlite-history.ts for what is kept and why.
 import type pg from 'pg';
 import type { HistoryStore, LeaseFence, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
-import { transaction } from './postgres-connection.js';
 import { fenced } from './postgres-leader-lease.js';
 import { TAKEN_OUT, toRun, toSample, toTakeOuts, type RunRow, type SampleRow, type TakeOutRow } from './store-rows.js';
 
 export class PostgresHistoryStore implements HistoryStore {
   constructor(private readonly pool: pg.Pool) {}
 
-  async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void> {
-    await transaction(this.pool, async (client) => {
+  async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[], fence?: LeaseFence): Promise<void> {
+    await fenced(this.pool, fence, async (client) => {
       await client.query(
         `INSERT INTO sampling_runs (profile, at, ok, error_code, interval_ms) VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (profile, at) DO UPDATE SET ok = excluded.ok, error_code = excluded.error_code, interval_ms = excluded.interval_ms`,

@@ -233,6 +233,6 @@ describe('forwarded requests', () => {
     expect(refused.status).toBe(403);
     expect(refused.body.error.code).toBe('foreign_origin');
 
-    expect((await browser.to(replicas.a).request('POST', `/api/checkouts/${id}/end`, { headers: { origin: publicOrigin }, body: {} })).status).toBe(200);
+    expect((await through.request('POST', `/api/checkouts/${id}/end`, { headers: { origin: publicOrigin }, body: {} })).status).toBe(200);
   });
 });

@@ -78,4 +78,10 @@ export class MemoryReplicaStore implements ReplicaStore {
     }
     return null;
   }
+
+  async runningOwner(id: string, now: number): Promise<string | null> {
+    const checkout = this.checkouts.get(id);
+    const lease = checkout && this.leases.get(checkout.ownerReplica);
+    return checkout && lease && lease.expiresAt > now && (checkout.status === 'active' || checkout.status === 'applying') ? checkout.ownerReplica : null;
+  }
 }

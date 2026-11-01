@@ -10,7 +10,7 @@ import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
-import type { AuditStore } from './audit/audit-store.js';
+import { LeaderLeaseLost, type AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
@@ -36,7 +36,7 @@ import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
-import type { CheckoutTiming } from './triage/checkout-timing.js';
+import { endAnswersWithinMs, type CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
@@ -178,7 +178,7 @@ async function serve(
           seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
         }),
       };
-  const restore = new RestoreService(auditStore, (id) => checkouts.isRunning(id));
+  const restore = new RestoreService(auditStore, async (id) => checkouts.isRunning(id) || ((await liveCheckouts?.runningElsewhere(id)) ?? false));
   const replayRules = new ReplayRules({
     checkouts,
     state: auditStore.ruleState,
@@ -200,7 +200,10 @@ async function serve(
     intervalMs: config.historyIntervalMs,
     testHooks: options.samplerTestHooks,
     // Called only once the app below is listening.
-    onError: (profile, err) => app.log.error({ err, profile }, 'A sampling run failed unexpectedly'),
+    onError: (profile, err) => {
+      if (err instanceof LeaderLeaseLost) app.log.info({ profile }, 'A sampling run wrote nothing: this Replica is no longer the Background Leader');
+      else app.log.error({ err, profile }, 'A sampling run failed unexpectedly');
+    },
   });
   const queueMetrics = new QueueMetrics(() => sampler.latest());
   sampler.onRun((finished) => queueMetrics.runFinished(finished));
@@ -233,6 +236,7 @@ async function serve(
     originCheck,
     forwarder: config.forwarding && createForwarder(config.forwarding.secret),
     liveCheckouts,
+    endWithinMs: endAnswersWithinMs({ ...config.checkoutTiming, ...options.checkoutTiming }, limits.maxMessages),
     profiles,
     access,
     checkouts,
@@ -284,7 +288,7 @@ async function serve(
     }
   }
 
-  // One Replica at a time runs what must run once. It claims the lease below, once the app can log.
+  // One Replica at a time runs what must run once. It claims the lease below, once Alerting has started.
   const leaderClock = options.leaderTestHooks?.clock ?? systemClock;
   const leader = new BackgroundLeader({
     lease: auditStore.leaderLease,
@@ -299,6 +303,7 @@ async function serve(
         log: app.log,
         afterRun: () => metricsReadings.refresh(),
       }),
+      sampler,
       ...(config.forwarding
         ? [
             goneReplicasJob({
@@ -314,7 +319,6 @@ async function serve(
     onChange: (isLeader) => app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader'),
   });
   options.leaderTestHooks?.leader?.(leader);
-  await leader.start();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
   // then every held Message goes back to its queue (an Apply in progress
@@ -326,7 +330,6 @@ async function serve(
     await metricsListener?.close();
     await metricsReadings.stop();
     await leader.stop();
-    await sampler.stop();
     // Before the notifier: a last pass can pause its rule, which sends a notification.
     await replayRules.stop();
     await alerting.stop();
@@ -341,8 +344,8 @@ async function serve(
   });
   try {
     await alerting.start();
-    // The sampler before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
-    await sampler.start();
+    // The leader's jobs, the sampler among them, before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
+    await leader.start();
     // Replay Rules: give each its state and schedule the running ones.
     await replayRules.start();
   } catch (err) {
@@ -436,9 +439,11 @@ interface AppOptions {
   liveCheckouts: LiveCheckouts | null;
   /** Refuses what a malicious page sends through an Operator's browser. */
   originCheck: RequestOriginCheck;
+  /** How long a forwarded end of a Checkout may take to answer. */
+  endWithinMs: number;
 }
 
-async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   // Before any route, so none is missed.
@@ -477,20 +482,22 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const toOwner =
-    forwarder && liveCheckouts
-      ? forwarder.toOwner(async (req: FastifyRequest<{ Params: { id: string } }>) => {
-          if (checkouts.owns(req.params.id)) return null;
-          const owner = await liveCheckouts.ownerOf(req.params.id);
-          if (!owner) return null;
-          if ('address' in owner) return owner.address;
-          // Answered here from now on. A profile no longer configured leaves it unknown here.
-          const profile = profiles.find((p) => p.name === owner.gone.profile);
-          if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
-          return null;
-        })
-      : {};
-  const checkoutDeps = { checkouts, access: profileAccess, toOwner };
+  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => {
+    if (!liveCheckouts || checkouts.owns(req.params.id)) return null;
+    const owner = await liveCheckouts.ownerOf(req.params.id);
+    if (!owner) return null;
+    if ('address' in owner) return owner.address;
+    // Answered here from now on. A profile no longer configured leaves it unknown here.
+    const profile = profiles.find((p) => p.name === owner.gone.profile);
+    if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
+    return null;
+  };
+  const checkoutDeps = {
+    checkouts,
+    access: profileAccess,
+    toOwner: forwarder ? forwarder.toOwner(ownerOf) : {},
+    toOwnerToEnd: forwarder ? forwarder.toOwner(ownerOf, { answerWithinMs: endWithinMs }) : {},
+  };
   registerSessionRoutes(app, {
     mode: access.kind,
     checkouts,
