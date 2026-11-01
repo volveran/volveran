@@ -216,6 +216,8 @@ export interface AuditStore {
   readonly alerts: AlertStore;
   /** Who is signed in, and who is signing in (Team Mode). */
   readonly sessions: SessionStore;
+  /** Who is the Background Leader. */
+  readonly leaderLease: LeaderLeaseStore;
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; answers its id. */
   record(entry: NewAuditEntry): Promise<number>;
@@ -233,13 +235,52 @@ export interface AuditStore {
    * many more as needed for the rest to fit in `maxBodyBytes`. Each evicted
    * entry keeps everything else and is marked body expired at `now`.
    */
-  evictBodies(eviction: BodyEviction): Promise<{ evicted: number }>;
+  evictBodies(eviction: BodyEviction, fence?: LeaseFence): Promise<{ evicted: number }>;
   /** The total size of the bodies stored now (what the size limit applies to). */
   storedBodyBytes(): Promise<number>;
   /** Resolves if the store can be reached now, and rejects soon if not, for a readiness probe. Never waits long. */
   ping(): Promise<void>;
   /** Closes the store. Closing it again does nothing. */
   close(): Promise<void>;
+}
+
+/**
+ * What a write by the Background Leader names so the store can check the lease as part
+ * of it. A write given a fence rejects with LeaderLeaseLost, having done nothing, once
+ * the lease is no longer held in that term, however long ago the caller last looked.
+ */
+export interface LeaseFence {
+  holder: string;
+  term: number;
+}
+
+/** A write named a fence whose lease has been given up or taken by another. */
+export class LeaderLeaseLost extends Error {
+  constructor() {
+    super('The leader lease is no longer held');
+    this.name = 'LeaderLeaseLost';
+  }
+}
+
+export interface LeaderLeaseGrant extends LeaseFence {
+  /** Epoch milliseconds, by the clock of whoever claimed it. */
+  expiresAt: number;
+}
+
+/**
+ * The one lease that says which Replica is the Background Leader (ADR 0014). On SQLite
+ * it is in memory, as one Replica needs no more, so a restart is its own leader at
+ * once; on PostgreSQL it is a row every Replica shares.
+ */
+export interface LeaderLeaseStore {
+  /**
+   * Takes the lease for `holder` until `now + durationMs`, or renews it. Answers null
+   * when another holds it past `now`. The term goes up each time the lease changes
+   * hands or comes back after being given up.
+   */
+  claim(holder: string, now: number, durationMs: number): Promise<LeaderLeaseGrant | null>;
+  /** Gives the lease up, free for the next claim; does nothing unless `holder` has it. */
+  release(holder: string): Promise<void>;
 }
 
 /** The Audit Entry of a pause or resume of a Replay Rule, which has no Message. */
@@ -295,7 +336,7 @@ export interface HistoryStore {
   /** The Applies and Rule Passes that took Messages out of the queue in the range, oldest first. */
   takeOuts(queue: SampledQueue, from: number, to: number): Promise<TakeOut[]>;
   /** Removes the Samples and sampling runs older than `before`. */
-  removeOlderThan(before: number): Promise<{ samples: number; runs: number }>;
+  removeOlderThan(before: number, fence?: LeaseFence): Promise<{ samples: number; runs: number }>;
 }
 
 /** The outcome of each notification, kept as long as the depth history. */
@@ -304,7 +345,7 @@ export interface NotificationStore {
   /** The latest outcomes (100 by default), newest first; `visible` narrows them first, so the limit counts only what is kept. */
   recent(limit?: number, visible?: NotificationScope): Promise<NotificationDelivery[]>;
   /** Removes the outcomes from before `cutoff`; answers how many. */
-  removeOlderThan(cutoff: Date): Promise<number>;
+  removeOlderThan(cutoff: Date, fence?: LeaseFence): Promise<number>;
 }
 
 /** A signed-in Operator's session. Tokens reach the store already sealed (token-seal.ts); it only holds them. */

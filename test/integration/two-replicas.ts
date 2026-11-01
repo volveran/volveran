@@ -54,7 +54,7 @@ export class ReplicaBrowser extends TestBrowser {
 
 export interface TwoReplicasOptions extends Pick<StartAppOptions, 'profiles' | 'alertDestinations' | 'env' | 'checkoutLimits' | 'checkoutTiming' | 'endedCheckoutRetentionMs' | 'bodyRetention'> {
   /** What differs per Replica, such as test hooks, a wrapped store or `logs`. Called again on a restart. */
-  perReplica?: (name: ReplicaName) => Pick<StartAppOptions, 'checkoutTestHooks' | 'samplerTestHooks' | 'wrapAuditStore' | 'logs' | 'env'>;
+  perReplica?: (name: ReplicaName) => Pick<StartAppOptions, 'checkoutTestHooks' | 'samplerTestHooks' | 'leaderTestHooks' | 'wrapAuditStore' | 'logs' | 'env'>;
 }
 
 export interface TwoReplicas {

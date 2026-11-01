@@ -136,6 +136,10 @@ _Avoid_: Server mode, hosted mode, SSO mode
 One running Volverán server among those sharing an audit store on PostgreSQL. Until multi-Replica work lands, run exactly one.
 _Avoid_: Pod, node
 
+**Background Leader**:
+The one Replica currently running what must run once however many Replicas there are, such as retention. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
+_Avoid_: Master, primary, active Replica
+
 **Audit Entry**:
 A record of one triage action: which Operator did it, as which broker user, when, on which Broker Profile and queue. For a Discard it includes a full copy of the Message.
 _Avoid_: Log line, history

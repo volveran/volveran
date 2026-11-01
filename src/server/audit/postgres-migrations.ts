@@ -178,6 +178,13 @@ export const MIGRATIONS: readonly string[] = [
      expires_at BIGINT NOT NULL
    );
    CREATE INDEX sign_ins_expires_at ON sign_ins (expires_at);`,
+  // Who is the Background Leader (#115). One row at most; its term only goes up.
+  `CREATE TABLE leader_lease (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     holder TEXT,
+     term BIGINT NOT NULL,
+     expires_at BIGINT NOT NULL
+   );`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */
