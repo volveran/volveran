@@ -215,6 +215,7 @@ describe('the Background Leader', () => {
     const lease: LeaderLeaseStore = {
       claim: (...args) => (down ? Promise.reject(new Error('store down')) : opened.claim(...args)),
       release: (holder) => opened.release(holder),
+      currentHolder: () => opened.currentHolder(),
     };
     const { job, events } = recordingJob();
     const errors: unknown[] = [];
@@ -308,6 +309,7 @@ describe('the Background Leader', () => {
     const lease: LeaderLeaseStore = {
       claim: async (holder, now, ms) => ({ holder, term: ++claims, expiresAt: now + ms }),
       release: () => Promise.reject(new Error('store down')),
+      currentHolder: () => Promise.resolve(null),
     };
     const leader = leaderOn(lease, [], time.clock, () => {});
     await leader.start();

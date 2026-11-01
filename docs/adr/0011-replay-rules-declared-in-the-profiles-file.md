@@ -18,6 +18,7 @@ The safety of a rule rests on four things, each a decision of its own:
 
 ## Consequences
 
+- With several Replicas the rules run on the Background Leader, and a pause stops a pass in progress at its next step ([ADR 0014](0014-replicas-forwarding-and-the-background-leader.md#replay-rules-on-the-leader)).
 - Changing a rule needs a change to the profiles file and a restart; a rule removed from the file stops at the next restart, while its Audit Entries stay.
 - A pass looks only at the Messages at the head of the queue, up to its limit; a long run of Messages it Keeps at the head can delay the ones behind them to a later pass.
 - During a pass the queue list and the "held by" answer name the rule (`Replay rule <name>`), so an Operator knows why a Checkout is refused and that it will end soon.

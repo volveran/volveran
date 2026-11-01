@@ -224,6 +224,8 @@ export const MIGRATIONS: readonly string[] = [
    );
    DROP INDEX live_checkouts_operator_id;
    CREATE UNIQUE INDEX live_checkouts_one_per_operator ON live_checkouts (operator_id) WHERE status IN ('starting', 'active');`,
+  // v7 (#118): when the leader next passes a rule, so that every Replica can show it.
+  `ALTER TABLE replay_rule_state ADD COLUMN next_pass_at BIGINT;`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

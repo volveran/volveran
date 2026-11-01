@@ -36,6 +36,16 @@ Some work must run once however many Replicas there are: retention and the sampl
 
 **Moving work onto the leader.** Add a `LeaderJob` to the list in `server.ts`. Its `start(fence)` may be called again after `stop()` in one process, so it must hold no state that assumes one start. `start` may do a first run before it answers: startup waits for it, while renewal does not. Writes that must not come from a former leader take a `fence` parameter on their store method, with a test in the contract suite ([ADR 0013](0013-audit-store-interface.md)); PostgreSQL's implementation runs in `fenced`, and SQLite's calls `check` right before writing. A job treats `LeaderLeaseLost` as no failure: it wrote nothing, and the leader will find out at its next claim.
 
+## Replay Rules on the leader
+
+Measured first (#118): a pass the lock queue refuses is recorded `skipped`, touches nothing, does not pause the rule, and its next pass counts from the skip. A refusal by permissions, 403, is another thing: the rule pauses with `lock_not_permitted`. Across Replicas a second pass of a rule is refused sooner, by the Operator claim on the Live Checkout records, and is also `skipped`. A pause used not to reach a pass in progress at all, which Replayed every due Message, and a resume through another Replica left the first with no next pass.
+
+**A pass is not moved or fenced once begun.** It is a Checkout, owned by the Replica that started it, so it finishes there and is recorded there even if the lease moves. Its writes (the pass, first-seen times, the count of the automatic stop, an automatic pause) state what happened, so they are not refused from a former leader. What is fenced is starting one: a scheduled pass first clears the rule's next pass under the fence. A new leader's pass, meanwhile, meets the Operator claim or the lock queue, and is skipped.
+
+**A pause is written where it arrives, and the leader is told.** So it works with the leader gone. The store settles it (`pause` and `resume` answer whether they changed anything), so two at once on two Replicas are one Audit Entry and one 409. A pause stops a pass that began before it, at the next step, as an Operator's stop does. The notice over the internal port is only for speed: it can be lost, and the pass may be a former leader's. So whatever runs the job or a pass also reads the store every 5 s (`RULE_STATE_CHECK_MS`).
+
+**Others read the next pass from the store,** since the timer is on the leader alone. To find the leader, its lease's holder is its Replica id, whose lease has the address. Run now is forwarded there, and answers 503 `replica_unreachable` when it cannot be reached: nothing has run.
+
 ## Restore
 
 A Message must not be republished twice by two clicks on two Replicas, so the guard is one store method, `claimRestore`: it writes the Restore's `pending` Audit Entry unless an earlier Restore of that Discard is anything but `failed`. PostgreSQL holds the Discard's row for the transaction. That needs no migration, where a unique index could refuse a store that already holds two Restores of one Discard. A Restore that crashed before reporting back keeps the body, as it does on one Replica: republishing again could duplicate the Message.

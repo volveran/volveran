@@ -25,6 +25,11 @@ export class PostgresLeaderLease implements LeaderLeaseStore {
   async release(holder: string): Promise<void> {
     await this.pool.query('UPDATE leader_lease SET holder = NULL WHERE holder = $1', [holder]);
   }
+
+  async currentHolder(): Promise<string | null> {
+    const { rows } = await this.pool.query<{ holder: string | null }>('SELECT holder FROM leader_lease WHERE id = 1');
+    return rows[0]?.holder ?? null;
+  }
 }
 
 /**

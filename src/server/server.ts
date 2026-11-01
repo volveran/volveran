@@ -27,7 +27,7 @@ import { BackgroundLeader, type LeaderTestHooks } from './leader/background-lead
 import { retentionJob } from './leader/retention-job.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
 import { readStartupConfig, type StartupConfig } from './startup-config.js';
-import { createForwarder, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
+import { createForwarder, replicaUnreachable, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
 import { goneReplicasJob } from './replicas/gone-replicas-job.js';
 import { LiveCheckouts } from './replicas/live-checkouts.js';
 import { ownLeaseRanOutReason } from './replicas/owner-gone.js';
@@ -50,7 +50,7 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
-import { attachOperator } from './operator.js';
+import { attachOperator, type Operator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
 
 export interface ServerOptions {
@@ -177,6 +177,12 @@ async function serve(
           seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
         }),
       };
+  const forwarder = config.forwarding && createForwarder(config.forwarding.secret);
+  /** Where the Background Leader can be reached: null when nobody holds the lease or its holder's own lease is over. */
+  const leaderAddress = async (): Promise<string | null> => {
+    const holder = await auditStore.leaderLease.currentHolder();
+    return holder === null ? null : auditStore.replicas.liveAddress(holder, Date.now());
+  };
   const restore = new RestoreService(auditStore, async (id) => checkouts.isRunning(id) || ((await liveCheckouts?.runningElsewhere(id)) ?? false));
   const replayRules = new ReplayRules({
     checkouts,
@@ -191,6 +197,18 @@ async function serve(
       await alerting.replayRuleChanged(profile);
       await metricsReadings.refresh();
     },
+    ...(forwarder && {
+      // The pause or resume is in the store: a leader that cannot be told finds it there by itself.
+      tellLeader: async (profile: string, rule: string, by: Operator) => {
+        try {
+          const address = await leaderAddress();
+          if (address) await forwarder.tell(address, `/api/profiles/${encodeURIComponent(profile)}/replay-rules/${encodeURIComponent(rule)}/changed`, by, TELL_LEADER_WITHIN_MS);
+        } catch (err) {
+          app.log.info({ err, profile, rule }, 'The Background Leader could not be told of a Replay rule pause or resume; it will read it from the store');
+        }
+      },
+    }),
+    onLeaseLost: () => app.log.info('A Replay rule pass or schedule wrote nothing: this Replica is no longer the Background Leader'),
   });
   const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
   const sampler = new QueueSampler({
@@ -231,7 +249,14 @@ async function serve(
   });
   const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
   const app = await buildApp({
-    forwarder: config.forwarding && createForwarder(config.forwarding.secret),
+    forwarder,
+    // Called only once the app is listening, when the leader below exists.
+    leaderAddressForRoute: async () => {
+      if (leader.isLeader) return null;
+      const address = await leaderAddress();
+      if (!address) throw replicaUnreachable();
+      return address;
+    },
     liveCheckouts,
     endWithinMs: endAnswersWithinMs({ ...config.checkoutTiming, ...options.checkoutTiming }, limits.maxMessages),
     profiles,
@@ -288,6 +313,7 @@ async function serve(
   // One Replica at a time runs what must run once. It claims the lease below, once Alerting has started.
   const leaderClock = options.leaderTestHooks?.clock ?? systemClock;
   const leader = new BackgroundLeader({
+    holder: replicaId,
     lease: auditStore.leaderLease,
     clock: leaderClock,
     timing: options.leaderTestHooks?.timing,
@@ -311,6 +337,8 @@ async function serve(
             }),
           ]
         : []),
+      // Last, so that it starts after the sampler and stops first, while what a last pass's pause tells still runs.
+      replayRules,
     ],
     onError: (err, job) => app.log.error({ err, job }, job ? `The Background Leader's job "${job}" failed` : 'The leader lease could not be claimed or given up'),
     onChange: (isLeader) => app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader'),
@@ -326,9 +354,8 @@ async function serve(
   app.addHook('onClose', async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
+    // Before the notifier, with the rules among its jobs: a last pass can pause its rule, which sends a notification.
     await leader.stop();
-    // Before the notifier: a last pass can pause its rule, which sends a notification.
-    await replayRules.stop();
     await alerting.stop();
     await notifier.close();
     await checkouts.endAll();
@@ -343,8 +370,6 @@ async function serve(
     await alerting.start();
     // The leader's jobs, the sampler among them, before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
     await leader.start();
-    // Replay Rules: give each its state and schedule the running ones.
-    await replayRules.start();
   } catch (err) {
     await app.close();
     throw err;
@@ -413,6 +438,9 @@ async function serve(
   };
 }
 
+/** A pause or resume answers no later than this for a leader that does not. It reads the store soon anyway. */
+const TELL_LEADER_WITHIN_MS = 2_000;
+
 /** Who acts: Solo Mode's configured Operator, or Team Mode's sign-in. */
 type Access = { kind: 'solo'; operator: string } | { kind: 'team'; auth: TeamAuth };
 
@@ -432,11 +460,13 @@ interface AppOptions {
   /** With other Replicas: how requests reach them. */
   forwarder: Forwarder | null;
   liveCheckouts: LiveCheckouts | null;
+  /** Where to forward what must run on the Background Leader; null when this Replica is it. */
+  leaderAddressForRoute(): Promise<string | null>;
   /** How long a forwarded end of a Checkout may take to answer. */
   endWithinMs: number;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, leaderAddressForRoute, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   // Before any route, so none is missed.
@@ -493,7 +523,8 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   });
   const alertReadings = { alerts: audit.audit.alerts, notifications: audit.audit.notifications, destinations: alertDestinations };
   registerProfileRoutes(app, profileAccess, history, alertReadings);
-  registerReplayRuleRoutes(app, replayRules, profileAccess);
+  // A Run now takes as long as a Checkout can.
+  registerReplayRuleRoutes(app, replayRules, profileAccess, forwarder ? forwarder.toOwner(leaderAddressForRoute, { answerWithinMs: endWithinMs }) : {});
   registerAlertDestinationRoutes(app, notifier, profileAccess);
   registerAlertRoutes(app, alertReadings, profileAccess);
   registerCheckoutRoutes(app, checkoutDeps);

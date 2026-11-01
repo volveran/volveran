@@ -45,6 +45,8 @@ export interface Forwarder {
    * to the route when it answers null. They run after sign-in and before the body is read.
    */
   toOwner<R extends FastifyRequest>(ownerOf: (req: R) => Promise<string | null>, options?: ToOwnerOptions): { onRequest: onRequestAsyncHookHandler };
+  /** Sends the Replica at `address` a POST of its own, with no body, on behalf of `operator`. Rejects unless it answers 2xx within `withinMs`. */
+  tell(address: string, path: string, operator: Operator, withinMs: number): Promise<void>;
 }
 
 function passedOn(headers: IncomingHttpHeaders): IncomingHttpHeaders {
@@ -86,6 +88,31 @@ export function createForwarder(secret: string): Forwarder {
     });
 
   return {
+    tell: (address, path, operator, withinMs) =>
+      new Promise<void>((resolve, reject) => {
+        const { hostname, port } = new URL(`http://${address}`);
+        const outgoing = http.request({
+          host: hostname.replace(/^\[|\]$/g, ''),
+          port,
+          method: 'POST',
+          path,
+          agent: false,
+          headers: { host: address, authorization: `Bearer ${secret}`, [OPERATOR_HEADER]: encodeOperator(operator), 'content-length': 0 },
+        });
+        const limit = setTimeout(() => outgoing.destroy(), withinMs);
+        outgoing.on('error', () => {});
+        outgoing.once('close', () => {
+          clearTimeout(limit);
+          reject(replicaUnreachable());
+        });
+        outgoing.once('response', (answer) => {
+          clearTimeout(limit);
+          answer.resume();
+          if ((answer.statusCode ?? 500) < 300) resolve();
+          else reject(new Error(`The Replica answered ${answer.statusCode}`));
+        });
+        outgoing.end();
+      }),
     toOwner(ownerOf, { answerWithinMs = DEFAULT_ANSWER_WITHIN_MS } = {}) {
       return {
         onRequest: async (req, reply) => {

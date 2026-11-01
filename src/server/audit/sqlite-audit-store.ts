@@ -257,6 +257,8 @@ const MIGRATIONS: string[] = [
    DROP TABLE replay_rule_passes;
    ALTER TABLE replay_rule_passes_v17 RENAME TO replay_rule_passes;
    CREATE INDEX replay_rule_passes_rule ON replay_rule_passes (rule_key, at);`,
+  // v18 (#118): when the leader next passes a rule, so that every Replica can show it.
+  `ALTER TABLE replay_rule_state ADD COLUMN next_pass_at INTEGER;`,
 ];
 
 export const AUDIT_DB_FILE = 'audit.sqlite';
@@ -285,7 +287,7 @@ export class SqliteAuditStore implements AuditStore {
       this.db.close();
       throw err;
     }
-    this.ruleState = new SqliteRuleStateStore(this.db);
+    this.ruleState = new SqliteRuleStateStore(this.db, this.leaderLease);
     this.history = new SqliteHistoryStore(this.db, this.leaderLease);
     this.notifications = new SqliteNotificationStore(this.db, this.leaderLease);
     this.alerts = new SqliteAlertStore(this.db);

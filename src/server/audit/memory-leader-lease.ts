@@ -22,6 +22,10 @@ export class MemoryLeaderLease implements LeaderLeaseStore {
     if (this.holder === holder) this.holder = null;
   }
 
+  async currentHolder(): Promise<string | null> {
+    return this.holder;
+  }
+
   /** Throws unless the lease is still held as `fence` says; no fence, no check. */
   check(fence: LeaseFence | undefined): void {
     if (fence && (fence.holder !== this.holder || fence.term !== this.term)) throw new LeaderLeaseLost();

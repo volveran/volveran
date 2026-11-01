@@ -10,6 +10,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Changed
 
+- A pause now stops a Rule Pass in progress at its next step. The step under way finishes; the Messages not reached go back to the queue and count as Not due. It used to carry on and Replay them all. With several Replicas, Rule Passes run on the Background Leader, and a pause or resume works through any Replica. Audit schema v18 on SQLite. (#118)
 - **Unknown keys in the profiles file are refused.** This is the deliberate breaking change of 1.0. A key the file does not have stops startup at every level, including the top level, a Broker Profile and a Replay rule's filter clause, where they used to be ignored, and the refusal names its path. A misspelt safety setting such as `requireAproval` can no longer silently leave it at its default. Try your file with `check-config` before upgrading ([guide](docs/configuration.md#unknown-keys)).
 - `check-config` now exits `0` or `1`. It no longer exits `2`: an unknown key is something startup refuses, so it exits `1` and reports the first as an `error:` line, in place of a `refused in 1.0:` line for each.
 - In Team Mode on PostgreSQL, sessions and sign-ins in progress live in the database, with their access and refresh tokens encrypted. An Operator stays signed in across a restart, and a sign-in or a sign-out works whichever Replica it reaches. On SQLite they stay in memory. (#107)

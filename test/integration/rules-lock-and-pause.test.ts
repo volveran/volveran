@@ -2,6 +2,7 @@
 // when the lock queue refuses it, and what a pause does to a pass in progress.
 import { afterEach, describe, expect, it } from 'vitest';
 import { lockQueueName } from '../../src/server/triage/checkout-lock.js';
+import { delayedAuditStore } from '../support/delayed-audit-store.js';
 import { brokerUsers, connect, deadLetter, deadLetterRoutes, fixtureQueues, purgeQueues, ranSummary, ruleSchedulerHooks, startApp, testProfile, type TestApp } from './harness.js';
 
 const route = deadLetterRoutes.classic;
@@ -90,5 +91,50 @@ describe('a Rule Pass the lock refuses', () => {
 
     expect(pass).toMatchObject({ status: 'failed', summary: null });
     expect(await listed(app)).toMatchObject({ state: { paused: true, pausedReason: 'lock_not_permitted' }, nextPassAt: null });
+  });
+});
+
+describe('a pause on a single Replica', () => {
+  const apps: TestApp[] = [];
+  afterEach(async () => {
+    while (apps.length) await apps.pop()!.close();
+    await purgeQueues('/', fixtureQueues);
+  });
+
+  it('stops the pass in progress at its next step, and the rest stay in the queue', async () => {
+    let reached = () => {};
+    let release = () => {};
+    const atStep = new Promise<void>((resolve) => (reached = resolve));
+    const opened = new Promise<void>((resolve) => (release = resolve));
+    const scheduler = ruleSchedulerHooks(new Date(Date.now() + 11 * MINUTE));
+    const app = await startApp({
+      profiles: [testProfile({ name: 'local', replayRules: [rule] })],
+      checkoutTestHooks: {
+        ...scheduler.hooks,
+        beforeApplyStep: async () => {
+          reached();
+          await opened;
+        },
+      },
+    });
+    apps.push(app);
+    await due(['p-1', 'p-2', 'p-3']);
+    const running = scheduler.runPass('local', RULE);
+    await atStep;
+
+    expect((await app.post(`${rulePath}/pause`, { reason: 'incident' })).status).toBe(200);
+    release();
+
+    expect(ranSummary(await running)).toMatchObject({ held: 3, replayed: 1, notDue: 2, failed: 0 });
+    expect((await app.get(`/api/audit-entries?rule=${RULE}&action=replay`)).body.entries).toHaveLength(1);
+  });
+
+  it('fails startup when the rules cannot start, as before they moved onto the leader', async () => {
+    await expect(
+      startApp({
+        profiles: [testProfile({ name: 'local', replayRules: [rule] })],
+        wrapAuditStore: (store) => delayedAuditStore(store, (call) => (call === 'ruleState.ensure' ? Promise.reject(new Error('store broken')) : undefined)),
+      }),
+    ).rejects.toThrow('store broken');
   });
 });
