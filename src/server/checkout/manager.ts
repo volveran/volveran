@@ -139,6 +139,16 @@ export interface CheckoutStartOptions extends StartOptions {
   maxMessages?: number;
 }
 
+/**
+ * Told of each Checkout, for the records other Replicas read. `started` is awaited before
+ * the start answers; the others are called inside first-wins sections and must not make them wait.
+ */
+export interface LiveCheckoutListener {
+  started(checkout: Checkout): Promise<void>;
+  changed(checkout: Checkout): void;
+  forgotten(id: string): void;
+}
+
 export interface CheckoutManagerOptions {
   /** Where Apply writes its Audit Entries. */
   audit: AuditStore;
@@ -161,6 +171,8 @@ export interface CheckoutManagerOptions {
   onApplyError?(checkoutId: string, err: unknown): void;
   /** An Apply ended with these outcomes, one per Message of the Checkout. */
   onApplyEnded?(checkout: Checkout, outcomes: readonly MessageOutcome[]): void;
+  /** Left out when this Replica is on its own. */
+  liveCheckouts?: LiveCheckoutListener;
 }
 
 /**
@@ -265,6 +277,7 @@ export class CheckoutManager {
     }
     try {
       await this.findDiedAgain(checkout, options.auditScope);
+      await this.options.liveCheckouts?.started(checkout);
     } catch (err) {
       // It holds Messages by now, so they go back as at any end. If it was lost
       // during the search that has been done, and the queue may be someone else's.
@@ -274,6 +287,11 @@ export class CheckoutManager {
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return this.view(checkout);
+  }
+
+  /** Whether this Replica knows Checkout `id`, which makes it the Owner Replica. */
+  owns(id: string): boolean {
+    return this.checkouts.has(id);
   }
 
   /** The browser still shows the Checkout: it stays until the next heartbeat window passes. */
@@ -446,6 +464,7 @@ export class CheckoutManager {
     checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate, canary: frozenCanary };
     checkout.approvalClosed = null;
     checkout.rejection = null;
+    this.options.liveCheckouts?.changed(checkout);
     return this.view(checkout);
   }
 
@@ -528,6 +547,7 @@ export class CheckoutManager {
     if (checkout.status !== 'active' || !request) throw notAwaitingApproval(checkout);
     checkout.approvalRequest = null;
     checkout.approvalClosed = closed;
+    this.options.liveCheckouts?.changed(checkout);
     return request;
   }
 
@@ -698,6 +718,7 @@ export class CheckoutManager {
     checkout.status = 'ended';
     checkout.endReason = reason;
     this.cancelApprovalRequest(checkout);
+    this.options.liveCheckouts?.changed(checkout);
     const { channel } = checkout;
     try {
       if (channel) {
@@ -743,7 +764,10 @@ export class CheckoutManager {
     if (this.byOperator.get(checkout.operator.id) === checkout) this.byOperator.delete(checkout.operator.id);
     clearTimeout(checkout.timeLimitTimer);
     clearTimeout(checkout.heartbeatTimer);
-    setTimeout(() => this.checkouts.delete(checkout.id), this.endedRetentionMs).unref();
+    setTimeout(() => {
+      this.checkouts.delete(checkout.id);
+      this.options.liveCheckouts?.forgotten(checkout.id);
+    }, this.endedRetentionMs).unref();
   }
 
   private startTimers(checkout: Checkout) {
@@ -779,6 +803,7 @@ export class CheckoutManager {
     // A wait for the next paced step ends now; the executor then finds the Checkout not active.
     checkout.applying?.stopController.abort();
     this.cancelApprovalRequest(checkout);
+    this.options.liveCheckouts?.changed(checkout);
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);

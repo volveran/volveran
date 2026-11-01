@@ -28,9 +28,11 @@ import type {
   NewAuditEntry,
   NotificationStore,
   RuleStateStore,
+  ReplicaStore,
   SessionStore,
 } from './audit-store.js';
 import { MemoryLeaderLease } from './memory-leader-lease.js';
+import { MemoryReplicaStore } from './memory-replicas.js';
 import { MemorySessionStore } from './memory-sessions.js';
 import { SqliteAlertStore } from './sqlite-alerts.js';
 import { SqliteHistoryStore } from './sqlite-history.js';
@@ -265,6 +267,7 @@ export class SqliteAuditStore implements AuditStore {
   readonly alerts: AlertStore;
   readonly sessions: SessionStore = new MemorySessionStore();
   readonly leaderLease = new MemoryLeaderLease();
+  readonly replicas: ReplicaStore = new MemoryReplicaStore();
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a

@@ -18,6 +18,16 @@ _Avoid_: Prod mode, locked profile
 An exclusive hold on the Messages at the head of one queue when it started (all of them, up to the Checkout limit), so the user can act on each one. Messages that arrive later, or lie beyond the limit, wait for the next Checkout. A Checkout has a time limit. Ending or losing a Checkout returns every Message that has no applied Decision to the queue.
 _Avoid_: Session, lock, snapshot, browse
 
+**Replica**:
+One running Volverán process that shares its audit store with others.
+_Avoid_: Pod, node
+
+**Owner Replica**:
+The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica passes requests about that Checkout on to it.
+
+**Background Leader**:
+The one Replica currently running the sampler, Alerts, Replay Rules and retention.
+
 **Lost Checkout**:
 A Checkout that ended without Volverán ending it, for example because the broker cancelled it. Its Messages are back in the queue and it can no longer be Applied.
 _Avoid_: Expired, timed out, dead Checkout
