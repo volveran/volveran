@@ -3,11 +3,12 @@
 // the Operator sees no difference. CONTRIBUTING.md ("Two Replicas") has the interface.
 //
 // Everything a Replica reaches or is reached by goes through a TCP proxy of its own:
-// its HTTP port, the broker's AMQP and management ports, and PostgreSQL. So `crash` needs
+// its HTTP port, its forwarding port, the broker's AMQP and management ports, and PostgreSQL. So `crash` needs
 // no seam in the app. It closes them all at once, which the outside world sees as a killed
 // process: connections drop with nothing settled and nothing written. Only then is
 // what is left of the app told to close, without waiting for it.
-import { startApp, type ProfileFixture, type StartAppOptions, type TestApp, type TestResponse } from './harness.js';
+import { randomBytes } from 'node:crypto';
+import { closedPort, startApp, type ProfileFixture, type StartAppOptions, type TestApp, type TestResponse } from './harness.js';
 import { teamModeEnv, TestBrowser } from './oidc-provider.js';
 import { startTcpProxy, type TcpProxy } from '../support/tcp-proxy.js';
 import { createTestDatabase, type TestDatabase } from '../support/test-postgres.js';
@@ -18,6 +19,8 @@ export interface Replica {
   readonly name: ReplicaName;
   /** Where it is reached now; a restart changes it. */
   readonly baseUrl: string;
+  /** Where the other Replica forwards to it; a restart changes it. */
+  readonly forwardingUrl: string;
   /** Whether it is up: after a `crash` or `shutdown`, false until `restart`. */
   readonly running: boolean;
   /** Without a session: a route for anyone, such as /readyz. For an Operator, use `browser().to(replica)`. */
@@ -52,7 +55,7 @@ export class ReplicaBrowser extends TestBrowser {
   }
 }
 
-export interface TwoReplicasOptions extends Pick<StartAppOptions, 'profiles' | 'alertDestinations' | 'env' | 'checkoutLimits' | 'checkoutTiming' | 'endedCheckoutRetentionMs' | 'bodyRetention'> {
+export interface TwoReplicasOptions extends Pick<StartAppOptions, 'profiles' | 'alertDestinations' | 'env' | 'checkoutLimits' | 'checkoutTiming' | 'endedCheckoutRetentionMs' | 'bodyRetention' | 'replicaLeaseTiming'> {
   /** What differs per Replica, such as test hooks, a wrapped store or `logs`. Called again on a restart. */
   perReplica?: (name: ReplicaName) => Pick<StartAppOptions, 'checkoutTestHooks' | 'samplerTestHooks' | 'wrapAuditStore' | 'logs' | 'env'>;
 }
@@ -68,6 +71,8 @@ export interface TwoReplicas {
   browser(): ReplicaBrowser;
   /** The one database they share, to read what no route shows. */
   database: TestDatabase;
+  /** The secret they forward under. */
+  forwardingSecret: string;
   /** Stops whatever still runs and drops the database. */
   close(): Promise<void>;
 }
@@ -95,14 +100,18 @@ export async function startTwoReplicas(options: TwoReplicasOptions = {}): Promis
   const database = await createTestDatabase();
   // No one listens here: the provider's redirect is sent to a Replica by ReplicaBrowser.
   const publicOrigin = 'http://127.0.0.1:9';
+  const forwardingSecret = randomBytes(32).toString('hex');
 
   const startReplica = (name: ReplicaName): Promise<Replica> => {
-    let running: { app: TestApp; proxies: TcpProxy[]; baseUrl: string } | null = null;
+    let running: { app: TestApp; proxies: TcpProxy[]; baseUrl: string; forwardingUrl: string } | null = null;
 
     const up = async (): Promise<void> => {
       const proxies: TcpProxy[] = [];
       const { perReplica, profiles, env, ...shared } = options;
       const own = perReplica?.(name) ?? {};
+      // The app is told the proxy's address, so the port must be known before it starts.
+      const forwardingPort = await closedPort();
+      const forwardingUrl = await proxied(`http://127.0.0.1:${forwardingPort}`, proxies);
       const app = await startApp({
         ...shared,
         ...own,
@@ -110,12 +119,15 @@ export async function startTwoReplicas(options: TwoReplicasOptions = {}): Promis
         env: {
           ...teamModeEnv(publicOrigin),
           VOLVERAN_POSTGRES_URL: await proxied(database.url, proxies),
+          VOLVERAN_FORWARDING_SECRET: forwardingSecret,
+          VOLVERAN_FORWARDING_PORT: String(forwardingPort),
+          VOLVERAN_FORWARDING_ADDRESS: new URL(forwardingUrl).host,
           ...env,
           ...own.env,
         },
       });
       const http = await proxied(app.baseUrl, proxies);
-      running = { app, proxies, baseUrl: http };
+      running = { app, proxies, baseUrl: http, forwardingUrl };
     };
 
     const stopped = (): never => {
@@ -144,6 +156,9 @@ export async function startTwoReplicas(options: TwoReplicasOptions = {}): Promis
       name,
       get baseUrl() {
         return (running ?? stopped()).baseUrl;
+      },
+      get forwardingUrl() {
+        return (running ?? stopped()).forwardingUrl;
       },
       get running() {
         return running !== null;
@@ -190,6 +205,7 @@ export async function startTwoReplicas(options: TwoReplicasOptions = {}): Promis
     other: (replica) => (replica === a ? b : a),
     browser: () => new ReplicaBrowser(random, publicOrigin),
     database,
+    forwardingSecret,
     async close() {
       await Promise.all([a, b].filter((replica) => replica.running).map((replica) => replica.shutdown()));
       await database.drop();

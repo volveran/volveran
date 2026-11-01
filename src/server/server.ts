@@ -1,8 +1,9 @@
 // HTTP JSON API and the built web app, served by one Fastify process.
 // startServer is the in-process entry point of both main.ts and the
 // integration test harness (test/integration/harness.ts).
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { Notifier } from './alerts/notifier.js';
@@ -24,6 +25,9 @@ import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
 import { readStartupConfig, type StartupConfig } from './startup-config.js';
+import { createForwarder, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
+import { LiveCheckouts } from './replicas/live-checkouts.js';
+import { DEFAULT_REPLICA_LEASE_TIMING, ReplicaLease, type ReplicaLeaseTiming } from './replicas/replica-lease.js';
 import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
@@ -73,6 +77,8 @@ export interface ServerOptions {
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
   samplerTestHooks?: SamplerTestHooks;
+  /** Test seam: how often a Replica renews its lease and how long that holds; unset in production. */
+  replicaLeaseTiming?: Partial<ReplicaLeaseTiming>;
   /** Test seam: told of each route as it is registered (the authorization matrix); unset in production. */
   onRouteRegistered?(route: { method: string; url: string }): void;
 }
@@ -130,7 +136,12 @@ async function serve(
     checkoutCounts: () => checkouts.counts(),
     storedBodyBytes: () => metricsReadings.current()?.storedBodyBytes ?? null,
   });
+  // Each start of the process is a new Replica: a Checkout does not survive a restart.
+  const replicaId = randomUUID();
+  // Called only once the app below is listening or starting up.
+  const liveCheckouts = config.forwarding ? new LiveCheckouts(auditStore.replicas, replicaId, (err) => app.log.error({ err }, 'A Live Checkout record could not be written; trying again')) : null;
   const checkouts = new CheckoutManager({
+    ...(liveCheckouts && { liveCheckouts }),
     audit: auditStore,
     limits,
     enforceApproval: config.mode.kind === 'team',
@@ -210,6 +221,8 @@ async function serve(
   });
   const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
   const app = await buildApp({
+    forwarder: config.forwarding && createForwarder(config.forwarding.secret),
+    liveCheckouts,
     profiles,
     access,
     checkouts,
@@ -304,6 +317,8 @@ async function serve(
   // then every held Message goes back to its queue (an Apply in progress
   // finishes first) before the audit store closes and the process exits.
   let metricsListener: MetricsListener | undefined;
+  let forwardingListener: ForwardingListener | undefined;
+  let replicaLease: ReplicaLease | undefined;
   app.addHook('onClose', async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
@@ -315,6 +330,11 @@ async function serve(
     await alerting.stop();
     await notifier.close();
     await checkouts.endAll();
+    // This Replica's Checkouts are over, so nothing is left to forward to it.
+    await forwardingListener?.close();
+    await replicaLease?.stop();
+    await liveCheckouts?.settled();
+    if (replicaLease) await auditStore.replicas.removeReplica(replicaId).catch((err: unknown) => app.log.error({ err }, 'This Replica could not remove its lease; it runs out by itself'));
     await auditStore.close();
   });
   try {
@@ -340,6 +360,33 @@ async function serve(
         families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
+    } catch (err) {
+      await app.close();
+      throw err;
+    }
+  }
+
+  // The internal port before the lease says where it is, and the lease before the web port takes a Checkout.
+  if (config.forwarding && liveCheckouts) {
+    const { forwarding } = config;
+    try {
+      await app.ready();
+      forwardingListener = await startForwardingListener({
+        host: options.host,
+        port: forwarding.port,
+        secret: forwarding.secret,
+        serve: (req, res) => app.routing(req, res),
+      });
+      const lease = new ReplicaLease({
+        store: auditStore.replicas,
+        replicaId,
+        forwardingAddress: forwarding.address,
+        timing: { ...DEFAULT_REPLICA_LEASE_TIMING, ...options.replicaLeaseTiming },
+        afterRenewal: () => liveCheckouts.writeAgain(),
+        onError: (err) => app.log.error({ err }, "This Replica's lease could not be renewed; trying again"),
+      });
+      await lease.start();
+      replicaLease = lease;
     } catch (err) {
       await app.close();
       throw err;
@@ -379,9 +426,12 @@ interface AppOptions {
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
   onRouteRegistered: ServerOptions['onRouteRegistered'];
+  /** With other Replicas: how requests reach them. */
+  forwarder: Forwarder | null;
+  liveCheckouts: LiveCheckouts | null;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   // Before any route, so none is missed.
@@ -414,8 +464,17 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const checkoutDeps = { checkouts, access: profileAccess };
-  registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
+  const toOwner =
+    forwarder && liveCheckouts
+      ? forwarder.toOwner(async (req: FastifyRequest<{ Params: { id: string } }>) => (checkouts.owns(req.params.id) ? null : liveCheckouts.ownerAddress(req.params.id)))
+      : {};
+  const checkoutDeps = { checkouts, access: profileAccess, toOwner };
+  registerSessionRoutes(app, {
+    mode: access.kind,
+    checkouts,
+    access: profileAccess,
+    ...(liveCheckouts && { activeElsewhere: (operatorId: string) => liveCheckouts.activeCheckoutOf(operatorId) }),
+  });
   const alertReadings = { alerts: audit.audit.alerts, notifications: audit.audit.notifications, destinations: alertDestinations };
   registerProfileRoutes(app, profileAccess, history, alertReadings);
   registerReplayRuleRoutes(app, replayRules, profileAccess);

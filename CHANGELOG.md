@@ -16,6 +16,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Added
 
+- With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout view and heartbeat work through any of them, on an internal port that requires the shared secret. Nothing changes without them, or on SQLite. (#108)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Security

@@ -69,12 +69,13 @@ await replicas.close();                            // in afterAll: stops what ru
 
 | | |
 |---|---|
-| `replicas.a`, `.b` | a `Replica`: `name`, `baseUrl`, `running`, `get` and `post` without a session (`/readyz`, `/metrics`), `crash`, `shutdown`, `restart` |
+| `replicas.a`, `.b` | a `Replica`: `name`, `baseUrl`, `forwardingUrl`, `running`, `get` and `post` without a session (`/readyz`, `/metrics`), `crash`, `shutdown`, `restart` |
 | `replicas.random()`, `.other(replica)` | a random running Replica, and the other one |
 | `replicas.browser()` | a new Operator's browser. A sign-in's steps can go to different Replicas: `to(a).startSignIn()`, `approveAtProvider`, then `to(b).get(callback)` |
 | `replicas.database` | the shared database (`query`), for what no route shows, such as a sealed row |
+| `replicas.forwardingSecret` | the secret both forward under, to knock on a `forwardingUrl` by hand |
 
-Options are those of `startApp` that make sense for both (`profiles`, `env`, `checkoutTiming`, ...); `perReplica: (name) => ({ checkoutTestHooks, samplerTestHooks, wrapAuditStore, logs, env })` gives each its own, and is called again on a restart. `crash` needs no seam in the app, because each Replica's HTTP port, broker ports (the `amqpUrl` and `managementUrl` of its profiles) and PostgreSQL go through TCP proxies of its own: it closes them all at once, so connections drop with nothing settled and nothing more written, and then tells what is left in-process to close, without waiting for it. A port a Replica adds, such as a forwarding port, must go through the same proxies for `crash` to cover it. A `baseUrl` changes on `restart`, so read it again.
+Options are those of `startApp` that make sense for both (`profiles`, `env`, `checkoutTiming`, `replicaLeaseTiming`, ...); `perReplica: (name) => ({ checkoutTestHooks, samplerTestHooks, wrapAuditStore, logs, env })` gives each its own, and is called again on a restart. `crash` needs no seam in the app, because each Replica's HTTP port, broker ports (the `amqpUrl` and `managementUrl` of its profiles) and PostgreSQL go through TCP proxies of its own: it closes them all at once, so connections drop with nothing settled and nothing more written, and then tells what is left in-process to close, without waiting for it. Its forwarding port goes through one too, and a port a Replica adds later must as well, for `crash` to cover it. A `baseUrl` changes on `restart`, so read it again.
 
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 

@@ -5,8 +5,10 @@
 // of its Message is on disk once `record` resolves (ADR 0001), so await it before
 // the ack. Limits and orderings stated here hold on every implementation.
 import type { AlertMemory } from '../alerts/evaluation.js';
+import type { ApprovalSummary } from '../checkout/view.js';
 import type { Operator } from '../operator.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
+import type { CheckoutStatus } from '../../shared/checkout.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { RulePass, RuleState } from '../../shared/replay-rules.js';
@@ -216,6 +218,8 @@ export interface AuditStore {
   readonly alerts: AlertStore;
   /** Who is signed in, and who is signing in (Team Mode). */
   readonly sessions: SessionStore;
+  /** Which Replicas are alive and which Checkouts they own. */
+  readonly replicas: ReplicaStore;
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; answers its id. */
   record(entry: NewAuditEntry): Promise<number>;
@@ -338,6 +342,61 @@ export interface SessionStore {
   addSignIn(id: string, signIn: StoredSignIn, now: number): Promise<void>;
   /** The sealed sign-in, removing it, so that of any callers only one gets it; else null. */
   takeSignIn(id: string, now: number): Promise<string | null>;
+}
+
+/** A Replica's lease, as stored. */
+export interface ReplicaLeaseRow {
+  replicaId: string;
+  /** `host:port` of its internal port. */
+  forwardingAddress: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/** What a Live Checkout record says that changes as the Checkout goes on. */
+export interface LiveCheckoutUpdate {
+  status: Exclude<CheckoutStatus, 'awaiting_approval'>;
+  /** The Approval the Checkout waits for, as the approvers' list shows it; null when it waits for none. */
+  approval: ApprovalSummary | null;
+}
+
+/** A Live Checkout record: where a Checkout is, and enough to list it. */
+export interface NewLiveCheckout extends LiveCheckoutUpdate {
+  id: string;
+  /** The Owner Replica. */
+  ownerReplica: string;
+  operator: Pick<Operator, 'id' | 'displayName'>;
+  profile: string;
+  vhost: string;
+  queue: string;
+}
+
+/** Where a request about a Checkout goes. */
+export interface LiveCheckoutRoute {
+  ownerReplica: string;
+  /** Null when the owner has no lease left at all. */
+  forwardingAddress: string | null;
+  ownerLeaseLive: boolean;
+}
+
+/**
+ * Replicas' leases and Live Checkout records. `now` is epoch milliseconds: a lease expiring
+ * at or before it is over. A record stays when its owner's lease ends, until it is removed.
+ */
+export interface ReplicaStore {
+  /** Takes or extends the Replica's lease. */
+  renewLease(lease: ReplicaLeaseRow): Promise<void>;
+  /** The Replica has gone for good: removes its lease and every record it owns, as one unit of work. */
+  removeReplica(replicaId: string): Promise<void>;
+
+  addCheckout(checkout: NewLiveCheckout): Promise<void>;
+  /** Does nothing if the record has gone. */
+  updateCheckout(id: string, update: LiveCheckoutUpdate): Promise<void>;
+  removeCheckout(id: string): Promise<void>;
+  /** The record's route, or null when there is no record. */
+  checkoutRoute(id: string, now: number): Promise<LiveCheckoutRoute | null>;
+  /** The id of the Operator's `active` Checkout whose owner's lease is live, or null. */
+  activeCheckoutOf(operatorId: string, now: number): Promise<string | null>;
 }
 
 /** Alerts and what arrival conditions remember of each queue, so a restart neither forgets nor re-sends a firing one. */

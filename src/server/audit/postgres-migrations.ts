@@ -178,6 +178,25 @@ export const MIGRATIONS: readonly string[] = [
      expires_at BIGINT NOT NULL
    );
    CREATE INDEX sign_ins_expires_at ON sign_ins (expires_at);`,
+  // v3: Replicas' leases and Live Checkout records. PostgreSQL only: on SQLite there is one Replica.
+  `CREATE TABLE replicas (
+     id TEXT PRIMARY KEY,
+     forwarding_address TEXT NOT NULL,
+     lease_expires_at BIGINT NOT NULL
+   );
+   CREATE TABLE live_checkouts (
+     id TEXT PRIMARY KEY,
+     owner_replica TEXT NOT NULL,
+     operator_id TEXT NOT NULL,
+     operator_name TEXT NOT NULL,
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     status TEXT NOT NULL,
+     approval TEXT
+   );
+   CREATE INDEX live_checkouts_owner_replica ON live_checkouts (owner_replica);
+   CREATE INDEX live_checkouts_operator_id ON live_checkouts (operator_id);`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */
