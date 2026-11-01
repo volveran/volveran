@@ -111,9 +111,9 @@ export interface ProfilesFile {
 export const NO_VERSION_WARNING = `The profiles file has no version; it is read as version 1. Add "version: 1" at its top`;
 
 /** Every key of the file's top level; any other is refused. */
-const TOP_LEVEL_KEYS = ['version', 'profiles', 'alertDestinations'];
+export const TOP_LEVEL_KEYS = ['version', 'profiles', 'alertDestinations'];
 /** Every key of a Broker Profile; any other is refused. */
-const PROFILE_KEYS = [
+export const PROFILE_KEYS = [
   'name',
   'managementUrl',
   'amqpUrl',

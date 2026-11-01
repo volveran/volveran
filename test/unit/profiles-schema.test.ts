@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import { parse, stringify } from 'yaml';
-import { parseProfilesFile } from '../../src/server/profiles.js';
+import { parseProfilesFile, PROFILE_KEYS, TOP_LEVEL_KEYS } from '../../src/server/profiles.js';
 import { upgradeFixtures } from '../support/upgrade-fixtures.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -101,6 +101,13 @@ describe('unknown keys at every level', () => {
     // Refusals name a list item by position and by name: profiles[0] ("shared").
     expect(refusal?.replace(/ \("[^"]*"\)/g, '')).toContain(at === '' ? 'file: notAKey' : `${at}.notAKey`);
     expect(schemaAccepts(withKey)).toBe(false);
+  });
+
+  it('every-key.yaml uses every key the parser takes at the top and on a Broker Profile, so one added to the parser alone fails', () => {
+    const doc = parse(text) as { profiles: Array<Record<string, unknown>> } & Record<string, unknown>;
+    expect(TOP_LEVEL_KEYS.filter((key) => !(key in doc))).toEqual([]);
+    const used = new Set(doc.profiles.flatMap((profile) => Object.keys(profile)));
+    expect(PROFILE_KEYS.filter((key) => !used.has(key))).toEqual([]);
   });
 
   it('every-key.yaml uses every key the schema names, so all of them are tried', () => {
