@@ -413,8 +413,9 @@ function signInFailed(reason: string): HttpError<'sign_in_failed'> {
  * Only a path of this app, as a browser reads it: it strips tabs and newlines and takes `\` as `/`.
  * So the value is resolved the same way, and the path it resolves to is what the redirect uses.
  */
-function safeReturnTo(value: string | undefined): string {
-  if (!value?.startsWith('/')) return '/';
+function safeReturnTo(value: unknown): string {
+  // Given twice, the query parser hands over a list.
+  if (typeof value !== 'string' || !value.startsWith('/')) return '/';
   const base = 'http://return-to.invalid';
   let url: URL;
   try {

@@ -87,6 +87,12 @@ describe('Team Mode', () => {
     expect(res.location).toBe('/queues?x=1');
   });
 
+  it('starts a sign-in when returnTo is given twice, returning to the start', async () => {
+    const browser = new TestBrowser(baseUrl);
+    const started = await browser.get('/auth/login?returnTo=/one&returnTo=/two');
+    expect(started.status).toBe(302);
+  });
+
   it('never returns to another site after sign-in', async () => {
     for (const returnTo of [
       'https://evil.example.com/',
