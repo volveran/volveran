@@ -78,6 +78,13 @@ Two things are worse than the note on #126 says. A Replica that does not own a C
 
 And these are what the design leaves open, rated in N3 and N4: with the secret, a forged identity read Audit Entries (a route that is never forwarded), then started a Checkout, and Discarded its Messages, with the Audit Entries naming the forged Operator.
 
+## After the fix: security headers and hostile content (#124)
+
+Unlike the rest of this document, this was tested after the fix. The web port now sends `Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` on every answer, including those Fastify writes without running a hook, and `Strict-Transport-Security` when `VOLVERAN_PUBLIC_URL` is https or `X-Forwarded-Proto` says https. `Cache-Control: no-store` is the default, which the web app's static files replace with their own. The metrics port sends the same, without HSTS. The forwarding port does not, as no browser reaches it. A malformed request that never becomes an HTTP request (Node's `clientError` answer) carries none of them. `img-src` allows `data:` for the wordmark's CSS mask.
+
+- **In the suite, with no browser:** `test/integration/security-headers.test.ts` checks the headers, including through another Replica, and reads the built page, styles and script for what the policy would refuse. `test/integration/hostile-content.test.ts` feeds markup through body, headers, routing key, message id and queue name; it checks the answers can only be read as data, renders the real queue table, Message list and Message view with those answers through React's server renderer, and checks the web source has no way to write a string as markup. Other views are covered by that source check alone.
+- **Once by hand, in real headless Firefox, not repeated by CI:** BROWSER_RESULT
+
 ## New findings
 
 No finding other than N1 is rated high or critical.

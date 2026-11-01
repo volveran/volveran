@@ -4,6 +4,7 @@
 // port can never reach it. A scrape only reads what `families` gives from
 // this process: it never contacts a broker or waits on the audit store.
 import http from 'node:http';
+import { setSecurityHeaders } from '../security-headers.js';
 import { renderMetrics, type MetricFamily } from './exposition.js';
 
 export interface MetricsListenerOptions {
@@ -25,6 +26,8 @@ const CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
 export async function startMetricsListener(options: MetricsListenerOptions): Promise<MetricsListener> {
   const server = http.createServer((req, res) => {
+    // Labels carry queue names, which anyone who can declare a queue chooses.
+    setSecurityHeaders(res);
     const path = (req.url ?? '').split('?')[0];
     if (path !== '/metrics' || (req.method !== 'GET' && req.method !== 'HEAD')) {
       res.writeHead(404).end();

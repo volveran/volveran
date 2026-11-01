@@ -26,6 +26,7 @@ All notable changes to Volverán are recorded here. The format is based on
 ### Security
 
 - A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
+- Every answer now carries a strict `Content-Security-Policy` that also refuses framing, with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`, and `Strict-Transport-Security` when Volverán is reached over https (`VOLVERAN_PUBLIC_URL` or `X-Forwarded-Proto`). A hostile Message body or header cannot run script in an Operator's browser. Answers other than the web app's files are `Cache-Control: no-store`, so Message bodies stay out of the browser's cache. (#124)
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
 - CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high finding in its dependencies or image.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.

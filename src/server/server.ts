@@ -50,6 +50,7 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
+import { sendSecurityHeaders } from './security-headers.js';
 import { attachOperator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
 
@@ -241,6 +242,7 @@ async function serve(
     webRoot: options.webRoot,
     logger: options.logger ?? false,
     onRouteRegistered: options.onRouteRegistered,
+    publicUrl: config.publicUrl,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -429,10 +431,13 @@ interface AppOptions {
   /** With other Replicas: how requests reach them. */
   forwarder: Forwarder | null;
   liveCheckouts: LiveCheckouts | null;
+  /** Where Volverán is reached from outside, if known. */
+  publicUrl: string | null;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, publicUrl }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
+  sendSecurityHeaders(app.server, publicUrl);
 
   // Before any route, so none is missed.
   if (onRouteRegistered) {
