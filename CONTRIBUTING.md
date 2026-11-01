@@ -5,12 +5,14 @@ Requirements: Node.js 24 and Docker with Compose v2.
 ```sh
 npm ci
 npm run dev            # server and web app with reload (Vite on :5173; it proxies /api and /auth)
-npm run lint           # typecheck server, web app and tests
+npm run lint           # typecheck server, web app and tests, then ESLint (tools/lint) for what tsc cannot see: floating promises
+npm run verify         # lint, unit and chart tests with capped workers: one summary line per step, the full output in verify.log
 npm test               # unit tests (no broker)
 npm run test:broker    # starts the test broker, runs test/broker-facts/, stops the broker
 npm run test:integration  # same for test/integration/
 npm run test:chart     # renders charts/volveran with helm template and checks the manifests (needs Helm)
 scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/ with kubeconform (needs Helm, kubectl and kubeconform)
+npm run test:chart:release  # renders the chart from the last release tag and the working tree and fails on a difference not listed in test/chart/release-diff-allow.yaml (needs Helm)
 npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator (needs kind, kubectl, Helm)
 npm run build          # dist/server and dist/web
 docker build -t volveran .   # the image, as the release workflow builds it

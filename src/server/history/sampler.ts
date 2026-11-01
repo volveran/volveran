@@ -173,6 +173,7 @@ export class QueueSampler {
   private schedule(): void {
     this.timer = this.clock.setTimer(() => {
       if (this.stopped) return;
+      // begin never rejects, and each profile is sampled at its own pace.
       for (const profile of this.sampled) if (!this.running.has(profile.name)) void this.begin(profile);
       this.schedule();
     }, this.options.intervalMs);

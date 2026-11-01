@@ -135,6 +135,7 @@ export class OperatorToken {
     const { refresh, until } = this.options;
     if (this.stopped || !refresh || this.refreshToken === undefined || this._expiresAt === undefined) return;
     if (when >= this._expiresAt || (until !== undefined && when >= until)) return;
+    // refresh reports its failures through onFailure, and nothing waits for it.
     this.timer = setTimeout(() => void this.refresh(refresh), Math.max(0, when - now));
     this.timer.unref();
   }

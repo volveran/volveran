@@ -96,7 +96,7 @@ export function canaryHooks(checkout: Checkout, options: CanaryOptions): CanaryH
     options.stopSignal.addEventListener('abort', () => resolve(), { once: true });
   });
   const goOn = Promise.race([continued, stopped]);
-  // Registered first, so it is set before anything else awaiting goOn runs.
+  // Registered first, so it is set before anything else awaiting goOn runs. goOn never rejects.
   let over = false;
   void goOn.then(() => (over = true));
 

@@ -124,6 +124,7 @@ export function signIn(): void {
 }
 
 /** Team Mode: end the session, then show the sign-in again. */
+// Never rejects, so handlers fire and forget it.
 export async function signOut(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
   signIn();

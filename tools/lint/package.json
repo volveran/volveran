@@ -1,0 +1,11 @@
+{
+  "name": "volveran-lint",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ESLint for `npm run lint`, installed apart from the root because typescript-eslint needs the TypeScript compiler API, which the root's TypeScript 7 does not have. It parses with TypeScript 6 here; the root's tsc still does the type checking.",
+  "devDependencies": {
+    "eslint": "^10.14.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}

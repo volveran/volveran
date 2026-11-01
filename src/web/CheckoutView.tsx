@@ -181,6 +181,7 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   };
 
   /** Assigns the Decision to the Messages: the Selection unless the keyboard named the focused Message. */
+  // Reports its own errors, so handlers fire and forget it.
   const decide = async (decision: Decision, handles: number[] = [...selection]) => {
     if (handles.length === 0) return;
     setBusy(true);

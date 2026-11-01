@@ -236,6 +236,7 @@ export function App() {
     };
   }, [profileName, vhost, debouncedSearch, onlyDeadLetterQueues, refreshTick, queueListShown]);
 
+  // Reports its own errors, so handlers fire and forget it.
   const startCheckout = async (queue: string, overrideConsumers = false) => {
     if (!profileName || !vhost) return;
     setError(undefined);

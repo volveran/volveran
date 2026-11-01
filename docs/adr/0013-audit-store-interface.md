@@ -24,7 +24,7 @@ What the interface promises is checked by one contract suite, `auditStoreContrac
 
 ## Consequences
 
-- A missing `await` on a call that answers nothing compiles (`npm run lint` is the type check, with no floating-promise rule), and on SQLite the write has already happened, so the tests pass. Only a delayed store or PostgreSQL shows it. Tests of ADR 0001's order and of the races therefore run against a delayed store.
+- A missing `await` on a call that answers nothing still compiles, and on SQLite the write has already happened, so the tests pass. `npm run lint` catches it with `no-floating-promises` unless the promise is passed on or `void`ed; beyond that, only a delayed store or PostgreSQL shows it. Tests of ADR 0001's order and of the races therefore run against a delayed store.
 - Each caller now has store failures arriving as rejections in code that used to throw at the call; a floating call would become an unhandled rejection, which stops the process.
 - An atomic operation a later feature needs (a claim on a body, a lease) is a new method here, with a test in the contract suite on both stores.
 - PostgreSQL's implementation must carry out a multi-statement method on one pooled connection, in one transaction.

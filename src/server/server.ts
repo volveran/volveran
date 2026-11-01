@@ -142,6 +142,7 @@ async function serve(
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
     onApplyEnded: (checkout, outcomes) => {
       triageMetrics.applyEnded(checkout.profile.name, outcomes);
+      // Never rejects, and an Apply's end should not wait for a reading.
       void metricsReadings.refresh();
     },
   });
@@ -223,7 +224,7 @@ async function serve(
       app.log.info({ profiles: mapped }, 'Solo Mode ignores the roles of Broker Profiles: the Operator is admin on every profile');
     }
   } else {
-    // Approval (v0.3): the one change for v0.2 users of Protected Profiles in Team Mode.
+    // Approval (v0.3): the one change for Operators of v0.2 Protected Profiles in Team Mode.
     for (const p of profiles.filter((p) => p.protected)) {
       if (p.requireApproval) {
         app.log.info(
@@ -277,7 +278,7 @@ async function serve(
       app.log.error(err, 'Retention could not remove old Samples');
     }
   };
-  // Never rejects. A run still going when the next is due is left to finish.
+  // Never rejects, so the timer can leave it running. A run still going when the next is due is left to finish.
   let retentionRun: Promise<void> | null = null;
   const runRetention = () => {
     retentionRun ??= (async () => {

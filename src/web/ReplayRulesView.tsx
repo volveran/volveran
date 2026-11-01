@@ -85,6 +85,7 @@ function RuleCard({
   const [pausing, setPausing] = useState(false);
   const [reason, setReason] = useState('');
 
+  // Reports its own errors, so handlers fire and forget it.
   const act = async (action: 'run' | 'pause' | 'resume') => {
     setBusy(action);
     setError(undefined);

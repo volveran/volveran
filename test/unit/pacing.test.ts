@@ -6,6 +6,7 @@ import { pacedDurationMs, pacer } from '../../src/server/apply/pacing.js';
 /** Whether `promise` has settled once pending timers up to `ms` from now have run. */
 async function settledAfter(promise: Promise<void>, ms: number): Promise<boolean> {
   let settled = false;
+  // Only notes the settling; a pacer's wait never rejects.
   void promise.then(() => (settled = true));
   await vi.advanceTimersByTimeAsync(ms);
   return settled;
