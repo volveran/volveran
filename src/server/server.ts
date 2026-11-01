@@ -3,6 +3,7 @@
 // integration test harness (test/integration/harness.ts).
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
@@ -107,6 +108,9 @@ const METRICS_READING_INTERVAL_MS = 15_000;
 
 /** How long requests in progress get to finish once shutdown has ended every Checkout. */
 const IN_FLIGHT_REQUESTS_MS = 5_000;
+
+/** How long the leader lease waits for a Rule Pass in progress at shutdown. */
+const LAST_RULE_PASS_MS = 5_000;
 
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
@@ -241,6 +245,7 @@ async function serve(
     lastSuccessAt: (profile) => sampler.latest().profiles.find((p) => p.profile === profile)?.lastSuccessAt ?? null,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
+    onLeaseLost: () => app.log.info('Alerting wrote nothing: this Replica is no longer the Background Leader'),
   });
   sampler.onRun(async (finished) => {
     await alerting.evaluate(finished);
@@ -312,6 +317,7 @@ async function serve(
     clock: leaderClock,
     timing: options.leaderTestHooks?.timing,
     jobs: [
+      alerting,
       retentionJob({
         store: auditStore,
         retention,
@@ -346,11 +352,15 @@ async function serve(
   const stopBackgroundWork = async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
+    // Before the leader, whose jobs include Alerting, and the notifier: a last pass can pause its
+    // rule, which sends a notification. But a pass returning many Messages does not hold the lease
+    // up: past this wait a pause it makes alerts on the next leader's next Sample instead.
+    const passes = replayRules.stop();
+    await Promise.race([passes, sleep(LAST_RULE_PASS_MS, undefined, { ref: false })]);
     await leader.stop();
-    // A Rule Pass is an ordinary Checkout, which endAll has told to stop. Before the notifier: a last pass can pause its rule, which sends a notification.
-    await replayRules.stop();
-    await alerting.stop();
+    await passes;
     await notifier.close();
+    await alerting.drained();
   };
   let stopped: Promise<void> | undefined;
   const stopWork = () =>
@@ -368,8 +378,7 @@ async function serve(
     await auditStore.close();
   });
   try {
-    await alerting.start();
-    // The leader's jobs, the sampler among them, before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
+    // The leader's jobs, Alerting and the sampler among them, before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
     await leader.start();
     // Replay Rules: give each its state and schedule the running ones.
     await replayRules.start();

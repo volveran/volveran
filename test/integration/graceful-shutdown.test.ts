@@ -7,7 +7,7 @@ import { parse } from 'yaml';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
 import type { LeaderControl } from '../../src/server/leader/background-leader.js';
 import { startTcpProxy } from '../support/tcp-proxy.js';
-import { drain, eventually, purgeQueues, readyCount, seedMessages, startApp, testBroker, testProfile, withChannel } from './harness.js';
+import { deadLetter, deadLetterRoutes, drain, eventually, purgeQueues, readyCount, ruleSchedulerHooks, seedMessages, startApp, testBroker, testProfile, withChannel } from './harness.js';
 import { startTwoReplicas, type ReplicaBrowser, type ReplicaName, type TwoReplicas, type TwoReplicasOptions } from './two-replicas.js';
 
 const CLASSIC = 'orders.dlq';
@@ -267,6 +267,45 @@ describe('a Replica shutting down', () => {
     step.open();
     await stopping;
   });
+
+  it('moves the leader lease within seconds even while a Rule Pass is still in progress', async () => {
+    const route = deadLetterRoutes.quorum;
+    const name = 'last-pass';
+    const rule = { name, vhost: '/', queue: route.dlq, every: '5m', backoff: { initial: '10m', multiplier: 2, max: '1h' }, maxAttempts: 2, stopWhen: { diedAgain: 50, within: '15m' } };
+    const controls: Partial<Record<ReplicaName, LeaderControl>> = {};
+    const step = gate();
+    const reached = gate();
+    toOpen.push(step.open);
+    const scheduler = ruleSchedulerHooks(new Date(Date.now() + 11 * 60_000));
+    replicas = await startTwoReplicas({
+      profiles: [testProfile({ name: 'dev', roles: { operator: ['ops'] }, replayRules: [rule] })],
+      perReplica: (replica) => ({
+        leaderTestHooks: { timing: { leaseMs: 600_000, renewMs: 100 }, leader: (control) => (controls[replica] = control) },
+        checkoutTestHooks:
+          replica === 'a'
+            ? {
+                ...scheduler.hooks,
+                beforeApplyStep: async () => {
+                  reached.open();
+                  await step.wait;
+                },
+              }
+            : ruleSchedulerHooks().hooks,
+      }),
+    });
+    await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== route.dlq));
+    const pass = scheduler.runPass('dev', name);
+    await reached.wait;
+
+    const stopping = replicas.a.shutdown();
+
+    await eventually(async () => expect(controls.b!.isLeader).toBe(true), 10_000);
+    step.open();
+    await stopping;
+    expect((await pass)?.status).toBe('ran');
+    await purgeQueues('/', [route.workQueue]);
+  }, 30_000);
 
   it('does not wait long for a client still reading once its Checkouts are over', async () => {
     const line = gate();

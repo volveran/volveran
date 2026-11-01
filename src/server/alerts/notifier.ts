@@ -22,7 +22,8 @@ export interface DeliveryTiming {
 
 const DEFAULT_TIMING: DeliveryTiming = { timeoutMs: 5_000, firstBackoffMs: 1_000 };
 const MAX_ATTEMPTS = 3;
-const SERVER_STOPPING = 'server_stopping';
+/** The error of a delivery the server's stop cut short. */
+export const SERVER_STOPPING = 'server_stopping';
 
 export interface NotifierOptions {
   destinations: AlertDestination[];
