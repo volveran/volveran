@@ -63,7 +63,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: ApprovalRoute
       const { role } = checkoutAccess(deps, req, 'checkout');
       checkApplyConfirmation(checkouts.get(req.params.id), req.body);
       const checkout = checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary);
-      await checkouts.recorded(req.params.id);
+      await checkouts.liveRecordWritten(req.params.id);
       return { checkout };
     },
   );
@@ -71,7 +71,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: ApprovalRoute
   app.delete<{ Params: { id: string } }>('/api/checkouts/:id/approval-request', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     const checkout = checkouts.withdrawApproval(req.params.id);
-    await checkouts.recorded(req.params.id);
+    await checkouts.liveRecordWritten(req.params.id);
     return { checkout };
   });
 
@@ -119,7 +119,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: ApprovalRoute
       requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
       // Nothing awaits between these checks and approve() taking the request.
       const started = checkouts.approve(checkout.id, operatorOf(req));
-      await checkouts.recorded(checkout.id);
+      await checkouts.liveRecordWritten(checkout.id);
       return reply.code(202).send({ checkout: started });
     },
   );
@@ -146,7 +146,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: ApprovalRoute
         throw new InvalidRequestError('A rejection needs a "reason": the requester sees it, so they know what to change.');
       }
       const rejected = checkouts.reject(checkout.id, operatorOf(req), reason);
-      await checkouts.recorded(checkout.id);
+      await checkouts.liveRecordWritten(checkout.id);
       return { checkout: rejected };
     },
   );

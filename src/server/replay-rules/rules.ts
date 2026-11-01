@@ -119,7 +119,7 @@ export class ReplayRules implements LeaderJob {
   }
 
   /** Gives every declared rule its state and schedules the running ones. */
-  async start(fence?: LeaseFence): Promise<void> {
+  async start(fence: LeaseFence): Promise<void> {
     this.stopped = false;
     this.fence = fence;
     this.armStateCheck();
