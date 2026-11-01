@@ -129,7 +129,7 @@ A condition on dead-letter queues or on Volverán itself, declared under a Broke
 _Avoid_: Alarm, trigger, monitor
 
 **Alert**:
-One Alert Rule firing for one queue (or one paused Replay Rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay Rule resumes or sampling succeeds. A firing Alert survives a restart without being sent again; removing its rule from the file drops it quietly.
+One Alert Rule firing for one queue (or one paused Replay Rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay Rule resumes or sampling succeeds. A firing Alert survives a restart or a change of Background Leader without being sent again as new; removing its rule from the file drops it quietly.
 _Avoid_: Incident, event, page
 
 ## Running
@@ -147,7 +147,7 @@ One running Volverán server among those sharing an audit store on PostgreSQL. U
 _Avoid_: Pod, node
 
 **Background Leader**:
-The one Replica currently running what must run once however many Replicas there are, such as retention and the sampler. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
+The one Replica currently running what must run once however many Replicas there are, such as retention, the sampler and Alerts. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
 _Avoid_: Master, primary, active Replica
 
 **Audit Entry**:

@@ -178,7 +178,8 @@ profiles:
 
 - A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is, and a run with no depth for a queue holds that queue's Alerts.
 - **Arrival conditions count only what the depth has borne out**: a take-out counts once the next Sample shows it did not explain a drop in depth. So false spikes do not fire them, and arrivals hidden by triage alert one Sample late. The history and the metrics are not corrected in this way, and can show a spike with no Alert.
-- A firing Alert survives a restart without being sent again. A crash between storing an Alert and sending it loses that notification rather than sending it twice.
+- A firing Alert survives a restart without being sent again. On SQLite, a crash between storing an Alert and sending it loses that notification rather than sending it twice.
+- **On PostgreSQL, a notification in flight when the Background Leader goes may be sent twice.** Only the leader evaluates and sends, so there is one notification per Alert however many Replicas run, and a firing Alert stays firing across a change of leader without being sent again as new. But a notification is forgotten only when its delivery has ended, and the next leader sends whatever is left. A crash, or a shutdown that cuts a delivery short, can therefore send one again, with the same `alertId`: make a receiver tolerate that. A delivery that ran out of attempts has ended, and is not sent again.
 - Removing an Alert Rule from the file drops its Alerts at the next restart, with no resolved notification.
 - A Replay Rule already paused, or a queue already warned, fires at the next evaluation, also when the Alert Rule has just been deployed. A Replay Rule deployed with `startPaused` never fires. Removing a paused Replay Rule from the file sends a resolved notification.
 

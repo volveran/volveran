@@ -227,6 +227,13 @@ export const MIGRATIONS: readonly string[] = [
   // v7: the session idle timeout. A session from before it, or one a Replica still on v6 adds
   // during a rolling update, has no idle expiry until its next request gives it one.
   `ALTER TABLE sessions ADD COLUMN idle_expires_at BIGINT NOT NULL DEFAULT 9007199254740991;`,
+  // v8: Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
+  `CREATE TABLE alert_unsent_notifications (
+     id BIGSERIAL PRIMARY KEY,
+     profile TEXT NOT NULL,
+     destination TEXT NOT NULL,
+     notification TEXT NOT NULL
+   );`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */
