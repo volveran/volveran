@@ -106,6 +106,11 @@ export class PostgresAuditStore implements AuditStore {
     await this.pool.query('UPDATE audit_entries SET outcome = $1, outcome_reason = $2 WHERE id = $3', [outcome, reason, id]);
   }
 
+  async settleInterrupted(checkoutId: string, reason: string): Promise<number> {
+    const { rowCount } = await this.pool.query("UPDATE audit_entries SET outcome = 'uncertain', outcome_reason = $1 WHERE checkout_id = $2 AND outcome = 'pending'", [reason, checkoutId]);
+    return rowCount ?? 0;
+  }
+
   async setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): Promise<void> {
     await this.pool.query('UPDATE audit_entries SET canary_outcome = $1 WHERE id = $2', [outcome, id]);
   }

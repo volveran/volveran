@@ -388,6 +388,37 @@ describe('an export through the Replica that does not own the Checkout', () => {
   });
 });
 
+describe('a Checkout whose Owner Replica has died', () => {
+  it('answers every route on the other Replica as a Lost Checkout, not as one that never existed', async () => {
+    await resetQueues();
+    const replicas = await startTwoReplicas({ profiles: [profile()], replicaLeaseTiming: { renewEveryMs: 100, holdsForMs: 400 } });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', QUEUE, 1);
+      const started = await browser.to(replicas.a).post(startPath, {});
+      expect(started.status).toBe(201);
+      const { id, messages } = started.body.checkout;
+      await replicas.a.crash();
+      const other = browser.to(replicas.b);
+      await eventually(async () => expect((await other.post(`/api/checkouts/${id}/matching`, { filter: [] })).status).toBe(200));
+
+      expect((await other.post(`/api/checkouts/${id}/decisions`, { handles: messages.map((m: { handle: number }) => m.handle), decision: DISCARD })).body.rejected).toHaveLength(1);
+      for (const rest of ['/apply', '/export']) {
+        const refused = await other.post(`/api/checkouts/${id}${rest}`, { confirm: true });
+        expect(refused.status).toBe(409);
+        expect(refused.body.error.code).toBe('checkout_not_active');
+      }
+      const ended = await other.post(`/api/checkouts/${id}/end`);
+      expect(ended.status).toBe(200);
+      expect(ended.body.checkout.status).toBe('lost');
+    } finally {
+      await replicas.close();
+      await purgeQueues('/', [QUEUE]);
+    }
+  });
+});
+
 describe('a large export through the Replica that does not own the Checkout', () => {
   const COUNT = 90;
   const SIZE = 1024 * 1024;

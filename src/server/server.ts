@@ -14,7 +14,7 @@ import type { AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
-import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
+import { CheckoutManager, DEFAULT_ENDED_RETENTION_MS, type CheckoutTestHooks } from './checkout/manager.js';
 import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
 import { QueueMetrics } from './metrics/queues.js';
@@ -28,7 +28,9 @@ import { retentionJob } from './leader/retention-job.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
 import { readStartupConfig, type StartupConfig } from './startup-config.js';
 import { createForwarder, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
+import { goneReplicasJob } from './replicas/gone-replicas-job.js';
 import { LiveCheckouts } from './replicas/live-checkouts.js';
+import { ownLeaseRanOutReason } from './replicas/owner-gone.js';
 import { DEFAULT_REPLICA_LEASE_TIMING, ReplicaLease, type ReplicaLeaseTiming } from './replicas/replica-lease.js';
 import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
@@ -142,6 +144,7 @@ async function serve(
   });
   // Each start of the process is a new Replica: a Checkout does not survive a restart.
   const replicaId = randomUUID();
+  const replicaLeaseTiming = { ...DEFAULT_REPLICA_LEASE_TIMING, ...options.replicaLeaseTiming };
   // Called only once the app below is listening or starting up.
   const liveCheckouts = config.forwarding ? new LiveCheckouts(auditStore.replicas, replicaId, (err) => app.log.error({ err }, 'A Live Checkout record could not be written; trying again')) : null;
   const checkouts = new CheckoutManager({
@@ -294,6 +297,16 @@ async function serve(
         log: app.log,
         afterRun: () => metricsReadings.refresh(),
       }),
+      ...(config.forwarding
+        ? [
+            goneReplicasJob({
+              store: auditStore,
+              everyMs: replicaLeaseTiming.renewEveryMs,
+              keepMs: options.endedCheckoutRetentionMs ?? DEFAULT_ENDED_RETENTION_MS,
+              log: app.log,
+            }),
+          ]
+        : []),
     ],
     onError: (err, job) => app.log.error({ err, job }, job ? `The Background Leader's job "${job}" failed` : 'The leader lease could not be claimed or given up'),
     onChange: (isLeader) => app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader'),
@@ -368,8 +381,9 @@ async function serve(
         store: auditStore.replicas,
         replicaId,
         forwardingAddress: forwarding.address,
-        timing: { ...DEFAULT_REPLICA_LEASE_TIMING, ...options.replicaLeaseTiming },
+        timing: replicaLeaseTiming,
         afterRenewal: () => liveCheckouts.writeAgain(),
+        onRanOut: () => checkouts.loseAll(ownLeaseRanOutReason),
         onError: (err) => app.log.error({ err }, "This Replica's lease could not be renewed; trying again"),
       });
       await lease.start();
@@ -453,7 +467,16 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => (checkouts.owns(req.params.id) || !liveCheckouts ? null : liveCheckouts.ownerAddress(req.params.id));
+  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => {
+    if (!liveCheckouts || checkouts.owns(req.params.id)) return null;
+    const owner = await liveCheckouts.ownerOf(req.params.id);
+    if (!owner) return null;
+    if ('address' in owner) return owner.address;
+    // Answered here from now on. A profile no longer configured leaves it unknown here.
+    const profile = profiles.find((p) => p.name === owner.gone.profile);
+    if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
+    return null;
+  };
   const checkoutDeps = {
     checkouts,
     access: profileAccess,
