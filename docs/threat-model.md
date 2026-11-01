@@ -49,8 +49,8 @@ Tested on 2026-11-01 at commit `953fdc6` (`integration/v1.0`), before the fixes 
 | No security headers | **Confirmed, fixed by #124** | Medium | #124 | Since the fix, the headers are sent as [tested after the fix](#after-the-fix-security-headers-and-hostile-content-124). Before it: `/`, a static file, `/api/session`, `/auth/login`, `/healthz`: no `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options` or `Referrer-Policy`. No HSTS with `X-Forwarded-Proto: https` either |
 | OIDC `code` and `state` reach logs | **Confirmed, fixed by #125** | Medium | #125 | **Since the fix:** a request's log line has no query, however the path is spelt. `logs-errors-idle.test.ts` captures the log through a real sign-in and a refused one, on both stores: no code, state, JWT, session cookie, client or session secret, encryption key or PostgreSQL URL. **As found:** after a real sign-in, the exact `code` and `state` are in the log: `"url":"/auth/callback?code=...&state=..."` in Fastify's `incoming request` line. By then the code has been used, and a stolen one is also bound to PKCE, which limits the harm; a code from a failed or interrupted sign-in may still be live until it expires. **Not found** in logs in the same runs: the session cookie, OIDC client secret, session secret, encryption key, forwarding secret, broker password, PostgreSQL password, a Message body |
 | Unhandled error messages returned to clients | **Confirmed, fixed by #125** | Medium | #125 | **Since the fix:** an unhandled error answers a fixed `internal_error` and logs the detail (tested with a store method failing, not with PostgreSQL stopped). Malformed and empty JSON answer 400, a body over the limit 413, an unsupported media type 415, the static files' Forbidden 403, each with a fixed message, and `//api/session` no longer answers 500. A sign-in failing on Volverán's side no longer tells the browser why; what the provider itself says still reaches it. Fastify's own `FST_ERR_BAD_URL` and closing 503 answers keep their shape; they carry only the client's path or a fixed text (the first read, not tested). **As found:** with PostgreSQL stopped, `/api/session`, `/api/audit-entries`, a Checkout start, and unauthenticated `/auth/login` answer 500 `connect ECONNREFUSED 127.0.0.1:<port>`. The refusal in `/%61pi/checkouts/<id>` below shows a raw `TypeError`. **Client errors also become 500** and should keep their status: malformed JSON, empty JSON, a body over the limit, an unsupported media type, and a Forbidden from the static files (`/%2e%2e/...`); `//api/session` also answers 500. PostgreSQL's connection string did not appear in a startup failure |
-| No `SECURITY.md` | **Rejected, fixed by #127 on this branch; see N2** | | | The file gives a route, response time and supported versions. It is not on `main` yet, and the route it gives does not work today |
-| No dependency or image scanning | **Rejected, fixed by #127 on this branch; see N1** | | | `npm audit --audit-level=high` exits 0 on both lockfiles (moderate findings below). `security.yml` passes on pull requests into `integration/v1.0`. It is not on `main` yet, so the weekly run has never run: GitHub schedules only from the default branch |
+| No `SECURITY.md` | **Rejected, fixed by #127; see N2** | | | The file gives a route, response time and supported versions. The route works since N2 was closed. It reaches `main` with the release |
+| No dependency or image scanning | **Rejected, fixed by #127 and #141; see N1** | | | `npm audit --audit-level=high` exits 0 on both lockfiles (moderate findings below). `security.yml` passes on pull requests into `integration/v1.0`. It reaches `main` with the release, and only then does the weekly run run, as GitHub schedules only from the default branch |
 
 ## Reviewed on request
 
@@ -60,7 +60,7 @@ Tested on 2026-11-01 at commit `953fdc6` (`integration/v1.0`), before the fixes 
 
 Two things are worse than the note on #126 says. A Replica that does not own a Checkout answers `/%61pi/checkouts/<id>` with **500** `Cannot destructure property 'id' of 'object null'`, not 401, because `toOwner` runs before the handler's `operatorOf`. It fails before anything is forwarded, so no request crosses, but without a session it tells an existing Checkout id (500) from an unknown one (401), given a random UUID. And an Operator with a valid session gets the same 500, since the guard also skips reading the session. Rating stays low. Testing `req.routeOptions.url` closes all of it.
 
-**The image scan counts only findings with a fix available (#127). See N1.**
+**The image scan counts only findings with a fix available (#127). Fixed by #141; see N1.**
 
 **The forwarding port and its secret.** These held:
 
@@ -79,6 +79,8 @@ Two things are worse than the note on #126 says. A Replica that does not own a C
 | The secret in either Replica's logs | Absent |
 
 And these are what the design leaves open, rated in N3 and N4: with the secret, a forged identity read Audit Entries (a route that is never forwarded), then started a Checkout, and Discarded its Messages, with the Audit Entries naming the forged Operator.
+
+**Repeated after #109, #111 and #114.** Read from the code of `replicas/forwarding.ts` and `auth.ts`, with the suites' tests; not attacked again. More routes now forward, and all pass the same owner and Role checks on the receiver as the forwarded Operator. A forwarded request now also carries the session's id, in clear on the internal port, as the secret and the Operator already are. With the secret, that id lets its holder act with that Operator's broker token on an `operatorToken` profile, by naming the session; the forged-identity route of N4 reaches the rest but not that token, so the secret also reaches every token in the store for a holder who learns the ids, from the traffic or from the store. That widens what N3 and N4 already rate, Medium, and needs nothing new to close: signing does not hide the id, TLS on the port would. A refusal by the internal port now answers an Operator `503 replica_unreachable`, not 401.
 
 ## After the fix: security headers and hostile content (#124)
 
@@ -118,9 +120,9 @@ The likely exposure looks small. From their descriptions, most concern tools or 
 
 Moving base does not settle it by itself: `node:24-trixie-slim` as published has 0 critical and 21 distinct high findings (6 of the matches are npm packages, `undici` and `brace-expansion`; this image removes npm, which probably carries them, but that was not checked). A distroless base was not tried. The narrowing was reasonable for keeping a pull request's check actionable; what is missing is the decision about what it hides. Options were a smaller base, a reviewed per-CVE list of accepted findings with a report of everything unfixed, and in any case a `SECURITY.md` that says what is really promised. #141 took all three: Alpine, the list in `.grype.yaml`, and a rewritten `SECURITY.md`.
 
-### N2. The private reporting route does not work. Medium
+### N2. The private reporting route did not work. Medium. Closed
 
-`SECURITY.md` sends reporters to `/security/advisories/new`, but `GET repos/volveran/volveran/private-vulnerability-reporting` answers `{"enabled":false}` on this public repository. Until it is switched on in the repository's settings, a researcher has no private route, which is #127's first criterion. `SECURITY.md` is also not on `main` yet, so GitHub does not show it.
+The maintainer enabled private vulnerability reporting, and `GET repos/volveran/volveran/private-vulnerability-reporting` now answers `{"enabled":true}`. As found, it answered `false`, so the route in `SECURITY.md`, `/security/advisories/new`, gave a researcher no private way to report.
 
 ### N3. Write access to the store yields the forwarding secret. Medium
 
@@ -172,6 +174,7 @@ Proposed, **awaiting a maintainer's decision**:
 - Solo Mode's protection is the loopback address: anyone on the same machine who can reach the port acts as the Operator, with no sign-in.
 - Whoever writes the profiles file, or reads the environment, has every credential. Both are trusted.
 - No login throttling in Volverán: authentication belongs to the provider. See N6 for what this leaves.
+- Dependabot's alerts on `glob` and `minimatch` stay open: 3 moderate in `npm audit`, reached through `@fastify/static`, which needs `glob` 13 even at its latest version, while the fixes are in 14 and in `minimatch` 11. `@fastify/static` calls `glob` at startup on the built web app's own directory, with no pattern or signal from a request, so from reading its code nothing a client sends reaches either. The alerts on `fast-uri` are fixed by updating it.
 - The idle timeout ends Volverán's session, not the provider's: while that one lasts, the web app's return to sign-in can sign an abandoned browser back in with no prompt. The browser's own page does this by itself on its next request. Shorten the provider's session to close it.
 
 ## OWASP ASVS Level 2
