@@ -7,6 +7,7 @@ import { parseHistoryInterval } from './history/interval.js';
 import { parseHistoryRetention } from './history/retention.js';
 import { parsePostgresUrl } from './audit/postgres-url.js';
 import { resolvePublicUrl } from './public-url.js';
+import { parseForwarding, type ForwardingSettings } from './replicas/config.js';
 import { parseMetricsPort } from './metrics/config.js';
 import { resolveRunMode, type RunMode } from './run-mode.js';
 import { parseCheckoutLimits, type CheckoutLimits } from './triage/checkout-collection.js';
@@ -29,6 +30,8 @@ export interface Config {
   postgresUrl: string | null;
   /** TLS required by VOLVERAN_POSTGRES_REQUIRE_TLS or VOLVERAN_POSTGRES_CA_FILE; null leaves it to the URL. */
   postgresTls: { caFile: string | null } | null;
+  /** Forwarding between Replicas (VOLVERAN_FORWARDING_SECRET, Team Mode on PostgreSQL); null: this Replica is on its own. */
+  forwarding: ForwardingSettings | null;
 }
 
 /** Reads the configuration from `env`; `host` is the listen address (Solo Mode accepts loopback only). */
@@ -54,6 +57,8 @@ export function loadConfig(
   if (!metricsPort.ok) return metricsPort;
   const postgres = parsePostgresUrl(env);
   if (!postgres.ok) return postgres;
+  const forwarding = parseForwarding(env, mode.mode.kind === 'team' && postgres.url !== null);
+  if (!forwarding.ok) return forwarding;
   return {
     ok: true,
     config: {
@@ -67,6 +72,7 @@ export function loadConfig(
       metricsPort: metricsPort.port,
       postgresUrl: postgres.url,
       postgresTls: postgres.tls,
+      forwarding: forwarding.forwarding,
     },
   };
 }

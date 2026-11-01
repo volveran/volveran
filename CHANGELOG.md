@@ -18,6 +18,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 - A Background Leader: one Replica holds a lease in the audit store and runs retention, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
 - The sampler runs on the Background Leader, so several Replicas take one set of Samples. Estimated arrivals count Messages taken out through every Replica, and a failover shows in the history view as a gap, with no false arrivals. On SQLite nothing changes.
+- With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout view and heartbeat work through any of them, on an internal port that requires the shared secret. Nothing changes without them, or on SQLite. (#108)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Security

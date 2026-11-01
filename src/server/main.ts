@@ -49,6 +49,10 @@
 //   VOLVERAN_METRICS_PORT   serves Prometheus metrics at /metrics on this port,
 //                           at VOLVERAN_HOST's address (default off; see
 //                           metrics/listener.ts)
+//   VOLVERAN_FORWARDING_SECRET, VOLVERAN_FORWARDING_PORT, VOLVERAN_FORWARDING_ADDRESS
+//                           several Replicas (Team Mode on PostgreSQL): the secret they
+//                           share, this one's internal port, and the host:port where
+//                           the others reach it (see replicas/config.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`) and each
 // Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
 //

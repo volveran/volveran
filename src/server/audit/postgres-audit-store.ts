@@ -13,6 +13,7 @@ import type {
   HistoryStore,
   NewAuditEntry,
   NotificationStore,
+  ReplicaStore,
   RuleStateStore,
   SessionStore,
 } from './audit-store.js';
@@ -22,6 +23,7 @@ import { migrate } from './postgres-migrations.js';
 import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
 import { PostgresNotificationStore } from './postgres-notifications.js';
+import { PostgresReplicaStore } from './postgres-replicas.js';
 import { PostgresRuleStateStore } from './postgres-rule-state.js';
 import { fenced, PostgresLeaderLease } from './postgres-leader-lease.js';
 import { PostgresSessionStore } from './postgres-sessions.js';
@@ -48,6 +50,7 @@ export class PostgresAuditStore implements AuditStore {
   readonly alerts: AlertStore;
   readonly sessions: SessionStore;
   readonly leaderLease: LeaderLeaseStore;
+  readonly replicas: ReplicaStore;
   private closing: Promise<void> | undefined;
   private pinging: Promise<void> | undefined;
 
@@ -58,6 +61,7 @@ export class PostgresAuditStore implements AuditStore {
     this.alerts = new PostgresAlertStore(pool);
     this.sessions = new PostgresSessionStore(pool);
     this.leaderLease = new PostgresLeaderLease(pool);
+    this.replicas = new PostgresReplicaStore(pool);
   }
 
   /**

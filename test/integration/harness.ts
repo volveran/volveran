@@ -126,6 +126,8 @@ export interface StartAppOptions {
   webRoot?: string;
   /** Told of each route the app registers. */
   onRouteRegistered?: ServerOptions['onRouteRegistered'];
+  /** How often a Replica renews its lease and how long that holds. */
+  replicaLeaseTiming?: ServerOptions['replicaLeaseTiming'];
 }
 
 /**
@@ -167,6 +169,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       bodyRetention: options.bodyRetention,
       webRoot: options.webRoot,
       onRouteRegistered: options.onRouteRegistered,
+      replicaLeaseTiming: options.replicaLeaseTiming,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {
