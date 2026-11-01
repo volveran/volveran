@@ -1072,7 +1072,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
       it('finds a record with its owner, its address and whether the lease is live', async () => {
         await store.replicas.renewLease(lease('r-1'));
-        await store.replicas.addCheckout(live());
+        await store.replicas.claimCheckout(live(), NOW);
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'r-1.internal:8081', ownerLeaseLive: true });
       });
 
@@ -1082,26 +1082,26 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
       it('keeps the record when the lease runs out, exactly at its time', async () => {
         await store.replicas.renewLease(lease('r-1'));
-        await store.replicas.addCheckout(live());
+        await store.replicas.claimCheckout(live(), NOW);
         expect((await store.replicas.checkoutRoute('c-1', NOW + 999))?.ownerLeaseLive).toBe(true);
         expect(await store.replicas.checkoutRoute('c-1', NOW + 1000)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'r-1.internal:8081', ownerLeaseLive: false });
       });
 
       it('extends a lease and takes a new address by renewing it', async () => {
         await store.replicas.renewLease(lease('r-1'));
-        await store.replicas.addCheckout(live());
+        await store.replicas.claimCheckout(live(), NOW);
         await store.replicas.renewLease({ replicaId: 'r-1', forwardingAddress: 'moved:8081', expiresAt: NOW + 5000 });
         expect(await store.replicas.checkoutRoute('c-1', NOW + 2000)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'moved:8081', ownerLeaseLive: true });
       });
 
       it('routes a record whose owner has no lease to nowhere', async () => {
-        await store.replicas.addCheckout(live());
+        await store.replicas.claimCheckout(live(), NOW);
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: null, ownerLeaseLive: false });
       });
 
       it("finds the Operator's active Checkout only while it is active and its owner's lease is live", async () => {
         await store.replicas.renewLease(lease('r-1'));
-        await store.replicas.addCheckout(live());
+        await store.replicas.claimCheckout(live(), NOW);
         expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBe('c-1');
         expect(await store.replicas.activeCheckoutOf('someone-else', NOW)).toBeNull();
         expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 1000)).toBeNull();
@@ -1116,8 +1116,8 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
 
       it('removes one record, and removing it again does nothing', async () => {
         await store.replicas.renewLease(lease('r-1'));
-        await store.replicas.addCheckout(live());
-        await store.replicas.addCheckout(live({ id: 'c-2' }));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
         await store.replicas.removeCheckout('c-1');
         await store.replicas.removeCheckout('c-1');
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
@@ -1127,11 +1127,88 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       it("removing a Replica removes its lease and records, and no other's", async () => {
         await store.replicas.renewLease(lease('r-1'));
         await store.replicas.renewLease(lease('r-2'));
-        await store.replicas.addCheckout(live());
-        await store.replicas.addCheckout(live({ id: 'c-2', ownerReplica: 'r-2' }));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
         await store.replicas.removeReplica('r-1');
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
         expect((await store.replicas.checkoutRoute('c-2', NOW))?.ownerLeaseLive).toBe(true);
+      });
+
+      describe('the limit of one Checkout per Operator', () => {
+        const held = { id: 'c-1', vhost: '/', queue: 'orders.dlq' };
+        const second = (overrides: Partial<NewLiveCheckout> = {}) => live({ id: 'c-2', ownerReplica: 'r-2', queue: 'payments.dlq', ...overrides });
+
+        beforeEach(async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.renewLease(lease('r-2'));
+        });
+
+        it('answers nothing to the first claim, and what the Operator holds to the next, which leaves no record', async () => {
+          expect(await store.replicas.claimCheckout(live(), NOW)).toBeNull();
+          expect(await store.replicas.claimCheckout(second(), NOW)).toEqual(held);
+          expect(await store.replicas.checkoutRoute('c-2', NOW)).toBeNull();
+        });
+
+        it('lets each Operator hold one', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.claimCheckout(second({ operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW)).toBeNull();
+        });
+
+        it('lets only one of many claims at once win', async () => {
+          const claims = Array.from({ length: 8 }, (_, i) => store.replicas.claimCheckout(live({ id: `c-${i}`, ownerReplica: i % 2 ? 'r-1' : 'r-2' }), NOW));
+          const answers = await Promise.all(claims);
+          const won = answers.flatMap((answer, i) => (answer === null ? [`c-${i}`] : []));
+          expect(won).toHaveLength(1);
+          for (const answer of answers) if (answer) expect(answer.id).toBe(won[0]);
+        });
+
+        it('counts a Checkout still starting, which is not yet shown as active', async () => {
+          await store.replicas.claimCheckout(live({ status: 'starting' }), NOW);
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBeNull();
+          expect(await store.replicas.claimCheckout(second(), NOW)).toEqual(held);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBe('c-1');
+        });
+
+        it.each(['ended', 'lost'] as const)('does not count a Checkout that is %s, though its record stays', async (status) => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval: null });
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+          expect(await store.replicas.checkoutRoute('c-1', NOW)).not.toBeNull();
+        });
+
+        it('frees the Operator when the record goes', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.removeCheckout('c-1');
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+        });
+
+        it("does not count a Checkout whose owner's lease is over: its record stays, for its loss to be noticed", async () => {
+          await store.replicas.renewLease(lease('r-1', NOW + 10));
+          await store.replicas.renewLease(lease('r-2', NOW + 5000));
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.claimCheckout(second(), NOW + 10)).toBeNull();
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 10)).toBe('c-2');
+          expect(await store.replicas.checkoutRoute('c-1', NOW + 10)).toMatchObject({ ownerReplica: 'r-1', ownerLeaseLive: false });
+        });
+
+        it('does not count a Checkout whose owner has no lease at all', async () => {
+          await store.replicas.claimCheckout(live({ ownerReplica: 'gone' }), NOW);
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+        });
+
+        it('keeps the Operator with the newer Checkout when an owner whose lease ran out comes back', async () => {
+          await store.replicas.renewLease(lease('r-1', NOW + 10));
+          await store.replicas.renewLease(lease('r-2', NOW + 5000));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.claimCheckout(second(), NOW + 10);
+          await store.replicas.renewLease(lease('r-1', NOW + 5000));
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 20)).toBe('c-2');
+          await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null });
+          await store.replicas.updateCheckout('c-2', { status: 'ended', approval: null });
+          expect(await store.replicas.claimCheckout(live({ id: 'c-3' }), NOW + 20)).toBeNull();
+        });
       });
     });
 

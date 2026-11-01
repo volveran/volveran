@@ -1,6 +1,6 @@
 // Replicas on SQLite: there is only ever one, so nothing registers and this stays empty in
 // a running app. It holds to the same contract as PostgreSQL, in this process's memory.
-import type { LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
+import type { LiveCheckoutRoute, LiveCheckoutUpdate, NewLiveCheckout, OperatorHolding, ReplicaLeaseRow, ReplicaStore } from './audit-store.js';
 
 export class MemoryReplicaStore implements ReplicaStore {
   private readonly leases = new Map<string, ReplicaLeaseRow>();
@@ -15,13 +15,21 @@ export class MemoryReplicaStore implements ReplicaStore {
     for (const [id, checkout] of this.checkouts) if (checkout.ownerReplica === replicaId) this.checkouts.delete(id);
   }
 
-  async addCheckout(checkout: NewLiveCheckout): Promise<void> {
-    this.checkouts.set(checkout.id, checkout);
+  async claimCheckout(claim: NewLiveCheckout, now: number): Promise<OperatorHolding | null> {
+    for (const checkout of this.checkouts.values()) {
+      if (checkout.operator.id !== claim.operator.id || (checkout.status !== 'starting' && checkout.status !== 'active')) continue;
+      const lease = this.leases.get(checkout.ownerReplica);
+      if (lease && lease.expiresAt > now) return { id: checkout.id, vhost: checkout.vhost, queue: checkout.queue };
+      this.checkouts.set(checkout.id, { ...checkout, status: 'lost', approval: null });
+    }
+    this.checkouts.set(claim.id, claim);
+    return null;
   }
 
   async updateCheckout(id: string, update: LiveCheckoutUpdate): Promise<void> {
     const checkout = this.checkouts.get(id);
-    if (checkout) this.checkouts.set(id, { ...checkout, ...update });
+    if (!checkout) return;
+    this.checkouts.set(id, { ...checkout, ...update, status: checkout.status === 'lost' && update.status === 'active' ? 'lost' : update.status });
   }
 
   async removeCheckout(id: string): Promise<void> {

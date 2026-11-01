@@ -204,6 +204,17 @@ export const MIGRATIONS: readonly string[] = [
    );
    CREATE INDEX live_checkouts_owner_replica ON live_checkouts (owner_replica);
    CREATE INDEX live_checkouts_operator_id ON live_checkouts (operator_id);`,
+  // One Checkout per Operator. Records of crashed Replicas may break it until now: the one
+  // with the latest lease stays, and any left that is out of date goes at the next claim.
+  `UPDATE live_checkouts SET status = 'lost', approval = NULL
+   WHERE status = 'active' AND id NOT IN (
+     SELECT DISTINCT ON (c.operator_id) c.id
+     FROM live_checkouts c LEFT JOIN replicas r ON r.id = c.owner_replica
+     WHERE c.status = 'active'
+     ORDER BY c.operator_id, r.lease_expires_at DESC NULLS LAST
+   );
+   DROP INDEX live_checkouts_operator_id;
+   CREATE UNIQUE INDEX live_checkouts_one_per_operator ON live_checkouts (operator_id) WHERE status IN ('starting', 'active');`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

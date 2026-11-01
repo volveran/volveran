@@ -5,7 +5,7 @@
 // Checkout run in order, and only the latest state is written; a write that fails is tried
 // again after the next lease renewal. Until then only the record's status is behind: where
 // to forward to does not change.
-import type { LiveCheckoutUpdate, NewLiveCheckout, ReplicaStore } from '../audit/audit-store.js';
+import type { LiveCheckoutUpdate, NewLiveCheckout, OperatorHolding, ReplicaStore } from '../audit/audit-store.js';
 import type { LiveCheckoutListener } from '../checkout/manager.js';
 import type { Checkout } from '../checkout/state.js';
 import { approvalSummary } from '../checkout/view.js';
@@ -21,7 +21,7 @@ function stateOf(checkout: Checkout): LiveCheckoutUpdate {
 }
 
 export class LiveCheckouts implements LiveCheckoutListener {
-  /** What was added here and is not yet forgotten: a Checkout that never finished starting has no record. */
+  /** What was claimed here and is not yet forgotten. */
   private readonly known = new Set<string>();
   /** The latest state not yet written; null: the record is to go. */
   private readonly unwritten = new Map<string, LiveCheckoutUpdate | null>();
@@ -33,8 +33,8 @@ export class LiveCheckouts implements LiveCheckoutListener {
     private readonly onError: (err: unknown) => void,
   ) {}
 
-  /** Writes the record, which every Replica then finds: a start answers only after this. */
-  async started(checkout: Checkout): Promise<void> {
+  /** Takes the Operator's one place before anything else of a start, or answers what holds it. */
+  async claim(checkout: Checkout): Promise<OperatorHolding | null> {
     const record: NewLiveCheckout = {
       id: checkout.id,
       ownerReplica: this.replicaId,
@@ -42,19 +42,34 @@ export class LiveCheckouts implements LiveCheckoutListener {
       profile: checkout.profile.name,
       vhost: checkout.vhost,
       queue: checkout.queue,
-      ...stateOf(checkout),
+      status: 'starting',
+      approval: null,
     };
+    // Known first: a claim that fails may still have been committed, and `abandoned` removes it.
     this.known.add(checkout.id);
-    try {
-      await this.writes.run(checkout.id, () => this.store.addCheckout(record));
-    } catch (err) {
-      this.known.delete(checkout.id);
-      throw err;
-    }
+    const holding = await this.writes.run(checkout.id, () => this.store.claimCheckout(record, Date.now()));
+    if (holding) this.known.delete(checkout.id);
+    return holding;
+  }
+
+  /** Every Replica now finds it as it is: a start answers only after this. */
+  async started(checkout: Checkout): Promise<void> {
+    await this.writes.run(checkout.id, () => this.store.updateCheckout(checkout.id, stateOf(checkout)));
+  }
+
+  /** A start failed before it held anything: its claim goes, and the Operator is free when this resolves. */
+  async abandoned(id: string): Promise<void> {
+    this.forgotten(id);
+    await this.written(id);
   }
 
   changed(checkout: Checkout): void {
     if (this.known.has(checkout.id)) this.write(checkout.id, stateOf(checkout));
+  }
+
+  /** Resolves once what was told of Checkout `id` has been written, or tried. Never rejects. */
+  written(id: string): Promise<void> {
+    return this.writes.run(id, async () => {});
   }
 
   forgotten(id: string): void {
