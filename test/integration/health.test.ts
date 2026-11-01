@@ -135,7 +135,7 @@ describe('/readyz during shutdown', () => {
     try {
       client.send(
         `POST /api/profiles/secret-profile/vhosts/%2F/queues/${QUEUE}/checkouts HTTP/1.1\r\n` +
-          'Host: volveran\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}',
+          'Host: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}',
       );
       await isLocked;
       closing = app.close();
@@ -143,7 +143,7 @@ describe('/readyz during shutdown', () => {
       await expect
         .poll(() => fetch(app.baseUrl + '/healthz').then(() => 'accepted', () => 'refused'), { timeout: 5_000 })
         .toBe('refused');
-      client.send('GET /readyz HTTP/1.1\r\nHost: volveran\r\n\r\n');
+      client.send('GET /readyz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n');
       release();
 
       await expect.poll(statuses, { timeout: 5_000 }).toEqual([201, 503]);
