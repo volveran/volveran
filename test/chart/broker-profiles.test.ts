@@ -158,7 +158,7 @@ describe('Broker Profiles', () => {
     const configMap = render({ brokerProfiles: { profiles: [tokenProfile] } }).one('ConfigMap');
     expect(parse(configMap.data!['profiles.yaml']!)).toEqual({ version: 1, profiles: [tokenProfile] });
     expect(parse(render({ brokerProfiles: { profiles: [{ ...prod, credentials: 'shared' }] } }).one('ConfigMap').data!['profiles.yaml']!))
-      .toEqual({ profiles: [{ ...prod, credentials: 'shared' }] });
+      .toEqual({ version: 1, profiles: [{ ...prod, credentials: 'shared' }] });
   });
 
   it('refuses an unknown credentials value, and a shared profile without username or passwordEnv', () => {
