@@ -8,8 +8,9 @@
 import type { LiveCheckoutRecord, LiveCheckoutUpdate, NewLiveCheckout, OperatorHolding, ReplicaStore } from '../audit/audit-store.js';
 import type { LiveCheckoutListener } from '../checkout/manager.js';
 import type { Checkout } from '../checkout/state.js';
-import { approvalSummary } from '../checkout/view.js';
+import { approvalSummary, type ApprovalSummary } from '../checkout/view.js';
 import { OneAtATime } from '../one-at-a-time.js';
+import { remainingMs } from '../triage/checkout-timing.js';
 import { ownerGoneReason } from './owner-gone.js';
 
 function stateOf(checkout: Checkout): LiveCheckoutUpdate {
@@ -106,6 +107,17 @@ export class LiveCheckouts implements LiveCheckoutListener {
   /** The id of an Operator's active Checkout on a Replica that is alive. */
   activeCheckoutOf(operatorId: string): Promise<string | null> {
     return this.store.activeCheckoutOf(operatorId, Date.now());
+  }
+
+  /** The Approvals waiting on other Replicas, except the Operator's own. A record's times are as of the request, so they are measured here. */
+  async waitingElsewhere(approverId: string): Promise<ApprovalSummary[]> {
+    const now = new Date();
+    const records = await this.store.waitingApprovals(now.getTime());
+    return records.flatMap(({ ownerReplica, operator, approval }) =>
+      approval && ownerReplica !== this.replicaId && operator.id !== approverId
+        ? [{ ...approval, waitingMs: Math.max(0, now.getTime() - new Date(approval.requestedAt).getTime()), remainingMs: remainingMs(new Date(approval.endsAt), now) }]
+        : [],
+    );
   }
 
   /**

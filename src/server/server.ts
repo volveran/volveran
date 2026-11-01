@@ -469,9 +469,9 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => {
-    if (!liveCheckouts || checkouts.owns(req.params.id)) return null;
-    const owner = await liveCheckouts.ownerOf(req.params.id);
+  const ownerOfCheckout = async (id: string) => {
+    if (!liveCheckouts || checkouts.owns(id)) return null;
+    const owner = await liveCheckouts.ownerOf(id);
     if (!owner) return null;
     if ('address' in owner) return owner.address;
     // Answered here from now on. A profile no longer configured leaves it unknown here.
@@ -479,6 +479,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
     if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
     return null;
   };
+  const ownerOf = (req: FastifyRequest<{ Params: { id: string } }>) => ownerOfCheckout(req.params.id);
   const checkoutDeps = {
     checkouts,
     access: profileAccess,
@@ -499,7 +500,11 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
-  registerApprovalRoutes(app, checkoutDeps);
+  registerApprovalRoutes(app, {
+    ...checkoutDeps,
+    toOwnerOfApproval: forwarder ? forwarder.toOwner((req: FastifyRequest<{ Params: { checkoutId: string } }>) => ownerOfCheckout(req.params.checkoutId)) : {},
+    ...(liveCheckouts && { waitingElsewhere: (approver: Operator) => liveCheckouts.waitingElsewhere(approver.id) }),
+  });
   registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
   registerHistoryRoutes(app, history, profileAccess);
