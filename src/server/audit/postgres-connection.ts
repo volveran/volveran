@@ -58,6 +58,33 @@ class StoreClient extends pg.Client {
     this.on('error', () => {});
   }
 
+  /**
+   * ADR 0001 needs a commit durable when it answers, whatever the database or role is set to.
+   * A connection counts as connected only once this is done, so it comes ahead of anything the
+   * pool asks. If it fails, the connection is not handed out, so nothing commits with the setting in doubt.
+   */
+  override connect(): Promise<this>;
+  override connect(callback: (err: Error | null, client: this) => void): void;
+  override connect(callback?: (err: Error | null, client: this) => void): Promise<this> | void {
+    const connect = super.connect.bind(this) as () => Promise<unknown>;
+    const query = super.query.bind(this) as (statement: string) => Promise<unknown>;
+    const ready = (async () => {
+      await connect();
+      try {
+        await query('SET synchronous_commit = on');
+      } catch (err) {
+        await this.end().catch(() => {});
+        throw err;
+      }
+      return this;
+    })();
+    if (!callback) return ready;
+    void ready.then(
+      () => callback(null, this),
+      (err: Error) => callback(err, this),
+    );
+  }
+
   override query(...args: unknown[]): never {
     const [statement, values, ...rest] = args;
     const query = super.query as (...given: unknown[]) => never;
@@ -75,12 +102,6 @@ export function createPool(connectionString: string, { tls, queryTimeoutMs = QUE
     types,
     Client: StoreClient,
     ...(tls && { ssl: { rejectUnauthorized: true, ca: tls.ca } }),
-  });
-  // ADR 0001 needs a commit durable when it answers, whatever the database or role is set
-  // to. This is queued ahead of anything the connection is asked. If it fails, the
-  // connection goes, so nothing commits on it with the setting in doubt.
-  pool.on('connect', (client) => {
-    client.query('SET synchronous_commit = on').catch(() => client.end().catch(() => {}));
   });
   // A connection lost while idle. The pool drops it and the next call makes a new one or
   // rejects; without a listener, the event would stop the process.
