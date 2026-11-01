@@ -10,6 +10,11 @@ export class MemoryReplicaStore implements ReplicaStore {
     this.leases.set(lease.replicaId, lease);
   }
 
+  async liveAddress(replicaId: string, now: number): Promise<string | null> {
+    const lease = this.leases.get(replicaId);
+    return lease && lease.expiresAt > now ? lease.forwardingAddress : null;
+  }
+
   async removeReplica(replicaId: string): Promise<void> {
     this.leases.delete(replicaId);
     for (const [id, checkout] of this.checkouts) if (checkout.ownerReplica === replicaId) this.checkouts.delete(id);

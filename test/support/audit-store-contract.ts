@@ -626,6 +626,27 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await store.ruleState.state(KEY)).toEqual({ paused: false, pausedReason: null, pausedBy: null, pausedAt: null });
       });
 
+      it('pauses and resumes once however many ask at once, with one Audit Entry each', async () => {
+        await store.ruleState.ensure(KEY, false);
+        const pauses = await Promise.all(Array.from({ length: 5 }, () => store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'))));
+        expect(pauses.filter(Boolean)).toHaveLength(1);
+        const resumes = await Promise.all(Array.from({ length: 5 }, () => store.ruleState.resume(KEY, ruleEntry('rule_resume'))));
+        expect(resumes.filter(Boolean)).toHaveLength(1);
+        expect(await store.list({ action: 'rule_pause' })).toHaveLength(1);
+        expect(await store.list({ action: 'rule_resume' })).toHaveLength(1);
+      });
+
+      it('keeps a next pass for a running rule only, cleared by a pause', async () => {
+        await store.ruleState.ensure(KEY, false);
+        await store.ruleState.setNextPass(KEY, AT);
+        expect(await store.ruleState.nextPass(KEY)).toEqual(AT);
+
+        await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
+        expect(await store.ruleState.nextPass(KEY)).toBeNull();
+        await store.ruleState.setNextPass(KEY, AT);
+        expect(await store.ruleState.nextPass(KEY)).toBeNull();
+      });
+
       it('writes the Audit Entry of a pause and of a resume, done, with the state', async () => {
         await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
         await store.ruleState.resume(KEY, ruleEntry('rule_resume'));
@@ -1539,6 +1560,19 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       const oldDiscard = () => store.record(entry({ at: new Date(NOW - 2 * DAY), message: { body: Buffer.from('b'), properties: {}, headers: {} } }));
       const evict = (fence: LeaseFence) => store.evictBodies({ now: new Date(NOW), maxAgeMs: DAY, maxBodyBytes: 1000 }, fence);
 
+      it('says who holds it, and where a Replica with a live lease can be reached', async () => {
+        expect(await lease().currentHolder()).toBeNull();
+        await lease().claim('a', NOW, LEASE);
+        expect(await lease().currentHolder()).toBe('a');
+        await lease().release('a');
+        expect(await lease().currentHolder()).toBeNull();
+
+        await store.replicas.renewLease({ replicaId: 'a', forwardingAddress: '10.0.0.1:9', expiresAt: NOW + LEASE });
+        expect(await store.replicas.liveAddress('a', NOW)).toBe('10.0.0.1:9');
+        expect(await store.replicas.liveAddress('a', NOW + LEASE)).toBeNull();
+        expect(await store.replicas.liveAddress('b', NOW)).toBeNull();
+      });
+
       it('goes to the first to claim it, and to nobody else while it lasts', async () => {
         expect(await lease().claim('a', NOW, LEASE)).toMatchObject({ holder: 'a', expiresAt: NOW + LEASE });
         expect(await lease().claim('b', NOW + LEASE - 1, LEASE)).toBeNull();
@@ -1594,6 +1628,9 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         await expect(evict(stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
         await expect(store.history.removeOlderThan(NOW, stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
         await expect(store.notifications.removeOlderThan(new Date(NOW), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await store.ruleState.ensure('p/r', false);
+        await expect(store.ruleState.setNextPass('p/r', new Date(NOW), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        expect(await store.ruleState.nextPass('p/r')).toBeNull();
 
         expect(await store.body(id)).not.toBeNull();
         expect((await store.history.lastRuns('p')).last).not.toBeNull();

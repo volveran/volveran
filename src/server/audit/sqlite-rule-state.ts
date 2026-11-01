@@ -14,11 +14,15 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { RulePass, RuleState } from '../../shared/replay-rules.js';
 import { insertEntry } from './audit-entry-sql.js';
-import { FIRST_SEEN_LIMIT, PASS_HISTORY, type RulePauseEntry, type RuleStateStore } from './audit-store.js';
+import { FIRST_SEEN_LIMIT, PASS_HISTORY, type LeaseFence, type RulePauseEntry, type RuleStateStore } from './audit-store.js';
+import type { MemoryLeaderLease } from './memory-leader-lease.js';
 import { toPass, toRuleState, type PassRow, type RuleStateRow } from './store-rows.js';
 
 export class SqliteRuleStateStore implements RuleStateStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly lease: MemoryLeaderLease,
+  ) {}
 
   /** The rule's state; creates it (paused when `startPaused`) the first time the rule is seen, after which the stored state wins. */
   async ensure(ruleKey: string, startPaused: boolean): Promise<RuleState> {
@@ -38,42 +42,57 @@ export class SqliteRuleStateStore implements RuleStateStore {
     return row ? toRuleState(row) : null;
   }
 
-  /** Pauses the rule (`reason`, `by`, `at`) and writes its Audit Entry, done, as one unit of work. */
-  async pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<void> {
-    this.inTransaction(() => {
-      this.setPaused(ruleKey, pause);
+  async pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<boolean> {
+    return this.inTransaction(() => {
+      if (!this.setPaused(ruleKey, pause)) return false;
       this.writeDoneEntry(entry);
+      return true;
     });
   }
 
-  /** Lets the rule run again, forgets the Died Again Messages counted for its automatic stop, and writes its Audit Entry, done, as one unit of work. */
-  async resume(ruleKey: string, entry: RulePauseEntry): Promise<void> {
-    this.inTransaction(() => {
-      this.setPaused(ruleKey, null);
+  async resume(ruleKey: string, entry: RulePauseEntry): Promise<boolean> {
+    return this.inTransaction(() => {
+      if (!this.setPaused(ruleKey, null)) return false;
       this.db.prepare('DELETE FROM replay_rule_died_again WHERE rule_key = ?').run(ruleKey);
       this.writeDoneEntry(entry);
+      return true;
     });
   }
 
-  private inTransaction(work: () => void): void {
+  async nextPass(ruleKey: string): Promise<Date | null> {
+    const row = this.db.prepare('SELECT next_pass_at FROM replay_rule_state WHERE rule_key = ?').get(ruleKey) as { next_pass_at: number | null } | undefined;
+    return row?.next_pass_at == null ? null : new Date(Number(row.next_pass_at));
+  }
+
+  async setNextPass(ruleKey: string, at: Date | null, fence?: LeaseFence): Promise<void> {
+    this.lease.check(fence);
+    const ms = at?.getTime() ?? null;
+    this.db.prepare('UPDATE replay_rule_state SET next_pass_at = ? WHERE rule_key = ? AND (paused = 0 OR ? IS NULL)').run(ms, ruleKey, ms);
+  }
+
+  private inTransaction<T>(work: () => T): T {
     this.db.exec('BEGIN');
     try {
-      work();
+      const result = work();
       this.db.exec('COMMIT');
+      return result;
     } catch (err) {
       if (this.db.isTransaction) this.db.exec('ROLLBACK');
       throw err;
     }
   }
 
-  private setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): void {
-    this.db
+  /** Answers whether it changed anything: a rule already as asked stays as it is. */
+  private setPaused(ruleKey: string, pause: { reason: string; by: string; at: Date } | null): boolean {
+    const { changes } = this.db
       .prepare(
         `INSERT INTO replay_rule_state (rule_key, paused, paused_reason, paused_by, paused_at) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (rule_key) DO UPDATE SET paused = excluded.paused, paused_reason = excluded.paused_reason,
-           paused_by = excluded.paused_by, paused_at = excluded.paused_at`,
+           paused_by = excluded.paused_by, paused_at = excluded.paused_at, next_pass_at = NULL
+         WHERE replay_rule_state.paused <> excluded.paused`,
       )
       .run(ruleKey, pause ? 1 : 0, pause?.reason ?? null, pause?.by ?? null, pause?.at.getTime() ?? null);
+    return Number(changes) === 1;
   }
 
   private writeDoneEntry(entry: RulePauseEntry): void {

@@ -47,10 +47,12 @@ A pass looks only at the Messages at the head of the queue: it holds at most `ma
 
 A paused rule runs no scheduled passes and stays paused across restarts. The Replay rules view shows why it paused, who paused it (a person, or the rule itself) and when.
 
-- **Pause** (`operator` or `admin`): from the Replay rules view, with a reason, or `POST /api/profiles/:profile/replay-rules/:name/pause` with `{ "reason": "…" }`. Use it during an incident to stop automatic Replay without a configuration change.
+- **Pause** (`operator` or `admin`): from the Replay rules view, with a reason, or `POST /api/profiles/:profile/replay-rules/:name/pause` with `{ "reason": "…" }`. Use it during an incident to stop automatic Replay without a configuration change. A pass in progress stops at its next step: the step under way finishes, and the Messages it had not reached go back to the queue, counted as Not due in that pass.
 - **Resume** (`admin`): from the view, or `POST /api/profiles/:profile/replay-rules/:name/resume`. Resuming clears the automatic stop's count, so the rule starts with a fresh window.
 - Pausing a paused rule, or resuming a running one, answers `409` (`replay_rule_paused`, `replay_rule_running`).
-- **Run now** (`admin`) still runs one pass of a paused rule, so you can check a fix before resuming. A pass run that way can pause a running rule like any other.
+- **Run now** (`admin`) still runs one pass of a paused rule, so you can check a fix before resuming; only a pause that comes after it began stops it. A pass run that way can pause a running rule like any other.
+
+With several Replicas, Rule Passes run on the Background Leader only, and a pause or resume works through any of them, also while the leader is changing. Attempts, back-off and the automatic stop's count live in the audit store and Audit Entries, so they carry on after a change. A new leader that finds a pass still going records its own as skipped. Run now answers `503` `replica_unreachable` while the leader cannot be reached.
 
 Every pause and resume is an Audit Entry (`rule_pause`, `rule_resume`) with the rule, the Operator (the person, or `Replay rule <name>` for an automatic pause) and the reason. The Audit view's action filter selects them.
 

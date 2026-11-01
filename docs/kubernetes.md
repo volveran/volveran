@@ -199,7 +199,7 @@ Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --ver
 
 - On SQLite, sessions live in the Volverán process, so every Operator signs in again afterwards. On PostgreSQL they live in the database and survive it.
 - On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order. An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
-- `pod.terminationGracePeriodSeconds` (60 by default) is the time it has for that before `SIGKILL`. On a quorum queue a Checkout's end waits for the queue to take its Messages back, up to 40 seconds at the default limit of 1,000 Messages (40 ms per Message, at least 5 seconds). Raise the grace period if you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, or if Checkouts on slow brokers need longer.
+- `pod.terminationGracePeriodSeconds` (60 by default) is the time it has for that before `SIGKILL`. On a quorum queue a Checkout's end waits for the queue to take its Messages back, up to 40 seconds at the default limit of 1,000 Messages (40 ms per Message, at least 5 seconds), after up to 5 seconds for notifications in progress. Raise the grace period if you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, or if Checkouts on slow brokers need longer.
 - The `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready.
 
 Plan deploys outside triage work, and tell Operators before one.

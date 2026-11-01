@@ -51,7 +51,7 @@ export interface RulePassSummary {
   usedUp: number;
   /** Of those, the ones Moved to the rule's parking queue (`whenAttemptsUsedUp.moveTo`). */
   moved: number;
-  /** Matching Messages still waiting for their back-off, and those past the pass's `maxPerPass`. */
+  /** Matching Messages still waiting for their back-off, those past the pass's `maxPerPass`, and those a pause left unattempted. */
   notDue: number;
   /** Messages the rule's filter does not select. */
   noMatch: number;
@@ -76,7 +76,7 @@ export interface RulePass {
   status: RulePassStatus;
   /** The counts of a pass that ran; null when it was skipped or failed. */
   summary: RulePassSummary | null;
-  /** Why it was skipped or failed; null when it ran. */
+  /** Why it was skipped or failed, or what stopped it part way; null when it ran to its end. */
   reason: string | null;
 }
 
