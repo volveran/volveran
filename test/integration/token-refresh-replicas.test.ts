@@ -4,7 +4,7 @@
 import type * as amqp from 'amqplib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { connectWithToken, managementWithToken, oauthBroker, oauthBrokerLog, signIn } from '../broker/oauth.js';
-import { sleep, type ProfileFixture } from './harness.js';
+import { eventually, sleep, type ProfileFixture } from './harness.js';
 import { startShortTokenProvider, testOidc, type ShortTokenProvider, type TestIdentity } from './oidc-provider.js';
 import { startTwoReplicas, type Replica, type ReplicaBrowser, type TwoReplicas } from './two-replicas.js';
 
@@ -62,10 +62,10 @@ describe("Refreshing the Operator's token across two Replicas", () => {
   const logs: Array<Record<string, any>> = [];
   const open: Array<[ReplicaBrowser, string]> = [];
 
-  async function start() {
+  // Long enough for the other Replica to reach the provider while one is waiting for it.
+  async function start(refreshDelayMs = 500) {
     logs.length = 0;
-    // Long enough for the other Replica to reach the provider while one is waiting for it.
-    provider = await startShortTokenProvider(LIFETIME_SECONDS, { refreshDelayMs: 500 });
+    provider = await startShortTokenProvider(LIFETIME_SECONDS, { refreshDelayMs });
     replicas = await startTwoReplicas({
       profiles: [profile],
       env: { VOLVERAN_OIDC_ISSUER: provider.issuer },
@@ -98,6 +98,18 @@ describe("Refreshing the Operator's token across two Replicas", () => {
       await ch.deleteQueue(TARGET);
     });
   });
+
+  it('gives a provider that does not answer a time limit, and signing out does not wait for it', async () => {
+    await start(60_000);
+    const browser = await signedInOn(replicas.a, 'token-replicas-sofia');
+    await eventually(async () => expect(provider.refreshes()).toBeGreaterThanOrEqual(1), 15_000, 100);
+
+    const startedAt = Date.now();
+    expect((await browser.to(replicas.b).post('/auth/logout')).status).toBeLessThan(400);
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+
+    await eventually(async () => expect(logs).toContainEqual(expect.objectContaining({ level: 40, reason: expect.stringContaining('did not answer within 10 seconds') })), 15_000, 200);
+  }, 60_000);
 
   it('saves a rotated token where the other Replica finds it, after the first has expired', async () => {
     await start();

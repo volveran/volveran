@@ -188,7 +188,7 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
             address = await ownerOf(req as never);
           } catch (err) {
             if (err instanceof HttpError) throw err;
-            // The store could not say who owns it, which a retry may: nothing is known to be lost.
+            // The store could not say who owns it, which a later try may: nothing is known to be lost.
             req.log.error({ err }, 'Could not read which Replica must answer a request');
             throw replicaUnreachable();
           }

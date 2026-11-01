@@ -99,7 +99,7 @@ describe('Restore on a store that answers late', () => {
 
   it('refuses a second Restore once the first has done its work', async () => {
     const { id: _id, ...discard } = (await sqlite.get(discardId))!;
-    await sqlite.record({ ...discard, operator: OPERATOR, action: 'restore', restoreOf: discardId, message: null });
+    await sqlite.record({ ...discard, at: new Date(), operator: OPERATOR, action: 'restore', restoreOf: discardId, message: null });
     await expect(restore(service())).rejects.toMatchObject({ code: 'already_restored' });
   });
 

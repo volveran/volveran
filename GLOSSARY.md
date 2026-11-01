@@ -23,11 +23,11 @@ The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica
 
 **Live Checkout**:
 What every Replica can read about a Checkout on any of them: a record in the audit store naming its Owner Replica, its Operator, its queue and its status. It is routing information. The held Messages and Decisions stay in the Owner Replica's memory.
-_Avoid_: Shared Checkout, remote Checkout
+_Avoid_: Remote Checkout
 
 **Forwarding**:
 A Replica passing a request on to the one that must answer it, over the internal port, with the signed-in Operator's identity under a shared secret. The Operator never knows it happened.
-_Avoid_: Proxying, routing, redirecting
+_Avoid_: Proxying
 
 **Lost Checkout**:
 A Checkout that ended without Volverán ending it, for example because the broker cancelled it or its Owner Replica died. Its Messages are back in the queue, or will be once the broker sees the connection gone, and it can no longer be Applied.
