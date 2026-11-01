@@ -50,7 +50,7 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
-import { attachOperator } from './operator.js';
+import { attachOperator, type Operator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
 
 export interface ServerOptions {
