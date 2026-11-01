@@ -154,7 +154,11 @@ describe("Refreshing the Operator's token across two Replicas", () => {
       .filter((line) => line.includes(`volveran checkout / ${QUEUE}: user 'token-replicas-tess' updated secret`));
     expect(updates.length).toBeGreaterThanOrEqual(2);
 
-    // With the other gone, the Owner Replica refreshes for itself.
+    // With the other gone, the Owner Replica refreshes for itself. Not in the middle of a refresh:
+    // a provider that has rotated the token for a Replica that dies before saving it refuses the next.
+    const before = provider.refreshes();
+    while (provider.refreshes() === before) await sleep(50);
+    await sleep(1_000); // Past the provider's 500 ms and the save, and well before the next is due.
     await replicas.b.crash();
     const refreshes = provider.refreshes();
     await sleep(2 * LIFETIME_SECONDS * 1000);
