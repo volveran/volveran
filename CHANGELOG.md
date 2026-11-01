@@ -36,7 +36,11 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Security
 
+- A state-changing request from a foreign `Origin` answers `403 foreign_origin`, on top of `SameSite=Lax`. In Team Mode the web app's origin is that of `VOLVERAN_OIDC_REDIRECT_URL` or `VOLVERAN_PUBLIC_URL`; API scripts send no `Origin` and are not affected. (#123)
+- Solo Mode refuses a foreign `Host` (`403 foreign_host`, on the metrics port too) or `Origin` on every request, so a website cannot reach it through DNS rebinding. If you reach it through another name, set `VOLVERAN_PUBLIC_URL`. (#123)
+- Sign-in no longer returns to another site through a tab or newline in `returnTo`. (#123)
 - A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
+- Every answer now carries a strict `Content-Security-Policy` that also refuses framing, with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`, and `Strict-Transport-Security` when Volverán is reached over https (`VOLVERAN_PUBLIC_URL` or `X-Forwarded-Proto`). A hostile Message body or header cannot run script in an Operator's browser. Answers other than the web app's files are `Cache-Control: no-store`, so Message bodies stay out of the browser's cache. (#124)
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
 - CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high or critical finding in its dependencies or image, with a fix or without one, unless it is on the reviewed list in `.grype.yaml`.
 - OIDC codes and `state` no longer reach the logs: a request's log line has its path without the query. (#125)

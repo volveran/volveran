@@ -3,7 +3,8 @@
 // shares nothing with the web app's port, so an HTTPRoute or Ingress to that
 // port can never reach it. A scrape only reads what `families` gives from
 // this process: it never contacts a broker or waits on the audit store.
-import http from 'node:http';
+import http, { type IncomingHttpHeaders } from 'node:http';
+import { setSecurityHeaders } from '../security-headers.js';
 import { renderMetrics, type MetricFamily } from './exposition.js';
 
 export interface MetricsListenerOptions {
@@ -12,6 +13,8 @@ export interface MetricsListenerOptions {
   port: number;
   /** Asked once per scrape. */
   families(): MetricFamily[];
+  /** A request these headers refuse answers 403. */
+  refuses?(headers: IncomingHttpHeaders): boolean;
   /** A scrape broke; it is answered 500. */
   onError(err: unknown): void;
 }
@@ -25,6 +28,12 @@ const CONTENT_TYPE = 'text/plain; version=0.0.4; charset=utf-8';
 
 export async function startMetricsListener(options: MetricsListenerOptions): Promise<MetricsListener> {
   const server = http.createServer((req, res) => {
+    // Labels carry queue names, which anyone who can declare a queue chooses.
+    setSecurityHeaders(res);
+    if (options.refuses?.(req.headers)) {
+      res.writeHead(403).end();
+      return;
+    }
     const path = (req.url ?? '').split('?')[0];
     if (path !== '/metrics' || (req.method !== 'GET' && req.method !== 'HEAD')) {
       res.writeHead(404).end();
