@@ -78,8 +78,8 @@ export class RestoreService {
 
   constructor(
     private readonly audit: AuditStore,
-    /** Whether Checkout `id` is still active or Applying in this process. */
-    private readonly checkoutRunning: (id: string) => boolean,
+    /** Whether Checkout `id` is still active or Applying, on this Replica or another. */
+    private readonly checkoutRunning: (id: string) => boolean | Promise<boolean>,
   ) {}
 
   /**
@@ -123,7 +123,7 @@ export class RestoreService {
     // `pending` is also the normal state of a step being carried out right now:
     // only once its Checkout is gone (ended, lost, or Volverán restarted) can
     // it no longer finish on its own.
-    if (discard.outcome === 'pending' && discard.checkoutId !== null && this.checkoutRunning(discard.checkoutId)) {
+    if (discard.outcome === 'pending' && discard.checkoutId !== null && (await this.checkoutRunning(discard.checkoutId))) {
       throw new RestoreError(
         'discard_in_progress',
         `The Discard of Audit Entry ${id} is still being carried out by Checkout ${discard.checkoutId}. Wait for its Apply to finish; its outcome will then be known.`,
@@ -138,15 +138,12 @@ export class RestoreService {
     if (this.running.has(id)) throw new RestoreError('restore_in_progress', `Audit Entry ${id} is being Restored.`);
 
     // Claimed before the store is asked about earlier Restores, so a second request for the same entry is refused.
+    // This only chooses this Replica's answer: what stops a second publish is the store's claim below.
     this.running.add(id);
     try {
       const earlier = (await this.audit.list({ restoreOf: id })).find((e) => e.outcome !== 'failed');
-      if (earlier) {
-        throw new RestoreError(
-          'already_restored',
-          `The Message of Audit Entry ${id} was already Restored to "${earlier.destination?.queue}" (Audit Entry ${earlier.id}).`,
-        );
-      }
+      // Looked at again by the claim; here so that this answer still comes before queue_not_found.
+      if (earlier) throw alreadyRestored(id, earlier);
       if (!profileHasVhost(profile, discard.vhost) || !(await management.getQueue(discard.vhost, queue))) {
         throw new RestoreError(
           'queue_not_found',
@@ -162,7 +159,7 @@ export class RestoreService {
       // The Operator's own token on a profile with `credentials: operatorToken`.
       const credentials = target.credentials();
       const replayId = randomUUID();
-      const entryId = await this.audit.record({
+      const claim = await this.audit.claimRestore({
         at: new Date(),
         operator,
         role,
@@ -179,6 +176,8 @@ export class RestoreService {
         replayId,
         message: null,
       });
+      if (!claim.claimed) throw alreadyRestored(id, claim.earlier);
+      const entryId = claim.id;
       const options = republishOptions(
         { ...message.properties, headers: message.headers },
         { replayId, from: discard.queue },
@@ -199,6 +198,13 @@ export class RestoreService {
       this.running.delete(id);
     }
   }
+}
+
+function alreadyRestored(id: number, earlier: AuditEntry): RestoreError {
+  return new RestoreError(
+    'already_restored',
+    `The Message of Audit Entry ${id} was already Restored to "${earlier.destination?.queue}" (Audit Entry ${earlier.id}).`,
+  );
 }
 
 /**
