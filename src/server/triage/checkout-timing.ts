@@ -53,6 +53,16 @@ export function consumerTimeoutMs(timing: CheckoutTiming): number {
   return timing.timeLimitMs + timing.consumerTimeoutMarginMs;
 }
 
+/**
+ * How long ending a Checkout may take to answer, so the Replica forwarding it can tell a
+ * slow end from an unreachable owner. An Apply in progress finishes first, which the time
+ * limit bounds, and then the Messages go back, for which this allows 45 ms each and at
+ * least 45 s.
+ */
+export function endAnswersWithinMs(timing: CheckoutTiming, maxMessages: number): number {
+  return timing.timeLimitMs + Math.max(45 * SECOND, 45 * maxMessages);
+}
+
 /** Milliseconds left until `endsAt` at `now`, never below 0. */
 export function remainingMs(endsAt: Date, now: Date): number {
   return Math.max(0, endsAt.getTime() - now.getTime());

@@ -17,9 +17,10 @@ import { parseFilter } from '../triage/filters.js';
 import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 
 export function registerDecisionRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
-  const { checkouts } = deps;
+  const { checkouts, toOwner } = deps;
   app.post<{ Params: { id: string }; Body: { filter?: unknown } | undefined }>(
     '/api/checkouts/:id/matching',
+    toOwner,
     async (req) => {
       checkoutAccess(deps, req, 'checkout');
       const checkout = checkouts.checkout(req.params.id);
@@ -32,6 +33,7 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: CheckoutRoute
 
   app.post<{ Params: { id: string }; Body: { handles?: unknown; decision?: unknown } | undefined }>(
     '/api/checkouts/:id/decisions',
+    toOwner,
     async (req) => {
       const { management } = checkoutAccess(deps, req, 'checkout');
       const checkout = checkouts.checkout(req.params.id);
