@@ -20,10 +20,12 @@ All notable changes to Volverán are recorded here. The format is based on
 - With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout works through any of them, on an internal port that requires the shared secret: its view and heartbeat, reading Messages, Decisions, Apply, stop, Canary continue, a streamed export and ending it. Nothing changes without them, or on SQLite. (#108, #109)
 - With Replicas, when an Owner Replica dies its Operators see a Lost Checkout with the reason through any other Replica, within the 15 s its lease holds, and an Apply it was running leaves `uncertain` Audit Entries for what is not known. While its lease is live but it cannot be reached, requests answer 503 `replica_unreachable`, to try again. A Replica that cannot renew its lease gives up its Checkouts. (#112)
 - AMQP connections ask for a 5 s heartbeat, unless a profile's `amqpUrl` names its own `heartbeat`. A lost host or network now holds a queue's lock and Messages for about 15 s rather than about three minutes. (#112)
+- With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Security
 
+- A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
 - CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high finding in its dependencies or image.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.

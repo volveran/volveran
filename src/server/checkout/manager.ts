@@ -60,7 +60,8 @@
 // says what happened to it). Ending the Checkout cancels it.
 //
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
-// most one (checked before the broker's lock, so the holder is known exactly).
+// most one (checked before the broker's lock, so the holder is known exactly). Across Replicas,
+// the Operator's limit is a claim on the Live Checkout records, and the queue's is the lock queue.
 import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
@@ -75,7 +76,7 @@ import { messageDetail, type HeldForBadge, type MessageDetail } from '../triage/
 import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
-import type { AuditStore, LiveCheckoutRecord, ProfileScope } from '../audit/audit-store.js';
+import type { AuditStore, LiveCheckoutRecord, OperatorHolding, ProfileScope } from '../audit/audit-store.js';
 import { diedAgain } from '../triage/died-again.js';
 import type { CheckoutQueueType } from '../../shared/checkout.js';
 import type { Role } from '../../shared/roles.js';
@@ -145,7 +146,13 @@ export interface CheckoutStartOptions extends StartOptions {
  * the start answers; the others are called inside first-wins sections and must not make them wait.
  */
 export interface LiveCheckoutListener {
+  /** Awaited before a start touches the broker: the Operator's Checkout on any Replica, if they have one. */
+  claim(checkout: Checkout): Promise<OperatorHolding | null>;
   started(checkout: Checkout): Promise<void>;
+  /** Awaited when a start fails before it held anything, so the Operator can start again anywhere at once. */
+  abandoned(id: string): Promise<void>;
+  /** Awaited before an end answers, so no Replica still finds the Checkout active after it. Never rejects. */
+  written(id: string): Promise<void>;
   changed(checkout: Checkout): void;
   forgotten(id: string): void;
 }
@@ -273,6 +280,8 @@ export class CheckoutManager {
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
+      const holding = await this.options.liveCheckouts?.claim(checkout);
+      if (holding) throw operatorHasCheckout(operator.displayName, holding);
       await openCheckout(checkout, target, options, {
         onLost: (reason) => this.markLost(checkout, reason),
         afterLock: this.hooks.afterLock,
@@ -282,6 +291,7 @@ export class CheckoutManager {
     } catch (err) {
       this.release(checkout);
       await closeCheckoutConnection(checkout);
+      await this.options.liveCheckouts?.abandoned(checkout.id);
       throw err;
     }
     try {
@@ -776,6 +786,7 @@ export class CheckoutManager {
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);
+    await this.options.liveCheckouts?.written(checkout.id);
     return this.view(checkout);
   }
 
