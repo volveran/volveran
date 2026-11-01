@@ -21,6 +21,8 @@ export const LEADER_TAKEOVER_MS = LEADER_LEASE_MS + LEADER_RENEW_MS;
 export interface LeaderJob {
   /** For logs. */
   name: string;
+  /** Failing to start on this process's first claim fails startup. Otherwise a failed start is reported, and tried again at each claim. */
+  mustStart?: boolean;
   /** Runs while this Replica is the leader. `start` may do its first run before it answers: renewal does not wait for it. */
   start(fence: LeaseFence): Promise<void>;
   /** Ends the job's work and whatever it has in progress. */
@@ -76,6 +78,10 @@ export class BackgroundLeader implements LeaderControl {
   private renewTimer: { cancel(): void } | null = null;
   private expiryTimer: { cancel(): void } | null = null;
   private claiming: Promise<void> | null = null;
+  /** The jobs that failed to start in this term: the next claim tries them again. */
+  private readonly unstarted = new Set<LeaderJob>();
+  private startingUp = false;
+  private startupFailure: { err: unknown } | null = null;
 
   constructor(options: BackgroundLeaderOptions) {
     this.lease = options.lease;
@@ -91,10 +97,16 @@ export class BackgroundLeader implements LeaderControl {
     return this.term !== null;
   }
 
-  /** Makes the first claim. If it wins, answers when the jobs have started, so what they do first is done before the app listens. */
+  /**
+   * Makes the first claim. If it wins, answers when the jobs have started, so what they do
+   * first is done before the app listens, and rejects if a job that must start did not.
+   */
   async start(): Promise<void> {
+    this.startingUp = true;
     await this.claimNow();
     await this.changes.settled();
+    this.startingUp = false;
+    if (this.startupFailure) throw this.startupFailure.err;
   }
 
   /** Claims the lease now and sets the next claim. Claims never overlap. */
@@ -142,7 +154,10 @@ export class BackgroundLeader implements LeaderControl {
   private held({ holder, term }: LeaderLeaseGrant): void {
     this.expiryTimer?.cancel();
     this.expiryTimer = this.clock.setTimer(() => this.lost(), this.leaseMs);
-    if (this.term === term) return;
+    if (this.term === term) {
+      if (this.unstarted.size > 0) void this.changes.run('jobs', () => this.startAgain({ holder, term }));
+      return;
+    }
     // The lease went to another and came back between two claims: the jobs hold a stale fence.
     this.lost();
     this.expiryTimer = this.clock.setTimer(() => this.lost(), this.leaseMs);
@@ -162,13 +177,28 @@ export class BackgroundLeader implements LeaderControl {
       try {
         await job.start(fence);
       } catch (err) {
-        this.onError(err, job.name);
+        this.unstarted.add(job);
+        if (this.startingUp && job.mustStart && !this.startupFailure) this.startupFailure = { err };
+        else this.onError(err, job.name);
       }
     }
     this.onChange?.(true);
   }
 
+  private async startAgain(fence: LeaseFence): Promise<void> {
+    for (const job of [...this.unstarted]) {
+      if (this.term !== fence.term) return;
+      try {
+        await job.start(fence);
+        this.unstarted.delete(job);
+      } catch (err) {
+        this.onError(err, job.name);
+      }
+    }
+  }
+
   private async stopJobs(): Promise<void> {
+    this.unstarted.clear();
     for (const job of [...this.jobs].reverse()) {
       try {
         await job.stop();

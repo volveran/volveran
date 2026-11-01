@@ -82,7 +82,17 @@ And these are what the design leaves open, rated in N3 and N4: with the secret, 
 
 No finding other than N1 is rated high or critical.
 
-### N1. The release gate does not count known high and critical image findings. High
+### N1. The release gate does not count known high and critical image findings. High. Fixed by #141
+
+**Fixed by #141.** The image is now on Alpine (`node:24-alpine`, both stages), with 0 high and 0 critical findings in Grype v0.121.0 and Trivy 0.69.3. The gate in `security.yml` and `release.yml` no longer sets `only-fixed`, so it counts findings with no fix too. Only what is on the reviewed list in `.grype.yaml` is left out, one vulnerability at a time with a stated reason, and that list is empty.
+
+What the gate does not promise, as in `SECURITY.md`:
+
+- "Known" means known to these tools on the day they ran. A clean scan is not proof that nothing is vulnerable, and a finding can appear after a release: the weekly scan of the released image looks for those, but a release already published stays as it is until the next one.
+- Medium and low findings do not stop a release. They stay visible in the scan's log.
+- The scan runs on the amd64 image, built in the release's first job. The arm64 image, and the image pushed by the later job, are built from the same Dockerfile and pins but are not scanned themselves.
+
+The rest of this section is the finding as tested before the fix, on Debian 12.
 
 `only-fixed: true` in `security.yml` and `release.yml`. Grype v0.121.0 on the image built from this commit:
 
@@ -97,7 +107,7 @@ This contradicts two statements: #92's "Known high and critical findings block t
 
 The likely exposure looks small. From their descriptions, most concern tools or calls a Node server does not obviously use (`mount`, `nsenter`, `infocmp`, Perl modules, `gzip`), and the container runs non-root with a read-only filesystem. That is a reading of descriptions, not a per-CVE check: none was shown unreachable, and `libc6`, `libstdc++6` and `zlib1g` are loaded by the process. The rating is high because the release promise does not hold, not because an exploit was shown.
 
-Moving base does not settle it by itself: `node:24-trixie-slim` as published has 0 critical and 21 distinct high findings (6 of the matches are npm packages, `undici` and `brace-expansion`; this image removes npm, which probably carries them, but that was not checked). A distroless base was not tried. The narrowing was reasonable for keeping a pull request's check actionable; what is missing is the decision about what it hides. Options: a smaller base, a reviewed per-CVE list of accepted findings with a report of everything unfixed, and in any case a `SECURITY.md` that says what is really promised. Needs a maintainer's decision.
+Moving base does not settle it by itself: `node:24-trixie-slim` as published has 0 critical and 21 distinct high findings (6 of the matches are npm packages, `undici` and `brace-expansion`; this image removes npm, which probably carries them, but that was not checked). A distroless base was not tried. The narrowing was reasonable for keeping a pull request's check actionable; what is missing is the decision about what it hides. Options were a smaller base, a reviewed per-CVE list of accepted findings with a report of everything unfixed, and in any case a `SECURITY.md` that says what is really promised. #141 took all three: Alpine, the list in `.grype.yaml`, and a rewritten `SECURITY.md`.
 
 ### N2. The private reporting route does not work. Medium
 
@@ -157,11 +167,11 @@ Against ASVS 4.0.3, by area. "Tested" means as above. "Suite" means the project'
 | V7 Errors and logging | **Not met yet** | #125. Audit Entries are the security log, and N4 limits their trust. Tested: wrong broker password and a bad PostgreSQL URL appear in no answer or log |
 | V8 Data protection | Partly | Bodies in clear (proposed accepted risk). No `Cache-Control: no-store` on API answers was seen, so #124 may wish to add it |
 | V9 Communications | Partly, not tested | TLS ends at the proxy. PostgreSQL TLS has its own settings. The forwarding port is plain HTTP (N3). Not tested here |
-| V10 Malicious code | Partly | #127's scans and pinning. N1 |
+| V10 Malicious code | Partly | #127's scans and pinning. The image gate counts findings with no fix (N1, fixed by #141) |
 | V11 Business logic | Suite | Four-eyes Approval, the Delivery Budget and first-wins races have their own tests. Not reviewed further here |
 | V12 Files | Met | No uploads. Static files and export as in V5 |
 | V13 API | Partly | No CORS. A bodyless POST needs no preflight (#123). Body limit applies, with the wrong status (#125) |
-| V14 Configuration | Partly | **Headers** (#124). Non-root, read-only image. N1 |
+| V14 Configuration | Partly | **Headers** (#124). Non-root, read-only image, on Alpine with no high or critical finding known to the scanners (N1, fixed by #141) |
 
 ## What was not done
 

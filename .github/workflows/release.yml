@@ -105,7 +105,7 @@ jobs:
           image: volveran:scan
           fail-build: true
           severity-cutoff: high
-          only-fixed: true
+          config: .grype.yaml
           output-format: table
 
   image:
