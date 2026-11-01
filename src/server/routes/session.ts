@@ -16,12 +16,14 @@ export interface SessionRouteDeps {
   mode: RunMode['kind'];
   checkouts: CheckoutManager;
   access: ProfileAccessCheck;
+  /** The Operator's active Checkout on another Replica; left out when this Replica is on its own. */
+  activeElsewhere?(operatorId: string): Promise<string | null>;
 }
 
-export function registerSessionRoutes(app: FastifyInstance, { mode, checkouts, access }: SessionRouteDeps) {
+export function registerSessionRoutes(app: FastifyInstance, { mode, checkouts, access, activeElsewhere }: SessionRouteDeps) {
   app.get('/api/session', async (req): Promise<Session> => {
     const operator = operatorOf(req);
-    const checkoutId = checkouts.activeFor(operator.id)?.id ?? null;
+    const checkoutId = checkouts.activeFor(operator.id)?.id ?? (await activeElsewhere?.(operator.id)) ?? null;
     const roles = access.roles(operator);
     if (mode === 'solo') return { mode: 'solo', operator: operator.displayName, checkoutId, roles };
     return {
