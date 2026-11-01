@@ -358,12 +358,23 @@ export async function closableManagementProxy(): Promise<{ url: string; close():
   };
 }
 
+/**
+ * A port nothing listens on, for a server to take later or to stay dead. It comes from below the
+ * kernel's ephemeral range (Linux starts at 32768): a port from listen(0) is free to be handed
+ * to the next listen(0) as soon as it closes, and then the server that wanted it gets EADDRINUSE.
+ */
 export async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as net.AddressInfo;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
+  for (;;) {
+    const port = 20_000 + Math.floor(Math.random() * 12_768);
+    const server = net.createServer();
+    const free = await new Promise<boolean>((resolve) => {
+      server.once('error', () => resolve(false));
+      server.listen(port, '127.0.0.1', () => resolve(true));
+    });
+    if (!free) continue;
+    await new Promise((resolve) => server.close(resolve));
+    return port;
+  }
 }
 
 /**

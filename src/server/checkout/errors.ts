@@ -26,7 +26,8 @@ export type CheckoutErrorCode =
   | 'awaiting_approval'
   | 'not_awaiting_approval'
   | 'cannot_approve_own_apply'
-  | 'apply_would_outlast_checkout';
+  | 'apply_would_outlast_checkout'
+  | 'replica_shutting_down';
 
 const STATUS: Record<CheckoutErrorCode, number> = {
   queue_not_found: 404,
@@ -50,6 +51,7 @@ const STATUS: Record<CheckoutErrorCode, number> = {
   not_awaiting_approval: 409,
   cannot_approve_own_apply: 403,
   apply_would_outlast_checkout: 409,
+  replica_shutting_down: 503,
 };
 
 export class CheckoutError extends HttpError<CheckoutErrorCode> {
@@ -60,6 +62,11 @@ export class CheckoutError extends HttpError<CheckoutErrorCode> {
 }
 
 type Queue = Pick<QueueRef, 'vhost' | 'queue'>;
+
+/** A start reached a Replica on its way out, which a load balancer stops sending to in a moment. */
+export function replicaShuttingDown(): CheckoutError {
+  return new CheckoutError('replica_shutting_down', 'This Replica is shutting down, so it takes no new Checkout. Try again in a moment.', { tryAgain: true });
+}
 
 /** The queue is already in a Checkout; `holder` is null when the broker would not say whose. */
 export function inCheckout({ vhost, queue }: Queue, holder: CheckoutHolder | null): CheckoutError {
@@ -225,7 +232,7 @@ function endedBecause(reason: EndReason | null, requester: string): string {
     case 'operator':
       return `${requester} ended the Checkout`;
     case 'shutdown':
-      return 'the Checkout ended when Volverán shut down';
+      return 'the Checkout ended when its Replica shut down';
     case 'applied':
       return 'the Checkout was Applied';
     case 'start-failed':

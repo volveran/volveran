@@ -15,11 +15,6 @@ export class MemoryReplicaStore implements ReplicaStore {
     return lease && lease.expiresAt > now ? lease.forwardingAddress : null;
   }
 
-  async removeReplica(replicaId: string): Promise<void> {
-    this.leases.delete(replicaId);
-    for (const [id, checkout] of this.checkouts) if (checkout.ownerReplica === replicaId) this.checkouts.delete(id);
-  }
-
   async claimCheckout(claim: NewLiveCheckout, now: number): Promise<OperatorHolding | null> {
     for (const checkout of this.checkouts.values()) {
       if (checkout.operator.id !== claim.operator.id || (checkout.status !== 'starting' && checkout.status !== 'active')) continue;
@@ -70,7 +65,8 @@ export class MemoryReplicaStore implements ReplicaStore {
     let removed = 0;
     for (const [replicaId, lease] of this.leases) {
       if (lease.expiresAt > before) continue;
-      await this.removeReplica(replicaId);
+      this.leases.delete(replicaId);
+      for (const [id, checkout] of this.checkouts) if (checkout.ownerReplica === replicaId) this.checkouts.delete(id);
       removed++;
     }
     return removed;

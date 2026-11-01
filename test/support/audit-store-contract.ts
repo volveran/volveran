@@ -1277,16 +1277,6 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         });
       });
 
-      it("removing a Replica removes its lease and records, and no other's", async () => {
-        await store.replicas.renewLease(lease('r-1'));
-        await store.replicas.renewLease(lease('r-2'));
-        await store.replicas.claimCheckout(live(), NOW);
-        await store.replicas.claimCheckout(live({ id: 'c-2', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
-        await store.replicas.removeReplica('r-1');
-        expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
-        expect((await store.replicas.checkoutRoute('c-2', NOW))?.ownerLeaseLive).toBe(true);
-      });
-
       it('reads a record back whole, with why it ended or was lost', async () => {
         expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
         await store.replicas.claimCheckout(live(), NOW);

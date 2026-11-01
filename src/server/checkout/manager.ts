@@ -21,10 +21,10 @@
 // It ends the Checkout ('applied') once it has run: what is still held
 // (Keep, failed, not attempted) goes back to the queue in order. While it
 // runs, the heartbeat window is suspended (closing the browser does not
-// cancel an Apply), and an Operator's end and shutdown wait for it. The time
+// cancel an Apply), and an Operator's end waits for it. The time
 // limit stays a hard bound: it asks the Apply to attempt no further step
 // (the rest is reported not attempted), and the Checkout then ends
-// ('time-limit'). The broker can still cut it short (Lost Checkout). The
+// ('time-limit'). Shutdown does the same (endAll, 'shutdown'). The broker can still cut it short (Lost Checkout). The
 // owner, or the approver of an approved Apply, can stop it the same way
 // (stopApplyBy); the Checkout then ends ('applied'). Every stop checks and
 // sets the request without awaiting, so the first of a stop, the time limit,
@@ -98,9 +98,10 @@ import {
   notAwaitingApproval,
   notCheckoutOwner,
   operatorHasCheckout,
+  replicaShuttingDown,
 } from './errors.js';
 import { startExport, type CheckoutExport } from './export.js';
-import { closeCheckoutConnection, openCheckout, type StartOptions } from './open.js';
+import { closeCheckoutConnection, closedOrGone, openCheckout, type StartOptions } from './open.js';
 import { returnMessages } from './return-messages.js';
 import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
 import { approvalSummary, pacedSteps, queueInfo, view as checkoutView, type ApprovalSummary, type CheckoutView } from './view.js';
@@ -199,7 +200,9 @@ export interface ApplyActor {
 
 /** What stopped an Apply first, as a refused stop or Continue says it. */
 function stopperText(stop: ApplyStop): string {
-  return stop.stoppedBy ?? (stop.endReason === 'time-limit' ? 'the time limit' : 'the Checkout ending');
+  if (stop.stoppedBy) return stop.stoppedBy;
+  if (stop.endReason === 'time-limit') return 'the time limit';
+  return stop.endReason === 'shutdown' ? 'the Replica shutting down' : 'the Checkout ending';
 }
 
 export const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
@@ -250,6 +253,9 @@ export class CheckoutManager {
   private readonly hooks: CheckoutTestHooks;
   private readonly endedRetentionMs: number;
   private readonly timing: CheckoutTiming;
+  /** Starts and ends under way, which shutdown must see out before the store closes. */
+  private readonly underWay = new Set<Promise<unknown>>();
+  private stopping = false;
 
   constructor(private readonly options: CheckoutManagerOptions) {
     this.hooks = options.testHooks ?? {};
@@ -261,7 +267,12 @@ export class CheckoutManager {
    * Starts a Checkout of `target`, a queue resolved through the access check
    * (its management client and the Operator's broker credentials included).
    */
-  async start(target: QueueAccess, operator: Operator, options: CheckoutStartOptions = {}): Promise<CheckoutView> {
+  start(target: QueueAccess, operator: Operator, options: CheckoutStartOptions = {}): Promise<CheckoutView> {
+    return this.seenOut(this.startCheckout(target, operator, options));
+  }
+
+  private async startCheckout(target: QueueAccess, operator: Operator, options: CheckoutStartOptions): Promise<CheckoutView> {
+    if (this.stopping) throw replicaShuttingDown();
     const ref = queueRefOf(target);
     const mine = this.byOperator.get(operator.id);
     if (mine) throw operatorHasCheckout(operator.displayName, mine);
@@ -302,6 +313,8 @@ export class CheckoutManager {
     try {
       await this.findDiedAgain(checkout, options.auditScope);
       await this.options.liveCheckouts?.started(checkout);
+      // No await from here to where it is registered, so endAll either finds it or it refuses.
+      if (this.stopping) throw replicaShuttingDown();
     } catch (err) {
       // It holds Messages by now, so they go back as at any end. If it was lost
       // during the search that has been done, and the queue may be someone else's.
@@ -781,14 +794,28 @@ export class CheckoutManager {
     checkout.endReason = reason;
     this.cancelApprovalRequest(checkout);
     this.options.liveCheckouts?.changed(checkout);
-    const { channel } = checkout;
+    return this.seenOut(this.returnAndRelease(checkout));
+  }
+
+  /** Counts `work` as under way until it settles. */
+  private seenOut<T>(work: Promise<T>): Promise<T> {
+    const counted: Promise<void> = work.then(
+      () => {},
+      () => {},
+    ).finally(() => this.underWay.delete(counted));
+    this.underWay.add(counted);
+    return work;
+  }
+
+  private async returnAndRelease(checkout: Checkout): Promise<CheckoutView> {
+    const { channel, connection } = checkout;
     try {
       if (channel) {
         await returnMessages(checkout, channel, {
           waitMs: this.hooks.returnWaitMs,
           onWaitRanOut: (waited) => this.options.onReturnWaitRanOut?.(checkout, waited),
         });
-        await channel.close();
+        if (connection) await closedOrGone(connection, channel.close());
       }
     } catch {
       // The channel is already gone: the broker has returned everything.
@@ -811,10 +838,25 @@ export class CheckoutManager {
     for (const checkout of [...this.locks.values()]) this.markLost(checkout, reason(checkout.queueType));
   }
 
-  /** Ends every active Checkout (on shutdown). */
+  /** From the first call of endAll: this Replica is on its way out. */
+  get shuttingDown(): boolean {
+    return this.stopping;
+  }
+
+  /**
+   * Shutdown. Before any await, no new Checkout starts, and every Apply is told to attempt no
+   * further step; a Checkout with none ends now. Resolves when every Checkout is over and its
+   * Messages are back, including those ending by themselves and a start on its way, which refuses.
+   */
   async endAll(): Promise<void> {
+    this.stopping = true;
+    const applying = [...this.checkouts.values()].flatMap((c) => c.applying?.settled ?? []);
+    for (const checkout of this.checkouts.values()) {
+      this.stopApply(checkout, { reason: STOP_REASONS.replicaShutDown, endReason: 'shutdown', stoppedBy: null });
+    }
     const active = [...this.checkouts.values()].filter((c) => c.status === 'active');
-    await Promise.all(active.map((c) => this.end(c.id, 'shutdown')));
+    await Promise.allSettled([...active.map((c) => this.end(c.id, 'shutdown')), ...applying]);
+    while (this.underWay.size > 0) await Promise.allSettled([...this.underWay]);
   }
 
   private lockKey(ref: QueueRef): string {

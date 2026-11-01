@@ -6,6 +6,10 @@
 #  - change: '+ imagePullPolicy: Always'
 #    reason: why an upgrade should bring this
 allowed:
+  - change: '+ terminationGracePeriodSeconds: 90'
+    reason: Shutdown ends Checkouts within a limit that 60 s did not cover (#119, docs/kubernetes.md).
+  - change: '- terminationGracePeriodSeconds: 60'
+    reason: Shutdown ends Checkouts within a limit that 60 s did not cover (#119, docs/kubernetes.md).
   - change: '+ - name: VOLVERAN_SESSION_ENCRYPTION_KEY'
     fixture: postgres.yaml
     reason: Sessions on PostgreSQL keep their tokens encrypted, with a key from this new required secret (#107).

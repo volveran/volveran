@@ -113,8 +113,11 @@ jobs:
       - name: Broker-facts suite
         run: npm run test:broker
       - name: Integration suite on SQLite
+        id: integration-sqlite
         run: npm run test:integration
+      # Runs whatever SQLite's result, so a failure there hides nothing here; either failing fails the job.
       - name: Integration suite on PostgreSQL
+        if: ${{ !cancelled() && (steps.integration-sqlite.conclusion == 'success' || steps.integration-sqlite.conclusion == 'failure') }}
         run: npm run test:integration
         env:
           VOLVERAN_TEST_AUDIT_STORE: postgres

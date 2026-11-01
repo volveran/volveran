@@ -18,6 +18,8 @@ To be written with Replica registration and forwarding (#108, #121): a Checkout'
 
 **The Background Leader clears up.** Audit Entries left `pending` by a gone Replica's Checkouts become `uncertain`, since the step may or may not have happened; `done` means settled, and a Message with no entry never left the queue. The lease and records are removed once they have been readable as long as a Checkout that is over (15 minutes).
 
+**A Replica that shuts down leaves its records.** It ends its Checkouts, writes why (`shutdown`) and then ends its lease at once, without removing anything. The others find the lease over and the record `ended`, and so answer for it as above, saying why it ended, rather than `checkout_not_found`. The Background Leader removes the lease and records after the same 15 minutes. If the store could not be written, the record still says `active`, and it is reported as a Lost Checkout, which is as much as is known.
+
 ## The Background Leader
 
 Some work must run once however many Replicas there are: retention, the sampler and Alerts now; Replay Rule scheduling after them. One Replica at a time, the Background Leader, runs all of it. One leader for everything was chosen over a lease per job because it is much simpler and the load is small.
@@ -61,7 +63,7 @@ A Message must not be republished twice by two clicks on two Replicas, so the gu
 ## Consequences
 
 - Gauges of shared state are exported by the leader alone, so that a sum across Replicas is right, and a Replica that does not lead does not read them from the store. A former leader's sampler keeps its snapshot, which is not shown. During a takeover they are absent, and a stalled leader can briefly export alongside its successor: both are visible in `volveran_background_leader`.
-- Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`. Until Replay Rules are a job (#118) they stop before the leader, so that a last Rule Pass's pause still reaches Alerting; a running pass delays the lease that long.
+- Shutdown (#119) stops background work and ends Checkouts side by side, with every port still serving, so the lease moves without waiting for Messages to return.
 - A job failing to start is logged and the leader stays leader without it, trying it again at each claim until it starts. A job that should not run without another must say so itself. A job marked `mustStart`, such as the sampler, instead fails startup if it fails on the process's first claim, as it always has on a single Replica; a Replica that takes over later is already serving, so it only retries.
 - Alerting does not sit out a term over a failed start, because it is what tells people about problems: it runs anyway, and first retries what the start could not do. It is `mustStart`, so a Replica that fails it while starting up fails its startup, as one always has, and the lease moves.
 - Only the leader reads the broker for Samples. The Messages taken out in estimated arrivals come from Audit Entries in the store, so they count every Replica. A failover leaves no runs for a while, which the history view shows as a gap once runs are more than 1.5 intervals apart, and the next Sample compares with the last stored one, counting what was taken out in between. At the default interval a quick takeover (a minute and 20 s at most, if the leader had just run) stays inside 1.5 intervals and shows no gap, because none was missed.
