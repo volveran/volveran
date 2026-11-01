@@ -26,6 +26,10 @@ All notable changes to Volverán are recorded here. The format is based on
 - With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
+### Fixed
+
+- Ending a Checkout through Keep no longer uses up Delivery Budget on quorum queues, however it ends, including at shutdown. (#134) It now waits for the queue to take the Messages back before closing the channel, which took about 20 seconds per 1,000 Messages on a busy machine, so ending a large Checkout answers later. The wait stops after 40 ms per Message returned, at least 5 seconds (40 seconds at the default limit of 1,000 Messages), and logs a warning; another consumer on the queue can cause that, and any Message not yet taken back then costs one delivery. If you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, raise `pod.terminationGracePeriodSeconds` to match.
+
 ### Security
 
 - A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
