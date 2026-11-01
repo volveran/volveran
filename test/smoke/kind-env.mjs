@@ -22,9 +22,19 @@ export const kubeContext = `kind-${clusterName}`;
  * ~/.kube/config; VOLVERAN_SMOKE_KUBECONFIG overrides it.
  */
 export const kubeconfig = env.VOLVERAN_SMOKE_KUBECONFIG || path.join(repoRoot, '.test-tmp', `${clusterName}.kubeconfig`);
-/** The one Kubernetes version the smoke test runs, and so the one docs/compatibility.md supports. kind's own default would move with kind. */
-export const kubernetesVersion = 'v1.37.0';
-export const kubernetesNodeImage = `kindest/node:${kubernetesVersion}@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`;
+/** The Kubernetes versions CI runs the smoke test on, each by digest. kind's own default would move with kind. docs/compatibility.md supports those that pass. */
+/** @type {Record<string, string>} */
+export const kubernetesNodeDigests = {
+  'v1.33.12': 'sha256:3f5c8443c620245e4d355cfe09e96a91ead32ceaa569d3f1ca9edf0cb2fe2ff4',
+  'v1.34.11': 'sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d',
+  'v1.35.8': 'sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0',
+  'v1.36.4': 'sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed',
+  'v1.37.0': 'sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5',
+};
+/** The version of this run: VOLVERAN_SMOKE_KUBERNETES, else the newest. */
+export const kubernetesVersion = env.VOLVERAN_SMOKE_KUBERNETES || 'v1.37.0';
+if (!(kubernetesVersion in kubernetesNodeDigests)) throw new Error(`No kind node image is pinned for Kubernetes ${kubernetesVersion}`);
+export const kubernetesNodeImage = `kindest/node:${kubernetesVersion}@${kubernetesNodeDigests[kubernetesVersion]}`;
 /** The kubectl flags that select the smoke cluster. */
 export const kubectlFlags = ['--kubeconfig', kubeconfig, '--context', kubeContext];
 
