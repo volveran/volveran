@@ -71,7 +71,7 @@ export function returnWaitMs(returned: number): number {
  * least 45 s.
  */
 export function endAnswersWithinMs(timing: CheckoutTiming, maxMessages: number): number {
-  return timing.timeLimitMs + Math.max(45 * SECOND, 45 * maxMessages);
+  return timing.timeLimitMs + Math.max(45 * SECOND, returnWaitMs(maxMessages) + 15 * SECOND);
 }
 
 /** Milliseconds left until `endsAt` at `now`, never below 0. */
