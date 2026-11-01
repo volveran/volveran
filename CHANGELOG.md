@@ -14,6 +14,8 @@ All notable changes to Volverán are recorded here. The format is based on
 - `check-config` now exits `0` or `1`. It no longer exits `2`: an unknown key is something startup refuses, so it exits `1` and reports the first as an `error:` line, in place of a `refused in 1.0:` line for each.
 - In Team Mode on PostgreSQL, sessions and sign-ins in progress live in the database, with their access and refresh tokens encrypted. An Operator stays signed in across a restart, and a sign-in or a sign-out works whichever Replica it reaches. On SQLite they stay in memory. (#107)
 
+- The image is built on `node:24-alpine` instead of `node:24-slim` (Debian 12), which removes every high and critical finding of the image scan. An image you build on Volverán's now installs packages with `apk`, not `apt-get`, and has musl for its C library.
+
 ### Added
 
 - A Background Leader: one Replica holds a lease in the audit store and runs retention, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
@@ -28,7 +30,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 - A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
-- CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high finding in its dependencies or image.
+- CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high or critical finding in its dependencies or image, with a fix or without one, unless it is on the reviewed list in `.grype.yaml`.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.
 - GitHub Actions are pinned by commit and the base image by digest, and Dependabot proposes their updates and those of npm dependencies.
 
