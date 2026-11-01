@@ -12,7 +12,17 @@
 // - A pass whose queue is held is skipped and recorded as skipped; one whose
 //   Checkout cannot start for another reason is recorded as failed. Every
 //   pass, scheduled or Run now, goes into the rule's history.
-// - stop() cancels the timers and waits for the passes in progress.
+// - It is a job of the Background Leader (ADR 0014): start() and stop() may each run many times.
+//   stop() cancels the timers and does not wait for the passes in progress, so that the lease
+//   can move before their Messages come back (drained() waits for them). They carry on and are
+//   recorded even once it has moved: what they did is true whichever Replica holds it, and a
+//   later write cannot be harmed by theirs. A scheduled pass starts, and a next pass is written,
+//   only under the fence.
+// - pause() and resume() work on any Replica: the store settles them, and the leader is told.
+//   If it never hears (it is changing, or the pass is a former leader's), whatever runs the job
+//   or a pass finds out from the store within RULE_STATE_CHECK_MS.
+// - A pause stops a pass in progress at its next step; one that came before the pass does not,
+//   so Run now still runs a paused rule.
 // - The automatic stop, after every pass (Run now too): the rule pauses with
 //   reason `died_again` once the Died Again Messages its passes saw within
 //   `stopWhen.within`, whose last Audit Entry is this rule's, reach
@@ -30,8 +40,9 @@
 import { randomUUID } from 'node:crypto';
 import { sharedBrokerUser } from '../broker-credentials.js';
 import { HttpError, InvalidRequestError } from '../http-error.js';
-import type { RulePauseEntry, RuleStateStore } from '../audit/audit-store.js';
+import { LeaderLeaseLost, type LeaseFence, type RulePauseEntry, type RuleStateStore } from '../audit/audit-store.js';
 import type { CheckoutManager } from '../checkout/manager.js';
+import type { LeaderJob } from '../leader/background-leader.js';
 import { OneAtATime } from '../one-at-a-time.js';
 import type { Operator } from '../operator.js';
 import type { BrokerProfile, QueueRef } from '../profiles.js';
@@ -40,11 +51,14 @@ import type { ReplayRule, ReplayRuleView, RuleBadge, RulePass, RuleState } from 
 import type { Role } from '../../shared/roles.js';
 import { replayRuleNotFound, replayRulePaused, replayRuleRunning } from './errors.js';
 import { evaluateRule } from './evaluate.js';
-import { ruleKey, ruleOperator, runRulePass, type RulePassFindings } from './pass.js';
+import { ruleKey, ruleOperator, runRulePass, type PassStop, type RulePassFindings } from './pass.js';
 import { systemClock, type RuleClock, type RuleSchedulerTestHooks } from './rule-clock.js';
 
 /** The Checkout start errors that pause a rule, each its own reason: they will not go away by themselves. */
 const PAUSING_START_ERRORS = new Set(['queue_not_found', 'broker_permission_denied', 'lock_not_permitted']);
+
+/** How often the store is read for a pause or resume nobody told this Replica of. */
+export const RULE_STATE_CHECK_MS = 5_000;
 
 /** The longest random jitter added to a pass's interval, so rules declared alike do not all pass at once. */
 export const MAX_JITTER_MS = 30_000;
@@ -71,23 +85,44 @@ export interface ReplayRulesOptions {
   onPassRecorded?(profile: string, rule: string, pass: RulePass): void;
   /** A rule was paused or resumed, automatically or by an Operator. Must not reject. */
   onPauseChanged?(profile: string): Promise<void>;
+  /** A pause or resume on a Replica not running the rules: tells the leader. Must not reject. */
+  tellLeader?(profile: string, rule: string, by: Operator): Promise<void>;
+  /** A write under the fence was refused: this Replica is no longer the leader. */
+  onLeaseLost?(): void;
 }
 
-export class ReplayRules {
+/** A pass in progress: what a pause can stop, and the pause it saw when it began. */
+interface PassInProgress {
+  stop: PassStop;
+  pausedAtSeen: string | null;
+}
+
+export class ReplayRules implements LeaderJob {
+  readonly name = 'replay-rules';
+  /** As it always has, a rule that cannot start fails startup. */
+  readonly mustStart = true;
   private readonly clock: RuleClock;
   /** Rule key → its next pass's timer and time, while it is scheduled. */
   private readonly timers = new Map<string, { at: Date; cancel(): void }>();
   /** Rule key → its passes in progress: at most one scheduled, and any Run now beside it. */
   private readonly running = new Map<string, Set<Promise<unknown>>>();
+  /** Rule key → its passes in progress, for a pause to stop. */
+  private readonly inProgress = new Map<string, Set<PassInProgress>>();
   private readonly perRule = new OneAtATime();
-  private stopped = false;
+  /** Until this Replica leads, and again once it stops. */
+  private stopped = true;
+  private fence: LeaseFence | undefined;
+  private stateCheck: { cancel(): void } | null = null;
 
   constructor(private readonly options: ReplayRulesOptions) {
     this.clock = options.testHooks?.clock ?? systemClock;
   }
 
   /** Gives every declared rule its state and schedules the running ones. */
-  async start(): Promise<void> {
+  async start(fence?: LeaseFence): Promise<void> {
+    this.stopped = false;
+    this.fence = fence;
+    this.armStateCheck();
     for (const profile of this.options.profiles) {
       for (const rule of profile.replayRules) {
         await this.options.state.ensure(ruleKey(profile.name, rule.name), rule.startPaused);
@@ -103,13 +138,86 @@ export class ReplayRules {
     });
   }
 
-  /** Cancels every timer and waits for the passes in progress to end. */
+  /** Cancels every timer. A pass in progress goes on, still watching for a pause. */
   async stop(): Promise<void> {
     this.stopped = true;
     for (const timer of this.timers.values()) timer.cancel();
     this.timers.clear();
+    await this.perRule.settled();
+    this.endStateCheckIfIdle();
+  }
+
+  /** Waits for the passes in progress to end and be recorded. */
+  async drained(): Promise<void> {
     await Promise.allSettled([...this.running.values()].flatMap((passes) => [...passes]));
     await this.perRule.settled();
+    this.endStateCheckIfIdle();
+  }
+
+  private endStateCheckIfIdle(): void {
+    if (!this.stopped || this.running.size > 0) return;
+    this.stateCheck?.cancel();
+    this.stateCheck = null;
+  }
+
+  /** Another Replica wrote a pause or resume of the rule, and tells this one. */
+  async changedElsewhere(profileName: string, name: string): Promise<void> {
+    const profile = this.options.profiles.find((p) => p.name === profileName);
+    if (!profile) return;
+    const rule = this.find(profile, name);
+    await this.perRule.run(ruleKey(profile.name, rule.name), () => this.followState(profile, rule));
+    await this.options.onPauseChanged?.(profile.name);
+  }
+
+  private armStateCheck(): void {
+    this.stateCheck?.cancel();
+    this.stateCheck = this.clock.setTimer(() => {
+      void this.checkStates().finally(() => {
+        this.endStateCheckIfIdle();
+        if (this.stateCheck) this.armStateCheck();
+      });
+    }, RULE_STATE_CHECK_MS);
+  }
+
+  /** What no one told this Replica: a pause that should stop a pass, a resume to schedule. Never rejects. */
+  private async checkStates(): Promise<void> {
+    for (const profile of this.options.profiles) {
+      for (const rule of profile.replayRules) {
+        const key = ruleKey(profile.name, rule.name);
+        try {
+          await this.perRule.run(key, () => this.followState(profile, rule));
+        } catch (err) {
+          this.options.onError?.(key, err);
+        }
+      }
+    }
+  }
+
+  /** Stops the passes a pause should stop, and makes the rule's timer agree with its state. Inside the rule's turn. */
+  private async followState(profile: BrokerProfile, rule: ReplayRule): Promise<void> {
+    const key = ruleKey(profile.name, rule.name);
+    const state = await this.options.state.state(key);
+    if (!state) return;
+    this.stopPasses(key, state);
+    if (this.stopped) return;
+    const scheduled = this.timers.has(key);
+    if (state.paused ? scheduled : !scheduled && !this.running.has(key)) await this.scheduleNext(profile, rule);
+  }
+
+  /** A pause that came after a pass began stops it: at once before its Apply, or at the next step of it. */
+  private stopPasses(key: string, state: RuleState): void {
+    if (!state.paused) return;
+    for (const pass of this.inProgress.get(key) ?? []) {
+      if (pass.stop.stoppedBy !== null || state.pausedAt === pass.pausedAtSeen) continue;
+      const by = state.pausedBy ?? 'an Operator';
+      pass.stop.stoppedBy = by;
+      if (pass.stop.checkoutId === null) continue;
+      try {
+        this.options.checkouts.stopApplyBy(pass.stop.checkoutId, { operator: { id: key, displayName: by }, as: 'owner' });
+      } catch {
+        // Its last step has been attempted, or something else stopped it first.
+      }
+    }
   }
 
   /** The rules of `profile`, in file order, with their state, last passes and next pass time. */
@@ -117,8 +225,8 @@ export class ReplayRules {
     return Promise.all(
       profile.replayRules.map(async (rule) => {
         const key = ruleKey(profile.name, rule.name);
-        const [state, passes] = await Promise.all([this.options.state.ensure(key, rule.startPaused), this.options.state.passes(key)]);
-        return { rule, state, passes, nextPassAt: this.timers.get(key)?.at.toISOString() ?? null };
+        const [state, passes, nextPass] = await Promise.all([this.options.state.ensure(key, rule.startPaused), this.options.state.passes(key), this.options.state.nextPass(key)]);
+        return { rule, state, passes, nextPassAt: nextPass?.toISOString() ?? null };
       }),
     );
   }
@@ -158,8 +266,10 @@ export class ReplayRules {
    */
   async runNow(profile: BrokerProfile, name: string): Promise<RulePass> {
     const rule = this.find(profile, name);
+    const key = ruleKey(profile.name, rule.name);
     try {
-      const { pass, error } = await this.tracked(ruleKey(profile.name, rule.name), this.pass(profile, rule));
+      const passing = async () => this.pass(profile, rule, (await this.options.state.ensure(key, rule.startPaused)).pausedAt);
+      const { pass, error } = await this.tracked(key, passing());
       if (error !== undefined) throw error;
       return pass;
     } finally {
@@ -205,8 +315,8 @@ export class ReplayRules {
     const rule = this.find(profile, name);
     if (typeof reason !== 'string' || reason.trim() === '') throw new InvalidRequestError('"reason" must say why the rule is paused.');
     return this.perRule.run(ruleKey(profile.name, name), async () => {
-      if ((await this.stateOf(profile, rule)).paused) throw replayRulePaused(profile.name, name);
-      await this.markPaused(profile, rule, { operator, role }, reason.trim());
+      await this.stateOf(profile, rule);
+      if (!(await this.markPaused(profile, rule, { operator, role }, reason.trim()))) throw replayRulePaused(profile.name, name);
       return this.stateOf(profile, rule);
     });
   }
@@ -219,8 +329,8 @@ export class ReplayRules {
   async resume(profile: BrokerProfile, name: string, operator: Operator, role: Role): Promise<RuleState> {
     const rule = this.find(profile, name);
     return this.perRule.run(ruleKey(profile.name, name), async () => {
-      if (!(await this.stateOf(profile, rule)).paused) throw replayRuleRunning(profile.name, name);
-      await this.markResumed(profile, rule, { operator, role });
+      await this.stateOf(profile, rule);
+      if (!(await this.markResumed(profile, rule, { operator, role }))) throw replayRuleRunning(profile.name, name);
       return this.stateOf(profile, rule);
     });
   }
@@ -247,6 +357,17 @@ export class ReplayRules {
     const now = this.clock.now().getTime();
     const base = last ? Math.max(now, Date.parse(last.at) + rule.everyMs) : now + rule.everyMs;
     const at = base + jitterMs(rule.everyMs);
+    try {
+      await this.options.state.setNextPass(key, new Date(at), this.fence);
+    } catch (err) {
+      if (err instanceof LeaderLeaseLost) {
+        this.options.onLeaseLost?.();
+        return;
+      }
+      // The timer still stands; only what the others are shown is behind.
+      this.options.onError?.(key, err);
+    }
+    if (this.stopped) return;
     const timer = this.clock.setTimer(() => {
       this.timers.delete(key);
       this.runScheduled(profile, rule).catch((err) => this.options.onError?.(key, err));
@@ -266,7 +387,16 @@ export class ReplayRules {
         reschedule = false;
         return null;
       }
-      return (await this.pass(profile, rule)).pass;
+      try {
+        // Before anything else of a pass: a former leader gets no further. As with a timer gone, no next pass shows.
+        await this.options.state.setNextPass(key, null, this.fence);
+      } catch (err) {
+        if (!(err instanceof LeaderLeaseLost)) throw err;
+        this.options.onLeaseLost?.();
+        reschedule = false;
+        return null;
+      }
+      return (await this.pass(profile, rule, state.pausedAt)).pass;
     };
     try {
       // Counted as running before its first store call, so a second one finds it.
@@ -290,13 +420,18 @@ export class ReplayRules {
   }
 
   /** Runs and records one pass; a skip or a refused start is recorded and returned with its error. */
-  private async pass(profile: BrokerProfile, rule: ReplayRule): Promise<{ pass: RulePass; error?: unknown }> {
+  private async pass(profile: BrokerProfile, rule: ReplayRule, pausedAtSeen: string | null): Promise<{ pass: RulePass; error?: unknown }> {
     const key = ruleKey(profile.name, rule.name);
     let error: unknown;
     const now = this.clock.now();
+    const inProgress: PassInProgress = { stop: { stoppedBy: null, checkoutId: null }, pausedAtSeen };
+    const ofRule = this.inProgress.get(key) ?? new Set<PassInProgress>();
+    this.inProgress.set(key, ofRule);
+    ofRule.add(inProgress);
     const { pass, findings } = await runRulePass(this.options.checkouts, profile, rule, {
       now,
       firstSeen: (ids, at) => this.options.state.firstSeen(key, ids, at),
+      stop: inProgress.stop,
     }).catch((err): { pass: RulePass; findings: null } => {
       error = err;
       const skipped = err instanceof HttpError && (err.code === 'checkout_in_progress' || err.code === 'operator_has_checkout');
@@ -304,6 +439,9 @@ export class ReplayRules {
         pass: { id: randomUUID(), at: now.toISOString(), status: skipped ? 'skipped' : 'failed', summary: null, reason: (err as Error).message },
         findings: null,
       };
+    }).finally(() => {
+      ofRule.delete(inProgress);
+      if (ofRule.size === 0) this.inProgress.delete(key);
     });
     await this.options.state.recordPass(key, pass);
     this.options.onPassRecorded?.(profile.name, rule.name, pass);
@@ -329,7 +467,7 @@ export class ReplayRules {
     } else if (error instanceof HttpError && PAUSING_START_ERRORS.has(error.code)) {
       reason = error.code;
     }
-    if (reason === null || (await this.stateOf(profile, rule)).paused) return;
+    if (reason === null) return;
     await this.markPaused(profile, rule, { operator: ruleOperator(profile.name, rule.name), role: 'operator' }, reason);
   }
 
@@ -338,19 +476,25 @@ export class ReplayRules {
   }
 
   /** Pauses the rule for `by` with `reason`, records it as an Audit Entry, and clears its next pass. Inside the rule's turn. */
-  private async markPaused(profile: BrokerProfile, rule: ReplayRule, by: RuleActor, reason: string): Promise<void> {
+  private async markPaused(profile: BrokerProfile, rule: ReplayRule, by: RuleActor, reason: string): Promise<boolean> {
     const at = this.clock.now();
     const entry = this.pauseOrResumeEntry(profile, rule, by, at, { action: 'rule_pause', reason });
-    await this.options.state.pause(ruleKey(profile.name, rule.name), { reason, by: by.operator.displayName, at }, entry);
-    await this.scheduleNext(profile, rule);
-    await this.options.onPauseChanged?.(profile.name);
+    if (!(await this.options.state.pause(ruleKey(profile.name, rule.name), { reason, by: by.operator.displayName, at }, entry))) return false;
+    await this.afterPauseOrResume(profile, rule, by);
+    return true;
   }
 
   /** Resumes the rule for `by`, clearing the automatic stop's count; records it as an Audit Entry and schedules its next pass. Inside the rule's turn. */
-  private async markResumed(profile: BrokerProfile, rule: ReplayRule, by: RuleActor): Promise<void> {
+  private async markResumed(profile: BrokerProfile, rule: ReplayRule, by: RuleActor): Promise<boolean> {
     const entry = this.pauseOrResumeEntry(profile, rule, by, this.clock.now(), { action: 'rule_resume', reason: null });
-    await this.options.state.resume(ruleKey(profile.name, rule.name), entry);
-    await this.scheduleNext(profile, rule);
+    if (!(await this.options.state.resume(ruleKey(profile.name, rule.name), entry))) return false;
+    await this.afterPauseOrResume(profile, rule, by);
+    return true;
+  }
+
+  private async afterPauseOrResume(profile: BrokerProfile, rule: ReplayRule, by: RuleActor): Promise<void> {
+    await this.followState(profile, rule);
+    if (this.stopped) await this.options.tellLeader?.(profile.name, rule.name, by.operator);
     await this.options.onPauseChanged?.(profile.name);
   }
 

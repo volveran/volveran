@@ -1,7 +1,8 @@
 // Replay Rule state on PostgreSQL. See sqlite-rule-state.ts for what is kept and why.
 import type pg from 'pg';
 import { insertEntry } from './audit-entry-sql.js';
-import { FIRST_SEEN_LIMIT, PASS_HISTORY, type RulePauseEntry, type RuleStateStore } from './audit-store.js';
+import { FIRST_SEEN_LIMIT, PASS_HISTORY, type LeaseFence, type RulePauseEntry, type RuleStateStore } from './audit-store.js';
+import { fenced } from './postgres-leader-lease.js';
 import { numbered, transaction } from './postgres-connection.js';
 import { toPass, toRuleState, type PassRow, type RuleStateRow } from './store-rows.js';
 import type { RulePass, RuleState } from '../../shared/replay-rules.js';
@@ -24,19 +25,33 @@ export class PostgresRuleStateStore implements RuleStateStore {
     return rows[0] ? toRuleState(rows[0]) : null;
   }
 
-  async pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<void> {
-    await transaction(this.pool, async (client) => {
-      await setPaused(client, ruleKey, pause);
+  async pause(ruleKey: string, pause: { reason: string; by: string; at: Date }, entry: RulePauseEntry): Promise<boolean> {
+    return transaction(this.pool, async (client) => {
+      if (!(await setPaused(client, ruleKey, pause))) return false;
       await writeDoneEntry(client, entry);
+      return true;
     });
   }
 
-  async resume(ruleKey: string, entry: RulePauseEntry): Promise<void> {
-    await transaction(this.pool, async (client) => {
-      await setPaused(client, ruleKey, null);
+  async resume(ruleKey: string, entry: RulePauseEntry): Promise<boolean> {
+    return transaction(this.pool, async (client) => {
+      if (!(await setPaused(client, ruleKey, null))) return false;
       await client.query('DELETE FROM replay_rule_died_again WHERE rule_key = $1', [ruleKey]);
       await writeDoneEntry(client, entry);
+      return true;
     });
+  }
+
+  async nextPass(ruleKey: string): Promise<Date | null> {
+    const { rows } = await this.pool.query<{ next_pass_at: number | null }>('SELECT next_pass_at FROM replay_rule_state WHERE rule_key = $1', [ruleKey]);
+    const at = rows[0]?.next_pass_at ?? null;
+    return at === null ? null : new Date(Number(at));
+  }
+
+  async setNextPass(ruleKey: string, at: Date | null, fence?: LeaseFence): Promise<void> {
+    await fenced(this.pool, fence, (client) =>
+      client.query('UPDATE replay_rule_state SET next_pass_at = $2 WHERE rule_key = $1 AND (paused = 0 OR $2::bigint IS NULL)', [ruleKey, at?.getTime() ?? null]),
+    );
   }
 
   async recordPass(ruleKey: string, pass: RulePass): Promise<void> {
@@ -111,13 +126,16 @@ export class PostgresRuleStateStore implements RuleStateStore {
   }
 }
 
-async function setPaused(client: pg.PoolClient, ruleKey: string, pause: { reason: string; by: string; at: Date } | null): Promise<void> {
-  await client.query(
+/** Answers whether it changed anything: a rule already as asked stays as it is. */
+async function setPaused(client: pg.PoolClient, ruleKey: string, pause: { reason: string; by: string; at: Date } | null): Promise<boolean> {
+  const { rowCount } = await client.query(
     `INSERT INTO replay_rule_state (rule_key, paused, paused_reason, paused_by, paused_at) VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (rule_key) DO UPDATE SET paused = excluded.paused, paused_reason = excluded.paused_reason,
-       paused_by = excluded.paused_by, paused_at = excluded.paused_at`,
+       paused_by = excluded.paused_by, paused_at = excluded.paused_at, next_pass_at = NULL
+     WHERE replay_rule_state.paused <> excluded.paused`,
     [ruleKey, pause ? 1 : 0, pause?.reason ?? null, pause?.by ?? null, pause?.at.getTime() ?? null],
   );
+  return rowCount === 1;
 }
 
 async function writeDoneEntry(client: pg.PoolClient, entry: RulePauseEntry): Promise<void> {

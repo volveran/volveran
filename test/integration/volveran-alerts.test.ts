@@ -6,14 +6,19 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import {
   closableManagementProxy,
   closedPort,
+  deadLetter,
   deadLetterRoutes,
   eventually,
+  fixtureQueues,
   makeTempDir,
   management,
+  purgeQueues,
+  ranSummary,
   ruleSchedulerHooks,
   samplerHooks,
   startApp,
   testProfile,
+  withChannel,
   type TestApp,
 } from './harness.js';
 import { startFakeDestination, type FakeDestination } from './fake-destination.js';
@@ -87,6 +92,62 @@ describe('Alert Rules on Volverán itself', () => {
       const { notifications } = (await app.get('/api/alerts')).body;
       expect(notifications.map((n: any) => n.replayRule)).toEqual(['retry', 'retry']);
     });
+  });
+
+  it("still tells of a last pass's automatic pause when a single Replica shuts down during that pass", async () => {
+    const route = deadLetterRoutes.classic;
+    const t0 = new Date();
+    const scheduler = ruleSchedulerHooks(t0);
+    let gate: { reached(): void; opened: Promise<void> } | null = null;
+    const app = await start({
+      profiles: [
+        testProfile({
+          name: 'local',
+          replayRules: [replayRule({ queue: dlq, stopWhen: { diedAgain: 1, within: '1h' } })],
+          alerts: [alert('stopped', { replayRulePaused: true })],
+        }),
+      ],
+      checkoutTestHooks: {
+        ...scheduler.hooks,
+        beforeApplyStep: async () => {
+          gate?.reached();
+          await gate?.opened;
+        },
+      },
+    });
+    await deadLetter(route, [{ body: 'p-1', options: { messageId: 'p-1' } }]);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== dlq));
+    scheduler.set(new Date(t0.getTime() + 11 * MINUTE));
+    expect(ranSummary(await scheduler.runPass('local', 'retry'))).toMatchObject({ replayed: 1 });
+    // It dies again, so the next pass reaches the limit and pauses the rule.
+    await eventually(async () => {
+      await withChannel('/', async (ch) => {
+        const m = await ch.get(route.workQueue, { noAck: false });
+        if (m) ch.nack(m, false, false);
+        expect((await ch.checkQueue(dlq)).messageCount).toBe(1);
+      });
+    }, 5_000, 50);
+    await purgeQueues('/', route.dlqs.filter((q) => q !== dlq));
+
+    let release = () => {};
+    let reached = () => {};
+    const atStep = new Promise<void>((resolve) => (reached = resolve));
+    gate = { reached, opened: new Promise<void>((resolve) => (release = resolve)) };
+    scheduler.set(new Date(t0.getTime() + 22 * MINUTE));
+    const running = scheduler.runPass('local', 'retry');
+    await atStep;
+
+    const closed = app.close();
+    apps.pop();
+    // Long enough for a leader that does not wait for the pass to have stopped its Alerting.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(destination.received).toHaveLength(0);
+    release();
+    await running;
+    await closed;
+
+    expect(sent()).toMatchObject([{ status: 'firing', replayRule: 'retry', reason: 'died_again' }]);
+    await purgeQueues('/', fixtureQueues);
   });
 
   it('tells of a pause by an Operator, says nothing of a rule deployed startPaused, and keeps a firing Alert across a restart', async () => {

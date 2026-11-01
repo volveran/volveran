@@ -24,6 +24,8 @@ const DEFAULT_TIMING: DeliveryTiming = { timeoutMs: 5_000, firstBackoffMs: 1_000
 const MAX_ATTEMPTS = 3;
 /** The error of a delivery the server's stop cut short. */
 export const SERVER_STOPPING = 'server_stopping';
+/** How long a stopping server waits for the deliveries in progress before it ends them. */
+export const CLOSE_WAIT_MS = 5_000;
 
 export interface NotifierOptions {
   destinations: AlertDestination[];
@@ -35,6 +37,10 @@ export interface NotifierOptions {
   /** Called with each delivery's outcome, recorded or not. */
   onDelivered?: (delivery: NotificationDelivery) => void;
   timing?: DeliveryTiming;
+  /** Replaces CLOSE_WAIT_MS. */
+  closeWaitMs?: number;
+  /** The wait on close ran out with this many deliveries in progress, which it then ends. */
+  onCloseWaitRanOut?: (inProgress: number) => void;
 }
 
 type AttemptResult = Pick<NewNotificationDelivery, 'outcome' | 'httpStatus' | 'error'>;
@@ -70,10 +76,27 @@ export class Notifier {
     return this.send(destinationName, testNotification(new Date(), `test-${randomUUID()}`));
   }
 
-  /** Ends the deliveries in progress at once (each records `server_stopping`) and waits for them. Call before the audit store closes. */
+  /**
+   * Gives the deliveries in progress up to CLOSE_WAIT_MS to end, then ends the rest (each
+   * records `server_stopping`) and waits for them. Call before the audit store closes.
+   */
   async close(): Promise<void> {
+    await this.waitForDeliveries();
     this.stopping.abort();
     await Promise.allSettled(this.inProgress);
+  }
+
+  private async waitForDeliveries(): Promise<void> {
+    if (this.inProgress.size === 0) return;
+    let timer: NodeJS.Timeout | undefined;
+    const ranOut = await Promise.race([
+      Promise.allSettled(this.inProgress).then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), this.options.closeWaitMs ?? CLOSE_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (ranOut) this.options.onCloseWaitRanOut?.(this.inProgress.size);
   }
 
   private async deliver(destination: AlertDestination, notification: Notification): Promise<NotificationDelivery> {

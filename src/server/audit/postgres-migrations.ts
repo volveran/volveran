@@ -234,6 +234,8 @@ export const MIGRATIONS: readonly string[] = [
      destination TEXT NOT NULL,
      notification TEXT NOT NULL
    );`,
+  // v9 (#118): when the leader next passes a rule, so that every Replica can show it.
+  `ALTER TABLE replay_rule_state ADD COLUMN next_pass_at BIGINT;`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

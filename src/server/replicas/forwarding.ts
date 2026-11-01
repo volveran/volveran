@@ -8,7 +8,9 @@
 // listener can make a request forwarded, through a map no header reaches: on the web port
 // these headers mean nothing. A forwarded request is answered here, never forwarded again.
 //
-// A forwarded Operator has no `brokerToken`: that stays with the Replica that served their sign-in.
+// Tokens never travel. A request names its session, and the receiving Replica reads the
+// session's token from the store (auth.ts). The id alone signs nobody in: a session cookie
+// must also be signed with the session secret.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { FastifyReply, FastifyRequest, onRequestAsyncHookHandler } from 'fastify';
@@ -17,16 +19,22 @@ import { isRecord } from '../is-record.js';
 import type { Operator } from '../operator.js';
 
 const OPERATOR_HEADER = 'x-volveran-forwarded-operator';
+const SESSION_HEADER = 'x-volveran-forwarded-session';
 /** How long a forwarded request may wait for its answer to begin, unless its route says otherwise. */
 const DEFAULT_ANSWER_WITHIN_MS = 10_000;
 /** Between one hop and the next, or what this hop replaces. */
-const NOT_PASSED_ON = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'cookie', 'authorization', OPERATOR_HEADER]);
+const NOT_PASSED_ON = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'cookie', 'authorization', OPERATOR_HEADER, SESSION_HEADER]);
 
-const forwardedRequests = new WeakMap<IncomingMessage, Operator>();
+const forwardedRequests = new WeakMap<IncomingMessage, { operator: Operator; session: string | null }>();
 
 /** The Operator a request was forwarded with; null for any request that arrived on the web port. */
 export function forwardedOperator(raw: IncomingMessage): Operator | null {
-  return forwardedRequests.get(raw) ?? null;
+  return forwardedRequests.get(raw)?.operator ?? null;
+}
+
+/** The id of the session a request was forwarded from; null when it named none, or arrived on the web port. */
+export function forwardedSession(raw: IncomingMessage): string | null {
+  return forwardedRequests.get(raw)?.session ?? null;
 }
 
 /** Another Replica must answer, and cannot now. Nothing is known to be lost. */
@@ -45,6 +53,8 @@ export interface Forwarder {
    * to the route when it answers null. They run after sign-in and before the body is read.
    */
   toOwner<R extends FastifyRequest>(ownerOf: (req: R) => Promise<string | null>, options?: ToOwnerOptions): { onRequest: onRequestAsyncHookHandler };
+  /** Sends the Replica at `address` a POST of its own, with no body, on behalf of `operator`. Rejects unless it answers 2xx within `withinMs`. */
+  tell(address: string, path: string, operator: Operator, withinMs: number): Promise<void>;
 }
 
 function passedOn(headers: IncomingHttpHeaders): IncomingHttpHeaders {
@@ -67,6 +77,7 @@ export function createForwarder(secret: string): Forwarder {
           host: address,
           authorization: `Bearer ${secret}`,
           [OPERATOR_HEADER]: encodeOperator(req.operator!),
+          ...(req.operator!.brokerToken?.sessionId !== undefined && { [SESSION_HEADER]: req.operator!.brokerToken.sessionId }),
         },
       });
       const limit = setTimeout(() => outgoing.destroy(), answerWithinMs);
@@ -86,6 +97,31 @@ export function createForwarder(secret: string): Forwarder {
     });
 
   return {
+    tell: (address, path, operator, withinMs) =>
+      new Promise<void>((resolve, reject) => {
+        const { hostname, port } = new URL(`http://${address}`);
+        const outgoing = http.request({
+          host: hostname.replace(/^\[|\]$/g, ''),
+          port,
+          method: 'POST',
+          path,
+          agent: false,
+          headers: { host: address, authorization: `Bearer ${secret}`, [OPERATOR_HEADER]: encodeOperator(operator), 'content-length': 0 },
+        });
+        const limit = setTimeout(() => outgoing.destroy(), withinMs);
+        outgoing.on('error', () => {});
+        outgoing.once('close', () => {
+          clearTimeout(limit);
+          reject(replicaUnreachable());
+        });
+        outgoing.once('response', (answer) => {
+          clearTimeout(limit);
+          answer.resume();
+          if ((answer.statusCode ?? 500) < 300) resolve();
+          else reject(new Error(`The Replica answered ${answer.statusCode}`));
+        });
+        outgoing.end();
+      }),
     toOwner(ownerOf, { answerWithinMs = DEFAULT_ANSWER_WITHIN_MS } = {}) {
       return {
         onRequest: async (req, reply) => {
@@ -154,7 +190,8 @@ export async function startForwardingListener({ host, port, secret, serve }: For
       res.end(JSON.stringify({ error: { code: 'forwarding_refused', message: 'This port takes only requests forwarded by another Replica.' } }));
       return;
     }
-    forwardedRequests.set(req, operator);
+    const session = req.headers[SESSION_HEADER];
+    forwardedRequests.set(req, { operator, session: typeof session === 'string' && session !== '' ? session : null });
     serve(req, res);
   });
   await new Promise<void>((resolve, reject) => {

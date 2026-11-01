@@ -51,7 +51,9 @@ export interface LeaderTestHooks {
 }
 
 export interface BackgroundLeaderOptions {
-  lease: LeaderLeaseStore;
+  /** Who claims, new with each process: a Replica's id, so that the others can find its address. */
+  holder?: string;
+  lease: Pick<LeaderLeaseStore, 'claim' | 'release'>;
   jobs: readonly LeaderJob[];
   clock?: RuleClock;
   timing?: Partial<LeaderTiming>;
@@ -63,8 +65,8 @@ export interface BackgroundLeaderOptions {
 
 export class BackgroundLeader implements LeaderControl {
   /** Who claims. A new one per process, so a restart is never taken for the Replica it was. */
-  readonly holder = randomUUID();
-  private readonly lease: LeaderLeaseStore;
+  readonly holder: string;
+  private readonly lease: BackgroundLeaderOptions['lease'];
   private readonly jobs: readonly LeaderJob[];
   private readonly clock: RuleClock;
   private readonly leaseMs: number;
@@ -84,6 +86,7 @@ export class BackgroundLeader implements LeaderControl {
   private startupFailure: { err: unknown } | null = null;
 
   constructor(options: BackgroundLeaderOptions) {
+    this.holder = options.holder ?? randomUUID();
     this.lease = options.lease;
     this.jobs = options.jobs;
     this.clock = options.clock ?? systemClock;

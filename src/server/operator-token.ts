@@ -40,6 +40,8 @@ export class RefreshRefused extends Error {
 }
 
 export interface RefreshOptions {
+  /** The session it belongs to, which forwarding names so that the Owner Replica can use the same session's token. */
+  sessionId?: string;
   /** The refresh grant at the provider; throws RefreshRefused when refused, anything else when it may pass. */
   refresh?: (refreshToken: string) => Promise<TokenGrant>;
   /** No refresh after this time (ms since the epoch): the session's end. */
@@ -64,6 +66,11 @@ function expiryOf(claims: Record<string, unknown>, grant: TokenGrant, now: numbe
   return typeof exp === 'number' ? exp * 1000 : grant.expiresIn !== undefined ? now + grant.expiresIn * 1000 : undefined;
 }
 
+/** When a grant's access token expires, as an OperatorToken holding it would say. */
+export function grantExpiresAt(grant: TokenGrant, now: number): number | undefined {
+  return expiryOf(claimsOf(grant.accessToken), grant, now);
+}
+
 export class OperatorToken {
   private accessToken!: string;
   private refreshToken: string | undefined;
@@ -80,6 +87,10 @@ export class OperatorToken {
   ) {
     this.take(grant, now);
     this.schedule(now);
+  }
+
+  get sessionId(): string | undefined {
+    return this.options.sessionId;
   }
 
   get claims(): Record<string, unknown> {
