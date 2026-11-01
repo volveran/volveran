@@ -52,6 +52,7 @@ import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { attachOperator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
+import { requestOriginCheck, type RequestOriginCheck } from './request-origin.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
@@ -242,7 +243,9 @@ async function serve(
     await metricsReadings.refresh();
   });
   const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
+  const originCheck = requestOriginCheck(config.mode, config.publicUrl);
   const app = await buildApp({
+    originCheck,
     forwarder: config.forwarding && createForwarder(config.forwarding.secret),
     liveCheckouts,
     endWithinMs: endAnswersWithinMs({ ...config.checkoutTiming, ...options.checkoutTiming }, limits.maxMessages),
@@ -372,6 +375,8 @@ async function serve(
         host: options.host,
         port: config.metricsPort,
         families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
+        // A scraper in Team Mode comes from the network by any address; Solo Mode has only loopback to protect it.
+        ...(config.mode.kind === 'solo' && { refuses: (headers) => originCheck('GET', headers) !== null }),
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
     } catch (err) {
@@ -444,6 +449,8 @@ interface AppOptions {
   /** With other Replicas: how requests reach them. */
   forwarder: Forwarder | null;
   liveCheckouts: LiveCheckouts | null;
+  /** Refuses what a malicious page sends through an Operator's browser. */
+  originCheck: RequestOriginCheck;
   /** How long a forwarded end of a Checkout may take to answer. */
   endWithinMs: number;
 }
@@ -475,7 +482,7 @@ function refusal(statusCode: number): { code: string; message: string } {
   }
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: logger && { ...(logger === true ? {} : logger), serializers: { req: requestLogLine } } });
 
   // Before any route, so none is missed.
@@ -497,6 +504,12 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
     }
     req.log.error({ err }, 'A request failed unexpectedly');
     return reply.status(500).send({ error: { code: 'internal_error', message: 'Something went wrong on the server. The details are in its log.' } });
+  });
+
+  // Before anything reads a session or forwards.
+  app.addHook('onRequest', async (req) => {
+    const refused = originCheck(req.method, req.headers);
+    if (refused) throw refused;
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
