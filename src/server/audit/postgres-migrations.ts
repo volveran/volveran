@@ -204,6 +204,15 @@ export const MIGRATIONS: readonly string[] = [
    );
    CREATE INDEX live_checkouts_owner_replica ON live_checkouts (owner_replica);
    CREATE INDEX live_checkouts_operator_id ON live_checkouts (operator_id);`,
+  // v5: what another Replica needs to show a Checkout whose owner has gone.
+  `ALTER TABLE live_checkouts
+     ADD COLUMN queue_type TEXT NOT NULL DEFAULT 'classic',
+     ADD COLUMN delivery_limit INTEGER,
+     ADD COLUMN ready_at_start INTEGER NOT NULL DEFAULT 0,
+     ADD COLUMN started_at BIGINT NOT NULL DEFAULT 0,
+     ADD COLUMN ends_at BIGINT NOT NULL DEFAULT 0,
+     ADD COLUMN end_reason TEXT,
+     ADD COLUMN lost_reason TEXT;`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

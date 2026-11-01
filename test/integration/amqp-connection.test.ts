@@ -8,7 +8,7 @@ import { brokerCredentials } from '../../src/server/broker-credentials.js';
 import { BrokerError } from '../../src/server/broker-error.js';
 import { parseProfiles, type BrokerProfile } from '../../src/server/profiles.js';
 import { readFile } from 'node:fs/promises';
-import { brokerUsers, closedPort, startTlsProxy, testBroker, tlsFixtures } from './harness.js';
+import { brokerUsers, closedPort, eventually, management, startTlsProxy, testBroker, tlsFixtures } from './harness.js';
 
 /** The test profile; `login` overrides its shared username and password. */
 function profile(overrides: Partial<BrokerProfile> = {}, login: { username?: string; password?: string } = {}): BrokerProfile {
@@ -61,6 +61,24 @@ describe('openAmqpConnection', () => {
     } finally {
       await conn.close();
     }
+  });
+
+  it("asks for a short heartbeat, unless the profile's URL names its own", async () => {
+    const timeoutOf = async (p: BrokerProfile, name: string) => {
+      const conn = await openAmqpConnection(p, brokerCredentials(p, { id: 'test', displayName: 'test' }), '/', name);
+      try {
+        return await eventually(async () => {
+          const res = await management('/connections');
+          const found = (res.body as Array<{ client_properties?: { connection_name?: string }; timeout?: number }>).find((c) => c.client_properties?.connection_name === name);
+          expect(found).toBeDefined();
+          return found!.timeout;
+        });
+      } finally {
+        await conn.close();
+      }
+    };
+    expect(await timeoutOf(profile(), 'volveran heartbeat default')).toBe(5);
+    expect(await timeoutOf(profile({ amqpUrl: `${testBroker.amqpUrl}?heartbeat=7` }), 'volveran heartbeat own')).toBe(7);
   });
 
   it('connects over amqps trusting the profile CA file', async () => {
