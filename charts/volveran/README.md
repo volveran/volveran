@@ -22,8 +22,8 @@ These follow from Volverán's design and are not values:
 - **The audit store PersistentVolumeClaim is kept on uninstall** (`helm.sh/resource-policy: keep`). Delete it by hand
   to delete the audit trail.
 
-A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues
-(on a quorum queue, a large Checkout can use up Delivery Budget as it ends); `pod.terminationGracePeriodSeconds` gives that time to finish.
+A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues,
+which on a quorum queue can take up to 40 seconds at the default limit of 1,000 Messages; `pod.terminationGracePeriodSeconds` gives that time to finish.
 
 ## Install
 

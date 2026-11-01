@@ -53,6 +53,17 @@ export function consumerTimeoutMs(timing: CheckoutTiming): number {
   return timing.timeLimitMs + timing.consumerTimeoutMarginMs;
 }
 
+/**
+ * How long a Checkout's end waits for a quorum queue to take `returned` Messages
+ * back: twice the 20 ms per Message measured on a busy machine
+ * (docs/rabbitmq-behaviour.md, "Returning Messages before closing"), and at least 5
+ * seconds. So 40 seconds at the default limit of 1,000 Messages, which fits the
+ * 60 seconds the chart gives SIGTERM.
+ */
+export function returnWaitMs(returned: number): number {
+  return Math.max(5 * SECOND, returned * 40);
+}
+
 /** Milliseconds left until `endsAt` at `now`, never below 0. */
 export function remainingMs(endsAt: Date, now: Date): number {
   return Math.max(0, endsAt.getTime() - now.getTime());

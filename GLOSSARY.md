@@ -79,7 +79,7 @@ Sending a Message to a queue the user names, or to an exchange with a routing ke
 _Avoid_: Transfer, copy, shovel
 
 **Keep**:
-Returning a Message to its source queue unchanged at the end of a Checkout. The return costs no Delivery Budget while the channel stays open, but on a quorum queue the channel closing straight after it, as a Checkout's end does today, can use some up (ADR 0006).
+Returning a Message to its source queue unchanged at the end of a Checkout. The return costs no Delivery Budget while the channel stays open, so on a quorum queue a Checkout's end waits for the queue to take the Messages back before it closes the channel, up to a time limit (ADR 0006).
 _Avoid_: Skip, requeue, ignore
 
 **Died Again**:
