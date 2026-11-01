@@ -359,10 +359,22 @@ function signInFailed(reason: string): HttpError<'sign_in_failed'> {
   return new HttpError(400, 'sign_in_failed', `Sign-in failed: ${reason}. Sign in again.`, { signInUrl: '/auth/login' });
 }
 
-/** Only a path of this app: never another site (`//host`, `/\host`, `https://...`). */
+/**
+ * Only a path of this app, as a browser reads it: it strips tabs and newlines and takes `\` as `/`.
+ * So the value is resolved the same way, and the path it resolves to is what the redirect uses.
+ */
 function safeReturnTo(value: string | undefined): string {
-  if (!value || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) return '/';
-  return value;
+  if (!value?.startsWith('/')) return '/';
+  const base = 'http://return-to.invalid';
+  let url: URL;
+  try {
+    url = new URL(value, base);
+  } catch {
+    return '/';
+  }
+  // Dots can leave `//` at the front of a path that resolved here.
+  if (url.origin !== base || url.pathname.startsWith('//')) return '/';
+  return url.pathname + url.search + url.hash;
 }
 
 function describe(err: unknown): string {
