@@ -21,6 +21,8 @@ export interface Replica {
   readonly baseUrl: string;
   /** Where the other Replica forwards to it; a restart changes it. */
   readonly forwardingUrl: string;
+  /** Where its metrics are scraped, with `VOLVERAN_METRICS_PORT` in its `env`. Not through a proxy: a scraper is not what `crash` is about. */
+  readonly metricsUrl: string | undefined;
   /** Whether it is up: after a `crash` or `shutdown`, false until `restart`. */
   readonly running: boolean;
   /** Without a session: a route for anyone, such as /readyz. For an Operator, use `browser().to(replica)`. */
@@ -159,6 +161,9 @@ export async function startTwoReplicas(options: TwoReplicasOptions = {}): Promis
       },
       get forwardingUrl() {
         return (running ?? stopped()).forwardingUrl;
+      },
+      get metricsUrl() {
+        return (running ?? stopped()).app.metricsUrl;
       },
       get running() {
         return running !== null;

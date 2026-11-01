@@ -18,7 +18,9 @@ import { CheckoutManager, DEFAULT_ENDED_RETENTION_MS, type CheckoutTestHooks } f
 import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
 import { QueueMetrics } from './metrics/queues.js';
+import { ReplicaMetrics } from './metrics/replicas.js';
 import { startRuntimeMetrics } from './metrics/runtime.js';
+import { reportingStoreErrors } from './metrics/store-errors.js';
 import { StoreReadings } from './metrics/store-readings.js';
 import { TriageMetrics } from './metrics/triage.js';
 import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
@@ -128,11 +130,16 @@ async function serve(
   openedStore: AuditStore,
 ): Promise<RunningServer> {
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const auditStore = options.wrapAuditStore?.(openedStore) ?? openedStore;
-  // A scrape takes the last of these readings and never waits on the store. Replay
-  // Rules are created below; this reads only once it has started.
+  // The leader below exists before anything scrapes.
+  const replicaMetrics = new ReplicaMetrics(() => leader.isLeader);
+  const auditStore = reportingStoreErrors(options.wrapAuditStore?.(openedStore) ?? openedStore, () => replicaMetrics.storeFailed());
+  // A scrape takes the last of these readings and never waits on the store. They describe
+  // shared state, so only the Background Leader shows them, and only it reads them: a
+  // Replica that stops leading forgets them, and takes new ones as soon as it leads again.
+  // Replay Rules and the leader are created below; this reads only once it has started.
   const metricsReadings = new StoreReadings({
     read: async () => {
+      if (!leader.isLeader) return null;
       const [ruleStates, storedBodyBytes, memories] = await Promise.all([
         replayRules.states(),
         auditStore.storedBodyBytes(),
@@ -146,10 +153,11 @@ async function serve(
     onError: (err) => app.log.error({ err }, 'The metrics could not read the audit store; they keep their last values'),
   });
   // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
+  const sharedReadings = () => (leader.isLeader ? metricsReadings.current() : null);
   const triageMetrics = new TriageMetrics({
-    ruleStates: () => metricsReadings.current()?.ruleStates ?? [],
+    ruleStates: () => sharedReadings()?.ruleStates ?? [],
     checkoutCounts: () => checkouts.counts(),
-    storedBodyBytes: () => metricsReadings.current()?.storedBodyBytes ?? null,
+    storedBodyBytes: () => sharedReadings()?.storedBodyBytes ?? null,
   });
   // Each start of the process is a new Replica: a Checkout does not survive a restart.
   const replicaId = randomUUID();
@@ -194,7 +202,7 @@ async function serve(
           maxSignInsInProgress: options.maxSignInsInProgress ?? DEFAULT_MAX_SIGN_INS_IN_PROGRESS,
         }),
       };
-  const forwarder = config.forwarding && createForwarder(config.forwarding.secret);
+  const forwarder = config.forwarding && createForwarder(config.forwarding.secret, (reason) => replicaMetrics.forwardingFailed(reason));
   /** Where the Background Leader can be reached: null when nobody holds the lease or its holder's own lease is over. */
   const leaderAddress = async (): Promise<string | null> => {
     const holder = await auditStore.leaderLease.currentHolder();
@@ -239,9 +247,10 @@ async function serve(
       else app.log.error({ err, profile }, 'A sampling run failed unexpectedly');
     },
   });
-  const queueMetrics = new QueueMetrics(() => sampler.latest());
+  // A former leader's snapshot stays for its next term, but it no longer says what is true now.
+  const queueMetrics = new QueueMetrics(() => (leader.isLeader ? sampler.latest() : { profiles: [] }));
   sampler.onRun((finished) => queueMetrics.runFinished(finished));
-  const alertMetrics = new AlertMetrics({ profiles, firingRules: (profile) => metricsReadings.current()?.firingRules.get(profile) ?? null });
+  const alertMetrics = new AlertMetrics({ profiles, firingRules: (profile) => sharedReadings()?.firingRules.get(profile) ?? null });
   const notifier = new Notifier({
     onDelivered: (delivery) => alertMetrics.delivered(delivery),
     destinations: alertDestinations,
@@ -274,7 +283,10 @@ async function serve(
     leaderAddressForRoute: async () => {
       if (leader.isLeader) return null;
       const address = await leaderAddress();
-      if (!address) throw replicaUnreachable();
+      if (!address) {
+        replicaMetrics.forwardingFailed('no_address');
+        throw replicaUnreachable();
+      }
       return address;
     },
     originCheck,
@@ -364,7 +376,11 @@ async function serve(
       replayRules,
     ],
     onError: (err, job) => app.log.error({ err, job }, job ? `The Background Leader's job "${job}" failed` : 'The leader lease could not be claimed or given up'),
-    onChange: (isLeader) => app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader'),
+    onChange: (isLeader) => {
+      app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader');
+      // Never rejects.
+      void metricsReadings.refresh();
+    },
   });
   options.leaderTestHooks?.leader?.(leader);
 
@@ -422,7 +438,7 @@ async function serve(
       metricsListener = await startMetricsListener({
         host: options.host,
         port: config.metricsPort,
-        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
+        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...replicaMetrics.families(), ...runtimeMetrics.families()],
         // A scraper in Team Mode comes from the network by any address; Solo Mode has only loopback to protect it.
         ...(config.mode.kind === 'solo' && { refuses: (headers) => originCheck('GET', headers) !== null }),
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
@@ -443,6 +459,7 @@ async function serve(
         port: forwarding.port,
         secret: forwarding.secret,
         serve: (req, res) => app.routing(req, res),
+        onRefused: () => replicaMetrics.forwardingFailed('refused'),
       });
       const lease = new ReplicaLease({
         store: auditStore.replicas,
