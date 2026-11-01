@@ -68,6 +68,22 @@ describe('an Owner Replica that crashes', () => {
     await browser.to(replicas.b).post(`/api/checkouts/${again.body.checkout.id}/end`);
   });
 
+  it('says what is known, not checkout_not_found, when its Broker Profile has left the file', async () => {
+    await start();
+    await seedMessages('/', QUEUE, 1);
+    const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+    await replicas.database.query('UPDATE live_checkouts SET profile = $1 WHERE id = $2', ['removed', id]);
+    await replicas.a.crash();
+
+    const answer = await eventually(async () => {
+      const view = await browser.to(replicas.b).get(`/api/checkouts/${id}`);
+      expect(view.status).toBe(404);
+      return view;
+    });
+    expect(answer.body.error.code).toBe('profile_not_found');
+    expect(answer.body.error.message).toMatch(/Replica .* has gone/);
+  });
+
   it('answers a Checkout that had already ended as ended, with its reason', async () => {
     await start();
     await seedMessages('/', QUEUE, 1);

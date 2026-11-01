@@ -22,7 +22,7 @@ A Checkout's held Messages live in one process's AMQP connection and cannot move
 
 `extraEnv` may not set the forwarding variables, on one Replica either, so the port cannot be opened beside this. This relies on a CNI that enforces NetworkPolicy, which the chart cannot check, and it says so in the install notes and the guide. Egress does not need the same care unless the engineer restricts it, and then the chart adds the rule between Replicas, since otherwise forwarding would fail only once a Checkout is on another pod. That rule uses the port number, because not every CNI resolves a named port on egress.
 
-**One Replica on any store renders as it did.** Recreate, no internal port, no secret, no budget, and no policy unless asked for: an upgrade must not roll or open anything unasked.
+**One Replica on any store renders as it did,** but for the profiles file's format version. Recreate, no internal port, no secret, no budget, and no policy unless asked for: an upgrade must not open anything unasked. The format version changes the ConfigMap's checksum, so the upgrade to 1.0 rolls the pod once and ends open Checkouts; the alternative was a warning at every start for as long as the set-up lasted.
 
 **A rolling update with `maxUnavailable: 0`, and a budget of one.** The replacement is ready before a pod is told to stop, so one always serves. `ScheduleAnyway` spreads pods without leaving a Replica unscheduled on a small cluster.
 
@@ -37,6 +37,10 @@ A Checkout's held Messages live in one process's AMQP connection and cannot move
 **A Replica whose lease runs out ends its Checkouts through Keep.** It may be alive and only cut off from the store, or have stalled. The others no longer forward to it, so it must not go on holding the queue, and a renewal must not bring the Checkout back. Keep needs only the broker, so the Messages go back with no delivery counted and none dropped, in the same way as at shutdown; the Checkout ends with the reason `lease-ran-out`. An Apply attempts no further step. So a store outage longer than a lease costs the Checkouts of every Replica, but no Delivery Budget. While that record cannot be written, another Replica that can read the store but not this one reports a Lost Checkout from what it knows, including the warning about a delivery: it cannot tell a Replica cut off from one that died. A connection already gone, as after a long stall, has returned its Messages the abnormal way, and that Checkout is lost.
 
 **The Background Leader clears up.** Audit Entries left `pending` by a gone Replica's Checkouts become `uncertain`, since the step may or may not have happened; `done` means settled, and a Message with no entry never left the queue. The lease and records are removed once they have been readable as long as a Checkout that is over (15 minutes).
+
+**The token refresh lock is the one lock held across a call out of the store** ([ADR 0013](0013-audit-store-interface.md)). It is an advisory lock on the session's id, so signing out, the sweep and a move of the idle expiry do not wait for a provider, and a session removed meanwhile is not brought back. A provider that does not answer in 10 s counts as a failed refresh, tried again; if it did act on the request, a rotating refresh token may be spent, and the Operator signs in again.
+
+**Sessions are shared only on PostgreSQL.** They live in its tables, with tokens sealed. On SQLite they are in memory (ADR 0013), as a single Replica needs no more.
 
 **A Replica that shuts down leaves its records.** It ends its Checkouts, writes why (`shutdown`) and then ends its lease at once, without removing anything. The others find the lease over and the record `ended`, and so answer for it as above, saying why it ended, rather than `checkout_not_found`. The Background Leader removes the lease and records after the same 15 minutes. If the store could not be written, the record still says `active`, and it is reported as a Lost Checkout, which is as much as is known.
 
@@ -76,7 +80,7 @@ Measured first (#118): a pass the lock queue refuses is recorded `skipped`, touc
 
 ## Restore
 
-A Message must not be republished twice by two clicks on two Replicas, so the guard is one store method, `claimRestore`: it writes the Restore's `pending` Audit Entry unless an earlier Restore of that Discard is anything but `failed`. PostgreSQL holds the Discard's row for the transaction. That needs no migration, where a unique index could refuse a store that already holds two Restores of one Discard. A Restore that crashed before reporting back keeps the body, as it does on one Replica: republishing again could duplicate the Message.
+A Message must not be republished twice by two clicks on two Replicas, so the guard is one store method, `claimRestore`: it writes the Restore's `pending` Audit Entry unless an earlier Restore of that Discard is anything but `failed`. PostgreSQL holds the Discard's row for the transaction. That needs no migration, where a unique index could refuse a store that already holds two Restores of one Discard. A Restore that crashed before reporting back keeps the body, as it does on one Replica: republishing again could duplicate the Message. Its `pending` entry names no Checkout, so nothing can tell its Replica went: once it is over two minutes old, the next try settles it to `uncertain` and answers 409 `restore_interrupted`. There is no republish and no override.
 
 "Is this Discard still running" asks the Live Checkout records as well as this process: a record that is `active` or `applying` under a live lease refuses the Restore. A Replica that has lost its lease cannot finish the step, so its record no longer counts.
 

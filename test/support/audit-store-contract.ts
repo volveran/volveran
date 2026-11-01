@@ -1188,6 +1188,43 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: null, ownerLeaseLive: false });
       });
 
+      describe('markOwnerGone', () => {
+        const REASON = 'its owner has gone';
+
+        it.each(['starting', 'active', 'applying'] as const)('makes a Checkout that is %s lost, with the reason and no Approval', async (status) => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval: null });
+          await store.replicas.markOwnerGone('c-1', REASON);
+          expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', approval: null, lostReason: REASON });
+        });
+
+        it('does not overwrite a Checkout that has ended', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null, endReason: 'operator' });
+          await store.replicas.markOwnerGone('c-1', REASON);
+          expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'ended', endReason: 'operator', lostReason: null });
+        });
+
+        it('keeps the reason of a Checkout already lost', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'the broker closed it' });
+          await store.replicas.markOwnerGone('c-1', REASON);
+          expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', lostReason: 'the broker closed it' });
+        });
+
+        it('does nothing if the record has gone', async () => {
+          await expect(store.replicas.markOwnerGone('nobody', REASON)).resolves.toBeUndefined();
+        });
+      });
+
+      it('ends a lease at once, and a lease that ends leaves its records', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.endLease('r-1', NOW);
+        expect(await store.replicas.liveAddress('r-1', NOW)).toBeNull();
+        expect(await store.replicas.checkoutRecord('c-1')).not.toBeNull();
+      });
+
       it("finds the Operator's active Checkout only while it is active and its owner's lease is live", async () => {
         await store.replicas.renewLease(lease('r-1'));
         await store.replicas.claimCheckout(live(), NOW);
@@ -1598,6 +1635,50 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           refresh.release();
           await Promise.all([done, removed]);
           expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        });
+
+        it('removes a session without waiting for a refresh in progress', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          let removed = false;
+          const removing = store.sessions.removeSession('s-1').then(() => {
+            removed = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const answeredDuringRefresh = removed;
+          refresh.release();
+          await Promise.all([done, removing]);
+          expect(answeredDuringRefresh).toBe(true);
+          expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        });
+
+        it('sweeps an expired session without waiting for its refresh in progress', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          let added = false;
+          const adding = store.sessions.addSession('s-2', session({ expiresAt: NOW + 5000, idleExpiresAt: NOW + 5000 }), NOW + 2000).then(() => {
+            added = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const answeredDuringRefresh = added;
+          refresh.release();
+          await Promise.all([done, adding]);
+          expect(answeredDuringRefresh).toBe(true);
+        });
+
+        it('moves the idle expiry during a refresh, and the move stays', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          await store.sessions.touchSession('s-1', NOW + 900);
+          refresh.release();
+          await done;
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated', idleExpiresAt: NOW + 900 }));
         });
 
         it('keeps answering other calls while many sessions wait on slow refreshes', async () => {

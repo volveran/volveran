@@ -56,6 +56,10 @@ export class PostgresReplicaStore implements ReplicaStore {
     );
   }
 
+  async endLease(replicaId: string, at: number): Promise<void> {
+    await this.pool.query('UPDATE replicas SET lease_expires_at = $2 WHERE id = $1', [replicaId, at]);
+  }
+
   async claimCheckout(c: NewLiveCheckout, now: number): Promise<OperatorHolding | null> {
     // The unique index decides between claims at once. A claim that finds a holder which then
     // goes before it can be read (ended, or never started) has nothing to answer, so tries again.
@@ -96,6 +100,14 @@ export class PostgresReplicaStore implements ReplicaStore {
          ready_at_start = COALESCE($8, ready_at_start)
        WHERE id = $1`,
       [id, status, approval && JSON.stringify(approval), endReason ?? null, lostReason ?? null, queueType ?? null, deliveryLimit ?? null, readyAtStart ?? null],
+    );
+  }
+
+  async markOwnerGone(id: string, lostReason: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE live_checkouts SET status = 'lost', approval = NULL, lost_reason = $2
+       WHERE id = $1 AND status IN ('starting', 'active', 'applying')`,
+      [id, lostReason],
     );
   }
 

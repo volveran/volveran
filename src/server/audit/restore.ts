@@ -13,6 +13,7 @@
 // its own Audit Entry (action `restore`, `restoreOf` the Discard, and the
 // replay id it published with), `pending` before the publish. A Discard whose body retention evicted cannot be
 // Restored.
+import { INTERRUPTED_REASON } from '../replicas/owner-gone.js';
 import { randomUUID } from 'node:crypto';
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
@@ -34,6 +35,7 @@ export type RestoreErrorCode =
   | 'outcome_uncertain'
   | 'discard_in_progress'
   | 'already_restored'
+  | 'restore_interrupted'
   | 'restore_in_progress'
   | 'profile_not_found'
   | 'queue_not_found';
@@ -46,6 +48,7 @@ const STATUS: Record<RestoreErrorCode, number> = {
   outcome_uncertain: 409,
   discard_in_progress: 409,
   already_restored: 409,
+  restore_interrupted: 409,
   restore_in_progress: 409,
   profile_not_found: 422,
   queue_not_found: 422,
@@ -143,7 +146,7 @@ export class RestoreService {
     try {
       const earlier = (await this.audit.list({ restoreOf: id })).find((e) => e.outcome !== 'failed');
       // Looked at again by the claim; here so that this answer still comes before queue_not_found.
-      if (earlier) throw alreadyRestored(id, earlier);
+      if (earlier) throw await this.refusalOver(id, earlier);
       if (!profileHasVhost(profile, discard.vhost) || !(await management.getQueue(discard.vhost, queue))) {
         throw new RestoreError(
           'queue_not_found',
@@ -176,7 +179,7 @@ export class RestoreService {
         replayId,
         message: null,
       });
-      if (!claim.claimed) throw alreadyRestored(id, claim.earlier);
+      if (!claim.claimed) throw await this.refusalOver(id, claim.earlier);
       const entryId = claim.id;
       const options = republishOptions(
         { ...message.properties, headers: message.headers },
@@ -198,7 +201,25 @@ export class RestoreService {
       this.running.delete(id);
     }
   }
+
+  /** Why an earlier Restore stops this one. One a crash left `pending` is settled here: all that is known is that it may have happened. */
+  private async refusalOver(id: number, earlier: AuditEntry): Promise<RestoreError> {
+    const interrupted = earlier.outcome === 'pending' && Date.now() - earlier.at.getTime() > RESTORE_FINISHES_WITHIN_MS;
+    if (interrupted) await this.audit.setOutcome(earlier.id, 'uncertain', INTERRUPTED_REASON);
+    if (!interrupted && earlier.outcome !== 'uncertain') return alreadyRestored(id, earlier);
+    return new RestoreError(
+      'restore_interrupted',
+      `An earlier Restore of the Message of Audit Entry ${id} (Audit Entry ${earlier.id}) stopped before its outcome was known, so the Message may or may not have reached "${earlier.destination?.queue}". Look in that queue. It is not Restored again, as that could duplicate the Message.`,
+    );
+  }
 }
+
+/**
+ * A Restore `pending` for longer than this has stopped: its Replica crashed before writing the
+ * outcome. Nothing else names who is carrying a Restore out, since it has no Checkout. One
+ * merely slow that finishes later still writes its outcome, which is then the truth.
+ */
+const RESTORE_FINISHES_WITHIN_MS = 2 * 60_000;
 
 function alreadyRestored(id: number, earlier: AuditEntry): RestoreError {
   return new RestoreError(

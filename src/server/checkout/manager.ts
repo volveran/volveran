@@ -156,7 +156,7 @@ export interface LiveCheckoutListener {
   /** Awaited when a start fails before it held anything, so the Operator can start again anywhere at once. */
   abandoned(id: string): Promise<void>;
   /** Awaited before an end answers, so no Replica still finds the Checkout active after it. Never rejects. */
-  written(id: string): Promise<void>;
+  writesDone(id: string): Promise<void>;
   changed(checkout: Checkout): void;
   forgotten(id: string): void;
 }
@@ -547,8 +547,8 @@ export class CheckoutManager {
    * the approvers' list agrees with an answer about a request. Never rejects. Call it after a
    * first-wins section, never in one (ADR 0013).
    */
-  async recorded(id: string): Promise<void> {
-    await this.options.liveCheckouts?.written(id);
+  async liveRecordWritten(id: string): Promise<void> {
+    await this.options.liveCheckouts?.writesDone(id);
   }
 
   /** How many Checkouts are active now, and how many of those wait for Approval. */
@@ -826,7 +826,7 @@ export class CheckoutManager {
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);
-    await this.options.liveCheckouts?.written(checkout.id);
+    await this.options.liveCheckouts?.writesDone(checkout.id);
     return this.view(checkout);
   }
 
