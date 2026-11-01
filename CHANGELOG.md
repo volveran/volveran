@@ -18,7 +18,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Added
 
-- A Background Leader: one Replica holds a lease in the audit store and runs retention, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
+- A Background Leader: one Replica holds a lease in the audit store and runs retention, the sampler and Alerts, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
 - The sampler runs on the Background Leader, so several Replicas take one set of Samples. Estimated arrivals count Messages taken out through every Replica, and a failover shows in the history view as a gap, with no false arrivals. On SQLite nothing changes.
 - With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout works through any of them, on an internal port that requires the shared secret: its view and heartbeat, reading Messages, Decisions, Apply, stop, Canary continue, a streamed export and ending it. Nothing changes without them, or on SQLite. (#108, #109)
 - With Replicas, when an Owner Replica dies its Operators see a Lost Checkout with the reason through any other Replica, within the 15 s its lease holds, and an Apply it was running leaves `uncertain` Audit Entries for what is not known. While its lease is live but it cannot be reached, requests answer 503 `replica_unreachable`, to try again. A Replica that cannot renew its lease gives up its Checkouts. (#112)
@@ -26,6 +26,7 @@ All notable changes to Volverán are recorded here. The format is based on
 - AMQP connections ask for a 5 s heartbeat, unless a profile's `amqpUrl` names its own `heartbeat`. A lost host or network now holds a queue's lock and Messages for about 15 s rather than about three minutes. (#112)
 - With those set, four-eyes works across Replicas: the Approvals view lists every waiting Approval from every Replica, and requesting, withdrawing, reading and comparing Messages, approving, rejecting, stopping, continuing and following an Apply work through any of them, with both people in the Audit Entries. (#111)
 - With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
+- With several Replicas, one notification goes out per Alert. A firing Alert survives a change of leader without being sent again as new. On PostgreSQL a notification in flight when the leader goes is sent again by the next, so it may arrive twice ([guide](docs/observability.md)). (#117)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Fixed

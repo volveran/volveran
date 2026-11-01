@@ -20,7 +20,7 @@ To be written with Replica registration and forwarding (#108, #121): a Checkout'
 
 ## The Background Leader
 
-Some work must run once however many Replicas there are: retention and the sampler now; Alerts and Replay Rule scheduling after them. One Replica at a time, the Background Leader, runs all of it. One leader for everything was chosen over a lease per job because it is much simpler and the load is small.
+Some work must run once however many Replicas there are: retention, the sampler and Alerts now; Replay Rule scheduling after them. One Replica at a time, the Background Leader, runs all of it. One leader for everything was chosen over a lease per job because it is much simpler and the load is small.
 
 **A lease row in the audit store, with no Kubernetes API access.** So the chart needs no RBAC, and the pod keeps `automountServiceAccountToken: false`, and it works outside Kubernetes too. Every Replica claims the lease every 5 s (`LEADER_RENEW_MS`); a claim lasts 15 s (`LEADER_LEASE_MS`). The leader's claims renew it, and the others take it once it has expired or been given up.
 
@@ -36,6 +36,8 @@ Some work must run once however many Replicas there are: retention and the sampl
 
 **Moving work onto the leader.** Add a `LeaderJob` to the list in `server.ts`. Its `start(fence)` may be called again after `stop()` in one process, so it must hold no state that assumes one start. `start` may do a first run before it answers: startup waits for it, while renewal does not. Writes that must not come from a former leader take a `fence` parameter on their store method, with a test in the contract suite ([ADR 0013](0013-audit-store-interface.md)); PostgreSQL's implementation runs in `fenced`, and SQLite's calls `check` right before writing. A job treats `LeaderLeaseLost` as no failure: it wrote nothing, and the leader will find out at its next claim.
 
+**Alerts, at least once.** A leader stores an evaluation's result and its notifications in one fenced write, and only then sends them, so a stalled former leader sends nothing for a result the store refuses. A notification is forgotten when its delivery has ended, delivered or out of attempts. One still there when a new leader starts is sent again: that may be twice, and it is never lost to a change of leader. Storing them is why a firing Alert need not be sent again to be safe. On SQLite they are in memory, like the lease, so a single Replica keeps what it has always done: a crash between storing and sending loses that notification, and a restart sends nothing again.
+
 ## Restore
 
 A Message must not be republished twice by two clicks on two Replicas, so the guard is one store method, `claimRestore`: it writes the Restore's `pending` Audit Entry unless an earlier Restore of that Discard is anything but `failed`. PostgreSQL holds the Discard's row for the transaction. That needs no migration, where a unique index could refuse a store that already holds two Restores of one Discard. A Restore that crashed before reporting back keeps the body, as it does on one Replica: republishing again could duplicate the Message.
@@ -44,6 +46,7 @@ A Message must not be republished twice by two clicks on two Replicas, so the gu
 
 ## Consequences
 
-- Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`.
+- Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`. Until Replay Rules are a job (#118) they stop before the leader, so that a last Rule Pass's pause still reaches Alerting; a running pass delays the lease that long.
 - A job failing to start is logged and the leader stays leader without it, trying it again at each claim until it starts. A job that should not run without another must say so itself. A job marked `mustStart`, such as the sampler, instead fails startup if it fails on the process's first claim, as it always has on a single Replica; a Replica that takes over later is already serving, so it only retries.
+- Alerting does not sit out a term over a failed start, because it is what tells people about problems: it runs anyway, and first retries what the start could not do. It is `mustStart`, so a Replica that fails it while starting up fails its startup, as one always has, and the lease moves.
 - Only the leader reads the broker for Samples. The Messages taken out in estimated arrivals come from Audit Entries in the store, so they count every Replica. A failover leaves no runs for a while, which the history view shows as a gap once runs are more than 1.5 intervals apart, and the next Sample compares with the last stored one, counting what was taken out in between. At the default interval a quick takeover (a minute and 20 s at most, if the leader had just run) stays inside 1.5 intervals and shows no gap, because none was missed.

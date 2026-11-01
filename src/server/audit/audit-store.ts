@@ -5,6 +5,7 @@
 // of its Message is on disk once `record` resolves (ADR 0001), so await it before
 // the ack. Limits and orderings stated here hold on every implementation.
 import type { AlertMemory } from '../alerts/evaluation.js';
+import type { Notification } from '../alerts/payloads.js';
 import type { ApprovalSummary } from '../checkout/view.js';
 import type { Operator } from '../operator.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
@@ -520,8 +521,27 @@ export interface ReplicaStore {
 export interface AlertStore {
   /** What is remembered of the profile. */
   load(profile: string): Promise<AlertMemory>;
-  /** Replaces what is remembered of the profile, in one commit. */
-  save(profile: string, memory: AlertMemory): Promise<void>;
+  /**
+   * Replaces what is remembered of the profile and adds the notifications that result
+   * from it, in one commit, so a new leader finds what a former one had yet to send.
+   * Answers the id of each notification, in order.
+   */
+  save(profile: string, memory: AlertMemory, outgoing?: readonly OutgoingNotification[], fence?: LeaseFence): Promise<number[]>;
   /** Quietly forgets the Alerts of rules no longer in the file, and all of profiles no longer in it. */
-  keepOnly(rulesByProfile: ReadonlyMap<string, readonly string[]>): Promise<void>;
+  keepOnly(rulesByProfile: ReadonlyMap<string, readonly string[]>, fence?: LeaseFence): Promise<void>;
+  /** The notifications saved and not yet said to have ended, oldest first. On SQLite they are in memory, so a restart forgets them (ADR 0014). */
+  unsent(): Promise<UnsentNotification[]>;
+  /** The notification's delivery has ended, however it went. */
+  ended(id: number): Promise<void>;
+}
+
+/** A notification an evaluation decided on, for one Alert Destination. */
+export interface OutgoingNotification {
+  destination: string;
+  notification: Notification;
+}
+
+export interface UnsentNotification extends OutgoingNotification {
+  id: number;
+  profile: string;
 }
