@@ -224,7 +224,10 @@ export const MIGRATIONS: readonly string[] = [
    );
    DROP INDEX live_checkouts_operator_id;
    CREATE UNIQUE INDEX live_checkouts_one_per_operator ON live_checkouts (operator_id) WHERE status IN ('starting', 'active');`,
-  // v7: Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
+  // v7: the session idle timeout. A session from before it, or one a Replica still on v6 adds
+  // during a rolling update, has no idle expiry until its next request gives it one.
+  `ALTER TABLE sessions ADD COLUMN idle_expires_at BIGINT NOT NULL DEFAULT 9007199254740991;`,
+  // v8: Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
   `CREATE TABLE alert_unsent_notifications (
      id BIGSERIAL PRIMARY KEY,
      profile TEXT NOT NULL,
