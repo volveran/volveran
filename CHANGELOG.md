@@ -6,6 +6,13 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
+- CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high finding in its dependencies or image.
+- The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.
+- GitHub Actions are pinned by commit and the base image by digest, and Dependabot proposes their updates and those of npm dependencies.
+
 ## [0.6.1] - 2026-10-31
 
 A queue can be Checked Out again straight after its Checkout ends.
