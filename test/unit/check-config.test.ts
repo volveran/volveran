@@ -138,13 +138,27 @@ describe('check-config', () => {
     expect(out).not.toContain('hunter2');
   });
 
-  it('exits 2 and lists the top-level and profile-level keys 1.0 will refuse', async () => {
-    const file = await write(`version: 1\nalertDestination: []\n${profile(['    requireAproval: false'])}`);
-    const { status, out } = await checkConfig(file);
-    expect(status).toBe(2);
-    expect(out).toContain('alertDestination');
-    expect(out).toContain('profiles[0] ("prod").requireAproval');
-    expect(out).toMatch(/refused in 1\.0/);
+  it('exits 1 on an unknown key, as startup would, naming its path', async () => {
+    const { status, out } = await checkConfig(await write(`version: 1\n${profile(['    requireAproval: false'])}`));
+    expect(status).toBe(1);
+    expect(out).toContain('profiles[0] ("prod").requireAproval is not a key');
+    expect(out).toContain('would refuse to start');
+  });
+
+  it('exits 1 on an unknown key deep in the file, naming its path', async () => {
+    const rule = [
+      '    replayRules:',
+      '      - name: r',
+      '        vhost: /',
+      '        queue: q',
+      '        every: 5m',
+      '        backoff: { initial: 1m, max: 1h, multiplyer: 2 }',
+      '        maxAttempts: 1',
+      '        stopWhen: { diedAgain: 1, within: 1m }',
+    ];
+    const { status, out } = await checkConfig(await write(`version: 1\n${profile(rule)}`));
+    expect(status).toBe(1);
+    expect(out).toContain('replayRules[0] ("r").backoff.multiplyer is not a key');
   });
 
   it('warns about a file without a version, and still exits 0', async () => {
@@ -161,7 +175,9 @@ describe('check-config', () => {
 
   it('never prints a secret', async () => {
     const file = await write(`version: 1\nextra: leaked-value\n${profile()}`);
-    const { out } = await checkConfig(file);
+    const { status, out } = await checkConfig(file);
+    expect(status).toBe(1);
+    expect(out).toContain('extra is not a key');
     expect(out).not.toContain('secret-password');
     expect(out).not.toContain('leaked-value');
   });

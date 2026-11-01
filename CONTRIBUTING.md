@@ -36,6 +36,8 @@ docker build -t volveran .   # the image, as the release workflow builds it
 
 After the release's image is published, add its upgrade fixture (see **Upgrade suite** below) and commit it. `test/integration/upgrade.test.ts` fails at the next version bump if it is missing.
 
+**Pinning and scanning.** A workflow names an action as `owner/repo@<commit> # v1.2.3` and the Dockerfile its base image as `node:24-slim@sha256:<digest>`; `test/unit/supply-chain.test.ts` fails on anything else. Dependabot (`.github/dependabot.yml`) updates both, so take its pull requests rather than editing a pin by hand. To add an action, resolve its commit from the tag (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`). `.github/workflows/security.yml` runs CodeQL, `npm audit` and the image scan, with a cut-off of high; the release workflow's first job repeats the last two. Reports of vulnerabilities go through [`SECURITY.md`](SECURITY.md).
+
 **Upgrade suite.** `test/integration/upgrade.test.ts` starts the current version on a real audit store and profiles file of every release and checks, through the HTTP API, that Audit Entries, Discarded bodies and Replay Rule state are readable and that Restore works (`upgradeChecks` in `test/support/upgrade-checks.ts`). It runs with the integration suite, in CI too. On PostgreSQL the same checks run after `copy-audit-store` moved each fixture there, so the copy is proved on the same stores. Each release has `test/fixtures/upgrade/<version>/`, written once by that release's image and never edited by hand. To add one for a new release:
 
 1. Add the version to `RELEASED_VERSIONS` in `test/support/upgrade-fixtures.ts`.
@@ -44,6 +46,8 @@ After the release's image is published, add its upgrade fixture (see **Upgrade s
 4. Run `npx vitest run --config vitest.integration.config.ts test/integration/upgrade.test.ts` with the broker up, and commit the directory.
 
 Another store can reuse this: copy a fixture with `copyFixtureStore`, start on it with `fixtureAppOptions`, and run `upgradeChecks`.
+
+**The profiles file schema.** `profiles.schema.json` is written by hand and published with each release; the parser (`src/server/profiles.ts`) stays the authority. `test/unit/profiles-schema.test.ts` holds the two to the fixtures in `test/fixtures/profiles-schema/`: `accepted/` and `refused/` for both, `parser-only/` for what a schema cannot see. A new key goes in the parser, the schema and `accepted/every-key.yaml`, where the test tries an unknown key beside it.
 
 **Audit store contract.** `auditStoreContract` in `test/support/audit-store-contract.ts` holds what any audit store must do ([ADR 0013](docs/adr/0013-audit-store-interface.md)). It takes the implementation as a parameter and uses only the interface, so a new store method gets its test there, with nothing about a particular database. `test/unit/audit-store-contract.test.ts` runs it on SQLite; what only SQLite has, its migrations, the upgrade suite checks on real stores. `test/integration/audit-store-contract-postgres.test.ts` runs it on PostgreSQL, a database per test (`createTestDatabase` in `test/support/test-postgres.ts`), and `test/integration/postgres-migrations.test.ts` has PostgreSQL's own. Migrations are kept per store and are append-only. A change to the schema is a new entry in both.
 
