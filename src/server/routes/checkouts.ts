@@ -34,6 +34,8 @@ export interface CheckoutRouteDeps {
   access: ProfileAccessCheck;
   /** Route options sending a request about another Replica's Checkout to its Owner Replica; none when this Replica is on its own. */
   toOwner: { onRequest?: onRequestAsyncHookHandler };
+  /** The same for ending a Checkout, which answers only once an Apply in progress has finished and the Messages are back. */
+  toOwnerToEnd: { onRequest?: onRequestAsyncHookHandler };
 }
 
 /**
@@ -72,7 +74,7 @@ export async function compareMessages(checkouts: CheckoutManager, id: string, qu
 }
 
 export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
-  const { checkouts, access, toOwner } = deps;
+  const { checkouts, access, toOwner, toOwnerToEnd } = deps;
   // Every response that shows a Checkout gets its rule badges here, after the route is
   // done: reading them awaits the store, which a first-wins section must not (ADR 0013).
   app.addHook('preSerialization', async (_req, _reply, payload: unknown) => {
@@ -106,13 +108,13 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
     return { checkout: checkouts.get(req.params.id) };
   });
 
-  app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
+  app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', toOwner, async (req) => {
     const handle = parseHandle(req.params.handle);
     checkoutAccess(deps, req, 'checkout');
     return { message: await checkouts.message(req.params.id, handle) };
   });
 
-  app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     return compareMessages(checkouts, req.params.id, req.query);
   });
@@ -128,6 +130,6 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
     checkoutAccess(deps, req, 'checkout');
     return { checkout: await checkouts.end(req.params.id) };
   };
-  app.delete<{ Params: { id: string } }>('/api/checkouts/:id', end);
-  app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', end);
+  app.delete<{ Params: { id: string } }>('/api/checkouts/:id', toOwnerToEnd, end);
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', toOwnerToEnd, end);
 }
