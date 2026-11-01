@@ -16,7 +16,8 @@ export class SqliteHistoryStore implements HistoryStore {
   ) {}
 
   /** Records a sampling run and its Samples in one commit. */
-  async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void> {
+  async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[], fence?: LeaseFence): Promise<void> {
+    this.lease.check(fence);
     this.db.exec('BEGIN');
     try {
       this.db
