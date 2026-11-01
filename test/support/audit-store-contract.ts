@@ -1355,6 +1355,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         operator: { id: 'sub-123', displayName: 'ana@example.com', email: 'ana@example.com', groups: ['ops'] },
         tokens: 'sealed-tokens',
         expiresAt: NOW + 1000,
+        idleExpiresAt: NOW + 60_000,
         ...overrides,
       });
 
@@ -1371,6 +1372,29 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         await store.sessions.addSession('s-1', session(), NOW);
         expect(await store.sessions.session('s-1', NOW + 999)).not.toBeNull();
         expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('no longer answers a session once it has been idle too long, before its lifetime ends', async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        expect(await store.sessions.session('s-1', NOW + 399)).not.toBeNull();
+        expect(await store.sessions.session('s-1', NOW + 400)).toBeNull();
+      });
+
+      it("moves a session's idle expiry and nothing else", async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        await store.sessions.touchSession('s-1', NOW + 700);
+        expect(await store.sessions.session('s-1', NOW + 500)).toEqual(session({ idleExpiresAt: NOW + 700 }));
+      });
+
+      it('does not let its idle expiry carry a session past its lifetime', async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        await store.sessions.touchSession('s-1', NOW + 5000);
+        expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('does not bring a removed session back when it is touched', async () => {
+        await store.sessions.touchSession('s-1', NOW + 700);
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
       });
 
       it('removes a session, and removing it again does nothing', async () => {
@@ -1460,6 +1484,34 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated-1' }));
         });
 
+        it('answers false without refreshing a session past its idle expiry', async () => {
+          await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 500 }), NOW);
+          let called = false;
+          const found = await store.sessions.refreshTokens('s-1', NOW + 500, async () => {
+            called = true;
+            return 'rotated';
+          });
+          expect(found).toBe(false);
+          expect(called).toBe(false);
+        });
+
+        it('moves the idle expiry without waiting for a refresh in progress, which still saves', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          let touched = false;
+          const touching = store.sessions.touchSession('s-1', NOW + 900).then(() => {
+            touched = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const answeredDuringRefresh = touched;
+          refresh.release();
+          await Promise.all([done, touching]);
+          expect(answeredDuringRefresh).toBe(true);
+          expect((await store.sessions.session('s-1', NOW))?.tokens).toBe('rotated');
+        });
+
         it('does not bring back a session removed during its refresh', async () => {
           await store.sessions.addSession('s-1', session(), NOW);
           const refresh = held('rotated');
@@ -1484,15 +1536,32 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
 
       it('hands a sign-in in progress to one caller only', async () => {
-        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW, 10);
         const taken = await Promise.all([store.sessions.takeSignIn('l-1', NOW), store.sessions.takeSignIn('l-1', NOW)]);
         expect(taken.sort()).toEqual(['sealed-login', null].sort());
         expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
       });
 
       it('does not hand over a sign-in that has expired', async () => {
-        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW, 10);
         expect(await store.sessions.takeSignIn('l-1', NOW + 1000)).toBeNull();
+      });
+
+      it('keeps the newest sign-ins in progress when there are too many, and the oldest go', async () => {
+        for (const i of [1, 2, 3, 4]) await store.sessions.addSignIn(`l-${i}`, { sealed: `sealed-${i}`, expiresAt: NOW + 1000 + i }, NOW, 2);
+        expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
+        expect(await store.sessions.takeSignIn('l-2', NOW)).toBeNull();
+        expect(await store.sessions.takeSignIn('l-3', NOW)).toBe('sealed-3');
+        expect(await store.sessions.takeSignIn('l-4', NOW)).toBe('sealed-4');
+      });
+
+      it('holds no more than the limit under sign-ins added at once', async () => {
+        const count = 120;
+        await Promise.all(Array.from({ length: count }, (_, i) => store.sessions.addSignIn(`l-${i}`, { sealed: `sealed-${i}`, expiresAt: NOW + 1000 + i }, NOW, 3)));
+        // Those added at the same moment may pass the limit until the next add, by no more than can run at once.
+        const left = await Promise.all(Array.from({ length: count }, (_, i) => store.sessions.takeSignIn(`l-${i}`, NOW)));
+        expect(left.filter((sealed) => sealed !== null).length).toBeLessThanOrEqual(3 + 30);
+        expect(left.at(-1)).toBe(`sealed-${count - 1}`);
       });
 
       it('leaves others alone when something new is added past their expiry', async () => {

@@ -27,6 +27,8 @@ export type RunMode =
       sessionSecret: string;
       /** Encrypts the tokens of sessions kept at rest: set on PostgreSQL only (with SQLite, sessions stay in memory). */
       sessionEncryptionKey?: string;
+      /** A session its Operator has not used for this long ends (VOLVERAN_SESSION_IDLE_MINUTES). */
+      sessionIdleMs: number;
     };
 
 export type RunModeResult = { ok: true; mode: RunMode } | { ok: false; error: string };
@@ -37,6 +39,9 @@ export const callbackPath = '/auth/callback';
 const minSessionSecretLength = 32;
 const defaultScopes = 'openid email profile';
 const defaultGroupsClaim = 'groups';
+const defaultSessionIdleMinutes = 60;
+/** A session's fixed lifetime: an idle timeout past it would never apply. */
+const maxSessionIdleMinutes = 720;
 
 export function resolveRunMode(env: Record<string, string | undefined>, host: string): RunModeResult {
   const auth = env.VOLVERAN_AUTH?.trim() || 'none';
@@ -129,6 +134,11 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
     }
   }
 
+  const idleMinutes = read('VOLVERAN_SESSION_IDLE_MINUTES') ?? String(defaultSessionIdleMinutes);
+  if (!/^\d+$/.test(idleMinutes) || Number(idleMinutes) < 1 || Number(idleMinutes) > maxSessionIdleMinutes) {
+    return { ok: false, error: `VOLVERAN_SESSION_IDLE_MINUTES must be a whole number from 1 to ${maxSessionIdleMinutes}, not "${idleMinutes}".` };
+  }
+
   // A dotted path into the claims (groups-claim.ts): no empty step.
   const groupsClaim = read('VOLVERAN_OIDC_GROUPS_CLAIM') ?? defaultGroupsClaim;
   if (groupsClaim.split('.').includes('')) {
@@ -152,6 +162,7 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
       },
       sessionSecret,
       ...(sessionEncryptionKey !== undefined && { sessionEncryptionKey }),
+      sessionIdleMs: Number(idleMinutes) * 60 * 1000,
     },
   };
 }

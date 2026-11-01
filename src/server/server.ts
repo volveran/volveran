@@ -13,7 +13,7 @@ import { RestoreService } from './audit/restore.js';
 import { LeaderLeaseLost, type AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
-import { createTeamAuth, type TeamAuth } from './auth.js';
+import { createTeamAuth, DEFAULT_MAX_SIGN_INS_IN_PROGRESS, type TeamAuth } from './auth.js';
 import { CheckoutManager, DEFAULT_ENDED_RETENTION_MS, type CheckoutTestHooks } from './checkout/manager.js';
 import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
@@ -56,7 +56,7 @@ import { ProfileAccessCheck } from './profile-access.js';
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
   profilesFile: string;
-  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET, VOLVERAN_SESSION_ENCRYPTION_KEY. */
+  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET, VOLVERAN_SESSION_ENCRYPTION_KEY, VOLVERAN_SESSION_IDLE_MINUTES. */
   env: Record<string, string | undefined>;
   host: string;
   /** 0 picks a free port. */
@@ -87,6 +87,10 @@ export interface ServerOptions {
   replicaLeaseTiming?: Partial<ReplicaLeaseTiming>;
   /** Test seam: told of each route as it is registered (the authorization matrix); unset in production. */
   onRouteRegistered?(route: { method: string; url: string }): void;
+  /** Test seam: overrides the session idle timeout from VOLVERAN_SESSION_IDLE_MINUTES; unset in production. */
+  sessionIdleMs?: number;
+  /** Test seam: how many sign-ins in progress the store keeps; unset in production. */
+  maxSignInsInProgress?: number;
 }
 
 export interface RunningServer {
@@ -181,6 +185,8 @@ async function serve(
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
           sessions: auditStore.sessions,
           seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
+          sessionIdleMs: options.sessionIdleMs ?? config.mode.sessionIdleMs,
+          maxSignInsInProgress: options.maxSignInsInProgress ?? DEFAULT_MAX_SIGN_INS_IN_PROGRESS,
         }),
       };
   const restore = new RestoreService(auditStore, async (id) => checkouts.isRunning(id) || ((await liveCheckouts?.runningElsewhere(id)) ?? false));
@@ -442,8 +448,35 @@ interface AppOptions {
   endWithinMs: number;
 }
 
+/** What the log says of a request: what Fastify's default says, without the query, which carries the OIDC code and state of /auth/callback. */
+function requestLogLine(req: FastifyRequest) {
+  return {
+    method: req.method,
+    url: req.url.split('?', 1)[0],
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
+
+/** What a client is told of a request the framework or a plugin refused. */
+function refusal(statusCode: number): { code: string; message: string } {
+  switch (statusCode) {
+    case 403:
+      return { code: 'forbidden', message: 'This request is not allowed.' };
+    case 404:
+      return { code: 'not_found', message: 'Nothing is here.' };
+    case 413:
+      return { code: 'body_too_large', message: 'The request body is too large.' };
+    case 415:
+      return { code: 'unsupported_media_type', message: "The request body's content type is not supported." };
+    default:
+      return { code: 'invalid_request', message: 'The request could not be read.' };
+  }
+}
+
 async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger });
+  const app = Fastify({ logger: logger && { ...(logger === true ? {} : logger), serializers: { req: requestLogLine } } });
 
   // Before any route, so none is missed.
   if (onRouteRegistered) {
@@ -452,12 +485,18 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
     });
   }
 
-  app.setErrorHandler((err, _req, reply) => {
+  app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {
       return reply.status(err.status).send({ error: { ...err.details, code: err.code, message: err.message } });
     }
-    app.log.error(err);
-    return reply.status(500).send({ error: { code: 'internal_error', message: (err as Error).message } });
+    const { statusCode, code } = err as { statusCode?: number; code?: string };
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      // Its message can quote the request's body, so neither the answer nor the log carries it.
+      req.log.info({ statusCode, code }, 'A request was refused');
+      return reply.status(statusCode).send({ error: refusal(statusCode) });
+    }
+    req.log.error({ err }, 'A request failed unexpectedly');
+    return reply.status(500).send({ error: { code: 'internal_error', message: 'Something went wrong on the server. The details are in its log.' } });
   });
 
   // Probes answer without a session in both modes (routes/health.ts).

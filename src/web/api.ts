@@ -1,6 +1,7 @@
 // Thin typed client over Volverán's HTTP JSON API. The response shapes are
 // the server's own, from src/shared/.
 import type { AuditAction, AuditEntryJson, BodyStoreUsage } from '../shared/audit.js';
+import { BACKGROUND_REQUEST_HEADER } from '../shared/background-request.js';
 import type { ApprovalSummary, CheckoutView, MessageDetail } from '../shared/checkout.js';
 import type { DeadLetterMap } from '../shared/dead-letter-map.js';
 import type { Decision } from '../shared/decisions.js';
@@ -94,12 +95,15 @@ export class ApiError extends Error {
   }
 }
 
-async function getJson<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+/** For polling that goes on as long as a page stays open, with nobody there: it does not keep the session from going idle. */
+const onItsOwn = { [BACKGROUND_REQUEST_HEADER]: '1' };
+
+async function getJson<T>(path: string, method = 'GET', body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
       method,
-      headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      headers: { accept: 'application/json', ...extraHeaders, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (err) {
@@ -160,9 +164,9 @@ export const api = {
       'POST',
       { overrideConsumers: opts.overrideConsumers === true },
     ).then((b) => b.checkout),
-  /** Keeps the Checkout alive (the page still shows it) and returns its state. */
-  heartbeat: (id: string) =>
-    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/heartbeat`, 'POST').then((b) => b.checkout),
+  /** Keeps the Checkout alive (the page still shows it) and returns its state. `over`: it has ended, and the page goes on asking as long as it stays open. */
+  heartbeat: (id: string, { over = false }: { over?: boolean } = {}) =>
+    getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/heartbeat`, 'POST', undefined, over ? onItsOwn : {}).then((b) => b.checkout),
   checkout: (id: string) => getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}`).then((b) => b.checkout),
   message: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/checkouts/${segment(id)}/messages/${handle}`).then((b) => b.message),
@@ -275,10 +279,13 @@ export const api = {
   withdrawApproval: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/checkouts/${segment(id)}/approval-request`, 'DELETE').then((b) => b.checkout),
   /** Other Operators' Checkouts waiting for an Approval this Operator may give. */
-  approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals').then((b) => b.approvals),
+  approvals: () => getJson<{ approvals: ApprovalSummary[] }>('/api/approvals', 'GET', undefined, onItsOwn).then((b) => b.approvals),
   /** A waiting Checkout, read-only; also the Checkout of an Apply this Operator approved. */
   approvalCheckout: (id: string) =>
     getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`).then((b) => b.checkout),
+  /** The same, for a page that keeps looking while it waits for an approver who may have left. */
+  watchApprovalCheckout: (id: string) =>
+    getJson<{ checkout: Checkout }>(`/api/approvals/${segment(id)}`, 'GET', undefined, onItsOwn).then((b) => b.checkout),
   approvalMessage: (id: string, handle: number) =>
     getJson<{ message: MessageDetail }>(`/api/approvals/${segment(id)}/messages/${handle}`).then((b) => b.message),
   approvalCompare: (id: string, a: number, b: number) =>

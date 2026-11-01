@@ -79,10 +79,10 @@ export class TestBrowser {
     return this.target();
   }
 
-  async request(method: string, url: string, init: { body?: unknown; form?: Record<string, string> } = {}): Promise<BrowserResponse> {
+  async request(method: string, url: string, init: { body?: unknown; form?: Record<string, string>; headers?: Record<string, string> } = {}): Promise<BrowserResponse> {
     const baseUrl = this.target();
     const absolute = new URL(url, baseUrl);
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...init.headers };
     if (absolute.origin === new URL(baseUrl).origin && this.cookies.size > 0) {
       headers.cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
     }
