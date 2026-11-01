@@ -155,6 +155,7 @@ Not available yet ([roadmap](ROADMAP.md)): several replicas (Team Mode runs one 
 - [PostgreSQL](docs/postgresql.md): keeping the audit store in your own database, with TLS, what happens when it goes away, and sizing.
 - [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
+- [Threat model](docs/threat-model.md): what Volverán protects, what was tested, and the risks it accepts.
 - [Architecture decisions](docs/adr/).
 - [Changelog](CHANGELOG.md).
 - [Contributing](CONTRIBUTING.md): development, tests and releases.
