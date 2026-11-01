@@ -48,7 +48,8 @@
 # only from source-controller v1.8.0 (Flux v2.8.0, February 2026) on. Move to
 # v3 once older Flux releases no longer matter.
 # GitHub Release: published last, with the version's CHANGELOG.md entry as its
-# notes; a pre-release tag gets a Release marked as a pre-release.
+# notes and the JSON Schema of the profiles file attached; a pre-release tag gets
+# a Release marked as a pre-release.
 name: Release
 
 on:
@@ -233,4 +234,4 @@ jobs:
           prerelease=()
           case "$version" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "Volverán $version" \
-            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"
+            --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}" profiles.schema.json

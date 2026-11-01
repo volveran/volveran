@@ -1,0 +1,35 @@
+# The values the parser reads as "not set".
+alertDestinations: null
+profiles:
+  - name: dev
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    credentials: null
+    username: guest
+    passwordEnv: PASSWORD
+    caFile: ""
+    defaultQueueFilter: null
+    requireApproval: null
+    roles: null
+    replayRate: { default: null, max: null }
+    canary: { watchWindow: null, requiredAbove: null }
+    alerts: null
+    replayRules:
+      - name: r
+        vhost: /
+        queue: q
+        filter: null
+        every: 5m
+        rate: null
+        backoff: { initial: 1m, multiplier: null, max: 1h }
+        maxAttempts: 1
+        whenAttemptsUsedUp: null
+        stopWhen: { diedAgain: 1, within: 1m }
+  - name: nulls
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    credentials: operatorToken
+    tokenUsernameClaim: null
+    replayRate: null
+    canary: null
+    replayRules: null
