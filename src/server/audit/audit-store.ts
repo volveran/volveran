@@ -5,8 +5,10 @@
 // of its Message is on disk once `record` resolves (ADR 0001), so await it before
 // the ack. Limits and orderings stated here hold on every implementation.
 import type { AlertMemory } from '../alerts/evaluation.js';
+import type { ApprovalSummary } from '../checkout/view.js';
 import type { Operator } from '../operator.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
+import type { CheckoutQueueType, CheckoutStatus, EndReason } from '../../shared/checkout.js';
 import type { AuditAction, AuditCanaryOutcome, AuditDestination, AuditOutcome } from '../../shared/audit.js';
 import type { Filter } from '../../shared/filters.js';
 import type { RulePass, RuleState } from '../../shared/replay-rules.js';
@@ -214,10 +216,18 @@ export interface AuditStore {
   readonly notifications: NotificationStore;
   /** Alerts. */
   readonly alerts: AlertStore;
+  /** Who is signed in, and who is signing in (Team Mode). */
+  readonly sessions: SessionStore;
+  /** Who is the Background Leader. */
+  readonly leaderLease: LeaderLeaseStore;
+  /** Which Replicas are alive and which Checkouts they own. */
+  readonly replicas: ReplicaStore;
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; answers its id. */
   record(entry: NewAuditEntry): Promise<number>;
   setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason?: string | null): Promise<void>;
+  /** The Replica carrying out Checkout `checkoutId` has gone: its entries still `pending` become `uncertain`, with `reason`. Answers how many. */
+  settleInterrupted(checkoutId: string, reason: string): Promise<number>;
   /** Records how the watch of a Canary's entry ended. */
   setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): Promise<void>;
   /** The entries matching `query` (every entry by default), newest first. */
@@ -231,13 +241,52 @@ export interface AuditStore {
    * many more as needed for the rest to fit in `maxBodyBytes`. Each evicted
    * entry keeps everything else and is marked body expired at `now`.
    */
-  evictBodies(eviction: BodyEviction): Promise<{ evicted: number }>;
+  evictBodies(eviction: BodyEviction, fence?: LeaseFence): Promise<{ evicted: number }>;
   /** The total size of the bodies stored now (what the size limit applies to). */
   storedBodyBytes(): Promise<number>;
   /** Resolves if the store can be reached now, and rejects soon if not, for a readiness probe. Never waits long. */
   ping(): Promise<void>;
   /** Closes the store. Closing it again does nothing. */
   close(): Promise<void>;
+}
+
+/**
+ * What a write by the Background Leader names so the store can check the lease as part
+ * of it. A write given a fence rejects with LeaderLeaseLost, having done nothing, once
+ * the lease is no longer held in that term, however long ago the caller last looked.
+ */
+export interface LeaseFence {
+  holder: string;
+  term: number;
+}
+
+/** A write named a fence whose lease has been given up or taken by another. */
+export class LeaderLeaseLost extends Error {
+  constructor() {
+    super('The leader lease is no longer held');
+    this.name = 'LeaderLeaseLost';
+  }
+}
+
+export interface LeaderLeaseGrant extends LeaseFence {
+  /** Epoch milliseconds, by the clock of whoever claimed it. */
+  expiresAt: number;
+}
+
+/**
+ * The one lease that says which Replica is the Background Leader (ADR 0014). On SQLite
+ * it is in memory, as one Replica needs no more, so a restart is its own leader at
+ * once; on PostgreSQL it is a row every Replica shares.
+ */
+export interface LeaderLeaseStore {
+  /**
+   * Takes the lease for `holder` until `now + durationMs`, or renews it. Answers null
+   * when another holds it past `now`. The term goes up each time the lease changes
+   * hands or comes back after being given up.
+   */
+  claim(holder: string, now: number, durationMs: number): Promise<LeaderLeaseGrant | null>;
+  /** Gives the lease up, free for the next claim; does nothing unless `holder` has it. */
+  release(holder: string): Promise<void>;
 }
 
 /** The Audit Entry of a pause or resume of a Replay Rule, which has no Message. */
@@ -293,7 +342,7 @@ export interface HistoryStore {
   /** The Applies and Rule Passes that took Messages out of the queue in the range, oldest first. */
   takeOuts(queue: SampledQueue, from: number, to: number): Promise<TakeOut[]>;
   /** Removes the Samples and sampling runs older than `before`. */
-  removeOlderThan(before: number): Promise<{ samples: number; runs: number }>;
+  removeOlderThan(before: number, fence?: LeaseFence): Promise<{ samples: number; runs: number }>;
 }
 
 /** The outcome of each notification, kept as long as the depth history. */
@@ -302,7 +351,135 @@ export interface NotificationStore {
   /** The latest outcomes (100 by default), newest first; `visible` narrows them first, so the limit counts only what is kept. */
   recent(limit?: number, visible?: NotificationScope): Promise<NotificationDelivery[]>;
   /** Removes the outcomes from before `cutoff`; answers how many. */
-  removeOlderThan(cutoff: Date): Promise<number>;
+  removeOlderThan(cutoff: Date, fence?: LeaseFence): Promise<number>;
+}
+
+/** A signed-in Operator's session. Tokens reach the store already sealed (token-seal.ts); it only holds them. */
+export interface StoredSession {
+  operator: Pick<Operator, 'id' | 'displayName' | 'email' | 'name' | 'groups'>;
+  /** Sealed. */
+  tokens: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/** A sign-in between /auth/login and /auth/callback. */
+export interface StoredSignIn {
+  sealed: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/**
+ * Sessions and sign-ins in progress. In memory on SQLite, so a restart signs everyone
+ * out, and shared in the database on PostgreSQL. `now` is epoch milliseconds: what
+ * expires at or before it is gone. Adding may remove what has expired.
+ */
+export interface SessionStore {
+  addSession(id: string, session: StoredSession, now: number): Promise<void>;
+  /** The session, or null. */
+  session(id: string, now: number): Promise<StoredSession | null>;
+  /** Replaces the session's sealed tokens; does nothing if it has gone. */
+  setTokens(id: string, tokens: string): Promise<void>;
+  removeSession(id: string): Promise<void>;
+  addSignIn(id: string, signIn: StoredSignIn, now: number): Promise<void>;
+  /** The sealed sign-in, removing it, so that of any callers only one gets it; else null. */
+  takeSignIn(id: string, now: number): Promise<string | null>;
+}
+
+/** A Replica's lease, as stored. */
+export interface ReplicaLeaseRow {
+  replicaId: string;
+  /** `host:port` of its internal port. */
+  forwardingAddress: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/** What a Live Checkout record says that changes as the Checkout goes on. */
+export interface LiveCheckoutUpdate {
+  /** `starting`: claimed, and not yet a Checkout anyone can use. */
+  status: Exclude<CheckoutStatus, 'awaiting_approval'> | 'starting';
+  /** The Approval the Checkout waits for, as the approvers' list shows it; null when it waits for none. */
+  approval: ApprovalSummary | null;
+  /** Why it ended; left out or null unless it has. */
+  endReason?: EndReason | null;
+  /** Why it was lost; left out or null unless it was. */
+  lostReason?: string | null;
+  /** Learned from the broker after the claim. Left out, the record keeps what it has; `deliveryLimit` goes with `queueType`. */
+  queueType?: CheckoutQueueType;
+  deliveryLimit?: number | null;
+  readyAtStart?: number;
+}
+
+/** A Live Checkout record: where a Checkout is, and enough to list it. */
+export interface NewLiveCheckout extends LiveCheckoutUpdate {
+  id: string;
+  /** The Owner Replica. */
+  ownerReplica: string;
+  operator: Pick<Operator, 'id' | 'displayName'>;
+  profile: string;
+  vhost: string;
+  queue: string;
+  queueType: CheckoutQueueType;
+  deliveryLimit: number | null;
+  readyAtStart: number;
+  /** Epoch milliseconds. */
+  startedAt: number;
+  /** Epoch milliseconds. */
+  endsAt: number;
+}
+
+/** A Live Checkout record as read: what another Replica can say of the Checkout once its owner has gone. */
+export interface LiveCheckoutRecord extends NewLiveCheckout {
+  endReason: EndReason | null;
+  lostReason: string | null;
+}
+
+/** The Checkout that holds an Operator's one place. */
+export interface OperatorHolding {
+  id: string;
+  vhost: string;
+  queue: string;
+}
+
+/** Where a request about a Checkout goes. */
+export interface LiveCheckoutRoute {
+  ownerReplica: string;
+  /** Null when the owner has no lease left at all. */
+  forwardingAddress: string | null;
+  ownerLeaseLive: boolean;
+}
+
+/**
+ * Replicas' leases and Live Checkout records. `now` is epoch milliseconds: a lease expiring
+ * at or before it is over. A record stays when its owner's lease ends, until it is removed.
+ */
+export interface ReplicaStore {
+  /** Takes or extends the Replica's lease. */
+  renewLease(lease: ReplicaLeaseRow): Promise<void>;
+  /** The Replica has gone for good: removes its lease and every record it owns, as one unit of work. */
+  removeReplica(replicaId: string): Promise<void>;
+
+  /**
+   * Adds the record unless the Operator already has a `starting` or `active` Checkout on a
+   * Replica whose lease is live: then adds nothing and answers that one. One whose owner's
+   * lease is over no longer counts, and becomes `lost` in the same unit of work.
+   */
+  claimCheckout(checkout: NewLiveCheckout, now: number): Promise<OperatorHolding | null>;
+  /** Does nothing if the record has gone. A `lost` record does not become `active` again: its Operator may hold another by now. */
+  updateCheckout(id: string, update: LiveCheckoutUpdate): Promise<void>;
+  removeCheckout(id: string): Promise<void>;
+  /** The record's route, or null when there is no record. */
+  checkoutRoute(id: string, now: number): Promise<LiveCheckoutRoute | null>;
+  /** The record, or null when there is none. */
+  checkoutRecord(id: string): Promise<LiveCheckoutRecord | null>;
+  /** Every record whose owner's lease is over at `now`. */
+  checkoutsOfGoneReplicas(now: number): Promise<LiveCheckoutRecord[]>;
+  /** Removes each lease over by `before` and the records of its Replica, as one unit of work. Answers how many leases. */
+  removeGoneReplicas(before: number): Promise<number>;
+  /** The id of the Operator's `active` Checkout whose owner's lease is live, or null. */
+  activeCheckoutOf(operatorId: string, now: number): Promise<string | null>;
 }
 
 /** Alerts and what arrival conditions remember of each queue, so a restart neither forgets nor re-sends a firing one. */

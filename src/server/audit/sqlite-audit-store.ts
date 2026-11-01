@@ -23,12 +23,17 @@ import type {
   AuditEntry,
   AuditQuery,
   AuditStore,
-  BodyEviction,
+  BodyEviction, LeaseFence,
   HistoryStore,
   NewAuditEntry,
   NotificationStore,
   RuleStateStore,
+  ReplicaStore,
+  SessionStore,
 } from './audit-store.js';
+import { MemoryLeaderLease } from './memory-leader-lease.js';
+import { MemoryReplicaStore } from './memory-replicas.js';
+import { MemorySessionStore } from './memory-sessions.js';
 import { SqliteAlertStore } from './sqlite-alerts.js';
 import { SqliteHistoryStore } from './sqlite-history.js';
 import { SqliteNotificationStore } from './sqlite-notifications.js';
@@ -260,6 +265,9 @@ export class SqliteAuditStore implements AuditStore {
   readonly history: HistoryStore;
   readonly notifications: NotificationStore;
   readonly alerts: AlertStore;
+  readonly sessions: SessionStore = new MemorySessionStore();
+  readonly leaderLease = new MemoryLeaderLease();
+  readonly replicas: ReplicaStore = new MemoryReplicaStore();
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -276,8 +284,8 @@ export class SqliteAuditStore implements AuditStore {
       throw err;
     }
     this.ruleState = new SqliteRuleStateStore(this.db);
-    this.history = new SqliteHistoryStore(this.db);
-    this.notifications = new SqliteNotificationStore(this.db);
+    this.history = new SqliteHistoryStore(this.db, this.leaderLease);
+    this.notifications = new SqliteNotificationStore(this.db, this.leaderLease);
     this.alerts = new SqliteAlertStore(this.db);
   }
 
@@ -302,6 +310,11 @@ export class SqliteAuditStore implements AuditStore {
 
   async setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): Promise<void> {
     this.db.prepare('UPDATE audit_entries SET outcome = ?, outcome_reason = ? WHERE id = ?').run(outcome, reason, id);
+  }
+
+  async settleInterrupted(checkoutId: string, reason: string): Promise<number> {
+    const { changes } = this.db.prepare("UPDATE audit_entries SET outcome = 'uncertain', outcome_reason = ? WHERE checkout_id = ? AND outcome = 'pending'").run(reason, checkoutId);
+    return Number(changes);
   }
 
   /** Records how the watch of a Canary's entry ended. */
@@ -337,7 +350,8 @@ export class SqliteAuditStore implements AuditStore {
    * as many more as needed for the rest to fit in `maxBodyBytes`. Each
    * evicted entry keeps everything else and is marked body expired at `now`.
    */
-  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction): Promise<{ evicted: number }> {
+  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction, fence?: LeaseFence): Promise<{ evicted: number }> {
+    this.leaderLease.check(fence);
     // `newer_bytes`: this body plus every newer one. The newest bodies that
     // fit are kept; anything older, or older than the age limit, goes.
     const ids = this.db

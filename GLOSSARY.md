@@ -18,8 +18,18 @@ _Avoid_: Prod mode, locked profile
 An exclusive hold on the Messages at the head of one queue when it started (all of them, up to the Checkout limit), so the user can act on each one. Messages that arrive later, or lie beyond the limit, wait for the next Checkout. A Checkout has a time limit. Ending or losing a Checkout returns every Message that has no applied Decision to the queue.
 _Avoid_: Session, lock, snapshot, browse
 
+**Replica**:
+One running Volverán process that shares its audit store with others.
+_Avoid_: Pod, node
+
+**Owner Replica**:
+The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica passes requests about that Checkout on to it.
+
+**Background Leader**:
+The one Replica currently running the sampler, Alerts, Replay Rules and retention.
+
 **Lost Checkout**:
-A Checkout that ended without Volverán ending it, for example because the broker cancelled it. Its Messages are back in the queue and it can no longer be Applied.
+A Checkout that ended without Volverán ending it, for example because the broker cancelled it or its Owner Replica died. Its Messages are back in the queue, or will be once the broker sees the connection gone, and it can no longer be Applied.
 _Avoid_: Expired, timed out, dead Checkout
 
 **Delivery Budget**:
@@ -135,6 +145,10 @@ _Avoid_: Server mode, hosted mode, SSO mode
 **Replica**:
 One running Volverán server among those sharing an audit store on PostgreSQL. Until multi-Replica work lands, run exactly one.
 _Avoid_: Pod, node
+
+**Background Leader**:
+The one Replica currently running what must run once however many Replicas there are, such as retention. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
+_Avoid_: Master, primary, active Replica
 
 **Audit Entry**:
 A record of one triage action: which Operator did it, as which broker user, when, on which Broker Profile and queue. For a Discard it includes a full copy of the Message.

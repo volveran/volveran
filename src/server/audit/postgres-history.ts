@@ -1,7 +1,8 @@
 // Depth history on PostgreSQL. See sqlite-history.ts for what is kept and why.
 import type pg from 'pg';
-import type { HistoryStore, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
+import type { HistoryStore, LeaseFence, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
 import { transaction } from './postgres-connection.js';
+import { fenced } from './postgres-leader-lease.js';
 import { TAKEN_OUT, toRun, toSample, toTakeOuts, type RunRow, type SampleRow, type TakeOutRow } from './store-rows.js';
 
 export class PostgresHistoryStore implements HistoryStore {
@@ -91,8 +92,8 @@ export class PostgresHistoryStore implements HistoryStore {
     return toTakeOuts(rows);
   }
 
-  async removeOlderThan(before: number): Promise<{ samples: number; runs: number }> {
-    return transaction(this.pool, async (client) => {
+  async removeOlderThan(before: number, fence?: LeaseFence): Promise<{ samples: number; runs: number }> {
+    return fenced(this.pool, fence, async (client) => {
       const samples = await client.query('DELETE FROM history_samples WHERE at < $1', [before]);
       const runs = await client.query('DELETE FROM sampling_runs WHERE at < $1', [before]);
       return { samples: samples.rowCount ?? 0, runs: runs.rowCount ?? 0 };

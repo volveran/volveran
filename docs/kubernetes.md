@@ -165,13 +165,13 @@ The chart only references Secrets by name, so SOPS, Sealed Secrets, External Sec
 
 | Secret | Value | Keys |
 |---|---|---|
-| OIDC | `oidc.existingSecret` | `client-secret` (`oidc.clientSecretKey`): the OIDC client secret. `session-secret` (`oidc.sessionSecretKey`): at least 32 characters, signs the session cookies. |
+| OIDC | `oidc.existingSecret` | `client-secret` (`oidc.clientSecretKey`): the OIDC client secret. `session-secret` (`oidc.sessionSecretKey`): at least 32 characters, signs the session cookies. On PostgreSQL, `session-encryption-key` (`oidc.sessionEncryptionKeyKey`): at least 32 characters, encrypts the tokens of sessions in the database. |
 | Broker passwords | `brokerProfiles.passwordsSecret` | One key per Broker Profile, named as its `passwordEnv`. Every key becomes an environment variable of the pod, so name keys as environment variables (`VOLVERAN_PROD_PASSWORD`). |
 | Alert Destinations | `alerts.existingSecret` | One key per `urlEnv` and `signingSecretEnv`. Every key becomes an environment variable of the pod. |
 
 Adding a Broker Profile means adding its profile to the values and its key to the passwords Secret, with no template change.
 
-The pod reads Secrets at startup. After changing one, restart Volverán (`kubectl -n volveran rollout restart deployment/volveran`), which signs everyone out (see [Upgrades](#upgrades-and-restarts)). A new session secret also invalidates every session cookie.
+The pod reads Secrets at startup. After changing one, restart Volverán (`kubectl -n volveran rollout restart deployment/volveran`), which signs everyone out on SQLite (see [Upgrades](#upgrades-and-restarts)). A new session secret also invalidates every session cookie, and a new session encryption key every session in the database.
 
 ## Private CAs
 
@@ -195,9 +195,9 @@ caBundles:
 
 Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`, or let Flux's `semver` range pick the new version up. Read the [changelog](../CHANGELOG.md) first; the chart and the app share one version.
 
-**A deploy signs everyone out and ends open Checkouts.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
+**A deploy ends open Checkouts and, on SQLite, signs everyone out.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
 
-- Sessions live in the Volverán process, so every Operator signs in again afterwards.
+- On SQLite, sessions live in the Volverán process, so every Operator signs in again afterwards. On PostgreSQL they live in the database and survive it.
 - On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order. An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
 - `pod.terminationGracePeriodSeconds` (60 by default) is the time it has for that before `SIGKILL`. On a quorum queue a Checkout's end waits for the queue to take its Messages back, up to 40 seconds at the default limit of 1,000 Messages (40 ms per Message, at least 5 seconds). Raise the grace period if you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, or if Checkouts on slow brokers need longer.
 - The `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready.

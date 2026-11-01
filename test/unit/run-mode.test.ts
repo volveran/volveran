@@ -82,6 +82,38 @@ describe('Team Mode settings', () => {
     expect(errorOf({ ...teamEnv, VOLVERAN_SESSION_SECRET: 'too-short' })).toMatch(/VOLVERAN_SESSION_SECRET.*32/);
   });
 
+  describe('the session encryption key', () => {
+    const postgres = { VOLVERAN_POSTGRES_URL: 'postgres://volveran@db.example.com/volveran' };
+    const key = 'an-encryption-key-of-at-least-32-characters';
+
+    it('is required on PostgreSQL, where sessions are kept at rest', () => {
+      expect(errorOf({ ...teamEnv, ...postgres })).toMatch(/VOLVERAN_SESSION_ENCRYPTION_KEY/);
+    });
+
+    it('is read on PostgreSQL', () => {
+      const result = resolveRunMode({ ...teamEnv, ...postgres, VOLVERAN_SESSION_ENCRYPTION_KEY: key }, '0.0.0.0');
+      expect(result.ok && result.mode.kind === 'team' && result.mode.sessionEncryptionKey).toBe(key);
+    });
+
+    it('is not needed on SQLite, where sessions stay in memory, and is ignored there', () => {
+      expect(resolveRunMode(teamEnv, '0.0.0.0').ok).toBe(true);
+      const result = resolveRunMode({ ...teamEnv, VOLVERAN_SESSION_ENCRYPTION_KEY: 'short' }, '0.0.0.0');
+      expect(result.ok && result.mode.kind === 'team' && result.mode.sessionEncryptionKey).toBeUndefined();
+    });
+
+    it('is not needed in Solo Mode on PostgreSQL', () => {
+      expect(resolveRunMode({ ...postgres, VOLVERAN_OPERATOR: 'ana' }, '127.0.0.1').ok).toBe(true);
+    });
+
+    it('refuses a short key', () => {
+      expect(errorOf({ ...teamEnv, ...postgres, VOLVERAN_SESSION_ENCRYPTION_KEY: 'too-short' })).toMatch(/VOLVERAN_SESSION_ENCRYPTION_KEY.*32/);
+    });
+
+    it('refuses the session secret as the key: knowing one must not give the other', () => {
+      expect(errorOf({ ...teamEnv, ...postgres, VOLVERAN_SESSION_ENCRYPTION_KEY: teamEnv.VOLVERAN_SESSION_SECRET })).toMatch(/VOLVERAN_SESSION_ENCRYPTION_KEY.*VOLVERAN_SESSION_SECRET/);
+    });
+  });
+
   it('refuses a redirect URL that is not the /auth/callback route', () => {
     expect(errorOf({ ...teamEnv, VOLVERAN_OIDC_REDIRECT_URL: 'https://volveran.example.com/callback' })).toMatch(
       /VOLVERAN_OIDC_REDIRECT_URL.*\/auth\/callback/,

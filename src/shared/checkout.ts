@@ -373,6 +373,8 @@ export interface CheckoutView {
   status: CheckoutStatus;
   /** Why the Checkout was lost; null unless status is "lost". */
   lostReason: string | null;
+  /** The Owner Replica has gone, so this comes from what the store knew of it: what happened to its Messages is in `lostReason` and the Audit Entries. */
+  ownerGone: boolean;
   /** Why the Checkout ended; null unless status is "ended". */
   endReason: EndReason | null;
   /** Ready Messages in the queue when it started; the UI shows "<heldCount> of ~<readyAtStart> held". */

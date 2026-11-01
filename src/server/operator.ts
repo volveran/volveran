@@ -9,6 +9,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from './http-error.js';
 import type { OperatorToken } from './operator-token.js';
+import { forwardedOperator } from './replicas/forwarding.js';
 
 export interface Operator {
   /**
@@ -56,11 +57,11 @@ export function teamOperator(claims: { sub: string; email?: unknown; name?: unkn
   };
 }
 
-/** Adds `req.operator` to every request; `resolve` returns null for a request without one. */
-export function attachOperator(app: FastifyInstance, resolve: (req: FastifyRequest) => Operator | null): void {
+/** Adds `req.operator` to every request: the one another Replica forwarded it with, else what `resolve` returns, null for a request without one. */
+export function attachOperator(app: FastifyInstance, resolve: (req: FastifyRequest) => Operator | null | Promise<Operator | null>): void {
   app.decorateRequest('operator', null);
   app.addHook('onRequest', async (req) => {
-    req.operator = resolve(req);
+    req.operator = forwardedOperator(req.raw) ?? (await resolve(req));
   });
 }
 

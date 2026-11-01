@@ -8,11 +8,15 @@ import {
   FIRST_SEEN_LIMIT,
   PASS_HISTORY,
   type AuditQuery,
+  LeaderLeaseLost,
   type AuditStore,
+  type LeaseFence,
   type NewAuditEntry,
+  type NewLiveCheckout,
   type NewNotificationDelivery,
   type QueueSample,
   type StoredSamplingRun,
+  type StoredSession,
 } from '../../src/server/audit/audit-store.js';
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
@@ -1051,6 +1055,304 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
+    describe('Replicas and Live Checkout records', () => {
+      const NOW = AT.getTime();
+      const lease = (replicaId: string, expiresAt = NOW + 1000) => ({ replicaId, forwardingAddress: `${replicaId}.internal:8081`, expiresAt });
+      const live = (overrides: Partial<NewLiveCheckout> = {}): NewLiveCheckout => ({
+        id: 'c-1',
+        ownerReplica: 'r-1',
+        operator: { id: 'sub-123', displayName: 'ana@example.com' },
+        profile: 'local',
+        vhost: '/',
+        queue: 'orders.dlq',
+        queueType: 'quorum',
+        deliveryLimit: 20,
+        readyAtStart: 3,
+        startedAt: NOW,
+        endsAt: NOW + 60_000,
+        status: 'active',
+        approval: null,
+        ...overrides,
+      });
+
+      it('finds a record with its owner, its address and whether the lease is live', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'r-1.internal:8081', ownerLeaseLive: true });
+      });
+
+      it('has no route without a record', async () => {
+        expect(await store.replicas.checkoutRoute('nobody', NOW)).toBeNull();
+      });
+
+      it('keeps the record when the lease runs out, exactly at its time', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect((await store.replicas.checkoutRoute('c-1', NOW + 999))?.ownerLeaseLive).toBe(true);
+        expect(await store.replicas.checkoutRoute('c-1', NOW + 1000)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'r-1.internal:8081', ownerLeaseLive: false });
+      });
+
+      it('extends a lease and takes a new address by renewing it', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.renewLease({ replicaId: 'r-1', forwardingAddress: 'moved:8081', expiresAt: NOW + 5000 });
+        expect(await store.replicas.checkoutRoute('c-1', NOW + 2000)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'moved:8081', ownerLeaseLive: true });
+      });
+
+      it('routes a record whose owner has no lease to nowhere', async () => {
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: null, ownerLeaseLive: false });
+      });
+
+      it("finds the Operator's active Checkout only while it is active and its owner's lease is live", async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBe('c-1');
+        expect(await store.replicas.activeCheckoutOf('someone-else', NOW)).toBeNull();
+        expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 1000)).toBeNull();
+        await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null });
+        expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBeNull();
+      });
+
+      it('ignores an update of a record that has gone', async () => {
+        await store.replicas.updateCheckout('nobody', { status: 'lost', approval: null });
+        expect(await store.replicas.checkoutRoute('nobody', NOW)).toBeNull();
+      });
+
+      it('removes one record, and removing it again does nothing', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        await store.replicas.removeCheckout('c-1');
+        await store.replicas.removeCheckout('c-1');
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
+        expect(await store.replicas.checkoutRoute('c-2', NOW)).not.toBeNull();
+      });
+
+      it("removing a Replica removes its lease and records, and no other's", async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        await store.replicas.removeReplica('r-1');
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
+        expect((await store.replicas.checkoutRoute('c-2', NOW))?.ownerLeaseLive).toBe(true);
+      });
+
+      it('reads a record back whole, with why it ended or was lost', async () => {
+        expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.checkoutRecord('c-1')).toEqual({ ...live(), endReason: null, lostReason: null });
+        await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null, endReason: 'operator' });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'ended', endReason: 'operator', lostReason: null });
+        await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'the broker closed it' });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', endReason: null, lostReason: 'the broker closed it' });
+      });
+
+      it('takes what is learned of the queue after the claim, and keeps it when an update does not say', async () => {
+        await store.replicas.claimCheckout(live({ status: 'starting', queueType: 'classic', deliveryLimit: null, readyAtStart: 0 }), NOW);
+        await store.replicas.updateCheckout('c-1', { status: 'active', approval: null, queueType: 'quorum', deliveryLimit: 20, readyAtStart: 3 });
+        await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'active', queueType: 'quorum', deliveryLimit: 20, readyAtStart: 3 });
+      });
+
+      it('keeps why a record was lost when its owner comes back and writes it active', async () => {
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'its lease ran out' });
+        await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', lostReason: 'its lease ran out' });
+      });
+
+      it("finds the records of Replicas whose lease is over, whatever their status, and no other's", async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2', NOW + 5000));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', status: 'ended', operator: { id: 'sub-789', displayName: 'cam@example.com' } }), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-3', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        expect(await store.replicas.checkoutsOfGoneReplicas(NOW + 999)).toEqual([]);
+        const gone = await store.replicas.checkoutsOfGoneReplicas(NOW + 1000);
+        expect(gone.map((c) => c.id).sort()).toEqual(['c-1', 'c-2']);
+      });
+
+      it('removes the leases over by a time and their records, and no others', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2', NOW + 5000));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        expect(await store.replicas.removeGoneReplicas(NOW + 999)).toBe(0);
+        expect(await store.replicas.checkoutRecord('c-1')).not.toBeNull();
+        expect(await store.replicas.removeGoneReplicas(NOW + 1000)).toBe(1);
+        expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
+        expect(await store.replicas.checkoutRoute('c-2', NOW)).not.toBeNull();
+        // Its lease is gone too: a Replica coming back starts a new one.
+        await store.replicas.claimCheckout(live({ id: 'c-4', operator: { id: 'sub-789', displayName: 'cam@example.com' } }), NOW);
+        expect((await store.replicas.checkoutRoute('c-4', NOW))?.forwardingAddress).toBeNull();
+      });
+
+      describe('the limit of one Checkout per Operator', () => {
+        const held = { id: 'c-1', vhost: '/', queue: 'orders.dlq' };
+        const second = (overrides: Partial<NewLiveCheckout> = {}) => live({ id: 'c-2', ownerReplica: 'r-2', queue: 'payments.dlq', ...overrides });
+
+        beforeEach(async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.renewLease(lease('r-2'));
+        });
+
+        it('answers nothing to the first claim, and what the Operator holds to the next, which leaves no record', async () => {
+          expect(await store.replicas.claimCheckout(live(), NOW)).toBeNull();
+          expect(await store.replicas.claimCheckout(second(), NOW)).toEqual(held);
+          expect(await store.replicas.checkoutRoute('c-2', NOW)).toBeNull();
+        });
+
+        it('lets each Operator hold one', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.claimCheckout(second({ operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW)).toBeNull();
+        });
+
+        it('lets only one of many claims at once win', async () => {
+          const claims = Array.from({ length: 8 }, (_, i) => store.replicas.claimCheckout(live({ id: `c-${i}`, ownerReplica: i % 2 ? 'r-1' : 'r-2' }), NOW));
+          const answers = await Promise.all(claims);
+          const won = answers.flatMap((answer, i) => (answer === null ? [`c-${i}`] : []));
+          expect(won).toHaveLength(1);
+          for (const answer of answers) if (answer) expect(answer.id).toBe(won[0]);
+        });
+
+        it('counts a Checkout still starting, which is not yet shown as active', async () => {
+          await store.replicas.claimCheckout(live({ status: 'starting' }), NOW);
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBeNull();
+          expect(await store.replicas.claimCheckout(second(), NOW)).toEqual(held);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBe('c-1');
+        });
+
+        it.each(['ended', 'lost'] as const)('does not count a Checkout that is %s, though its record stays', async (status) => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval: null });
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+          expect(await store.replicas.checkoutRoute('c-1', NOW)).not.toBeNull();
+        });
+
+        it('frees the Operator when the record goes', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.removeCheckout('c-1');
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+        });
+
+        it("does not count a Checkout whose owner's lease is over: its record stays, for its loss to be noticed", async () => {
+          await store.replicas.renewLease(lease('r-1', NOW + 10));
+          await store.replicas.renewLease(lease('r-2', NOW + 5000));
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.claimCheckout(second(), NOW + 10)).toBeNull();
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 10)).toBe('c-2');
+          expect(await store.replicas.checkoutRoute('c-1', NOW + 10)).toMatchObject({ ownerReplica: 'r-1', ownerLeaseLive: false });
+        });
+
+        it('does not count a Checkout whose owner has no lease at all', async () => {
+          await store.replicas.claimCheckout(live({ ownerReplica: 'gone' }), NOW);
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+        });
+
+        it('keeps the Operator with the newer Checkout when an owner whose lease ran out comes back', async () => {
+          await store.replicas.renewLease(lease('r-1', NOW + 10));
+          await store.replicas.renewLease(lease('r-2', NOW + 5000));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.claimCheckout(second(), NOW + 10);
+          await store.replicas.renewLease(lease('r-1', NOW + 5000));
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 20)).toBe('c-2');
+          await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null });
+          await store.replicas.updateCheckout('c-2', { status: 'ended', approval: null });
+          expect(await store.replicas.claimCheckout(live({ id: 'c-3' }), NOW + 20)).toBeNull();
+        });
+      });
+    });
+
+    describe('entries left by a Replica that has gone', () => {
+      const entryOf = (checkoutId: string) => entry({ checkoutId });
+
+      it("makes a Checkout's pending entries uncertain, with the reason, and leaves the rest as they are", async () => {
+        const pending = await store.record(entryOf('c-1'));
+        const done = await store.record(entryOf('c-1'));
+        await store.setOutcome(done, 'done');
+        const failed = await store.record(entryOf('c-1'));
+        await store.setOutcome(failed, 'failed', 'channel closed');
+        const other = await store.record(entryOf('c-2'));
+
+        expect(await store.settleInterrupted('c-1', 'its Replica stopped')).toBe(1);
+
+        expect(await store.get(pending)).toMatchObject({ outcome: 'uncertain', outcomeReason: 'its Replica stopped' });
+        expect(await store.get(done)).toMatchObject({ outcome: 'done', outcomeReason: null });
+        expect(await store.get(failed)).toMatchObject({ outcome: 'failed', outcomeReason: 'channel closed' });
+        expect(await store.get(other)).toMatchObject({ outcome: 'pending' });
+        expect(await store.settleInterrupted('c-1', 'its Replica stopped')).toBe(0);
+      });
+    });
+
+    describe('sessions', () => {
+      const NOW = AT.getTime();
+      const session = (overrides: Partial<StoredSession> = {}): StoredSession => ({
+        operator: { id: 'sub-123', displayName: 'ana@example.com', email: 'ana@example.com', groups: ['ops'] },
+        tokens: 'sealed-tokens',
+        expiresAt: NOW + 1000,
+        ...overrides,
+      });
+
+      it('answers a session as it was added', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+      });
+
+      it('answers null for a session it does not have', async () => {
+        expect(await store.sessions.session('nobody', NOW)).toBeNull();
+      });
+
+      it('no longer answers a session once it has expired', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        expect(await store.sessions.session('s-1', NOW + 999)).not.toBeNull();
+        expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('removes a session, and removing it again does nothing', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        await store.sessions.addSession('s-2', session(), NOW);
+        await store.sessions.removeSession('s-1');
+        await store.sessions.removeSession('s-1');
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        expect(await store.sessions.session('s-2', NOW)).not.toBeNull();
+      });
+
+      it("replaces a session's tokens and nothing else", async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        await store.sessions.setTokens('s-1', 'rotated');
+        expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated' }));
+      });
+
+      it('does not bring a removed session back when its tokens are set', async () => {
+        await store.sessions.setTokens('s-1', 'rotated');
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+      });
+
+      it('hands a sign-in in progress to one caller only', async () => {
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        const taken = await Promise.all([store.sessions.takeSignIn('l-1', NOW), store.sessions.takeSignIn('l-1', NOW)]);
+        expect(taken.sort()).toEqual(['sealed-login', null].sort());
+        expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
+      });
+
+      it('does not hand over a sign-in that has expired', async () => {
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        expect(await store.sessions.takeSignIn('l-1', NOW + 1000)).toBeNull();
+      });
+
+      it('leaves others alone when something new is added past their expiry', async () => {
+        await store.sessions.addSession('old', session(), NOW);
+        await store.sessions.addSession('live', session({ expiresAt: NOW + 5000 }), NOW);
+        await store.sessions.addSession('new', session({ expiresAt: NOW + 5000 }), NOW + 2000);
+        expect(await store.sessions.session('live', NOW + 2000)).not.toBeNull();
+        expect(await store.sessions.session('old', NOW)).toBeNull();
+      });
+    });
+
     describe('closing', () => {
       it('answers a ping while it is open', async () => {
         await expect(store.ping()).resolves.toBeUndefined();
@@ -1059,6 +1361,87 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       it('closes more than once', async () => {
         await store.close();
         await expect(store.close()).resolves.toBeUndefined();
+      });
+    });
+
+    describe('the leader lease', () => {
+      const NOW = AT.getTime();
+      const LEASE = 15_000;
+      const lease = () => store.leaderLease;
+      const oldDiscard = () => store.record(entry({ at: new Date(NOW - 2 * DAY), message: { body: Buffer.from('b'), properties: {}, headers: {} } }));
+      const evict = (fence: LeaseFence) => store.evictBodies({ now: new Date(NOW), maxAgeMs: DAY, maxBodyBytes: 1000 }, fence);
+
+      it('goes to the first to claim it, and to nobody else while it lasts', async () => {
+        expect(await lease().claim('a', NOW, LEASE)).toMatchObject({ holder: 'a', expiresAt: NOW + LEASE });
+        expect(await lease().claim('b', NOW + LEASE - 1, LEASE)).toBeNull();
+      });
+
+      it('is renewed by its holder, in the same term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        const renewed = await lease().claim('a', NOW + 5_000, LEASE);
+        expect(renewed).toEqual({ holder: 'a', term: first!.term, expiresAt: NOW + 5_000 + LEASE });
+        expect(await lease().claim('b', NOW + LEASE + 1, LEASE)).toBeNull();
+      });
+
+      it('goes to another once it has expired, in a later term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        const taken = await lease().claim('b', NOW + LEASE, LEASE);
+        expect(taken!.holder).toBe('b');
+        expect(taken!.term).toBeGreaterThan(first!.term);
+        expect(await lease().claim('a', NOW + LEASE + 1, LEASE)).toBeNull();
+      });
+
+      it('gives one of many claiming at once the lease', async () => {
+        const claims = await Promise.all(['a', 'b', 'c', 'd'].map((holder) => lease().claim(holder, NOW, LEASE)));
+        expect(claims.filter(Boolean)).toHaveLength(1);
+      });
+
+      it('is free for another at once when its holder gives it up, in a later term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        await lease().release('a');
+        const taken = await lease().claim('b', NOW + 1, LEASE);
+        expect(taken!.term).toBeGreaterThan(first!.term);
+      });
+
+      it('stays with its holder when another gives it up', async () => {
+        await lease().claim('a', NOW, LEASE);
+        await lease().release('b');
+        expect(await lease().claim('b', NOW + 1, LEASE)).toBeNull();
+      });
+
+      it('lets a write through for the lease as it is held', async () => {
+        const fence = (await lease().claim('a', NOW, LEASE))!;
+        await oldDiscard();
+        expect(await evict(fence)).toEqual({ evicted: 1 });
+        expect(await store.history.removeOlderThan(NOW, fence)).toEqual({ samples: 0, runs: 0 });
+        expect(await store.notifications.removeOlderThan(new Date(NOW), fence)).toBe(0);
+      });
+
+      it('refuses a write for a lease another has taken since, and does none of it', async () => {
+        const stale = (await lease().claim('a', NOW, LEASE))!;
+        await lease().claim('b', NOW + LEASE, LEASE);
+        const id = await oldDiscard();
+        await store.history.recordRun('p', { at: NOW - DAY, ok: true, errorCode: null, intervalMs: 1000 }, []);
+
+        await expect(evict(stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.history.removeOlderThan(NOW, stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.notifications.removeOlderThan(new Date(NOW), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect(await store.body(id)).not.toBeNull();
+        expect((await store.history.lastRuns('p')).last).not.toBeNull();
+      });
+
+      it('refuses a write for a lease given up', async () => {
+        const given = (await lease().claim('a', NOW, LEASE))!;
+        await lease().release('a');
+        await expect(evict(given)).rejects.toBeInstanceOf(LeaderLeaseLost);
+      });
+
+      it('refuses a write when the same holder is back in a later term', async () => {
+        const before = (await lease().claim('a', NOW, LEASE))!;
+        await lease().release('a');
+        await lease().claim('a', NOW + 1, LEASE);
+        await expect(evict(before)).rejects.toBeInstanceOf(LeaderLeaseLost);
       });
     });
 

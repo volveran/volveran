@@ -6,13 +6,21 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+**Upgrading in Team Mode on PostgreSQL:** set the new `VOLVERAN_SESSION_ENCRYPTION_KEY` (chart: add `session-encryption-key` to the Secret named in `oidc.existingSecret`), or Volverán refuses to start. Nothing changes on SQLite or in Solo Mode.
+
 ### Changed
 
 - **Unknown keys in the profiles file are refused.** This is the deliberate breaking change of 1.0. A key the file does not have stops startup at every level, including the top level, a Broker Profile and a Replay rule's filter clause, where they used to be ignored, and the refusal names its path. A misspelt safety setting such as `requireAproval` can no longer silently leave it at its default. Try your file with `check-config` before upgrading ([guide](docs/configuration.md#unknown-keys)).
 - `check-config` now exits `0` or `1`. It no longer exits `2`: an unknown key is something startup refuses, so it exits `1` and reports the first as an `error:` line, in place of a `refused in 1.0:` line for each.
+- In Team Mode on PostgreSQL, sessions and sign-ins in progress live in the database, with their access and refresh tokens encrypted. An Operator stays signed in across a restart, and a sign-in or a sign-out works whichever Replica it reaches. On SQLite they stay in memory. (#107)
 
 ### Added
 
+- A Background Leader: one Replica holds a lease in the audit store and runs retention, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
+- With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout works through any of them, on an internal port that requires the shared secret: its view and heartbeat, reading Messages, Decisions, Apply, stop, Canary continue, a streamed export and ending it. Nothing changes without them, or on SQLite. (#108, #109)
+- With Replicas, when an Owner Replica dies its Operators see a Lost Checkout with the reason through any other Replica, within the 15 s its lease holds, and an Apply it was running leaves `uncertain` Audit Entries for what is not known. While its lease is live but it cannot be reached, requests answer 503 `replica_unreachable`, to try again. A Replica that cannot renew its lease gives up its Checkouts. (#112)
+- AMQP connections ask for a 5 s heartbeat, unless a profile's `amqpUrl` names its own `heartbeat`. A lost host or network now holds a queue's lock and Messages for about 15 s rather than about three minutes. (#112)
+- With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Fixed
@@ -21,6 +29,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Security
 
+- A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
 - CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high finding in its dependencies or image.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.

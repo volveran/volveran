@@ -25,6 +25,9 @@ Every setting is an environment variable.
 | `VOLVERAN_HISTORY_RETENTION_DAYS` | `14` | how long Samples and the outcomes of notifications are kept (1 to 90); the retention job removes older ones ([sizing](observability.md#sizing)) |
 | `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link |
 | `VOLVERAN_METRICS_PORT` | off | serves Prometheus metrics at `/metrics` on this port, at `VOLVERAN_HOST`'s address, with no session; never on the web app's port ([metric reference](observability.md#metrics)) |
+| `VOLVERAN_FORWARDING_SECRET` | unset | several Replicas, in Team Mode on PostgreSQL only (ignored elsewhere): at least 32 characters, the same on every Replica. Setting it makes this Replica register in the database, and serve a Checkout it does not own by forwarding to its Owner Replica. Anyone holding it can act as any Operator on the forwarding port, so let only other Replicas reach that port. Unset, nothing registers |
+| `VOLVERAN_FORWARDING_PORT` | required with the secret | this Replica's internal port, at `VOLVERAN_HOST`'s address; differs from the web app's and metrics ports |
+| `VOLVERAN_FORWARDING_ADDRESS` | required with the secret | the `host:port` where other Replicas reach that port |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
 
@@ -85,8 +88,9 @@ The parser stays the authority. The schema checks the shape of the file and its 
 | `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
 | `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](team-mode.md#the-groups-claim)) |
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
+| `VOLVERAN_SESSION_ENCRYPTION_KEY` | required with `VOLVERAN_POSTGRES_URL` | at least 32 characters, different from the session secret (`openssl rand -hex 32`); encrypts the access and refresh tokens of sessions in the database. Not read on SQLite |
 
-The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions last 12 hours and **Sign out** ends them at once. On SQLite they live in the Volverán process, so a restart signs everyone out. On PostgreSQL they live in the database, so a restart signs nobody out; a new encryption key signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
 
 ## The audit store volume
 
