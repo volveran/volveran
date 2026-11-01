@@ -33,7 +33,7 @@ A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each
 
 ### Health checks
 
-`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that), `503` once shutdown starts, and on PostgreSQL `503` with `{"status":"unavailable"}` while the database cannot be reached, [recovering by itself](postgresql.md#when-the-database-goes-away). Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), otherwise return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
+`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that), `503` with `{"status":"unavailable"}` from the moment shutdown starts, and on PostgreSQL `503` with `{"status":"unavailable"}` while the database cannot be reached, [recovering by itself](postgresql.md#when-the-database-goes-away). Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), otherwise return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
 
 ## Checking the configuration
 

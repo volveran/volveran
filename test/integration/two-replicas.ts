@@ -175,7 +175,7 @@ export async function startTwoReplicas(options: TwoReplicasOptions = {}): Promis
         running = null;
         // Closing a proxy drops its connections and refuses new ones, all before anything else runs.
         await release(proxies);
-        // Not awaited: a killed process does not wait for its own clean-up, and with a live Checkout this one may never finish.
+        // Not awaited: a killed process does not wait for its own clean-up.
         void app.close().catch(() => {});
       },
       async shutdown() {

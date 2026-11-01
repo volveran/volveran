@@ -94,7 +94,7 @@ spec:
         checksum/broker-profiles: 3893a5007e5b6e3dfb982f816593e12dc663210b4945b5f20e05332bd4fc8b74
     spec:
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 60
+      terminationGracePeriodSeconds: 90
       # Restricted Pod Security Standard. 1000:1000 is the image's numeric user.
       securityContext:
         runAsNonRoot: true

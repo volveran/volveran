@@ -24,6 +24,7 @@ import { heldLine } from '../shared/held-line.js';
 import { product } from '../shared/product.js';
 import { rateText } from '../shared/replay-rate.js';
 import { returnOrder } from '../shared/return-order.js';
+import { shutdownLine } from './shutdown-line.js';
 import {
   api,
   ApiError,
@@ -622,7 +623,7 @@ function endedLine(c: Checkout): string {
     case 'applied':
       return `This Checkout was Applied; the Messages not done are back in the queue ${returnOrder(c.queueType)}.`;
     case 'shutdown':
-      return `This Checkout ended because ${product.name} shut down; ${back}`;
+      return shutdownLine(c.queueType);
     default:
       return `This Checkout has ended; ${back}`;
   }

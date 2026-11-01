@@ -23,7 +23,7 @@ These follow from Volverán's design and are not values:
   to delete the audit trail.
 
 A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues,
-which on a quorum queue can take up to 40 seconds at the default limit of 1,000 Messages; `pod.terminationGracePeriodSeconds` gives that time to finish.
+which on a quorum queue can take about a minute at worst at the default limit of 1,000 Messages; `pod.terminationGracePeriodSeconds` (90) gives that time to finish.
 
 ## Install
 
@@ -290,7 +290,7 @@ refused at render time.
 
 | Value | Default | Description |
 |---|---|---|
-| `pod.terminationGracePeriodSeconds` | `60` | Time between `SIGTERM` and `SIGKILL`, for Volverán to end every active Checkout. |
+| `pod.terminationGracePeriodSeconds` | `90` | Time between `SIGTERM` and `SIGKILL`, for Volverán to end every active Checkout. Raise it with `VOLVERAN_CHECKOUT_MAX_MESSAGES`. |
 | `pod.resources` | requests `cpu: 100m`, `memory: 256Mi`; limits `cpu: 1`, `memory: 512Mi` | Container resources, sized for the default Checkout limit (100 MB of held Message bodies). Raise the memory limit along with any larger Checkout limit. |
 | `pod.automountServiceAccountToken` | `false` | Volverán never talks to the Kubernetes API, so no token is mounted. |
 | `pod.nodeSelector` | `{}` | Node labels the pod must run on, for example `{pool: tools}`. |

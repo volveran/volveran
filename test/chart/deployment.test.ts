@@ -36,8 +36,8 @@ describe('Deployment', () => {
     expect(podSpec(render({ pod: { automountServiceAccountToken: true } })).automountServiceAccountToken).toBe(true);
   });
 
-  it('gives SIGTERM 60 seconds by default to end every active Checkout', () => {
-    expect(podSpec(render()).terminationGracePeriodSeconds).toBe(60);
+  it('gives SIGTERM 90 seconds by default to end every active Checkout', () => {
+    expect(podSpec(render()).terminationGracePeriodSeconds).toBe(90);
     expect(podSpec(render({ pod: { terminationGracePeriodSeconds: 300 } })).terminationGracePeriodSeconds).toBe(300);
   });
 

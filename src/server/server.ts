@@ -107,6 +107,9 @@ export interface RunningServer {
 /** How often the metrics read the audit store when nothing has told them to. */
 const METRICS_READING_INTERVAL_MS = 15_000;
 
+/** How long requests in progress get to finish once shutdown has ended every Checkout. */
+const IN_FLIGHT_REQUESTS_MS = 5_000;
+
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const startup = await readStartupConfig(options);
@@ -381,15 +384,13 @@ async function serve(
   });
   options.leaderTestHooks?.leader?.(leader);
 
-  // No new Rule Pass starts. The leader stops, on a single Replica only once the passes in
-  // progress have ended, so that Alerting can still tell of what a last pass paused; with
-  // several, at once. The passes end and are recorded; then every held Message goes back
-  // to its queue (an Apply in progress finishes first) before the audit store closes and
-  // the process exits.
   let metricsListener: MetricsListener | undefined;
   let forwardingListener: ForwardingListener | undefined;
   let replicaLease: ReplicaLease | undefined;
-  app.addHook('onClose', async () => {
+  // Shutdown, with the ports still serving, so Operators can read their Checkouts to the end, and
+  // /readyz says not ready at once. Its two halves run side by side, so neither's wait adds to the
+  // other's, and `pod.terminationGracePeriodSeconds` needs to cover only the longer (docs/kubernetes.md).
+  const stopBackgroundWork = async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
     // A single Replica has no next leader to tell of a last pass's pause, so it stays the leader until its passes end.
@@ -404,12 +405,20 @@ async function serve(
     // Up to CLOSE_WAIT_MS, so that what a last pass paused can still be told.
     await notifier.close();
     await alerting.drained();
-    await checkouts.endAll();
-    // This Replica's Checkouts are over, so nothing is left to forward to it.
+  };
+  let stopped: Promise<void> | undefined;
+  const stopWork = () =>
+    (stopped ??= (async () => {
+      app.log.info('Shutting down: no new Checkouts, and every Checkout on this Replica ends');
+      // endAll first: before its first await it refuses starts and stops every Apply.
+      await Promise.all([checkouts.endAll(), stopBackgroundWork()]);
+      await liveCheckouts?.settled();
+      // Their records stay, saying why they ended, for the others to answer from.
+      await replicaLease?.giveUp().catch((err: unknown) => app.log.error({ err }, 'This Replica could not end its lease; it runs out by itself'));
+    })());
+  app.addHook('onClose', async () => {
+    await stopWork();
     await forwardingListener?.close();
-    await replicaLease?.stop();
-    await liveCheckouts?.settled();
-    if (replicaLease) await auditStore.replicas.removeReplica(replicaId).catch((err: unknown) => app.log.error({ err }, 'This Replica could not remove its lease; it runs out by itself'));
     await auditStore.close();
   });
   try {
@@ -482,7 +491,16 @@ async function serve(
   return {
     url: `http://${host}:${port}`,
     metricsUrl: metricsListener && `http://${host}:${metricsListener.port}/metrics`,
-    close: () => app.close(),
+    close: async () => {
+      await stopWork();
+      // Everything of value is done: a client still reading must not hold the store open until SIGKILL.
+      const cutOff = setTimeout(() => app.server.closeAllConnections(), IN_FLIGHT_REQUESTS_MS);
+      try {
+        await app.close();
+      } finally {
+        clearTimeout(cutOff);
+      }
+    },
   };
 }
 
@@ -577,7 +595,7 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
-  registerHealthRoutes(app, audit.audit);
+  registerHealthRoutes(app, audit.audit, () => checkouts.shuttingDown);
 
   // Every request carries its Operator (operator.ts); in Team Mode, /api/
   // routes refuse requests without a session before any handler runs.
