@@ -38,6 +38,12 @@ Some work must run once however many Replicas there are: retention now; the samp
 
 **Alerts, at least once.** A leader stores an evaluation's result and its notifications in one fenced write, and only then sends them, so a stalled former leader sends nothing for a result the store refuses. A notification is forgotten when its delivery has ended, delivered or out of attempts. One still there when a new leader starts is sent again: that may be twice, and it is never lost to a change of leader. Storing them is why a firing Alert need not be sent again to be safe. On SQLite they are in memory, like the lease, so a single Replica keeps what it has always done: a crash between storing and sending loses that notification, and a restart sends nothing again.
 
+## Restore
+
+A Message must not be republished twice by two clicks on two Replicas, so the guard is one store method, `claimRestore`: it writes the Restore's `pending` Audit Entry unless an earlier Restore of that Discard is anything but `failed`. PostgreSQL holds the Discard's row for the transaction. That needs no migration, where a unique index could refuse a store that already holds two Restores of one Discard. A Restore that crashed before reporting back keeps the body, as it does on one Replica: republishing again could duplicate the Message.
+
+"Is this Discard still running" asks the Live Checkout records as well as this process: a record that is `active` or `applying` under a live lease refuses the Restore. A Replica that has lost its lease cannot finish the step, so its record no longer counts.
+
 ## Consequences
 
 - Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`.

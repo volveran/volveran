@@ -119,6 +119,12 @@ export interface AuditEntry
   } | null;
 }
 
+/** A Restore's Audit Entry, before it publishes: it names the Discard and stores no Message. */
+export type NewRestoreEntry = NewAuditEntry & { restoreOf: number; message: null };
+
+/** Whether a Restore may publish: its entry's id, or the earlier Restore that stops it. */
+export type RestoreClaim = { claimed: true; id: number } | { claimed: false; earlier: AuditEntry };
+
 /** Broker Profiles by name: only the ones listed, or every one except those listed. */
 export type ProfileScope = { only: string[] } | { except: string[] };
 
@@ -226,6 +232,12 @@ export interface AuditStore {
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; answers its id. */
   record(entry: NewAuditEntry): Promise<number>;
+  /**
+   * Writes a Restore's `pending` entry unless an earlier Restore of the same Discard
+   * is anything but `failed`, however many Replicas ask at once. So a Restore that
+   * failed frees the body, and one that never reported back keeps it.
+   */
+  claimRestore(entry: NewRestoreEntry): Promise<RestoreClaim>;
   setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason?: string | null): Promise<void>;
   /** The Replica carrying out Checkout `checkoutId` has gone: its entries still `pending` become `uncertain`, with `reason`. Answers how many. */
   settleInterrupted(checkoutId: string, reason: string): Promise<number>;
@@ -481,6 +493,8 @@ export interface ReplicaStore {
   removeGoneReplicas(before: number): Promise<number>;
   /** The id of the Operator's `active` Checkout whose owner's lease is live, or null. */
   activeCheckoutOf(operatorId: string, now: number): Promise<string | null>;
+  /** The Owner Replica of Checkout `id` while it is `active` or `applying` and its owner's lease is live, or null. */
+  runningOwner(id: string, now: number): Promise<string | null>;
 }
 
 /** Alerts and what arrival conditions remember of each queue, so a restart neither forgets nor re-sends a firing one. */
