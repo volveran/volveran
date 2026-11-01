@@ -29,7 +29,7 @@ These are internal, and may change in any version:
 
 ## What a version may change
 
-Within 1.x, a contract may only gain optional things: a new setting with a default that changes nothing, a new route, a new metric or label value, a new field in a webhook body or an export line. So write a webhook receiver or an export reader to ignore a field it does not know.
+Within 1.x, a contract may only gain optional things: a new setting with a default that changes nothing, a new route, a new metric or label value, a new field in a webhook body or an export line. So write whatever reads a webhook body or an export line to ignore a field it does not know.
 
 Removing something or changing its meaning needs a major version.
 

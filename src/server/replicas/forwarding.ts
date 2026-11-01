@@ -28,7 +28,7 @@ const SESSION_HEADER = 'x-volveran-forwarded-session';
 const PROTOCOL_HEADER = 'x-volveran-forwarding-protocol';
 /**
  * Change this when what Replicas say to each other changes meaning: the identity headers, or
- * what a forwarded request may assume of its receiver. The refusal of another version must stay
+ * what a forwarded request may assume of the Replica answering it. The refusal of another version must stay
  * as it is through 1.x (a 400 with PROTOCOL_HEADER), so that every Replica can read it.
  */
 const FORWARDING_PROTOCOL_VERSION = '1';
