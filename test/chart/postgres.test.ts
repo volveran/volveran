@@ -36,6 +36,26 @@ describe('postgres', () => {
     expect(env(chart, 'VOLVERAN_POSTGRES_URL').valueFrom.secretKeyRef).toEqual({ name: 'db', key: 'connection' });
   });
 
+  it('reads the session encryption key from the OIDC Secret, since sessions are kept in the database', () => {
+    expect(env(render(onPostgres), 'VOLVERAN_SESSION_ENCRYPTION_KEY')).toEqual({
+      name: 'VOLVERAN_SESSION_ENCRYPTION_KEY',
+      valueFrom: { secretKeyRef: { name: 'volveran-oidc', key: 'session-encryption-key' } },
+    });
+  });
+
+  it('takes another key for it', () => {
+    const chart = render({ ...onPostgres, oidc: { sessionEncryptionKeyKey: 'tokens' } });
+    expect(env(chart, 'VOLVERAN_SESSION_ENCRYPTION_KEY').valueFrom.secretKeyRef.key).toBe('tokens');
+  });
+
+  it('asks for no session encryption key on SQLite, where sessions stay in memory', () => {
+    expect(env(render(), 'VOLVERAN_SESSION_ENCRYPTION_KEY')).toBeUndefined();
+  });
+
+  it('refuses the session encryption key in extraEnv', () => {
+    expect(renderRefusal({ ...onPostgres, extraEnv: [{ name: 'VOLVERAN_SESSION_ENCRYPTION_KEY', value: 'x' }] })).toContain('VOLVERAN_SESSION_ENCRYPTION_KEY');
+  });
+
   it('never renders a Secret holding the URL', () => {
     expect(render(onPostgres).kinds()).not.toContain('Secret');
   });

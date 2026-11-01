@@ -26,6 +26,7 @@ export const testOidc = {
 };
 
 export const testSessionSecret = 'test-session-secret-0123456789abcdef';
+export const testSessionEncryptionKey = 'test-session-encryption-key-0123456789abcdef';
 
 /** The environment of a Team Mode app reached at `baseUrl` (startApp merges it over its defaults). */
 export function teamModeEnv(baseUrl: string, issuer = testOidc.issuer): Record<string, string | undefined> {
@@ -37,6 +38,7 @@ export function teamModeEnv(baseUrl: string, issuer = testOidc.issuer): Record<s
     VOLVERAN_OIDC_CLIENT_SECRET: testOidc.clientSecret,
     VOLVERAN_OIDC_REDIRECT_URL: `${baseUrl}/auth/callback`,
     VOLVERAN_SESSION_SECRET: testSessionSecret,
+    VOLVERAN_SESSION_ENCRYPTION_KEY: testSessionEncryptionKey,
   };
 }
 
@@ -63,14 +65,25 @@ export interface BrowserResponse {
  * the Operator's browser.
  */
 export class TestBrowser {
-  readonly cookies = new Map<string, string>();
+  /** Where this request goes: fixed, or chosen per request (two-replicas.ts). */
+  private readonly target: () => string;
 
-  constructor(readonly baseUrl: string) {}
+  constructor(
+    baseUrl: string | (() => string),
+    readonly cookies = new Map<string, string>(),
+  ) {
+    this.target = typeof baseUrl === 'string' ? () => baseUrl : baseUrl;
+  }
+
+  get baseUrl(): string {
+    return this.target();
+  }
 
   async request(method: string, url: string, init: { body?: unknown; form?: Record<string, string> } = {}): Promise<BrowserResponse> {
-    const absolute = new URL(url, this.baseUrl);
+    const baseUrl = this.target();
+    const absolute = new URL(url, baseUrl);
     const headers: Record<string, string> = {};
-    if (absolute.origin === new URL(this.baseUrl).origin && this.cookies.size > 0) {
+    if (absolute.origin === new URL(baseUrl).origin && this.cookies.size > 0) {
       headers.cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
     }
     let body: string | undefined;
@@ -83,7 +96,7 @@ export class TestBrowser {
     }
     const res = await fetch(absolute, { method, headers, body, redirect: 'manual' });
     const setCookies = res.headers.getSetCookie();
-    if (absolute.origin === new URL(this.baseUrl).origin) {
+    if (absolute.origin === new URL(baseUrl).origin) {
       for (const c of setCookies) {
         const [pair = ''] = c.split(';');
         const eq = pair.indexOf('=');

@@ -81,6 +81,10 @@
         "sessionSecretKey": {
           "type": "string",
           "minLength": 1
+        },
+        "sessionEncryptionKeyKey": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "description": "issuer, clientId, redirectUrl and existingSecret are required. The chart refuses a missing one with a message naming it (templates/_helpers.tpl), which a schema error cannot carry."

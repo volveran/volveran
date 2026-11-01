@@ -25,6 +25,8 @@ export type RunMode =
       oidc: OidcSettings;
       /** Signs the session cookie. */
       sessionSecret: string;
+      /** Encrypts the tokens of sessions kept at rest: set on PostgreSQL only (with SQLite, sessions stay in memory). */
+      sessionEncryptionKey?: string;
     };
 
 export type RunModeResult = { ok: true; mode: RunMode } | { ok: false; error: string };
@@ -107,6 +109,26 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
     };
   }
 
+  // Sessions are at rest in the store only on PostgreSQL.
+  let sessionEncryptionKey: string | undefined;
+  if (read('VOLVERAN_POSTGRES_URL')) {
+    sessionEncryptionKey = read('VOLVERAN_SESSION_ENCRYPTION_KEY');
+    if (!sessionEncryptionKey) {
+      return {
+        ok: false,
+        error:
+          'Team Mode on PostgreSQL keeps sessions in the database, with their tokens encrypted, and needs VOLVERAN_SESSION_ENCRYPTION_KEY: ' +
+          `at least ${minSessionSecretLength} characters (e.g. the output of \`openssl rand -hex 32\`), the same on every Replica.`,
+      };
+    }
+    if (sessionEncryptionKey.length < minSessionSecretLength) {
+      return { ok: false, error: `VOLVERAN_SESSION_ENCRYPTION_KEY must be at least ${minSessionSecretLength} characters long (e.g. the output of \`openssl rand -hex 32\`).` };
+    }
+    if (sessionEncryptionKey === sessionSecret) {
+      return { ok: false, error: 'VOLVERAN_SESSION_ENCRYPTION_KEY must differ from VOLVERAN_SESSION_SECRET: one encrypts tokens in the database, the other signs cookies.' };
+    }
+  }
+
   // A dotted path into the claims (groups-claim.ts): no empty step.
   const groupsClaim = read('VOLVERAN_OIDC_GROUPS_CLAIM') ?? defaultGroupsClaim;
   if (groupsClaim.split('.').includes('')) {
@@ -129,6 +151,7 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
         groupsClaim,
       },
       sessionSecret,
+      ...(sessionEncryptionKey !== undefined && { sessionEncryptionKey }),
     },
   };
 }

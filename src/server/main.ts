@@ -9,6 +9,9 @@
 //   VOLVERAN_OIDC_ISSUER, VOLVERAN_OIDC_CLIENT_ID, VOLVERAN_OIDC_CLIENT_SECRET,
 //   VOLVERAN_OIDC_REDIRECT_URL, VOLVERAN_OIDC_SCOPES, VOLVERAN_SESSION_SECRET
 //                           Team Mode sign-in (see run-mode.ts, auth.ts)
+//   VOLVERAN_SESSION_ENCRYPTION_KEY
+//                           Team Mode on PostgreSQL: encrypts the tokens of the
+//                           sessions kept there (see token-seal.ts)
 //   VOLVERAN_OIDC_GROUPS_CLAIM
 //                           the claim (name or dotted path) holding the
 //                           Operator's groups, for Roles (default groups; see

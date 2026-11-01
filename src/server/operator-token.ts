@@ -44,6 +44,8 @@ export interface RefreshOptions {
   refresh?: (refreshToken: string) => Promise<TokenGrant>;
   /** No refresh after this time (ms since the epoch): the session's end. */
   until?: number;
+  /** Refresh even when the access token has already expired: one read back from a session store after a restart. */
+  refreshPastExpiry?: boolean;
   /** Told why a refresh failed (never a token); `final` when it stops refreshing. */
   onFailure?: (reason: string, final: boolean) => void;
 }
@@ -127,14 +129,14 @@ export class OperatorToken {
 
   private schedule(now: number): void {
     if (this._expiresAt === undefined) return;
-    this.refreshAt(this._expiresAt - refreshMarginMs(this._expiresAt - now), now);
+    this.refreshAt(now >= this._expiresAt ? now : this._expiresAt - refreshMarginMs(this._expiresAt - now), now);
   }
 
   /** Refreshes at `when`, if it can still refresh then. */
   private refreshAt(when: number, now: number): void {
-    const { refresh, until } = this.options;
+    const { refresh, until, refreshPastExpiry } = this.options;
     if (this.stopped || !refresh || this.refreshToken === undefined || this._expiresAt === undefined) return;
-    if (when >= this._expiresAt || (until !== undefined && when >= until)) return;
+    if ((when >= this._expiresAt && !refreshPastExpiry) || (until !== undefined && when >= until)) return;
     // refresh reports its failures through onFailure, and nothing waits for it.
     this.timer = setTimeout(() => void this.refresh(refresh), Math.max(0, when - now));
     this.timer.unref();

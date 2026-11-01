@@ -162,6 +162,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.oidc.existingSecret | quote }}
                   key: {{ .Values.oidc.sessionSecretKey | quote }}
+            {{- if .Values.postgres.existingSecret }}
+            - name: VOLVERAN_SESSION_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.existingSecret | quote }}
+                  key: {{ .Values.oidc.sessionEncryptionKeyKey | quote }}
+            {{- end }}
             {{- if .Values.metrics.enabled }}
             - name: VOLVERAN_METRICS_PORT
               value: {{ printf "%d" (int64 .Values.metrics.port) | quote }}

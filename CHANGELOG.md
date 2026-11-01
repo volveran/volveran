@@ -6,6 +6,12 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+**Upgrading in Team Mode on PostgreSQL:** set the new `VOLVERAN_SESSION_ENCRYPTION_KEY` (chart: add `session-encryption-key` to the Secret named in `oidc.existingSecret`), or Volverán refuses to start. Nothing changes on SQLite or in Solo Mode.
+
+### Changed
+
+- In Team Mode on PostgreSQL, sessions and sign-ins in progress live in the database, with their access and refresh tokens encrypted. An Operator stays signed in across a restart, and a sign-in or a sign-out works whichever Replica it reaches. On SQLite they stay in memory. (#107)
+
 ## [0.6.1] - 2026-10-31
 
 A queue can be Checked Out again straight after its Checkout ends.

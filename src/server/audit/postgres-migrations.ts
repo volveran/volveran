@@ -164,6 +164,20 @@ export const MIGRATIONS: readonly string[] = [
      recent TEXT NOT NULL,
      PRIMARY KEY (profile, vhost, queue)
    );`,
+  // v2: sessions and sign-ins in progress, shared by Replicas. PostgreSQL only: on SQLite they stay in memory.
+  `CREATE TABLE sessions (
+     id TEXT PRIMARY KEY,
+     operator TEXT NOT NULL,
+     tokens TEXT NOT NULL,
+     expires_at BIGINT NOT NULL
+   );
+   CREATE INDEX sessions_expires_at ON sessions (expires_at);
+   CREATE TABLE sign_ins (
+     id TEXT PRIMARY KEY,
+     sealed TEXT NOT NULL,
+     expires_at BIGINT NOT NULL
+   );
+   CREATE INDEX sign_ins_expires_at ON sign_ins (expires_at);`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

@@ -1,6 +1,6 @@
 # Running Volverán on PostgreSQL
 
-By default the audit store is SQLite on one volume. Setting a connection URL keeps it in a PostgreSQL database instead, one your team already backs up and monitors: Audit Entries, Discarded bodies, Replay Rule state, depth history, notifications and Alerts. Every view behaves the same on either store.
+By default the audit store is SQLite on one volume. Setting a connection URL keeps it in a PostgreSQL database instead, one your team already backs up and monitors: Audit Entries, Discarded bodies, Replay Rule state, depth history, notifications, Alerts and sessions. Every view behaves the same on either store.
 
 SQLite stays the default, and Solo Mode never needs a database server. Volverán still runs one Replica on PostgreSQL. Several Replicas come in a later version.
 
@@ -40,6 +40,15 @@ kubectl -n volveran create secret generic volveran-postgres \
 postgres:
   existingSecret: volveran-postgres   # the key is `url`; postgres.urlKey changes it
 ```
+
+In Team Mode, sessions and sign-ins in progress live in the database too, so a restart signs nobody out, and their access and refresh tokens are encrypted, so a dump of the database hands out none. The key is a new required secret: add it to the Secret named in `oidc.existingSecret`, or the pod cannot start.
+
+```sh
+kubectl -n volveran patch secret volveran-oidc --type merge \
+  -p "{\"stringData\":{\"session-encryption-key\":\"$(openssl rand -hex 32)\"}}"
+```
+
+It must differ from the session secret, which keeps signing cookies, and be the same on every Replica. Changing it signs everyone out. Outside the chart, set [`VOLVERAN_SESSION_ENCRYPTION_KEY`](configuration.md).
 
 The chart then renders no PersistentVolumeClaim and no data volume, and still runs one replica with `Recreate`. A claim left from before stays in the cluster, because it carries `helm.sh/resource-policy: keep`.
 

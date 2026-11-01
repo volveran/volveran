@@ -6,13 +6,22 @@
 //   POST /auth/logout                ends the session (204)
 //
 // The browser only holds a random session id in a signed, HTTP-only,
-// SameSite=Lax cookie; who is signed in lives in this process, so signing out
-// ends the session even for a copied cookie, and a restart signs everyone out.
-// Every /api/ route answers 401 `not_signed_in` without a session.
+// SameSite=Lax cookie. Who is signed in, and who is signing in, lives in the
+// audit store's session store: in memory on SQLite, so a restart signs everyone
+// out; in the database on PostgreSQL, sealed (token-seal.ts), so any Replica can
+// finish a sign-in, serve a session or end it, and a restart signs nobody out.
+// Every request reads its session there, so signing out ends the session
+// everywhere, even for a copied cookie. Every /api/ route answers 401
+// `not_signed_in` without a session.
+//
+// A session's OperatorToken is live in each process that has served it, because
+// a Checkout's connections listen to it. Each one refreshes on its own; making
+// that safe across Replicas is #114.
 import { randomBytes } from 'node:crypto';
 import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as oidc from 'openid-client';
+import type { SessionStore, StoredSession } from './audit/audit-store.js';
 import { ConfigError } from './config-error.js';
 import { groupsAtSignIn } from './groups-claim.js';
 import { HttpError } from './http-error.js';
@@ -20,6 +29,7 @@ import { isLoopback } from './is-loopback.js';
 import { attachOperator, notSignedIn, teamOperator, type Operator } from './operator.js';
 import { OperatorToken, RefreshRefused, type TokenGrant } from './operator-token.js';
 import type { OidcSettings } from './run-mode.js';
+import type { TokenSeal } from './token-seal.js';
 
 const sessionCookie = 'volveran_session';
 const loginCookie = 'volveran_login';
@@ -33,59 +43,40 @@ interface PendingLogin {
   state: string;
   nonce: string;
   returnTo: string;
-  expiresAt: number;
 }
 
-interface Session {
-  /** Who signed in, with their groups and their access token (`brokerToken`). */
+/** What a session store holds, sealed, of an Operator's tokens. */
+interface SealedTokens {
+  accessToken: string;
+  refreshToken: string | undefined;
+  /** Epoch milliseconds; null when nothing says. */
+  expiresAt: number | null;
+}
+
+/** A session this process has served: its Operator, with the live token. */
+interface LiveSession {
   operator: Operator;
   expiresAt: number;
-}
-
-/** Entries that expire; expired ones are dropped when read and swept on insert. */
-class ExpiringMap<T extends { expiresAt: number }> {
-  private readonly entries = new Map<string, T>();
-
-  add(value: T): string {
-    const now = Date.now();
-    for (const [id, entry] of this.entries) if (entry.expiresAt <= now) this.entries.delete(id);
-    const id = randomBytes(32).toString('base64url');
-    this.entries.set(id, value);
-    return id;
-  }
-
-  get(id: string | undefined): T | undefined {
-    if (!id) return undefined;
-    const entry = this.entries.get(id);
-    if (entry && entry.expiresAt <= Date.now()) {
-      this.entries.delete(id);
-      return undefined;
-    }
-    return entry;
-  }
-
-  delete(id: string | undefined): void {
-    if (id) this.entries.delete(id);
-  }
-
-  values(): IterableIterator<T> {
-    return this.entries.values();
-  }
 }
 
 export interface TeamAuth {
   register(app: FastifyInstance): Promise<void>;
 }
 
+export interface TeamAuthOptions {
+  refreshBrokerTokens: boolean;
+  /** Where sessions and sign-ins in progress live. */
+  sessions: SessionStore;
+  /** What protects their tokens there. */
+  seal: TokenSeal;
+}
+
 /**
  * Reads the provider's discovery document (throwing a ConfigError when it
  * cannot) and returns the sign-in routes and session guard to register.
  */
-export async function createTeamAuth(
-  settings: OidcSettings,
-  sessionSecret: string,
-  options: { refreshBrokerTokens: boolean },
-): Promise<TeamAuth> {
+export async function createTeamAuth(settings: OidcSettings, sessionSecret: string, options: TeamAuthOptions): Promise<TeamAuth> {
+  const { sessions, seal } = options;
   const issuer = new URL(settings.issuer);
   let config: oidc.Configuration;
   try {
@@ -108,8 +99,7 @@ export async function createTeamAuth(
 
   const redirectUrl = new URL(settings.redirectUrl);
   const secure = redirectUrl.protocol === 'https:';
-  const logins = new ExpiringMap<PendingLogin>();
-  const sessions = new ExpiringMap<Session>();
+  const live = new Map<string, LiveSession>();
 
   const readCookie = (req: FastifyRequest, name: string): string | undefined => {
     const raw = req.cookies[name];
@@ -138,15 +128,104 @@ export async function createTeamAuth(
     }
   };
 
+  const dropLive = (sessionId: string): void => {
+    live.get(sessionId)?.operator.brokerToken?.stop();
+    live.delete(sessionId);
+  };
+
+  const remember = (sessionId: string, session: LiveSession, now: number): void => {
+    for (const [id, known] of live) if (known.expiresAt <= now) dropLive(id);
+    live.set(sessionId, session);
+  };
+
+  const sealTokens = (sessionId: string, grant: TokenGrant, refreshToken: string | undefined, now: number): string => {
+    const tokens: SealedTokens = {
+      accessToken: grant.accessToken,
+      refreshToken,
+      expiresAt: grant.expiresIn === undefined ? null : now + grant.expiresIn * 1000,
+    };
+    return seal.seal(JSON.stringify(tokens), sessionId);
+  };
+
   return {
     async register(app) {
       await app.register(fastifyCookie, { secret: sessionSecret });
+
+      /** The session's token in this process: it refreshes itself until the session ends, and keeps the store up to date. */
+      const liveToken = (sessionId: string, grant: TokenGrant, expiresAt: number, operatorId: string, restored: boolean): OperatorToken =>
+        new OperatorToken(
+          grant,
+          options.refreshBrokerTokens
+            ? {
+                refresh: async (refreshToken) => {
+                  // Signed out on another Replica since this one last served the session.
+                  if (!(await sessions.session(sessionId, Date.now()))) {
+                    dropLive(sessionId);
+                    throw new RefreshRefused('the session has ended');
+                  }
+                  const fresh = await refreshGrant(refreshToken);
+                  try {
+                    await sessions.setTokens(sessionId, sealTokens(sessionId, fresh, fresh.refreshToken ?? refreshToken, Date.now()));
+                  } catch (err) {
+                    // The grant is good, and this process carries on with it. After a restart the Operator may have to sign in again.
+                    app.log.error({ err, operator: operatorId }, "The Operator's refreshed tokens could not be saved");
+                  }
+                  return fresh;
+                },
+                until: expiresAt,
+                refreshPastExpiry: restored,
+                onFailure: (reason, final) =>
+                  app.log.warn(
+                    { operator: operatorId, reason },
+                    final
+                      ? "Could not refresh the Operator's access token: their broker connections close when it expires, and they must sign in again"
+                      : "Could not refresh the Operator's access token; trying again",
+                  ),
+              }
+            : {},
+        );
+
+      /** The session as this process serves it, made live the first time it is seen here. */
+      const goLive = (sessionId: string, stored: StoredSession, now: number): LiveSession | null => {
+        const known = live.get(sessionId);
+        if (known) return known;
+        const opened = seal.open(stored.tokens, sessionId);
+        if (opened === null) {
+          app.log.warn({ operator: stored.operator.id }, "A session's tokens could not be read: VOLVERAN_SESSION_ENCRYPTION_KEY has changed, or differs between Replicas. The Operator must sign in again");
+          return null;
+        }
+        const tokens = JSON.parse(opened) as SealedTokens;
+        const grant: TokenGrant = {
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresIn: tokens.expiresAt === null ? undefined : (tokens.expiresAt - now) / 1000,
+        };
+        const session: LiveSession = {
+          operator: { ...stored.operator, brokerToken: liveToken(sessionId, grant, stored.expiresAt, stored.operator.id, true) },
+          expiresAt: stored.expiresAt,
+        };
+        remember(sessionId, session, now);
+        return session;
+      };
+
       // Sessions die with the app: no more token refreshes.
       app.addHook('onClose', async () => {
-        for (const session of sessions.values()) session.operator.brokerToken?.stop();
+        for (const session of live.values()) session.operator.brokerToken?.stop();
       });
 
-      attachOperator(app, (req) => sessions.get(readCookie(req, sessionCookie))?.operator ?? null);
+      // Only /api/ has an Operator: a probe or a static file with a cookie must not depend on the store.
+      attachOperator(app, async (req) => {
+        if (!req.url.startsWith('/api/')) return null;
+        const sessionId = readCookie(req, sessionCookie);
+        if (!sessionId) return null;
+        const now = Date.now();
+        const stored = await sessions.session(sessionId, now);
+        if (!stored) {
+          dropLive(sessionId);
+          return null;
+        }
+        return goLive(sessionId, stored, now)?.operator ?? null;
+      });
       app.addHook('onRequest', async (req) => {
         if (req.url.startsWith('/api/') && !req.operator) throw notSignedIn();
       });
@@ -158,9 +237,10 @@ export async function createTeamAuth(
           state: oidc.randomState(),
           nonce: oidc.randomNonce(),
           returnTo: safeReturnTo(req.query.returnTo),
-          expiresAt: Date.now() + loginLifetimeMs,
         };
-        const id = logins.add(login);
+        const id = randomBytes(32).toString('base64url');
+        const now = Date.now();
+        await sessions.addSignIn(id, { sealed: seal.seal(JSON.stringify(login), id), expiresAt: now + loginLifetimeMs }, now);
         const authorizeUrl = oidc.buildAuthorizationUrl(config, {
           redirect_uri: settings.redirectUrl,
           scope: settings.scopes.join(' '),
@@ -175,12 +255,13 @@ export async function createTeamAuth(
 
       app.get('/auth/callback', async (req, reply) => {
         const loginId = readCookie(req, loginCookie);
-        const login = logins.get(loginId);
-        logins.delete(loginId);
+        const sealed = loginId ? await sessions.takeSignIn(loginId, Date.now()) : null;
+        const opened = sealed === null ? null : seal.open(sealed, loginId!);
         reply.clearCookie(loginCookie, { path: '/auth' });
-        if (!login) {
+        if (opened === null) {
           throw signInFailed('this browser has no sign-in in progress, or it took longer than 10 minutes');
         }
+        const login = JSON.parse(opened) as PendingLogin;
 
         // The provider saw the redirect URL as configured; rebuild it with this
         // request's query, since a reverse proxy may change host and path.
@@ -209,36 +290,25 @@ export async function createTeamAuth(
           throw signInFailed(describe(err));
         }
 
-        const expiresAt = Date.now() + sessionLifetimeMs;
+        const now = Date.now();
+        const expiresAt = now + sessionLifetimeMs;
+        const sessionId = randomBytes(32).toString('base64url');
+        const grant: TokenGrant = { accessToken: tokens.access_token, expiresIn: tokens.expiresIn(), refreshToken: tokens.refresh_token };
+        await sessions.addSession(sessionId, { operator, tokens: sealTokens(sessionId, grant, grant.refreshToken, now), expiresAt }, now);
         // Kept with the session's Operator, never sent to the browser or logged:
         // profiles with `credentials: operatorToken` connect with it (ADR 0008),
         // and it refreshes itself until the session ends.
-        const { id } = operator;
-        operator.brokerToken = new OperatorToken(
-          { accessToken: tokens.access_token, expiresIn: tokens.expiresIn(), refreshToken: tokens.refresh_token },
-          options.refreshBrokerTokens
-            ? {
-                refresh: refreshGrant,
-                until: expiresAt,
-                onFailure: (reason, final) =>
-                  app.log.warn(
-                    { operator: id, reason },
-                    final
-                      ? "Could not refresh the Operator's access token: their broker connections close when it expires, and they must sign in again"
-                      : "Could not refresh the Operator's access token; trying again",
-                  ),
-              }
-            : {},
-        );
-        const sessionId = sessions.add({ operator, expiresAt });
+        remember(sessionId, { operator: { ...operator, brokerToken: liveToken(sessionId, grant, expiresAt, operator.id, false) }, expiresAt }, now);
         reply.setCookie(sessionCookie, sessionId, cookieOptions(sessionLifetimeMs, '/'));
         return reply.redirect(login.returnTo);
       });
 
       app.post('/auth/logout', async (req, reply) => {
         const sessionId = readCookie(req, sessionCookie);
-        sessions.get(sessionId)?.operator.brokerToken?.stop();
-        sessions.delete(sessionId);
+        if (sessionId) {
+          await sessions.removeSession(sessionId);
+          dropLive(sessionId);
+        }
         reply.clearCookie(sessionCookie, { path: '/' });
         return reply.status(204).send();
       });

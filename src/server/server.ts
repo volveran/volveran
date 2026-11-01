@@ -24,6 +24,7 @@ import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
 import { readStartupConfig, type StartupConfig } from './startup-config.js';
+import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
@@ -47,7 +48,7 @@ import { ProfileAccessCheck } from './profile-access.js';
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
   profilesFile: string;
-  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET. */
+  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET, VOLVERAN_SESSION_ENCRYPTION_KEY. */
   env: Record<string, string | undefined>;
   host: string;
   /** 0 picks a free port. */
@@ -152,6 +153,8 @@ async function serve(
       : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret, {
           // Refreshing the access token is for profiles that connect with it.
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
+          sessions: auditStore.sessions,
+          seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
         }),
       };
   const restore = new RestoreService(auditStore, (id) => checkouts.isRunning(id));
