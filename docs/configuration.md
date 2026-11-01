@@ -23,7 +23,7 @@ Every setting is an environment variable.
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 | `VOLVERAN_HISTORY_INTERVAL_SECONDS` | `60` | how often Volverán samples the dead-letter queues of every Broker Profile with shared credentials, reading only the management API (15 to 3600) |
 | `VOLVERAN_HISTORY_RETENTION_DAYS` | `14` | how long Samples and the outcomes of notifications are kept (1 to 90); the retention job removes older ones ([sizing](observability.md#sizing)) |
-| `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link |
+| `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link. Also an address the browser may reach Volverán at: its origin is accepted by the [Origin and Host checks](team-mode.md#what-volverán-does). An `https` value also sends `Strict-Transport-Security` on every answer, as does a request with `X-Forwarded-Proto: https` |
 | `VOLVERAN_METRICS_PORT` | off | serves Prometheus metrics at `/metrics` on this port, at `VOLVERAN_HOST`'s address, with no session; never on the web app's port ([metric reference](observability.md#metrics)) |
 | `VOLVERAN_FORWARDING_SECRET` | unset | several Replicas, in Team Mode on PostgreSQL only (ignored elsewhere): at least 32 characters, the same on every Replica. Setting it makes this Replica register in the database, and serve a Checkout it does not own by forwarding to its Owner Replica. Anyone holding it can act as any Operator on the forwarding port, so let only other Replicas reach that port. Unset, nothing registers |
 | `VOLVERAN_FORWARDING_PORT` | required with the secret | this Replica's internal port, at `VOLVERAN_HOST`'s address; differs from the web app's and metrics ports |
@@ -89,8 +89,18 @@ The parser stays the authority. The schema checks the shape of the file and its 
 | `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](team-mode.md#the-groups-claim)) |
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
 | `VOLVERAN_SESSION_ENCRYPTION_KEY` | required with `VOLVERAN_POSTGRES_URL` | at least 32 characters, different from the session secret (`openssl rand -hex 32`); encrypts the access and refresh tokens of sessions in the database. Not read on SQLite |
+| `VOLVERAN_SESSION_IDLE_MINUTES` | `60` | 1 to 720; a session its Operator has not used for this long ends. See [below](#session-idle-timeout) |
 
-The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions last 12 hours and **Sign out** ends them at once. On SQLite they live in the Volverán process, so a restart signs everyone out. On PostgreSQL they live in the database, so a restart signs nobody out; a new encryption key signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions last 12 hours at most and **Sign out** ends them at once. On SQLite they live in the Volverán process, so a restart signs everyone out. On PostgreSQL they live in the database, so a restart signs nobody out; a new encryption key signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+
+### Session idle timeout
+
+A session ends when its Operator has done nothing for `VOLVERAN_SESSION_IDLE_MINUTES`, on both audit stores, on top of the 12 hours. It can end up to a minute early, as a session in use is written to the store at most once a minute.
+
+- **What counts.** Any `/api/` request, through any Replica, including the heartbeat of an open Checkout. An open page on a Checkout therefore keeps the session until the Checkout has ended, which its time limit bounds. What a page keeps asking with nobody needed there does not count: the heartbeat of a Checkout that is over, and the Approvals page's polling.
+- **What happens next.** The next request answers `401 not_signed_in`, and the web app goes to the provider's sign-in and returns to the same page. If the Operator is still signed in at the provider, that takes no password: to require one, shorten the provider's own session too.
+- **`credentials: operatorToken`.** A session that has ended stops refreshing its access token, so a Checkout's connections close when the token expires. Keep the page open during a long Apply, as its heartbeat keeps the session.
+- **After an upgrade.** A session from before this setting, or after the timeout is shortened, takes the new timeout at its next request.
 
 ## The audit store volume
 

@@ -224,7 +224,10 @@ export const MIGRATIONS: readonly string[] = [
    );
    DROP INDEX live_checkouts_operator_id;
    CREATE UNIQUE INDEX live_checkouts_one_per_operator ON live_checkouts (operator_id) WHERE status IN ('starting', 'active');`,
-  // v7 (#118): when the leader next passes a rule, so that every Replica can show it.
+  // v7: the session idle timeout. A session from before it, or one a Replica still on v6 adds
+  // during a rolling update, has no idle expiry until its next request gives it one.
+  `ALTER TABLE sessions ADD COLUMN idle_expires_at BIGINT NOT NULL DEFAULT 9007199254740991;`,
+  // v8 (#118): when the leader next passes a rule, so that every Replica can show it.
   `ALTER TABLE replay_rule_state ADD COLUMN next_pass_at BIGINT;`,
 ];
 

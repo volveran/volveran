@@ -14,6 +14,11 @@
 // everywhere, even for a copied cookie. Every /api/ route answers 401
 // `not_signed_in` without a session.
 //
+// A session ends 12 hours after sign-in, or sooner when its Operator does nothing
+// for the idle timeout. Any /api/ request counts, on the Replica that took it (a
+// forwarded request reads no session), except one the web app sends on its own while
+// nobody may be there (BACKGROUND_REQUEST_HEADER).
+//
 // A session's OperatorToken is live in each process that has served it, because
 // a Checkout's connections listen to it. Each one refreshes on its own; making
 // that safe across Replicas is #114.
@@ -21,6 +26,7 @@ import { randomBytes } from 'node:crypto';
 import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import * as oidc from 'openid-client';
+import { BACKGROUND_REQUEST_HEADER } from '../shared/background-request.js';
 import type { SessionStore, StoredSession } from './audit/audit-store.js';
 import { ConfigError } from './config-error.js';
 import { groupsAtSignIn } from './groups-claim.js';
@@ -37,6 +43,10 @@ const loginCookie = 'volveran_login';
 const sessionLifetimeMs = 12 * 60 * 60 * 1000;
 /** Time allowed at the provider between /auth/login and /auth/callback. */
 const loginLifetimeMs = 10 * 60 * 1000;
+/** Sign-ins in progress the store keeps, as anyone can start one. Past it the oldest go: their Operators sign in again. */
+export const DEFAULT_MAX_SIGN_INS_IN_PROGRESS = 10_000;
+/** A session in use writes to the store at most this often; its idle timeout can end this much early. */
+const maxIdleTouchEveryMs = 60 * 1000;
 
 interface PendingLogin {
   codeVerifier: string;
@@ -69,6 +79,9 @@ export interface TeamAuthOptions {
   sessions: SessionStore;
   /** What protects their tokens there. */
   seal: TokenSeal;
+  /** A session the Operator has not used for this long ends. */
+  sessionIdleMs: number;
+  maxSignInsInProgress: number;
 }
 
 /**
@@ -76,7 +89,8 @@ export interface TeamAuthOptions {
  * cannot) and returns the sign-in routes and session guard to register.
  */
 export async function createTeamAuth(settings: OidcSettings, sessionSecret: string, options: TeamAuthOptions): Promise<TeamAuth> {
-  const { sessions, seal } = options;
+  const { sessions, seal, sessionIdleMs, maxSignInsInProgress } = options;
+  const idleTouchEveryMs = Math.min(maxIdleTouchEveryMs, sessionIdleMs / 10);
   const issuer = new URL(settings.issuer);
   let config: oidc.Configuration;
   try {
@@ -213,9 +227,22 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
         for (const session of live.values()) session.operator.brokerToken?.stop();
       });
 
+      /** Moves the idle expiry for a request that counts. One set further ahead (from before the timeout, or a longer one) always comes back. */
+      const touch = async (req: FastifyRequest, sessionId: string, stored: StoredSession, now: number): Promise<void> => {
+        const idleExpiresAt = now + sessionIdleMs;
+        const counts = req.headers[BACKGROUND_REQUEST_HEADER] === undefined;
+        if (stored.idleExpiresAt <= idleExpiresAt && !(counts && idleExpiresAt - stored.idleExpiresAt >= idleTouchEveryMs)) return;
+        try {
+          await sessions.touchSession(sessionId, idleExpiresAt);
+        } catch (err) {
+          // The session was just read, and the next request tries again.
+          req.log.error({ err, operator: stored.operator.id }, "A session's idle timeout could not be moved");
+        }
+      };
+
       // Only /api/ has an Operator: a probe or a static file with a cookie must not depend on the store.
       attachOperator(app, async (req) => {
-        if (!req.url.startsWith('/api/')) return null;
+        if (!underApi(req)) return null;
         const sessionId = readCookie(req, sessionCookie);
         if (!sessionId) return null;
         const now = Date.now();
@@ -224,10 +251,11 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
           dropLive(sessionId);
           return null;
         }
+        await touch(req, sessionId, stored, now);
         return goLive(sessionId, stored, now)?.operator ?? null;
       });
       app.addHook('onRequest', async (req) => {
-        if (req.url.startsWith('/api/') && !req.operator) throw notSignedIn();
+        if (underApi(req) && !req.operator) throw notSignedIn();
       });
 
       app.get<{ Querystring: { returnTo?: string } }>('/auth/login', async (req, reply) => {
@@ -240,7 +268,7 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
         };
         const id = randomBytes(32).toString('base64url');
         const now = Date.now();
-        await sessions.addSignIn(id, { sealed: seal.seal(JSON.stringify(login), id), expiresAt: now + loginLifetimeMs }, now);
+        await sessions.addSignIn(id, { sealed: seal.seal(JSON.stringify(login), id), expiresAt: now + loginLifetimeMs }, now, maxSignInsInProgress);
         const authorizeUrl = oidc.buildAuthorizationUrl(config, {
           redirect_uri: settings.redirectUrl,
           scope: settings.scopes.join(' '),
@@ -287,14 +315,17 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
           });
           operator = teamOperator(claims, groups);
         } catch (err) {
-          throw signInFailed(describe(err));
+          // What the provider said is for the Operator; anything else is about Volverán's side of it.
+          if (err instanceof oidc.AuthorizationResponseError || err instanceof oidc.ResponseBodyError) throw signInFailed(describe(err));
+          req.log.warn({ reason: describe(err) }, 'A sign-in failed');
+          throw signInFailed("the provider's answer could not be used");
         }
 
         const now = Date.now();
         const expiresAt = now + sessionLifetimeMs;
         const sessionId = randomBytes(32).toString('base64url');
         const grant: TokenGrant = { accessToken: tokens.access_token, expiresIn: tokens.expiresIn(), refreshToken: tokens.refresh_token };
-        await sessions.addSession(sessionId, { operator, tokens: sealTokens(sessionId, grant, grant.refreshToken, now), expiresAt }, now);
+        await sessions.addSession(sessionId, { operator, tokens: sealTokens(sessionId, grant, grant.refreshToken, now), expiresAt, idleExpiresAt: now + sessionIdleMs }, now);
         // Kept with the session's Operator, never sent to the browser or logged:
         // profiles with `credentials: operatorToken` connect with it (ADR 0008),
         // and it refreshes itself until the session ends.
@@ -316,14 +347,34 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
   };
 }
 
+/**
+ * Whether the request is for /api/. The router decodes a path and the raw URL is not decoded, so
+ * `/%61pi/session` reaches an /api/ route; a path no route has, or the web app's wildcard, shows only in the raw URL.
+ */
+function underApi(req: FastifyRequest): boolean {
+  return req.routeOptions.url?.startsWith('/api/') === true || req.url.startsWith('/api/');
+}
+
 function signInFailed(reason: string): HttpError<'sign_in_failed'> {
   return new HttpError(400, 'sign_in_failed', `Sign-in failed: ${reason}. Sign in again.`, { signInUrl: '/auth/login' });
 }
 
-/** Only a path of this app: never another site (`//host`, `/\host`, `https://...`). */
+/**
+ * Only a path of this app, as a browser reads it: it strips tabs and newlines and takes `\` as `/`.
+ * So the value is resolved the same way, and the path it resolves to is what the redirect uses.
+ */
 function safeReturnTo(value: string | undefined): string {
-  if (!value || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) return '/';
-  return value;
+  if (!value?.startsWith('/')) return '/';
+  const base = 'http://return-to.invalid';
+  let url: URL;
+  try {
+    url = new URL(value, base);
+  } catch {
+    return '/';
+  }
+  // Dots can leave `//` at the front of a path that resolved here.
+  if (url.origin !== base || url.pathname.startsWith('//')) return '/';
+  return url.pathname + url.search + url.hash;
 }
 
 function describe(err: unknown): string {

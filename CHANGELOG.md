@@ -24,14 +24,28 @@ All notable changes to Volverán are recorded here. The format is based on
 - With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout works through any of them, on an internal port that requires the shared secret: its view and heartbeat, reading Messages, Decisions, Apply, stop, Canary continue, a streamed export and ending it. Nothing changes without them, or on SQLite. (#108, #109)
 - With Replicas, when an Owner Replica dies its Operators see a Lost Checkout with the reason through any other Replica, within the 15 s its lease holds, and an Apply it was running leaves `uncertain` Audit Entries for what is not known. While its lease is live but it cannot be reached, requests answer 503 `replica_unreachable`, to try again. A Replica that cannot renew its lease gives up its Checkouts. (#112)
 - AMQP connections ask for a 5 s heartbeat, unless a profile's `amqpUrl` names its own `heartbeat`. A lost host or network now holds a queue's lock and Messages for about 15 s rather than about three minutes. (#112)
+- With those set, four-eyes works across Replicas: the Approvals view lists every waiting Approval from every Replica, and requesting, withdrawing, reading and comparing Messages, approving, rejecting, stopping, continuing and following an Apply work through any of them, with both people in the Audit Entries. (#111)
 - With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
+### Fixed
+
+- Ending a Checkout through Keep no longer uses up Delivery Budget on quorum queues, however it ends, including at shutdown. (#134) It now waits for the queue to take the Messages back before closing the channel, which took about 20 seconds per 1,000 Messages on a busy machine, so ending a large Checkout answers later. The wait stops after 40 ms per Message returned, at least 5 seconds (40 seconds at the default limit of 1,000 Messages), and logs a warning; another consumer on the queue can cause that, and any Message not yet taken back then costs one delivery. If you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, raise `pod.terminationGracePeriodSeconds` to match.
+
 ### Security
 
+- A state-changing request from a foreign `Origin` answers `403 foreign_origin`, on top of `SameSite=Lax`. In Team Mode the web app's origin is that of `VOLVERAN_OIDC_REDIRECT_URL` or `VOLVERAN_PUBLIC_URL`; API scripts send no `Origin` and are not affected. (#123)
+- Solo Mode refuses a foreign `Host` (`403 foreign_host`, on the metrics port too) or `Origin` on every request, so a website cannot reach it through DNS rebinding. If you reach it through another name, set `VOLVERAN_PUBLIC_URL`. (#123)
+- Sign-in no longer returns to another site through a tab or newline in `returnTo`. (#123)
 - A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
+- Every answer now carries a strict `Content-Security-Policy` that also refuses framing, with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`, and `Strict-Transport-Security` when Volverán is reached over https (`VOLVERAN_PUBLIC_URL` or `X-Forwarded-Proto`). A hostile Message body or header cannot run script in an Operator's browser. Answers other than the web app's files are `Cache-Control: no-store`, so Message bodies stay out of the browser's cache. (#124)
 - A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
 - CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high or critical finding in its dependencies or image, with a fix or without one, unless it is on the reviewed list in `.grype.yaml`.
+- OIDC codes and `state` no longer reach the logs: a request's log line has its path without the query. (#125)
+- An unhandled error answers a generic `internal_error` and logs the detail. A request Volverán cannot take keeps its status rather than answering 500: malformed or empty JSON `400 invalid_request`, a body over the limit `413 body_too_large`, an unsupported media type `415 unsupported_media_type`, a refusal from the static files `403 forbidden`. A sign-in that fails on Volverán's side says only that the provider's answer could not be used, with the reason in the log. (#125)
+- In Team Mode, a session ends after `VOLVERAN_SESSION_IDLE_MINUTES` (default 60) without activity, on both audit stores, as well as 12 hours after sign-in. ([details](docs/configuration.md#session-idle-timeout), #125)
+- The session guard reads the route, so `/%61pi/session` is refused like `/api/session`, and `/%61pi/checkouts/<id>` no longer answers 500 or tells an existing Checkout from an unknown one. (#126)
+- `/auth/login` without a session can no longer add sign-ins in progress without limit: Volverán keeps the newest 10,000.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.
 - GitHub Actions are pinned by commit and the base image by digest, and Dependabot proposes their updates and those of npm dependencies.
 

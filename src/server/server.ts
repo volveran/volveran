@@ -13,7 +13,7 @@ import { RestoreService } from './audit/restore.js';
 import { LeaderLeaseLost, type AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
-import { createTeamAuth, type TeamAuth } from './auth.js';
+import { createTeamAuth, DEFAULT_MAX_SIGN_INS_IN_PROGRESS, type TeamAuth } from './auth.js';
 import { CheckoutManager, DEFAULT_ENDED_RETENTION_MS, type CheckoutTestHooks } from './checkout/manager.js';
 import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
@@ -50,13 +50,15 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
+import { sendSecurityHeaders } from './security-headers.js';
 import { attachOperator, type Operator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
+import { requestOriginCheck, type RequestOriginCheck } from './request-origin.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
   profilesFile: string;
-  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET, VOLVERAN_SESSION_ENCRYPTION_KEY. */
+  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET, VOLVERAN_SESSION_ENCRYPTION_KEY, VOLVERAN_SESSION_IDLE_MINUTES. */
   env: Record<string, string | undefined>;
   host: string;
   /** 0 picks a free port. */
@@ -87,6 +89,10 @@ export interface ServerOptions {
   replicaLeaseTiming?: Partial<ReplicaLeaseTiming>;
   /** Test seam: told of each route as it is registered (the authorization matrix); unset in production. */
   onRouteRegistered?(route: { method: string; url: string }): void;
+  /** Test seam: overrides the session idle timeout from VOLVERAN_SESSION_IDLE_MINUTES; unset in production. */
+  sessionIdleMs?: number;
+  /** Test seam: how many sign-ins in progress the store keeps; unset in production. */
+  maxSignInsInProgress?: number;
 }
 
 export interface RunningServer {
@@ -161,6 +167,12 @@ async function serve(
     onRuleBadgesError: (err) => app.log.error({ err }, 'The rule badges of a Checkout could not be read'),
     // Called only once the app below is listening.
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
+    // Called only once the app below is listening.
+    onReturnWaitRanOut: (checkout, waited) =>
+      app.log.warn(
+        { checkoutId: checkout.id, queue: checkout.queue, ...waited },
+        'A Checkout stopped waiting for its quorum queue to take its Messages back, so some may have used up Delivery Budget',
+      ),
     onApplyEnded: (checkout, outcomes) => {
       triageMetrics.applyEnded(checkout.profile.name, outcomes);
       // Never rejects, and an Apply's end should not wait for a reading.
@@ -175,6 +187,8 @@ async function serve(
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
           sessions: auditStore.sessions,
           seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
+          sessionIdleMs: options.sessionIdleMs ?? config.mode.sessionIdleMs,
+          maxSignInsInProgress: options.maxSignInsInProgress ?? DEFAULT_MAX_SIGN_INS_IN_PROGRESS,
         }),
       };
   const forwarder = config.forwarding && createForwarder(config.forwarding.secret);
@@ -248,6 +262,7 @@ async function serve(
     await metricsReadings.refresh();
   });
   const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
+  const originCheck = requestOriginCheck(config.mode, config.publicUrl);
   const app = await buildApp({
     forwarder,
     // Called only once the app is listening, when the leader below exists.
@@ -257,6 +272,7 @@ async function serve(
       if (!address) throw replicaUnreachable();
       return address;
     },
+    originCheck,
     liveCheckouts,
     endWithinMs: endAnswersWithinMs({ ...config.checkoutTiming, ...options.checkoutTiming }, limits.maxMessages),
     profiles,
@@ -270,6 +286,7 @@ async function serve(
     webRoot: options.webRoot,
     logger: options.logger ?? false,
     onRouteRegistered: options.onRouteRegistered,
+    publicUrl: config.publicUrl,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -337,7 +354,7 @@ async function serve(
             }),
           ]
         : []),
-      // Last, so that it starts after the sampler and stops first, while what a last pass's pause tells still runs.
+      // Last, so that it starts after the sampler and stops first.
       replayRules,
     ],
     onError: (err, job) => app.log.error({ err, job }, job ? `The Background Leader's job "${job}" failed` : 'The leader lease could not be claimed or given up'),
@@ -354,8 +371,10 @@ async function serve(
   app.addHook('onClose', async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
-    // Before the notifier, with the rules among its jobs: a last pass can pause its rule, which sends a notification.
+    // The lease moves without waiting for a Rule Pass to give its Messages back.
     await leader.stop();
+    // Before the notifier: a last pass can pause its rule, which sends a notification.
+    await replayRules.drained();
     await alerting.stop();
     await notifier.close();
     await checkouts.endAll();
@@ -385,6 +404,8 @@ async function serve(
         host: options.host,
         port: config.metricsPort,
         families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
+        // A scraper in Team Mode comes from the network by any address; Solo Mode has only loopback to protect it.
+        ...(config.mode.kind === 'solo' && { refuses: (headers) => originCheck('GET', headers) !== null }),
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
     } catch (err) {
@@ -462,12 +483,44 @@ interface AppOptions {
   liveCheckouts: LiveCheckouts | null;
   /** Where to forward what must run on the Background Leader; null when this Replica is it. */
   leaderAddressForRoute(): Promise<string | null>;
+  /** Refuses what a malicious page sends through an Operator's browser. */
+  originCheck: RequestOriginCheck;
+  /** Where Volverán is reached from outside, if known. */
+  publicUrl: string | null;
   /** How long a forwarded end of a Checkout may take to answer. */
   endWithinMs: number;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, leaderAddressForRoute, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger });
+/** What the log says of a request: what Fastify's default says, without the query, which carries the OIDC code and state of /auth/callback. */
+function requestLogLine(req: FastifyRequest) {
+  return {
+    method: req.method,
+    url: req.url.split('?', 1)[0],
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
+
+/** What a client is told of a request the framework or a plugin refused. */
+function refusal(statusCode: number): { code: string; message: string } {
+  switch (statusCode) {
+    case 403:
+      return { code: 'forbidden', message: 'This request is not allowed.' };
+    case 404:
+      return { code: 'not_found', message: 'Nothing is here.' };
+    case 413:
+      return { code: 'body_too_large', message: 'The request body is too large.' };
+    case 415:
+      return { code: 'unsupported_media_type', message: "The request body's content type is not supported." };
+    default:
+      return { code: 'invalid_request', message: 'The request could not be read.' };
+  }
+}
+
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, leaderAddressForRoute, liveCheckouts, publicUrl, endWithinMs }: AppOptions): Promise<FastifyInstance> {
+  const app = Fastify({ logger: logger && { ...(logger === true ? {} : logger), serializers: { req: requestLogLine } } });
+  sendSecurityHeaders(app.server, publicUrl);
 
   // Before any route, so none is missed.
   if (onRouteRegistered) {
@@ -476,12 +529,24 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
     });
   }
 
-  app.setErrorHandler((err, _req, reply) => {
+  app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {
       return reply.status(err.status).send({ error: { ...err.details, code: err.code, message: err.message } });
     }
-    app.log.error(err);
-    return reply.status(500).send({ error: { code: 'internal_error', message: (err as Error).message } });
+    const { statusCode, code } = err as { statusCode?: number; code?: string };
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      // Its message can quote the request's body, so neither the answer nor the log carries it.
+      req.log.info({ statusCode, code }, 'A request was refused');
+      return reply.status(statusCode).send({ error: refusal(statusCode) });
+    }
+    req.log.error({ err }, 'A request failed unexpectedly');
+    return reply.status(500).send({ error: { code: 'internal_error', message: 'Something went wrong on the server. The details are in its log.' } });
+  });
+
+  // Before anything reads a session or forwards.
+  app.addHook('onRequest', async (req) => {
+    const refused = originCheck(req.method, req.headers);
+    if (refused) throw refused;
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
@@ -499,9 +564,9 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const ownerOf = async (req: FastifyRequest<{ Params: { id: string } }>) => {
-    if (!liveCheckouts || checkouts.owns(req.params.id)) return null;
-    const owner = await liveCheckouts.ownerOf(req.params.id);
+  const ownerOfCheckout = async (id: string) => {
+    if (!liveCheckouts || checkouts.owns(id)) return null;
+    const owner = await liveCheckouts.ownerOf(id);
     if (!owner) return null;
     if ('address' in owner) return owner.address;
     // Answered here from now on. A profile no longer configured leaves it unknown here.
@@ -509,6 +574,7 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
     if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
     return null;
   };
+  const ownerOf = (req: FastifyRequest<{ Params: { id: string } }>) => ownerOfCheckout(req.params.id);
   const checkoutDeps = {
     checkouts,
     access: profileAccess,
@@ -530,7 +596,11 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
-  registerApprovalRoutes(app, checkoutDeps);
+  registerApprovalRoutes(app, {
+    ...checkoutDeps,
+    toOwnerOfApproval: forwarder ? forwarder.toOwner((req: FastifyRequest<{ Params: { checkoutId: string } }>) => ownerOfCheckout(req.params.checkoutId)) : {},
+    ...(liveCheckouts && { waitingElsewhere: (approver: Operator) => liveCheckouts.waitingElsewhere(approver.id) }),
+  });
   registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
   registerHistoryRoutes(app, history, profileAccess);

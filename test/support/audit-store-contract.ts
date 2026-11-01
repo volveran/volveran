@@ -21,6 +21,7 @@ import {
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
+import type { ApprovalSummary } from '../../src/shared/checkout.js';
 
 /** An empty store, and a way back to what it holds once it is closed. */
 export interface OpenedAuditStore {
@@ -1211,6 +1212,53 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await store.replicas.runningOwner('nobody', NOW)).toBeNull();
       });
 
+      describe('waiting Approvals', () => {
+        const approval: ApprovalSummary = {
+          checkoutId: 'c-1',
+          requester: 'ana@example.com',
+          profile: 'local',
+          vhost: '/',
+          queue: 'orders.dlq',
+          queueType: 'quorum',
+          requestedAt: new Date(NOW).toISOString(),
+          waitingMs: 0,
+          endsAt: new Date(NOW + 60_000).toISOString(),
+          remainingMs: 60_000,
+          decisionSummary: [{ kind: 'discard', count: 2 }],
+          decisionSummaryText: '2 Discard',
+          rate: null,
+          canary: null,
+        };
+
+        it('lists an active Checkout that waits, with what the approvers see', async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval });
+          expect(await store.replicas.waitingApprovals(NOW)).toMatchObject([{ id: 'c-1', ownerReplica: 'r-1', approval }]);
+        });
+
+        it('leaves out a Checkout that waits for none', async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.waitingApprovals(NOW)).toEqual([]);
+        });
+
+        it.each(['starting', 'ended', 'lost'] as const)('leaves out a Checkout that is %s', async (status) => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval });
+          expect(await store.replicas.waitingApprovals(NOW)).toEqual([]);
+        });
+
+        it("leaves out a Checkout whose owner's lease is over, exactly at its time", async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval });
+          expect(await store.replicas.waitingApprovals(NOW + 999)).toHaveLength(1);
+          expect(await store.replicas.waitingApprovals(NOW + 1000)).toEqual([]);
+        });
+      });
+
       it("removing a Replica removes its lease and records, and no other's", async () => {
         await store.replicas.renewLease(lease('r-1'));
         await store.replicas.renewLease(lease('r-2'));
@@ -1376,6 +1424,7 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         operator: { id: 'sub-123', displayName: 'ana@example.com', email: 'ana@example.com', groups: ['ops'] },
         tokens: 'sealed-tokens',
         expiresAt: NOW + 1000,
+        idleExpiresAt: NOW + 60_000,
         ...overrides,
       });
 
@@ -1392,6 +1441,29 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         await store.sessions.addSession('s-1', session(), NOW);
         expect(await store.sessions.session('s-1', NOW + 999)).not.toBeNull();
         expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('no longer answers a session once it has been idle too long, before its lifetime ends', async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        expect(await store.sessions.session('s-1', NOW + 399)).not.toBeNull();
+        expect(await store.sessions.session('s-1', NOW + 400)).toBeNull();
+      });
+
+      it("moves a session's idle expiry and nothing else", async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        await store.sessions.touchSession('s-1', NOW + 700);
+        expect(await store.sessions.session('s-1', NOW + 500)).toEqual(session({ idleExpiresAt: NOW + 700 }));
+      });
+
+      it('does not let its idle expiry carry a session past its lifetime', async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        await store.sessions.touchSession('s-1', NOW + 5000);
+        expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('does not bring a removed session back when it is touched', async () => {
+        await store.sessions.touchSession('s-1', NOW + 700);
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
       });
 
       it('removes a session, and removing it again does nothing', async () => {
@@ -1415,15 +1487,32 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
 
       it('hands a sign-in in progress to one caller only', async () => {
-        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW, 10);
         const taken = await Promise.all([store.sessions.takeSignIn('l-1', NOW), store.sessions.takeSignIn('l-1', NOW)]);
         expect(taken.sort()).toEqual(['sealed-login', null].sort());
         expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
       });
 
       it('does not hand over a sign-in that has expired', async () => {
-        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW, 10);
         expect(await store.sessions.takeSignIn('l-1', NOW + 1000)).toBeNull();
+      });
+
+      it('keeps the newest sign-ins in progress when there are too many, and the oldest go', async () => {
+        for (const i of [1, 2, 3, 4]) await store.sessions.addSignIn(`l-${i}`, { sealed: `sealed-${i}`, expiresAt: NOW + 1000 + i }, NOW, 2);
+        expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
+        expect(await store.sessions.takeSignIn('l-2', NOW)).toBeNull();
+        expect(await store.sessions.takeSignIn('l-3', NOW)).toBe('sealed-3');
+        expect(await store.sessions.takeSignIn('l-4', NOW)).toBe('sealed-4');
+      });
+
+      it('holds no more than the limit under sign-ins added at once', async () => {
+        const count = 120;
+        await Promise.all(Array.from({ length: count }, (_, i) => store.sessions.addSignIn(`l-${i}`, { sealed: `sealed-${i}`, expiresAt: NOW + 1000 + i }, NOW, 3)));
+        // Those added at the same moment may pass the limit until the next add, by no more than can run at once.
+        const left = await Promise.all(Array.from({ length: count }, (_, i) => store.sessions.takeSignIn(`l-${i}`, NOW)));
+        expect(left.filter((sealed) => sealed !== null).length).toBeLessThanOrEqual(3 + 30);
+        expect(left.at(-1)).toBe(`sealed-${count - 1}`);
       });
 
       it('leaves others alone when something new is added past their expiry', async () => {

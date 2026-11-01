@@ -4,9 +4,9 @@
 // Checkouts, the in-process locks, the timers, and how a Checkout ends.
 //
 // Ending a Checkout nack-requeues every held Message one at a time in queue
-// order, then the overflow, before closing the channel: on quorum queues that
-// keeps the order, and costs no Delivery Budget only for what the queue has
-// taken back when the channel closes (ADR 0006). A closed channel or
+// order, then the overflow, and on a quorum queue waits for the queue to take
+// them back before closing the channel, up to a time limit: that keeps the
+// order and costs no Delivery Budget (return-messages.ts, ADR 0006). A closed channel or
 // connection (a crash, the network, a quorum consumer timeout arriving as a
 // channel close) makes it a Lost Checkout: the broker has returned
 // everything, at the cost of one delivery on quorum queues.
@@ -101,6 +101,7 @@ import {
 } from './errors.js';
 import { startExport, type CheckoutExport } from './export.js';
 import { closeCheckoutConnection, openCheckout, type StartOptions } from './open.js';
+import { returnMessages } from './return-messages.js';
 import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
 import { approvalSummary, pacedSteps, queueInfo, view as checkoutView, type ApprovalSummary, type CheckoutView } from './view.js';
 
@@ -123,6 +124,8 @@ export interface CheckoutTestHooks {
   beforeApplyStep?(entryId: number): Promise<void>;
   /** An export is about to make the line of the Message at `position` (1 is the head of the queue). */
   beforeExportLine?(position: number): Promise<void>;
+  /** Replaces how long a Checkout's end waits for a quorum queue to take its Messages back (returnWaitMs). */
+  returnWaitMs?: number;
   /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/rule-clock.ts); the server hands them to it. */
   ruleScheduler?: RuleSchedulerTestHooks;
 }
@@ -179,6 +182,8 @@ export interface CheckoutManagerOptions {
   onApplyError?(checkoutId: string, err: unknown): void;
   /** An Apply ended with these outcomes, one per Message of the Checkout. */
   onApplyEnded?(checkout: Checkout, outcomes: readonly MessageOutcome[]): void;
+  /** A Checkout's end stopped waiting for its queue to take its Messages back; the channel closes anyway. */
+  onReturnWaitRanOut?(checkout: Checkout, waited: { returned: number; waitedMs: number }): void;
   /** Left out when this Replica is on its own. */
   liveCheckouts?: LiveCheckoutListener;
 }
@@ -523,6 +528,15 @@ export class CheckoutManager {
     return this.view(checkout);
   }
 
+  /**
+   * Resolves once the other Replicas can read Checkout `id` as it is now, or that was tried, so
+   * the approvers' list agrees with an answer about a request. Never rejects. Call it after a
+   * first-wins section, never in one (ADR 0013).
+   */
+  async recorded(id: string): Promise<void> {
+    await this.options.liveCheckouts?.written(id);
+  }
+
   /** How many Checkouts are active now, and how many of those wait for Approval. */
   counts(): { active: number; waitingApproval: number } {
     const active = [...this.checkouts.values()].filter((c) => c.status === 'active');
@@ -770,12 +784,10 @@ export class CheckoutManager {
     const { channel } = checkout;
     try {
       if (channel) {
-        // Keep = basic.nack(requeue), one at a time in queue order: unlike
-        // reject it uses up no Delivery Budget by itself, and a quorum queue
-        // puts them back in the order returned. Closing straight after can
-        // overtake the nacks, which does use it up (ADR 0006).
-        for (const m of checkout.held.values()) channel.nack(m, false, true);
-        for (const m of checkout.overflow) channel.nack(m, false, true);
+        await returnMessages(checkout, channel, {
+          waitMs: this.hooks.returnWaitMs,
+          onWaitRanOut: (waited) => this.options.onReturnWaitRanOut?.(checkout, waited),
+        });
         await channel.close();
       }
     } catch {

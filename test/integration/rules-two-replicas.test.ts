@@ -249,6 +249,25 @@ describe('Replay Rules on the Background Leader', () => {
     await eventually(async () => expect(ranSummary(await schedulers.a.runPass('dev', RULE))).toMatchObject({ held: 0 }), 5_000, 50);
   });
 
+  it('moves the lease on a graceful stop without waiting for a pass, which still finishes and is recorded', async () => {
+    const gate = stepGate();
+    const { two, schedulers, leaders, listed } = await started({ gate });
+    await due(['p-1']);
+    const running = schedulers.a.runPass('dev', RULE);
+    await gate.atStep;
+
+    const stopping = two.a.shutdown();
+    await eventually(async () => {
+      await leaders.b.claimNow();
+      expect(leaders.b.isLeader()).toBe(true);
+    }, 10_000, 50);
+
+    gate.release();
+    expect(ranSummary(await running)).toMatchObject({ replayed: 1 });
+    await stopping;
+    expect((await listed('b')).passes).toMatchObject([{ status: 'ran' }]);
+  });
+
   it('stops a pass in progress on a pause through the other Replica: the step under way finishes, the rest go back', async () => {
     const gate = stepGate();
     const { two, schedulers, browser, listed } = await started({ gate });

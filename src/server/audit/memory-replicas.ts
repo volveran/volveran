@@ -76,6 +76,13 @@ export class MemoryReplicaStore implements ReplicaStore {
     return removed;
   }
 
+  async waitingApprovals(now: number): Promise<LiveCheckoutRecord[]> {
+    return [...this.checkouts.values()].filter((checkout) => {
+      const lease = this.leases.get(checkout.ownerReplica);
+      return checkout.status === 'active' && checkout.approval !== null && lease !== undefined && lease.expiresAt > now;
+    });
+  }
+
   async activeCheckoutOf(operatorId: string, now: number): Promise<string | null> {
     for (const checkout of this.checkouts.values()) {
       const lease = this.leases.get(checkout.ownerReplica);

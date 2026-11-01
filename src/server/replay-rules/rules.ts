@@ -13,10 +13,11 @@
 //   Checkout cannot start for another reason is recorded as failed. Every
 //   pass, scheduled or Run now, goes into the rule's history.
 // - It is a job of the Background Leader (ADR 0014): start() and stop() may each run many times.
-//   stop() cancels the timers and waits for the passes in progress, which carry on and are
-//   recorded even if the lease has moved: what they did is true whichever Replica holds it, and
-//   a later write cannot be harmed by theirs. A scheduled pass starts, and a next pass is
-//   written, only under the fence.
+//   stop() cancels the timers and does not wait for the passes in progress, so that the lease
+//   can move before their Messages come back (drained() waits for them). They carry on and are
+//   recorded even once it has moved: what they did is true whichever Replica holds it, and a
+//   later write cannot be harmed by theirs. A scheduled pass starts, and a next pass is written,
+//   only under the fence.
 // - pause() and resume() work on any Replica: the store settles them, and the leader is told.
 //   If it never hears (it is changing, or the pass is a former leader's), whatever runs the job
 //   or a pass finds out from the store within RULE_STATE_CHECK_MS.
@@ -137,13 +138,24 @@ export class ReplayRules implements LeaderJob {
     });
   }
 
-  /** Cancels every timer and waits for the passes in progress to end. */
+  /** Cancels every timer. A pass in progress goes on, still watching for a pause. */
   async stop(): Promise<void> {
     this.stopped = true;
     for (const timer of this.timers.values()) timer.cancel();
     this.timers.clear();
+    await this.perRule.settled();
+    this.endStateCheckIfIdle();
+  }
+
+  /** Waits for the passes in progress to end and be recorded. */
+  async drained(): Promise<void> {
     await Promise.allSettled([...this.running.values()].flatMap((passes) => [...passes]));
     await this.perRule.settled();
+    this.endStateCheckIfIdle();
+  }
+
+  private endStateCheckIfIdle(): void {
+    if (!this.stopped || this.running.size > 0) return;
     this.stateCheck?.cancel();
     this.stateCheck = null;
   }
@@ -161,6 +173,7 @@ export class ReplayRules implements LeaderJob {
     this.stateCheck?.cancel();
     this.stateCheck = this.clock.setTimer(() => {
       void this.checkStates().finally(() => {
+        this.endStateCheckIfIdle();
         if (this.stateCheck) this.armStateCheck();
       });
     }, RULE_STATE_CHECK_MS);
