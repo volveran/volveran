@@ -1197,6 +1197,20 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect((await store.history.lastRuns('p')).last).not.toBeNull();
       });
 
+      it('records a sampling run for the lease as it is held, and refuses one for a lease another has taken since, recording none of it', async () => {
+        const ref = { profile: 'p', vhost: '/', queue: 'q' };
+        const run = (at: number) => ({ at, ok: true, errorCode: null, intervalMs: 1000 });
+        const sample = (at: number) => ({ vhost: '/', queue: 'q', at, depth: 1, estimatedArrivals: null });
+        const held = (await lease().claim('a', NOW, LEASE))!;
+        await store.history.recordRun('p', run(NOW), [sample(NOW)], held);
+        await lease().claim('b', NOW + LEASE, LEASE);
+
+        await expect(store.history.recordRun('p', run(NOW + 1), [sample(NOW + 1)], held)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect((await store.history.lastRuns('p')).last!.at).toBe(NOW);
+        expect((await store.history.samples(ref, NOW, NOW + 1)).map((s) => s.at)).toEqual([NOW]);
+      });
+
       it('refuses a write for a lease given up', async () => {
         const given = (await lease().claim('a', NOW, LEASE))!;
         await lease().release('a');

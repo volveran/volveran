@@ -8,7 +8,7 @@ To be written with Replica registration and forwarding (#108, #121): a Checkout'
 
 ## The Background Leader
 
-Some work must run once however many Replicas there are: retention now; the sampler, Alerts and Replay Rule scheduling after it. One Replica at a time, the Background Leader, runs all of it. One leader for everything was chosen over a lease per job because it is much simpler and the load is small.
+Some work must run once however many Replicas there are: retention and the sampler now; Alerts and Replay Rule scheduling after them. One Replica at a time, the Background Leader, runs all of it. One leader for everything was chosen over a lease per job because it is much simpler and the load is small.
 
 **A lease row in the audit store, with no Kubernetes API access.** So the chart needs no RBAC, and the pod keeps `automountServiceAccountToken: false`, and it works outside Kubernetes too. Every Replica claims the lease every 5 s (`LEADER_RENEW_MS`); a claim lasts 15 s (`LEADER_LEASE_MS`). The leader's claims renew it, and the others take it once it has expired or been given up.
 
@@ -27,4 +27,5 @@ Some work must run once however many Replicas there are: retention now; the samp
 ## Consequences
 
 - Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`.
-- A job failing to start is logged and the leader stays leader without it. A job that should not run without another must say so itself.
+- A job failing to start is logged and the leader stays leader without it, trying it again at each claim until it starts. A job that should not run without another must say so itself. A job marked `mustStart`, such as the sampler, instead fails startup if it fails on the process's first claim, as it always has on a single Replica; a Replica that takes over later is already serving, so it only retries.
+- Only the leader reads the broker for Samples. The Messages taken out in estimated arrivals come from Audit Entries in the store, so they count every Replica. A failover leaves no runs for a while, which the history view shows as a gap once runs are more than 1.5 intervals apart, and the next Sample compares with the last stored one, counting what was taken out in between. At the default interval a quick takeover (a minute and 20 s at most, if the leader had just run) stays inside 1.5 intervals and shows no gap, because none was missed.

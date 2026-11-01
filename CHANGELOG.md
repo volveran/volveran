@@ -17,6 +17,7 @@ All notable changes to Volverán are recorded here. The format is based on
 ### Added
 
 - A Background Leader: one Replica holds a lease in the audit store and runs retention, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. Run exactly one Replica for now; on SQLite it is simply its own leader, and nothing changes.
+- The sampler runs on the Background Leader, so several Replicas take one set of Samples. Estimated arrivals count Messages taken out through every Replica, and a failover shows in the history view as a gap, with no false arrivals. On SQLite nothing changes.
 - A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
 
 ### Security

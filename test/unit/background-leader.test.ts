@@ -266,6 +266,43 @@ describe('the Background Leader', () => {
     expect(errors.map((e) => (e as Error).message)).toEqual(['no start', 'no stop']);
   });
 
+  it('on its first claim, rejects start() for a job whose start must not fail, as the failure of startup and not as a logged error', async () => {
+    const errors: unknown[] = [];
+    const required: LeaderJob = { name: 'required', mustStart: true, start: () => Promise.reject(new Error('no start')), stop: async () => {} };
+    const leader = leaderOn(store(), [required], time.clock, (err) => errors.push(err));
+    await expect(leader.start()).rejects.toThrow('no start');
+    expect(errors).toEqual([]);
+  });
+
+  it('after taking over, reports a job that fails to start and tries it again at each claim, with the same fence, until it starts', async () => {
+    const lease = store();
+    const errors: unknown[] = [];
+    const fences: LeaseFence[] = [];
+    let attempts = 0;
+    const required: LeaderJob = {
+      name: 'required',
+      mustStart: true,
+      start: async (fence) => {
+        fences.push(fence);
+        if (++attempts < 3) throw new Error('no start');
+      },
+      stop: async () => {},
+    };
+    const silent = testClock();
+    await leaderOn(lease, [], silent.clock).start();
+    const b = leaderOn(lease, [required], time.clock, (err) => errors.push(err));
+    await b.start();
+
+    await time.advance(LEADER_TAKEOVER_MS);
+    expect(b.isLeader).toBe(true);
+    await time.advance(3 * 5_000);
+    expect(attempts).toBe(3);
+    expect(errors.map((e) => (e as Error).message)).toEqual(['no start', 'no start']);
+    expect(fences[2]).toEqual(fences[0]);
+    await time.advance(3 * 5_000);
+    expect(attempts).toBe(3);
+  });
+
   it('stops whatever happens to the store, and does not claim after', async () => {
     let claims = 0;
     const lease: LeaderLeaseStore = {
