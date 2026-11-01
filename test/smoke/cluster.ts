@@ -128,6 +128,14 @@ export function crash(pod: VolveranPod): void {
 const connectCode = (ip: string, port: number) =>
   `const s=require('net').connect(${port},'${ip}');const done=(r)=>{console.log(r);process.exit(0)};s.on('connect',()=>done('open'));s.on('error',()=>done('closed'));setTimeout(()=>done('closed'),3000)`;
 
+/** What a Volverán pod is answered when it asks another's forwarding port for the session, saying this forwarding protocol version. */
+export function askForwardingPort(pod: VolveranPod, ip: string, port: number, secret: string, protocol: string): { status: number; protocol: string | null } {
+  const operator = Buffer.from(JSON.stringify({ id: 'smoke-operator', displayName: 'Smoke Operator', groups: [] })).toString('base64url');
+  const headers = { authorization: `Bearer ${secret}`, 'x-volveran-forwarded-operator': operator, 'x-volveran-forwarding-protocol': protocol };
+  const code = `fetch('http://${ip}:${port}/api/session',{headers:${JSON.stringify(headers)}}).then((r)=>console.log(JSON.stringify({status:r.status,protocol:r.headers.get('x-volveran-forwarding-protocol')})))`;
+  return JSON.parse(kubectl(['-n', appNamespace, 'exec', pod.name, '-c', 'volveran', '--', 'node', '-e', code]));
+}
+
 /** Whether a Volverán pod can open a connection to this address. */
 export function connectFromPod(pod: VolveranPod, ip: string, port: number): string {
   return kubectl(['-n', appNamespace, 'exec', pod.name, '-c', 'volveran', '--', 'node', '-e', connectCode(ip, port)]).trim();

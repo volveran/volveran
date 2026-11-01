@@ -45,6 +45,18 @@ describe('forwarding failures', () => {
     expect(failures).toEqual(['timed_out']);
   });
 
+  it('says when a notice reaches a Replica on another forwarding protocol, which rejects', async () => {
+    const failures: ForwardingFailure[] = [];
+    const { forwarder, address } = await start(failures);
+    silent.removeAllListeners('request');
+    silent.on('request', (_req, res) => {
+      res.writeHead(400, { 'x-volveran-forwarding-protocol': '2' });
+      res.end();
+    });
+    await expect(forwarder.tell(address, '/api/changed', ana, 1_000)).rejects.toThrow();
+    expect(failures).toEqual(['protocol_mismatch']);
+  });
+
   it('counts nothing when it is the Operator who went away', async () => {
     const failures: ForwardingFailure[] = [];
     let arrived = () => {};

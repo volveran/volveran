@@ -44,7 +44,7 @@ import { refuseNewerStore } from './store-version.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
 /** Append-only: each entry runs once, in order, recorded in PRAGMA user_version. */
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: readonly string[] = [
   `CREATE TABLE audit_entries (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      created_at INTEGER NOT NULL,

@@ -11,6 +11,11 @@
 // Tokens never travel. A request names its session, and the receiving Replica reads the
 // session's token from the store (auth.ts). The id alone signs nobody in: a session cookie
 // must also be signed with the session secret.
+//
+// Every request says which forwarding protocol it speaks, because during a rolling update
+// Replicas of two versions run side by side (ADR 0015). A Replica refuses another version before
+// it reads anything else of the request, and the sender treats that as an Owner Replica it
+// cannot reach now: the Operator is told to try again, nothing is acted on and nothing is lost.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { FastifyReply, FastifyRequest, onRequestAsyncHookHandler } from 'fastify';
@@ -20,10 +25,17 @@ import type { Operator } from '../operator.js';
 
 const OPERATOR_HEADER = 'x-volveran-forwarded-operator';
 const SESSION_HEADER = 'x-volveran-forwarded-session';
+const PROTOCOL_HEADER = 'x-volveran-forwarding-protocol';
+/**
+ * Change this when what Replicas say to each other changes meaning: the identity headers, or
+ * what a forwarded request may assume of the Replica answering it. The refusal of another version must stay
+ * as it is through 1.x (a 400 with PROTOCOL_HEADER), so that every Replica can read it.
+ */
+const FORWARDING_PROTOCOL_VERSION = '1';
 /** How long a forwarded request may wait for its answer to begin, unless its route says otherwise. */
 const DEFAULT_ANSWER_WITHIN_MS = 10_000;
 /** Between one hop and the next, or what this hop replaces. */
-const NOT_PASSED_ON = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'cookie', 'authorization', OPERATOR_HEADER, SESSION_HEADER]);
+const NOT_PASSED_ON = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'cookie', 'authorization', OPERATOR_HEADER, SESSION_HEADER, PROTOCOL_HEADER]);
 
 const forwardedRequests = new WeakMap<IncomingMessage, { operator: Operator; session: string | null }>();
 
@@ -60,9 +72,15 @@ export interface Forwarder {
 /**
  * Why a request between Replicas failed: the connection failed or dropped before an answer
  * began (`unreachable`), no answer began in time (`timed_out`), nobody is known to send it to
- * (`no_address`), or the internal port refused it, told by the Replica refusing (`refused`).
+ * (`no_address`), the internal port refused it, told by the Replica refusing (`refused`), or
+ * the other Replica speaks another forwarding protocol, told by the Replica sending (`protocol_mismatch`).
  */
-export type ForwardingFailure = 'unreachable' | 'timed_out' | 'no_address' | 'refused';
+export type ForwardingFailure = 'unreachable' | 'timed_out' | 'no_address' | 'refused' | 'protocol_mismatch';
+
+/** The answer of a Replica that speaks another forwarding protocol. No route answers with this header. */
+function isProtocolRefusal(answer: IncomingMessage): boolean {
+  return answer.statusCode === 400 && answer.headers[PROTOCOL_HEADER] !== undefined;
+}
 
 function passedOn(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   return Object.fromEntries(Object.entries(headers).filter(([name]) => !NOT_PASSED_ON.has(name)));
@@ -86,6 +104,7 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
           ...passedOn(req.raw.headers),
           host: address,
           authorization: `Bearer ${secret}`,
+          [PROTOCOL_HEADER]: FORWARDING_PROTOCOL_VERSION,
           [OPERATOR_HEADER]: encodeOperator(req.operator!),
           ...(req.operator!.brokerToken?.sessionId !== undefined && { [SESSION_HEADER]: req.operator!.brokerToken.sessionId }),
         },
@@ -124,7 +143,7 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
           method: 'POST',
           path,
           agent: false,
-          headers: { host: address, authorization: `Bearer ${secret}`, [OPERATOR_HEADER]: encodeOperator(operator), 'content-length': 0 },
+          headers: { host: address, authorization: `Bearer ${secret}`, [PROTOCOL_HEADER]: FORWARDING_PROTOCOL_VERSION, [OPERATOR_HEADER]: encodeOperator(operator), 'content-length': 0 },
         });
         let answered = false;
         let timedOut = false;
@@ -142,7 +161,10 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
           answered = true;
           clearTimeout(limit);
           answer.resume();
-          if ((answer.statusCode ?? 500) < 300) resolve();
+          if (isProtocolRefusal(answer)) {
+            onFailure('protocol_mismatch');
+            reject(replicaUnreachable());
+          } else if ((answer.statusCode ?? 500) < 300) resolve();
           else reject(new Error(`The Replica answered ${answer.statusCode}`));
         });
         outgoing.end();
@@ -154,6 +176,11 @@ export function createForwarder(secret: string, onFailure: (reason: ForwardingFa
           const address = await ownerOf(req as never);
           if (address === null) return;
           const answer = await send(req, reply, address, answerWithinMs);
+          if (isProtocolRefusal(answer)) {
+            answer.resume();
+            onFailure('protocol_mismatch');
+            throw replicaUnreachable();
+          }
           return reply
             .status(answer.statusCode ?? 502)
             .headers(passedOn(answer.headers))
@@ -211,7 +238,14 @@ export interface ForwardingListener {
 /** The internal port. It answers only requests carrying the secret and an Operator; nothing here is for a browser. */
 export async function startForwardingListener({ host, port, secret, serve, onRefused }: ForwardingListenerOptions): Promise<ForwardingListener> {
   const server = http.createServer((req, res) => {
-    const operator = carriesSecret(req, secret) ? decodeOperator(req.headers[OPERATOR_HEADER]) : null;
+    const secretHolds = carriesSecret(req, secret);
+    // Only a Replica learns the version, and the rest of the request may mean something else in another one.
+    if (secretHolds && req.headers[PROTOCOL_HEADER] !== FORWARDING_PROTOCOL_VERSION) {
+      res.writeHead(400, { 'content-type': 'application/json', [PROTOCOL_HEADER]: FORWARDING_PROTOCOL_VERSION });
+      res.end(JSON.stringify({ error: { code: 'forwarding_protocol_mismatch', message: `This Replica speaks forwarding protocol ${FORWARDING_PROTOCOL_VERSION}.` } }));
+      return;
+    }
+    const operator = secretHolds ? decodeOperator(req.headers[OPERATOR_HEADER]) : null;
     if (!operator || !req.url?.startsWith('/api/')) {
       onRefused();
       res.writeHead(401, { 'content-type': 'application/json' });
