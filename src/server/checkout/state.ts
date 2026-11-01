@@ -86,6 +86,11 @@ export interface Checkout extends QueueRef {
   /** The last request's rejection, shown to the requester until the next request. */
   rejection: Rejection | null;
   lostReason: string | null;
+  /**
+   * Known only from a Live Checkout record, since its Owner Replica has gone: Messages may
+   * still be on their way back, and an Apply may have settled some (its Audit Entries tell).
+   */
+  ownerGone: boolean;
   endReason: EndReason | null;
   /** Ready Messages in the queue when the Checkout started (passive declare). */
   readyAtStart: number;

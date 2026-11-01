@@ -312,6 +312,11 @@ export class SqliteAuditStore implements AuditStore {
     this.db.prepare('UPDATE audit_entries SET outcome = ?, outcome_reason = ? WHERE id = ?').run(outcome, reason, id);
   }
 
+  async settleInterrupted(checkoutId: string, reason: string): Promise<number> {
+    const { changes } = this.db.prepare("UPDATE audit_entries SET outcome = 'uncertain', outcome_reason = ? WHERE checkout_id = ? AND outcome = 'pending'").run(reason, checkoutId);
+    return Number(changes);
+  }
+
   /** Records how the watch of a Canary's entry ended. */
   async setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): Promise<void> {
     this.db.prepare('UPDATE audit_entries SET canary_outcome = ? WHERE id = ?').run(outcome, id);

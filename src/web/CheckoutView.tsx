@@ -101,6 +101,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       received: (c: Checkout) => {
         setCheckout(c);
         setReceivedAt(Date.now());
+        // An answer ends "try again in a moment"; any other error stays until the Operator acts.
+        setError((e) => (e?.details.tryAgain === true ? undefined : e));
       },
       failed: setError,
       everyMs: (c) => Math.max(1_000, Math.min(5_000, c.heartbeatWindowMs / 4)),
@@ -116,6 +118,8 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
       received: (c: Checkout) => {
         setCheckout(c);
         setReceivedAt(Date.now());
+        // An answer ends "try again in a moment"; any other error stays until the Operator acts.
+        setError((e) => (e?.details.tryAgain === true ? undefined : e));
       },
       failed: setError,
       everyMs: APPLY_POLL_MS,
@@ -391,11 +395,13 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
         <div className="error" role="alert">
           <strong>Lost Checkout</strong>
           <p>{checkout.lostReason}</p>
-          <p>
-            {checkout.lastApply
-              ? 'Every Message whose Decision was not done is back in the queue.'
-              : 'Every Message is back in the queue; nothing of this Checkout was applied.'}
-          </p>
+          {!checkout.ownerGone && (
+            <p>
+              {checkout.lastApply
+                ? 'Every Message whose Decision was not done is back in the queue.'
+                : 'Every Message is back in the queue; nothing of this Checkout was applied.'}
+            </p>
+          )}
         </div>
       )}
       {checkout.status === 'ended' && <p className="empty">{endedLine(checkout)}</p>}

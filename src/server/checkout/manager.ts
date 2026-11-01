@@ -64,7 +64,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
-import { queueRefOf, type QueueRef } from '../profiles.js';
+import { queueRefOf, type BrokerProfile, type QueueRef } from '../profiles.js';
 import { STOP_REASONS } from '../apply/stop-reasons.js';
 import type { ApplyOptions, MessageOutcome, RuleActing } from '../apply/types.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
@@ -75,8 +75,9 @@ import { messageDetail, type HeldForBadge, type MessageDetail } from '../triage/
 import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
-import type { AuditStore, ProfileScope } from '../audit/audit-store.js';
+import type { AuditStore, LiveCheckoutRecord, ProfileScope } from '../audit/audit-store.js';
 import { diedAgain } from '../triage/died-again.js';
+import type { CheckoutQueueType } from '../../shared/checkout.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
 import { canaryFor } from './canary.js';
@@ -189,7 +190,44 @@ function stopperText(stop: ApplyStop): string {
   return stop.stoppedBy ?? (stop.endReason === 'time-limit' ? 'the time limit' : 'the Checkout ending');
 }
 
-const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
+export const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
+
+/** A Checkout holding nothing yet, `active`. */
+function blankCheckout(ref: QueueRef, fields: Pick<Checkout, 'id' | 'operator' | 'startedAt' | 'endsAt' | 'timing' | 'requireApproval' | 'limits'>): Checkout {
+  return {
+    ...ref,
+    ...fields,
+    // Set from the credentials the connection opens with (open.ts).
+    brokerUser: '',
+    queueType: 'classic',
+    deliveryLimit: null,
+    deadLetterExchange: false,
+    timeLimitTimer: undefined,
+    heartbeatTimer: undefined,
+    status: 'active',
+    approvalRequest: null,
+    approvalClosed: null,
+    rejection: null,
+    lostReason: null,
+    ownerGone: false,
+    endReason: null,
+    readyAtStart: 0,
+    limitedBy: null,
+    connection: undefined,
+    channel: undefined,
+    onlyConsumer: false,
+    held: new Map(),
+    overflow: [],
+    heldBytes: 0,
+    diedAgain: new Map(),
+    decisions: new Map(),
+    applying: null,
+    applyProgress: null,
+    lastApply: null,
+    canaryWatch: new Map(),
+    canary: null,
+  };
+}
 
 export class CheckoutManager {
   private readonly checkouts = new Map<string, Checkout>();
@@ -220,47 +258,18 @@ export class CheckoutManager {
     if (other) throw inCheckout(ref, { operator: other.operator.displayName, since: other.startedAt.toISOString() });
 
     const startedAt = new Date();
-    const checkout: Checkout = {
-      ...ref,
+    const checkout = blankCheckout(ref, {
       id: randomUUID(),
       operator,
-      // Set from the credentials the connection opens with (open.ts).
-      brokerUser: '',
-      queueType: 'classic',
-      deliveryLimit: null,
-      deadLetterExchange: false,
       startedAt,
-      timing: this.timing,
       endsAt: new Date(startedAt.getTime() + this.timing.timeLimitMs),
-      timeLimitTimer: undefined,
-      heartbeatTimer: undefined,
-      status: 'active',
+      timing: this.timing,
       requireApproval: (this.options.enforceApproval ?? false) && target.profile.protected && target.profile.requireApproval,
-      approvalRequest: null,
-      approvalClosed: null,
-      rejection: null,
-      lostReason: null,
-      endReason: null,
-      readyAtStart: 0,
       limits:
         options.maxMessages === undefined
           ? this.options.limits
           : { ...this.options.limits, maxMessages: Math.min(options.maxMessages, this.options.limits.maxMessages) },
-      limitedBy: null,
-      connection: undefined,
-      channel: undefined,
-      onlyConsumer: false,
-      held: new Map(),
-      overflow: [],
-      heldBytes: 0,
-      diedAgain: new Map(),
-      decisions: new Map(),
-      applying: null,
-      applyProgress: null,
-      lastApply: null,
-      canaryWatch: new Map(),
-      canary: null,
-    };
+    });
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
@@ -292,6 +301,35 @@ export class CheckoutManager {
   /** Whether this Replica knows Checkout `id`, which makes it the Owner Replica. */
   owns(id: string): boolean {
     return this.checkouts.has(id);
+  }
+
+  /**
+   * Another Replica owned this Checkout and has gone (`record`, already saying lost or ended):
+   * from here on this Replica answers for it, as an owner does for a Checkout that is over,
+   * through the same routes and checks, and forgets it after the same while. It holds nothing,
+   * and takes neither queue nor Operator. Nothing awaits, so of two requests one adds it.
+   */
+  answerForGoneOwner(record: LiveCheckoutRecord, profile: BrokerProfile): void {
+    if (this.checkouts.has(record.id)) return;
+    const ref: QueueRef = { profile, vhost: record.vhost, queue: record.queue };
+    const checkout = blankCheckout(ref, {
+      id: record.id,
+      operator: record.operator,
+      startedAt: new Date(record.startedAt),
+      endsAt: new Date(record.endsAt),
+      timing: this.timing,
+      requireApproval: false,
+      limits: this.options.limits,
+    });
+    checkout.queueType = record.queueType;
+    checkout.deliveryLimit = record.deliveryLimit;
+    checkout.readyAtStart = record.readyAtStart;
+    checkout.status = record.status === 'ended' ? 'ended' : 'lost';
+    checkout.endReason = record.endReason;
+    checkout.lostReason = record.lostReason;
+    checkout.ownerGone = checkout.status === 'lost';
+    this.checkouts.set(checkout.id, checkout);
+    this.release(checkout);
   }
 
   /** The browser still shows the Checkout: it stays until the next heartbeat window passes. */
@@ -739,6 +777,15 @@ export class CheckoutManager {
     checkout.overflow = [];
     this.release(checkout);
     return this.view(checkout);
+  }
+
+  /**
+   * This Replica's lease has run out, so other Replicas report its Checkouts lost: it makes
+   * that true, closing their connections, and the broker returns their Messages. An Apply
+   * attempts no further step, as on any Lost Checkout. Nothing awaits.
+   */
+  loseAll(reason: (queueType: CheckoutQueueType) => string): void {
+    for (const checkout of [...this.locks.values()]) this.markLost(checkout, reason(checkout.queueType));
   }
 
   /** Ends every active Checkout (on shutdown). */
