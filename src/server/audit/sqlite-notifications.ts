@@ -2,11 +2,15 @@
 // as long as the depth history (VOLVERAN_HISTORY_RETENTION_DAYS).
 import type { DatabaseSync } from 'node:sqlite';
 import type { NotificationDelivery } from '../../shared/alerts.js';
-import type { NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
+import type { LeaseFence, NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
+import type { MemoryLeaderLease } from './memory-leader-lease.js';
 import { notificationScope, RECENT_LIMIT, toDelivery, type NotificationRow } from './store-rows.js';
 
 export class SqliteNotificationStore implements NotificationStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly lease: MemoryLeaderLease,
+  ) {}
 
   async record(d: NewNotificationDelivery): Promise<NotificationDelivery> {
     const { lastInsertRowid } = this.db
@@ -45,7 +49,8 @@ export class SqliteNotificationStore implements NotificationStore {
   }
 
   /** Removes the outcomes from before `cutoff`; returns how many. */
-  async removeOlderThan(cutoff: Date): Promise<number> {
+  async removeOlderThan(cutoff: Date, fence?: LeaseFence): Promise<number> {
+    this.lease.check(fence);
     return Number(this.db.prepare('DELETE FROM notifications WHERE at < ?').run(cutoff.getTime()).changes);
   }
 }

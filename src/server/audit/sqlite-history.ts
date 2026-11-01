@@ -5,11 +5,15 @@
 // periodic retention job. The Applies and Rule Passes on a queue are read from
 // the Audit Entries.
 import type { DatabaseSync } from 'node:sqlite';
-import type { HistoryStore, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
+import type { HistoryStore, LeaseFence, QueueSample, SampledQueue, StoredSamplingRun, StoredSample, TakeOut } from './audit-store.js';
+import type { MemoryLeaderLease } from './memory-leader-lease.js';
 import { TAKEN_OUT, toRun, toSample, toTakeOuts, type RunRow, type SampleRow, type TakeOutRow } from './store-rows.js';
 
 export class SqliteHistoryStore implements HistoryStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly lease: MemoryLeaderLease,
+  ) {}
 
   /** Records a sampling run and its Samples in one commit. */
   async recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void> {
@@ -106,7 +110,8 @@ export class SqliteHistoryStore implements HistoryStore {
   }
 
   /** Removes the Samples and sampling runs older than `before`. */
-  async removeOlderThan(before: number): Promise<{ samples: number; runs: number }> {
+  async removeOlderThan(before: number, fence?: LeaseFence): Promise<{ samples: number; runs: number }> {
+    this.lease.check(fence);
     const samples = this.db.prepare('DELETE FROM history_samples WHERE at < ?').run(before);
     const runs = this.db.prepare('DELETE FROM sampling_runs WHERE at < ?').run(before);
     return { samples: Number(samples.changes), runs: Number(runs.changes) };

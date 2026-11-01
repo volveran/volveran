@@ -22,6 +22,8 @@ import { StoreReadings } from './metrics/store-readings.js';
 import { TriageMetrics } from './metrics/triage.js';
 import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
+import { BackgroundLeader, type LeaderTestHooks } from './leader/background-leader.js';
+import { retentionJob } from './leader/retention-job.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
 import { readStartupConfig, type StartupConfig } from './startup-config.js';
 import { keySeal, noSeal } from './token-seal.js';
@@ -73,6 +75,8 @@ export interface ServerOptions {
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
   samplerTestHooks?: SamplerTestHooks;
+  /** Test seams of the Background Leader; unset in production. */
+  leaderTestHooks?: LeaderTestHooks;
   /** Test seam: told of each route as it is registered (the authorization matrix); unset in production. */
   onRouteRegistered?(route: { method: string; url: string }): void;
 }
@@ -261,44 +265,27 @@ async function serve(
     }
   }
 
-  // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
-  const evict = async () => {
-    try {
-      const { evicted } = await auditStore.evictBodies({ now: new Date(), ...retention });
-      if (evicted > 0) app.log.info({ evicted }, 'Retention evicted Discarded Message bodies');
-    } catch (err) {
-      app.log.error(err, 'Retention could not evict Discarded Message bodies');
-    }
-    try {
-      await auditStore.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
-    } catch (err) {
-      app.log.error(err, 'Retention could not remove old notification outcomes');
-    }
-  };
-  // The same job removes Samples and sampling runs past the history retention.
-  const removeOldHistory = async () => {
-    try {
-      const { samples } = await auditStore.history.removeOlderThan(Date.now() - config.historyRetentionMs);
-      if (samples > 0) app.log.info({ samples }, 'Retention removed old Samples');
-    } catch (err) {
-      app.log.error(err, 'Retention could not remove old Samples');
-    }
-  };
-  // Never rejects, so the timer can leave it running. A run still going when the next is due is left to finish.
-  let retentionRun: Promise<void> | null = null;
-  const runRetention = () => {
-    retentionRun ??= (async () => {
-      await evict();
-      await removeOldHistory();
-      await metricsReadings.refresh();
-    })().finally(() => {
-      retentionRun = null;
-    });
-    return retentionRun;
-  };
-  await runRetention();
-  const retentionTimer = setInterval(() => void runRetention(), retention.intervalMs);
-  retentionTimer.unref();
+  // One Replica at a time runs what must run once. It claims the lease below, once the app can log.
+  const leaderClock = options.leaderTestHooks?.clock ?? systemClock;
+  const leader = new BackgroundLeader({
+    lease: auditStore.leaderLease,
+    clock: leaderClock,
+    timing: options.leaderTestHooks?.timing,
+    jobs: [
+      retentionJob({
+        store: auditStore,
+        retention,
+        historyRetentionMs: config.historyRetentionMs,
+        clock: leaderClock,
+        log: app.log,
+        afterRun: () => metricsReadings.refresh(),
+      }),
+    ],
+    onError: (err, job) => app.log.error({ err, job }, job ? `The Background Leader's job "${job}" failed` : 'The leader lease could not be claimed or given up'),
+    onChange: (isLeader) => app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader'),
+  });
+  options.leaderTestHooks?.leader?.(leader);
+  await leader.start();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
   // then every held Message goes back to its queue (an Apply in progress
@@ -307,8 +294,7 @@ async function serve(
   app.addHook('onClose', async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
-    clearInterval(retentionTimer);
-    await retentionRun;
+    await leader.stop();
     await sampler.stop();
     // Before the notifier: a last pass can pause its rule, which sends a notification.
     await replayRules.stop();

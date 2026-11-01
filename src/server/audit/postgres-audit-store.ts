@@ -9,7 +9,7 @@ import type {
   AuditEntry,
   AuditQuery,
   AuditStore,
-  BodyEviction,
+  BodyEviction, LeaderLeaseStore, LeaseFence,
   HistoryStore,
   NewAuditEntry,
   NotificationStore,
@@ -23,6 +23,7 @@ import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
 import { PostgresNotificationStore } from './postgres-notifications.js';
 import { PostgresRuleStateStore } from './postgres-rule-state.js';
+import { fenced, PostgresLeaderLease } from './postgres-leader-lease.js';
 import { PostgresSessionStore } from './postgres-sessions.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
@@ -46,6 +47,7 @@ export class PostgresAuditStore implements AuditStore {
   readonly notifications: NotificationStore;
   readonly alerts: AlertStore;
   readonly sessions: SessionStore;
+  readonly leaderLease: LeaderLeaseStore;
   private closing: Promise<void> | undefined;
   private pinging: Promise<void> | undefined;
 
@@ -55,6 +57,7 @@ export class PostgresAuditStore implements AuditStore {
     this.notifications = new PostgresNotificationStore(pool);
     this.alerts = new PostgresAlertStore(pool);
     this.sessions = new PostgresSessionStore(pool);
+    this.leaderLease = new PostgresLeaderLease(pool);
   }
 
   /**
@@ -124,8 +127,8 @@ export class PostgresAuditStore implements AuditStore {
    * call that waited for another to finish finds the row marked, and neither counts nor
    * marks it again.
    */
-  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction): Promise<{ evicted: number }> {
-    const { rows } = await this.pool.query<{ evicted: number }>(
+  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction, fence?: LeaseFence): Promise<{ evicted: number }> {
+    const { rows } = await fenced(this.pool, fence, (client) => client.query<{ evicted: number }>(
       `WITH stored AS (
          SELECT id, created_at,
                 SUM(body_bytes) OVER (ORDER BY created_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS newer_bytes
@@ -140,7 +143,7 @@ export class PostgresAuditStore implements AuditStore {
        )
        SELECT COUNT(*) AS evicted FROM marked`,
       [now.getTime(), now.getTime() - maxAgeMs, maxBodyBytes],
-    );
+    ));
     return { evicted: rows[0]!.evicted };
   }
 

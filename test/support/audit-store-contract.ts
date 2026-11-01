@@ -8,7 +8,9 @@ import {
   FIRST_SEEN_LIMIT,
   PASS_HISTORY,
   type AuditQuery,
+  LeaderLeaseLost,
   type AuditStore,
+  type LeaseFence,
   type NewAuditEntry,
   type NewNotificationDelivery,
   type QueueSample,
@@ -1125,6 +1127,87 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       it('closes more than once', async () => {
         await store.close();
         await expect(store.close()).resolves.toBeUndefined();
+      });
+    });
+
+    describe('the leader lease', () => {
+      const NOW = AT.getTime();
+      const LEASE = 15_000;
+      const lease = () => store.leaderLease;
+      const oldDiscard = () => store.record(entry({ at: new Date(NOW - 2 * DAY), message: { body: Buffer.from('b'), properties: {}, headers: {} } }));
+      const evict = (fence: LeaseFence) => store.evictBodies({ now: new Date(NOW), maxAgeMs: DAY, maxBodyBytes: 1000 }, fence);
+
+      it('goes to the first to claim it, and to nobody else while it lasts', async () => {
+        expect(await lease().claim('a', NOW, LEASE)).toMatchObject({ holder: 'a', expiresAt: NOW + LEASE });
+        expect(await lease().claim('b', NOW + LEASE - 1, LEASE)).toBeNull();
+      });
+
+      it('is renewed by its holder, in the same term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        const renewed = await lease().claim('a', NOW + 5_000, LEASE);
+        expect(renewed).toEqual({ holder: 'a', term: first!.term, expiresAt: NOW + 5_000 + LEASE });
+        expect(await lease().claim('b', NOW + LEASE + 1, LEASE)).toBeNull();
+      });
+
+      it('goes to another once it has expired, in a later term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        const taken = await lease().claim('b', NOW + LEASE, LEASE);
+        expect(taken!.holder).toBe('b');
+        expect(taken!.term).toBeGreaterThan(first!.term);
+        expect(await lease().claim('a', NOW + LEASE + 1, LEASE)).toBeNull();
+      });
+
+      it('gives one of many claiming at once the lease', async () => {
+        const claims = await Promise.all(['a', 'b', 'c', 'd'].map((holder) => lease().claim(holder, NOW, LEASE)));
+        expect(claims.filter(Boolean)).toHaveLength(1);
+      });
+
+      it('is free for another at once when its holder gives it up, in a later term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        await lease().release('a');
+        const taken = await lease().claim('b', NOW + 1, LEASE);
+        expect(taken!.term).toBeGreaterThan(first!.term);
+      });
+
+      it('stays with its holder when another gives it up', async () => {
+        await lease().claim('a', NOW, LEASE);
+        await lease().release('b');
+        expect(await lease().claim('b', NOW + 1, LEASE)).toBeNull();
+      });
+
+      it('lets a write through for the lease as it is held', async () => {
+        const fence = (await lease().claim('a', NOW, LEASE))!;
+        await oldDiscard();
+        expect(await evict(fence)).toEqual({ evicted: 1 });
+        expect(await store.history.removeOlderThan(NOW, fence)).toEqual({ samples: 0, runs: 0 });
+        expect(await store.notifications.removeOlderThan(new Date(NOW), fence)).toBe(0);
+      });
+
+      it('refuses a write for a lease another has taken since, and does none of it', async () => {
+        const stale = (await lease().claim('a', NOW, LEASE))!;
+        await lease().claim('b', NOW + LEASE, LEASE);
+        const id = await oldDiscard();
+        await store.history.recordRun('p', { at: NOW - DAY, ok: true, errorCode: null, intervalMs: 1000 }, []);
+
+        await expect(evict(stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.history.removeOlderThan(NOW, stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.notifications.removeOlderThan(new Date(NOW), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect(await store.body(id)).not.toBeNull();
+        expect((await store.history.lastRuns('p')).last).not.toBeNull();
+      });
+
+      it('refuses a write for a lease given up', async () => {
+        const given = (await lease().claim('a', NOW, LEASE))!;
+        await lease().release('a');
+        await expect(evict(given)).rejects.toBeInstanceOf(LeaderLeaseLost);
+      });
+
+      it('refuses a write when the same holder is back in a later term', async () => {
+        const before = (await lease().claim('a', NOW, LEASE))!;
+        await lease().release('a');
+        await lease().claim('a', NOW + 1, LEASE);
+        await expect(evict(before)).rejects.toBeInstanceOf(LeaderLeaseLost);
       });
     });
 

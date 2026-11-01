@@ -23,13 +23,14 @@ import type {
   AuditEntry,
   AuditQuery,
   AuditStore,
-  BodyEviction,
+  BodyEviction, LeaseFence,
   HistoryStore,
   NewAuditEntry,
   NotificationStore,
   RuleStateStore,
   SessionStore,
 } from './audit-store.js';
+import { MemoryLeaderLease } from './memory-leader-lease.js';
 import { MemorySessionStore } from './memory-sessions.js';
 import { SqliteAlertStore } from './sqlite-alerts.js';
 import { SqliteHistoryStore } from './sqlite-history.js';
@@ -263,6 +264,7 @@ export class SqliteAuditStore implements AuditStore {
   readonly notifications: NotificationStore;
   readonly alerts: AlertStore;
   readonly sessions: SessionStore = new MemorySessionStore();
+  readonly leaderLease = new MemoryLeaderLease();
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a
@@ -279,8 +281,8 @@ export class SqliteAuditStore implements AuditStore {
       throw err;
     }
     this.ruleState = new SqliteRuleStateStore(this.db);
-    this.history = new SqliteHistoryStore(this.db);
-    this.notifications = new SqliteNotificationStore(this.db);
+    this.history = new SqliteHistoryStore(this.db, this.leaderLease);
+    this.notifications = new SqliteNotificationStore(this.db, this.leaderLease);
     this.alerts = new SqliteAlertStore(this.db);
   }
 
@@ -340,7 +342,8 @@ export class SqliteAuditStore implements AuditStore {
    * as many more as needed for the rest to fit in `maxBodyBytes`. Each
    * evicted entry keeps everything else and is marked body expired at `now`.
    */
-  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction): Promise<{ evicted: number }> {
+  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction, fence?: LeaseFence): Promise<{ evicted: number }> {
+    this.leaderLease.check(fence);
     // `newer_bytes`: this body plus every newer one. The newest bodies that
     // fit are kept; anything older, or older than the age limit, goes.
     const ids = this.db
