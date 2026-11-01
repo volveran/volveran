@@ -10,7 +10,7 @@ import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
-import type { AuditStore } from './audit/audit-store.js';
+import { LeaderLeaseLost, type AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
 import { createTeamAuth, type TeamAuth } from './auth.js';
@@ -199,7 +199,10 @@ async function serve(
     intervalMs: config.historyIntervalMs,
     testHooks: options.samplerTestHooks,
     // Called only once the app below is listening.
-    onError: (profile, err) => app.log.error({ err, profile }, 'A sampling run failed unexpectedly'),
+    onError: (profile, err) => {
+      if (err instanceof LeaderLeaseLost) app.log.info({ profile }, 'A sampling run wrote nothing: this Replica is no longer the Background Leader');
+      else app.log.error({ err, profile }, 'A sampling run failed unexpectedly');
+    },
   });
   const queueMetrics = new QueueMetrics(() => sampler.latest());
   sampler.onRun((finished) => queueMetrics.runFinished(finished));
@@ -283,7 +286,7 @@ async function serve(
     }
   }
 
-  // One Replica at a time runs what must run once. It claims the lease below, once the app can log.
+  // One Replica at a time runs what must run once. It claims the lease below, once Alerting has started.
   const leaderClock = options.leaderTestHooks?.clock ?? systemClock;
   const leader = new BackgroundLeader({
     lease: auditStore.leaderLease,
@@ -299,6 +302,7 @@ async function serve(
         log: app.log,
         afterRun: () => metricsReadings.refresh(),
       }),
+      sampler,
       ...(config.forwarding
         ? [
             goneReplicasJob({
@@ -314,7 +318,6 @@ async function serve(
     onChange: (isLeader) => app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader'),
   });
   options.leaderTestHooks?.leader?.(leader);
-  await leader.start();
 
   // No new Rule Pass starts and the ones in progress end (and are recorded);
   // then the leader stops, while Alerting can still tell of what a last pass paused; then
@@ -326,8 +329,7 @@ async function serve(
   app.addHook('onClose', async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
-    await sampler.stop();
-    // Before the leader and the notifier: a last pass can pause its rule, which sends a notification.
+    // Before the leader, whose jobs include Alerting, and the notifier: a last pass can pause its rule, which sends a notification.
     await replayRules.stop();
     await leader.stop();
     await notifier.close();
@@ -341,10 +343,8 @@ async function serve(
     await auditStore.close();
   });
   try {
-    // Alerting has started by now, if this Replica is the leader. On takeover a failure is only logged, and tried again.
-    alerting.throwStartFailure();
-    // The sampler before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
-    await sampler.start();
+    // The leader's jobs, Alerting and the sampler among them, before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
+    await leader.start();
     // Replay Rules: give each its state and schedule the running ones.
     await replayRules.start();
   } catch (err) {

@@ -338,8 +338,8 @@ export interface RuleStateStore {
 
 /** Depth history: one Sample per dead-letter queue per sampling run, one run per Broker Profile. */
 export interface HistoryStore {
-  /** Records a sampling run and its Samples in one commit. */
-  recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[]): Promise<void>;
+  /** Records a sampling run and its Samples in one commit; refused, recording nothing, when `fence` no longer holds. */
+  recordRun(profile: string, run: StoredSamplingRun, samples: readonly QueueSample[], fence?: LeaseFence): Promise<void>;
   /** The queue's latest Sample before `before` (default: of all), or null. */
   latestSample(queue: SampledQueue, before?: number): Promise<StoredSample | null>;
   /** The queue's Samples from `from` to `to` (inclusive), oldest first. */

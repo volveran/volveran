@@ -43,13 +43,14 @@ const PREPARING = '';
 
 export class Alerting implements LeaderJob {
   readonly name = 'alerting';
+  /** A Replica that cannot start it fails its startup, as one always has. */
+  readonly mustStart = true;
   private readonly profiles: Map<string, BrokerProfile>;
   private readonly oneAtATime = new OneAtATime();
   /** Set while this Replica is the leader. */
   private fence: LeaseFence | null = null;
   /** Whether this term's first evaluation may go ahead. */
   private prepared = false;
-  private startFailure: unknown = null;
   private readonly deliveries = new Map<number, Promise<void>>();
 
   constructor(private readonly options: AlertingOptions) {
@@ -59,13 +60,12 @@ export class Alerting implements LeaderJob {
   /**
    * From here this Replica evaluates. Alerts of rules no longer in the file go now, with
    * no resolved notification, and what a former leader left unsent goes out. If that
-   * fails it is tried again before each evaluation, so a leader never sits without
-   * Alerts for its whole term because the store failed once.
+   * fails it is tried again before each evaluation, as well as at each claim, so a
+   * leader evaluates as soon as the store lets it. Starting again in a term is safe.
    */
   async start(fence: LeaseFence): Promise<void> {
     this.fence = fence;
     this.prepared = false;
-    this.startFailure = null;
     try {
       await this.prepare(fence);
     } catch (err) {
@@ -73,14 +73,8 @@ export class Alerting implements LeaderJob {
         this.options.onLeaseLost?.();
         return;
       }
-      this.startFailure = err;
       throw err;
     }
-  }
-
-  /** Throws what the last start failed with, for a startup that should fail with it. */
-  throwStartFailure(): void {
-    if (this.startFailure !== null) throw this.startFailure;
   }
 
   /** No evaluation starts after this, and those in progress have ended when it resolves. Deliveries in progress carry on. */

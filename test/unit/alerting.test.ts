@@ -161,11 +161,10 @@ describe('Alerting on a delayed store', () => {
     const stale = await claim('me');
     await store.leaderLease.release('me');
     await expect(alerting.start(stale)).resolves.toBeUndefined();
-    expect(() => alerting.throwStartFailure()).not.toThrow();
     expect(leaseLost()).toBe(1);
   });
 
-  it('after a failed start says so, still evaluates, and first does what the start could not', async () => {
+  it('after a failed start still evaluates, and first does what the start could not', async () => {
     let failing = true;
     const { alerting, store, sent, claim } = alertingOn((call) => {
       if (failing && call === 'alerts.keepOnly') throw new Error('store gone');
@@ -173,7 +172,6 @@ describe('Alerting on a delayed store', () => {
     await store.alerts.save('gone', { alerts: [], arrivals: [{ vhost: '/', queue: 'q', unsettled: 1, recent: [] }] });
 
     await expect(alerting.start(await claim('me'))).rejects.toThrow('store gone');
-    expect(() => alerting.throwStartFailure()).toThrow('store gone');
 
     await expect(alerting.evaluate(deepRun('prod'))).rejects.toThrow('store gone');
     expect(sent).toEqual([]);

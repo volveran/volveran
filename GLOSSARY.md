@@ -147,7 +147,7 @@ One running Volverán server among those sharing an audit store on PostgreSQL. U
 _Avoid_: Pod, node
 
 **Background Leader**:
-The one Replica currently running what must run once however many Replicas there are, such as retention and Alerts. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
+The one Replica currently running what must run once however many Replicas there are, such as retention, the sampler and Alerts. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
 _Avoid_: Master, primary, active Replica
 
 **Audit Entry**:
