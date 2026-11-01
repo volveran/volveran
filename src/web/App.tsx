@@ -624,7 +624,7 @@ function VhostWarningCounts({ counts, vhost }: { counts: SetupWarningCounts; vho
 }
 
 /** The queue list. The keyboard's queue row takes the DOM focus, so it is visible and announced. */
-function QueueTable({
+export function QueueTable({
   queues,
   profile,
   vhost,

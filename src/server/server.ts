@@ -50,6 +50,7 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
+import { sendSecurityHeaders } from './security-headers.js';
 import { attachOperator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
 import { requestOriginCheck, type RequestOriginCheck } from './request-origin.js';
@@ -261,6 +262,7 @@ async function serve(
     webRoot: options.webRoot,
     logger: options.logger ?? false,
     onRouteRegistered: options.onRouteRegistered,
+    publicUrl: config.publicUrl,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -453,6 +455,8 @@ interface AppOptions {
   liveCheckouts: LiveCheckouts | null;
   /** Refuses what a malicious page sends through an Operator's browser. */
   originCheck: RequestOriginCheck;
+  /** Where Volverán is reached from outside, if known. */
+  publicUrl: string | null;
   /** How long a forwarded end of a Checkout may take to answer. */
   endWithinMs: number;
 }
@@ -484,8 +488,9 @@ function refusal(statusCode: number): { code: string; message: string } {
   }
 }
 
-async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, endWithinMs }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts, publicUrl, endWithinMs }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: logger && { ...(logger === true ? {} : logger), serializers: { req: requestLogLine } } });
+  sendSecurityHeaders(app.server, publicUrl);
 
   // Before any route, so none is missed.
   if (onRouteRegistered) {
