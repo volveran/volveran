@@ -52,6 +52,7 @@ import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { attachOperator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
+import { requestOriginCheck, type RequestOriginCheck } from './request-origin.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
@@ -227,7 +228,9 @@ async function serve(
     await metricsReadings.refresh();
   });
   const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
+  const originCheck = requestOriginCheck(config.mode, config.publicUrl);
   const app = await buildApp({
+    originCheck,
     forwarder: config.forwarding && createForwarder(config.forwarding.secret),
     liveCheckouts,
     profiles,
@@ -357,6 +360,8 @@ async function serve(
         host: options.host,
         port: config.metricsPort,
         families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
+        // A scraper in Team Mode comes from the network by any address; Solo Mode has only loopback to protect it.
+        ...(config.mode.kind === 'solo' && { refuses: (headers) => originCheck('GET', headers) !== null }),
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
     } catch (err) {
@@ -429,9 +434,11 @@ interface AppOptions {
   /** With other Replicas: how requests reach them. */
   forwarder: Forwarder | null;
   liveCheckouts: LiveCheckouts | null;
+  /** Refuses what a malicious page sends through an Operator's browser. */
+  originCheck: RequestOriginCheck;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts }: AppOptions): Promise<FastifyInstance> {
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, liveCheckouts }: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger });
 
   // Before any route, so none is missed.
@@ -447,6 +454,12 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
     }
     app.log.error(err);
     return reply.status(500).send({ error: { code: 'internal_error', message: (err as Error).message } });
+  });
+
+  // Before anything reads a session or forwards.
+  app.addHook('onRequest', async (req) => {
+    const refusal = originCheck(req.method, req.headers);
+    if (refusal) throw refusal;
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
