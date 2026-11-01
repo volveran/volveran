@@ -18,15 +18,16 @@ _Avoid_: Prod mode, locked profile
 An exclusive hold on the Messages at the head of one queue when it started (all of them, up to the Checkout limit), so the user can act on each one. Messages that arrive later, or lie beyond the limit, wait for the next Checkout. A Checkout has a time limit. Ending or losing a Checkout returns every Message that has no applied Decision to the queue.
 _Avoid_: Session, lock, snapshot, browse
 
-**Replica**:
-One running Volverán process that shares its audit store with others.
-_Avoid_: Pod, node
-
 **Owner Replica**:
-The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica passes requests about that Checkout on to it.
+The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica passes requests about that Checkout on to it, which is forwarding.
 
-**Background Leader**:
-The one Replica currently running the sampler, Alerts, Replay Rules and retention.
+**Live Checkout**:
+What every Replica can read about a Checkout on any of them: a record in the audit store naming its Owner Replica, its Operator, its queue and its status. It is routing information. The held Messages and Decisions stay in the Owner Replica's memory.
+_Avoid_: Shared Checkout, remote Checkout
+
+**Forwarding**:
+A Replica passing a request on to the one that must answer it, over the internal port, with the signed-in Operator's identity under a shared secret. The Operator never knows it happened.
+_Avoid_: Proxying, routing, redirecting
 
 **Lost Checkout**:
 A Checkout that ended without Volverán ending it, for example because the broker cancelled it or its Owner Replica died. Its Messages are back in the queue, or will be once the broker sees the connection gone, and it can no longer be Applied.
@@ -143,11 +144,11 @@ The tool running as a shared service that Operators reach over the network after
 _Avoid_: Server mode, hosted mode, SSO mode
 
 **Replica**:
-One running Volverán server among those sharing an audit store on PostgreSQL. Until multi-Replica work lands, run exactly one.
+One running Volverán server. Several share an audit store on PostgreSQL; on SQLite there is exactly one.
 _Avoid_: Pod, node
 
 **Background Leader**:
-The one Replica currently running what must run once however many Replicas there are, such as retention, the sampler and Alerts. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
+The one Replica currently running what must run once however many Replicas there are: the sampler, Alerts, Replay Rules and retention. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
 _Avoid_: Master, primary, active Replica
 
 **Audit Entry**:
