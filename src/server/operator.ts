@@ -57,10 +57,10 @@ export function teamOperator(claims: { sub: string; email?: unknown; name?: unkn
 }
 
 /** Adds `req.operator` to every request; `resolve` returns null for a request without one. */
-export function attachOperator(app: FastifyInstance, resolve: (req: FastifyRequest) => Operator | null): void {
+export function attachOperator(app: FastifyInstance, resolve: (req: FastifyRequest) => Operator | null | Promise<Operator | null>): void {
   app.decorateRequest('operator', null);
   app.addHook('onRequest', async (req) => {
-    req.operator = resolve(req);
+    req.operator = await resolve(req);
   });
 }
 

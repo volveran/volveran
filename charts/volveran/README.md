@@ -149,6 +149,7 @@ names the missing value.
 | `oidc.existingSecret` | required | An existing Secret holding the OIDC client secret and the session secret. |
 | `oidc.clientSecretKey` | `client-secret` | Key of `oidc.existingSecret` holding the OIDC client secret. |
 | `oidc.sessionSecretKey` | `session-secret` | Key of `oidc.existingSecret` holding the session secret (at least 32 characters; it signs the session cookies). |
+| `oidc.sessionEncryptionKeyKey` | `session-encryption-key` | Key of `oidc.existingSecret` holding the session encryption key, read only with `postgres.existingSecret`: at least 32 characters, different from the session secret; it encrypts the tokens of sessions in the database. The pod cannot start until the Secret has this key. |
 
 ### Broker Profiles
 

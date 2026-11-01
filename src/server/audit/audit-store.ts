@@ -214,6 +214,8 @@ export interface AuditStore {
   readonly notifications: NotificationStore;
   /** Alerts. */
   readonly alerts: AlertStore;
+  /** Who is signed in, and who is signing in (Team Mode). */
+  readonly sessions: SessionStore;
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; answers its id. */
   record(entry: NewAuditEntry): Promise<number>;
@@ -303,6 +305,39 @@ export interface NotificationStore {
   recent(limit?: number, visible?: NotificationScope): Promise<NotificationDelivery[]>;
   /** Removes the outcomes from before `cutoff`; answers how many. */
   removeOlderThan(cutoff: Date): Promise<number>;
+}
+
+/** A signed-in Operator's session. Tokens reach the store already sealed (token-seal.ts); it only holds them. */
+export interface StoredSession {
+  operator: Pick<Operator, 'id' | 'displayName' | 'email' | 'name' | 'groups'>;
+  /** Sealed. */
+  tokens: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/** A sign-in between /auth/login and /auth/callback. */
+export interface StoredSignIn {
+  sealed: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/**
+ * Sessions and sign-ins in progress. In memory on SQLite, so a restart signs everyone
+ * out, and shared in the database on PostgreSQL. `now` is epoch milliseconds: what
+ * expires at or before it is gone. Adding may remove what has expired.
+ */
+export interface SessionStore {
+  addSession(id: string, session: StoredSession, now: number): Promise<void>;
+  /** The session, or null. */
+  session(id: string, now: number): Promise<StoredSession | null>;
+  /** Replaces the session's sealed tokens; does nothing if it has gone. */
+  setTokens(id: string, tokens: string): Promise<void>;
+  removeSession(id: string): Promise<void>;
+  addSignIn(id: string, signIn: StoredSignIn, now: number): Promise<void>;
+  /** The sealed sign-in, removing it, so that of any callers only one gets it; else null. */
+  takeSignIn(id: string, now: number): Promise<string | null>;
 }
 
 /** Alerts and what arrival conditions remember of each queue, so a restart neither forgets nor re-sends a firing one. */

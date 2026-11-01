@@ -85,8 +85,9 @@ The parser stays the authority. The schema checks the shape of the file and its 
 | `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
 | `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](team-mode.md#the-groups-claim)) |
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
+| `VOLVERAN_SESSION_ENCRYPTION_KEY` | required with `VOLVERAN_POSTGRES_URL` | at least 32 characters, different from the session secret (`openssl rand -hex 32`); encrypts the access and refresh tokens of sessions in the database. Not read on SQLite |
 
-The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions last 12 hours and **Sign out** ends them at once. On SQLite they live in the Volverán process, so a restart signs everyone out. On PostgreSQL they live in the database, so a restart signs nobody out; a new encryption key signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
 
 ## The audit store volume
 

@@ -53,6 +53,29 @@ Another store can reuse this: copy a fixture with `copyFixtureStore`, start on i
 
 **The integration suite on either store.** `VOLVERAN_TEST_AUDIT_STORE=postgres npm run test:integration` runs the whole suite on PostgreSQL; the default is `sqlite`, and CI runs both. `startApp` and `spawnServer` give an app a database of its own through `test/integration/test-store.ts`, as they would a data directory: a `dataDir` stands for one database for the file, so a test can restart the app on it. To seed or read that store, use `openTestStore(dataDir)`, never a particular store. A test about one store names it in `env`: `VOLVERAN_POSTGRES_URL` set for PostgreSQL, set to `undefined` for SQLite. The test PostgreSQL also takes TLS with the certificate in `test/fixtures/tls/`, and `startTcpProxy` in `test/support/tcp-proxy.ts` stands between an app and a database to take it away.
 
+**Two Replicas.** `startTwoReplicas` in `test/integration/two-replicas.ts` starts two in-process apps through `startApp`, in Team Mode, against the test broker and one PostgreSQL of their own, whichever store the suite is on. A test asserts through what an Operator sees, and that the answer does not depend on the Replica:
+
+```ts
+const replicas = await startTwoReplicas({ profiles: [testProfile({ name: 'dev' })] });
+const browser = replicas.browser();                // a TestBrowser for one Operator, cookies included
+await browser.signIn({ sub: 'ana' });
+await browser.get('/api/session');                 // each request goes to a random running Replica
+await browser.to(replicas.a).get('/api/session');  // or to a chosen one, with the same cookies
+await replicas.a.crash();                          // abruptly: see below
+await replicas.b.shutdown();                       // gracefully, as on SIGTERM
+await replicas.a.restart();                        // on the same store, at a new baseUrl
+await replicas.close();                            // in afterAll: stops what runs, drops the database
+```
+
+| | |
+|---|---|
+| `replicas.a`, `.b` | a `Replica`: `name`, `baseUrl`, `running`, `get` and `post` without a session (`/readyz`, `/metrics`), `crash`, `shutdown`, `restart` |
+| `replicas.random()`, `.other(replica)` | a random running Replica, and the other one |
+| `replicas.browser()` | a new Operator's browser. A sign-in's steps can go to different Replicas: `to(a).startSignIn()`, `approveAtProvider`, then `to(b).get(callback)` |
+| `replicas.database` | the shared database (`query`), for what no route shows, such as a sealed row |
+
+Options are those of `startApp` that make sense for both (`profiles`, `env`, `checkoutTiming`, ...); `perReplica: (name) => ({ checkoutTestHooks, samplerTestHooks, wrapAuditStore, logs, env })` gives each its own, and is called again on a restart. `crash` needs no seam in the app, because each Replica's HTTP port, broker ports (the `amqpUrl` and `managementUrl` of its profiles) and PostgreSQL go through TCP proxies of its own: it closes them all at once, so connections drop with nothing settled and nothing more written, and then tells what is left in-process to close, without waiting for it. A port a Replica adds, such as a forwarding port, must go through the same proxies for `crash` to cover it. A `baseUrl` changes on `restart`, so read it again.
+
 **Broker-facts suite.** `test/broker-facts/` checks every fact in [`docs/rabbitmq-behaviour.md`](docs/rabbitmq-behaviour.md) against a real RabbitMQ. Each test is named after the bullet it covers, word for word, and a unit test fails when a bullet has no test. When a RabbitMQ release changes a fact, fix the document, the ADRs that depend on it and the test together. CI runs the suite against the pinned image on every push and against the latest `rabbitmq:4-management` every week.
 
 **Test broker.** `test/broker/` holds the compose file, `rabbitmq.conf` (15 s global `consumer_timeout`) and `definitions.json` (users, vhosts, origin queues and dead-letter queues). The compose file also runs a mock OIDC provider ([mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), issuer `http://127.0.0.1:<port>/default`) for the Team Mode tests; `TestBrowser` in `test/integration/oidc-provider.ts` signs in through it as any `sub`, email and name. The compose file also runs PostgreSQL for the audit store, on throwaway storage. A second RabbitMQ, `rabbitmq-oauth` (`rabbitmq-oauth.conf`), has the OAuth 2.0 backend only and trusts the mock provider's signing key, which `oidc.json` pins (`oidc-signing-key.pem` is its public half), because RabbitMQ fetches signing keys over https only; the OAuth 2.0 broker facts connect to it with tokens from `test/broker/oauth.ts`. Every checkout gets its own broker: the compose project is named after the checkout's directory and path (`volveran-test-<dir>-<hash>`), and the host ports are random free ports on 127.0.0.1, so several worktrees can run tests at once. `npm run test:broker` and `test:integration` always tear their broker down. To iterate against a running broker:

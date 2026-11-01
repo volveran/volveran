@@ -13,6 +13,7 @@ import {
   type NewNotificationDelivery,
   type QueueSample,
   type StoredSamplingRun,
+  type StoredSession,
 } from '../../src/server/audit/audit-store.js';
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
@@ -1048,6 +1049,71 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           }).not.toThrow();
           await expect(promise).rejects.toThrow();
         }
+      });
+    });
+
+    describe('sessions', () => {
+      const NOW = AT.getTime();
+      const session = (overrides: Partial<StoredSession> = {}): StoredSession => ({
+        operator: { id: 'sub-123', displayName: 'ana@example.com', email: 'ana@example.com', groups: ['ops'] },
+        tokens: 'sealed-tokens',
+        expiresAt: NOW + 1000,
+        ...overrides,
+      });
+
+      it('answers a session as it was added', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+      });
+
+      it('answers null for a session it does not have', async () => {
+        expect(await store.sessions.session('nobody', NOW)).toBeNull();
+      });
+
+      it('no longer answers a session once it has expired', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        expect(await store.sessions.session('s-1', NOW + 999)).not.toBeNull();
+        expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('removes a session, and removing it again does nothing', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        await store.sessions.addSession('s-2', session(), NOW);
+        await store.sessions.removeSession('s-1');
+        await store.sessions.removeSession('s-1');
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        expect(await store.sessions.session('s-2', NOW)).not.toBeNull();
+      });
+
+      it("replaces a session's tokens and nothing else", async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        await store.sessions.setTokens('s-1', 'rotated');
+        expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated' }));
+      });
+
+      it('does not bring a removed session back when its tokens are set', async () => {
+        await store.sessions.setTokens('s-1', 'rotated');
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+      });
+
+      it('hands a sign-in in progress to one caller only', async () => {
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        const taken = await Promise.all([store.sessions.takeSignIn('l-1', NOW), store.sessions.takeSignIn('l-1', NOW)]);
+        expect(taken.sort()).toEqual(['sealed-login', null].sort());
+        expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
+      });
+
+      it('does not hand over a sign-in that has expired', async () => {
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW);
+        expect(await store.sessions.takeSignIn('l-1', NOW + 1000)).toBeNull();
+      });
+
+      it('leaves others alone when something new is added past their expiry', async () => {
+        await store.sessions.addSession('old', session(), NOW);
+        await store.sessions.addSession('live', session({ expiresAt: NOW + 5000 }), NOW);
+        await store.sessions.addSession('new', session({ expiresAt: NOW + 5000 }), NOW + 2000);
+        expect(await store.sessions.session('live', NOW + 2000)).not.toBeNull();
+        expect(await store.sessions.session('old', NOW)).toBeNull();
       });
     });
 

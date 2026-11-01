@@ -23,7 +23,7 @@ interface Exception {
 const exceptions: Exception[] = [
   {
     term: 'session',
-    files: ['server/audit/postgres-migrations.ts', 'server/auth.ts', 'server/metrics/listener.ts', 'server/operator-token.ts', 'server/operator.ts', 'server/routes/health.ts', 'server/routes/session.ts', 'server/run-mode.ts', 'server/server.ts', 'shared/queues.ts', 'web/api.ts'],
+    files: ['server/audit/audit-store.ts', 'server/audit/memory-sessions.ts', 'server/audit/postgres-migrations.ts', 'server/audit/postgres-sessions.ts', 'server/auth.ts', 'server/main.ts', 'server/metrics/listener.ts', 'server/token-seal.ts', 'server/operator-token.ts', 'server/operator.ts', 'server/routes/health.ts', 'server/routes/session.ts', 'server/run-mode.ts', 'server/server.ts', 'shared/queues.ts', 'web/api.ts'],
     reason: 'Sign-in sessions in Team Mode and PostgreSQL sessions; the glossary means a Checkout.',
   },
   {

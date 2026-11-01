@@ -28,7 +28,9 @@ import type {
   NewAuditEntry,
   NotificationStore,
   RuleStateStore,
+  SessionStore,
 } from './audit-store.js';
+import { MemorySessionStore } from './memory-sessions.js';
 import { SqliteAlertStore } from './sqlite-alerts.js';
 import { SqliteHistoryStore } from './sqlite-history.js';
 import { SqliteNotificationStore } from './sqlite-notifications.js';
@@ -260,6 +262,7 @@ export class SqliteAuditStore implements AuditStore {
   readonly history: HistoryStore;
   readonly notifications: NotificationStore;
   readonly alerts: AlertStore;
+  readonly sessions: SessionStore = new MemorySessionStore();
 
   /**
    * Opens (creating if needed) the audit store in `dataDir`. Without a

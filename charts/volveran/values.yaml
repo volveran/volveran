@@ -28,6 +28,8 @@ oidc:
   clientSecretKey: client-secret
   # -- At least 32 characters; it signs the session cookies.
   sessionSecretKey: session-secret
+  # -- With postgres.existingSecret: at least 32 characters, not the session secret; it encrypts the tokens of sessions in the database.
+  sessionEncryptionKeyKey: session-encryption-key
 
 brokerProfiles:
   # -- Broker Profiles, in the same shape as the profiles YAML (see profiles.example.yaml).

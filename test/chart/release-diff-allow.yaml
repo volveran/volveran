@@ -3,6 +3,21 @@
 # line of the render, without its indentation, as the check prints it (`+ ` or
 # `- ` first). `fixture` limits it to one fixture's file name. Remove an entry
 # once it is in a release; the check says which ones it no longer needs.
-allowed: []
 #  - change: '+ imagePullPolicy: Always'
 #    reason: why an upgrade should bring this
+allowed:
+  - change: '+ - name: VOLVERAN_SESSION_ENCRYPTION_KEY'
+    fixture: postgres.yaml
+    reason: Sessions on PostgreSQL keep their tokens encrypted, with a key from this new required secret (#107).
+  - change: '+ valueFrom:'
+    fixture: postgres.yaml
+    reason: The session encryption key comes from a Secret (#107).
+  - change: '+ secretKeyRef:'
+    fixture: postgres.yaml
+    reason: The session encryption key comes from a Secret (#107).
+  - change: '+ name: "volveran-oidc"'
+    fixture: postgres.yaml
+    reason: The session encryption key is in the OIDC Secret (#107).
+  - change: '+ key: "session-encryption-key"'
+    fixture: postgres.yaml
+    reason: The default key of the session encryption key in that Secret (#107).
