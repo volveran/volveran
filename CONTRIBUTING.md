@@ -69,7 +69,7 @@ await replicas.close();                            // in afterAll: stops what ru
 
 | | |
 |---|---|
-| `replicas.a`, `.b` | a `Replica`: `name`, `baseUrl`, `forwardingUrl`, `running`, `get` and `post` without a session (`/readyz`, `/metrics`), `crash`, `shutdown`, `restart` |
+| `replicas.a`, `.b` | a `Replica`: `name`, `baseUrl`, `forwardingUrl`, `metricsUrl` (with `VOLVERAN_METRICS_PORT` in its `env`), `running`, `get` and `post` without a session (`/readyz`), `crash`, `shutdown`, `restart` |
 | `replicas.random()`, `.other(replica)` | a random running Replica, and the other one |
 | `replicas.browser()` | a new Operator's browser. A sign-in's steps can go to different Replicas: `to(a).startSignIn()`, `approveAtProvider`, then `to(b).get(callback)` |
 | `replicas.database` | the shared database (`query`), for what no route shows, such as a sealed row |

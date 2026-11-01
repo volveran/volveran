@@ -49,13 +49,23 @@ export interface Forwarder {
   tell(address: string, path: string, operator: Operator, withinMs: number): Promise<void>;
 }
 
+/**
+ * Why a request between Replicas failed: the connection failed or dropped before an answer
+ * began (`unreachable`), no answer began in time (`timed_out`), nobody is known to send it to
+ * (`no_address`), or the internal port refused it, told by the Replica refusing (`refused`).
+ */
+export type ForwardingFailure = 'unreachable' | 'timed_out' | 'no_address' | 'refused';
+
 function passedOn(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   return Object.fromEntries(Object.entries(headers).filter(([name]) => !NOT_PASSED_ON.has(name)));
 }
 
-export function createForwarder(secret: string): Forwarder {
+export function createForwarder(secret: string, onFailure: (reason: ForwardingFailure) => void): Forwarder {
   const send = (req: FastifyRequest, reply: FastifyReply, address: string, answerWithinMs: number) =>
     new Promise<IncomingMessage>((resolve, reject) => {
+      let answered = false;
+      let timedOut = false;
+      let operatorLeft = false;
       const { hostname, port } = new URL(`http://${address}`);
       const outgoing = http.request({
         host: hostname.replace(/^\[|\]$/g, ''),
@@ -71,19 +81,27 @@ export function createForwarder(secret: string): Forwarder {
           [OPERATOR_HEADER]: encodeOperator(req.operator!),
         },
       });
-      const limit = setTimeout(() => outgoing.destroy(), answerWithinMs);
+      const limit = setTimeout(() => {
+        timedOut = true;
+        outgoing.destroy();
+      }, answerWithinMs);
       outgoing.once('response', (answer) => {
+        answered = true;
         clearTimeout(limit);
         resolve(answer);
       });
       // Destroyed by the limit, or the connection failed. Once answered, this changes nothing.
       outgoing.once('close', () => {
         clearTimeout(limit);
+        if (!answered && !operatorLeft) onFailure(timedOut ? 'timed_out' : 'unreachable');
         reject(replicaUnreachable());
       });
       outgoing.on('error', () => {});
       // The Operator went away, or the answer is complete.
-      reply.raw.once('close', () => outgoing.destroy());
+      reply.raw.once('close', () => {
+        operatorLeft = true;
+        outgoing.destroy();
+      });
       req.raw.pipe(outgoing);
     });
 
@@ -99,13 +117,20 @@ export function createForwarder(secret: string): Forwarder {
           agent: false,
           headers: { host: address, authorization: `Bearer ${secret}`, [OPERATOR_HEADER]: encodeOperator(operator), 'content-length': 0 },
         });
-        const limit = setTimeout(() => outgoing.destroy(), withinMs);
+        let answered = false;
+        let timedOut = false;
+        const limit = setTimeout(() => {
+          timedOut = true;
+          outgoing.destroy();
+        }, withinMs);
         outgoing.on('error', () => {});
         outgoing.once('close', () => {
           clearTimeout(limit);
+          if (!answered) onFailure(timedOut ? 'timed_out' : 'unreachable');
           reject(replicaUnreachable());
         });
         outgoing.once('response', (answer) => {
+          answered = true;
           clearTimeout(limit);
           answer.resume();
           if ((answer.statusCode ?? 500) < 300) resolve();
@@ -166,6 +191,8 @@ export interface ForwardingListenerOptions {
   secret: string;
   /** Serves an accepted request as the web port would. */
   serve(req: IncomingMessage, res: ServerResponse): void;
+  /** A request without the secret or an Operator came: a Replica with another secret, or something that should not reach this port. */
+  onRefused(): void;
 }
 
 export interface ForwardingListener {
@@ -173,10 +200,11 @@ export interface ForwardingListener {
 }
 
 /** The internal port. It answers only requests carrying the secret and an Operator; nothing here is for a browser. */
-export async function startForwardingListener({ host, port, secret, serve }: ForwardingListenerOptions): Promise<ForwardingListener> {
+export async function startForwardingListener({ host, port, secret, serve, onRefused }: ForwardingListenerOptions): Promise<ForwardingListener> {
   const server = http.createServer((req, res) => {
     const operator = carriesSecret(req, secret) ? decodeOperator(req.headers[OPERATOR_HEADER]) : null;
     if (!operator || !req.url?.startsWith('/api/')) {
+      onRefused();
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { code: 'forwarding_refused', message: 'This port takes only requests forwarded by another Replica.' } }));
       return;

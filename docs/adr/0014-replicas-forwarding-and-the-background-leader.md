@@ -60,6 +60,7 @@ A Message must not be republished twice by two clicks on two Replicas, so the gu
 
 ## Consequences
 
+- Gauges of shared state are exported by the leader alone, so that a sum across Replicas is right, and a Replica that does not lead does not read them from the store. A former leader's sampler keeps its snapshot, which is not shown. During a takeover they are absent, and a stalled leader can briefly export alongside its successor: both are visible in `volveran_background_leader`.
 - Shutdown (#119) stops the leader before ending Checkouts, so the lease moves without waiting for Messages to return. Today's `onClose` already does this, as `leader.stop()` comes before `checkouts.endAll()`. Until Replay Rules are a job (#118) they stop before the leader, so that a last Rule Pass's pause still reaches Alerting; a running pass delays the lease that long.
 - A job failing to start is logged and the leader stays leader without it, trying it again at each claim until it starts. A job that should not run without another must say so itself. A job marked `mustStart`, such as the sampler, instead fails startup if it fails on the process's first claim, as it always has on a single Replica; a Replica that takes over later is already serving, so it only retries.
 - Alerting does not sit out a term over a failed start, because it is what tells people about problems: it runs anyway, and first retries what the start could not do. It is `mustStart`, so a Replica that fails it while starting up fails its startup, as one always has, and the lease moves.
