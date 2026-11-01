@@ -139,13 +139,13 @@ Observed on a broker with the OAuth 2.0 backend only (`auth_backends.1 = rabbit_
 
 ## Node.js runtime: `node:sqlite`
 
-Not a broker fact, but the same kind of gate: the audit store relies on it, and it was checked on 30 October 2026. On Node 24 `node:sqlite` is **[Stability 1.2, release candidate](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)**, since v24.15.0, and it is not stable. Node's [stability index](https://nodejs.org/api/documentation.html#stability-index) says of that stage: "No further breaking changes are anticipated but may still occur", and it is still a stage of Experimental, which semantic versioning does not cover. Node 24.21.0 and the image's 24.22.2 load it and open a database with no flag and no warning. The image's `node:24-slim` is a moving tag, so what is pinned is the major version, not the release.
+Not a broker fact, but the same kind of gate: the audit store relies on it, and it was checked on 30 October 2026. On Node 24 `node:sqlite` is **[Stability 1.2, release candidate](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)**, since v24.15.0, and it is not stable. Node's [stability index](https://nodejs.org/api/documentation.html#stability-index) says of that stage: "No further breaking changes are anticipated but may still occur", and it is still a stage of Experimental, which semantic versioning does not cover. Node 24.21.0 and the image's 24.22.2 load it and open a database with no flag and no warning. The image pins `node:24-slim` by digest, so a Node release reaches it only through a Dependabot pull request.
 
 What this means for SQLite's long-term promise:
 
 **The stored data is not at risk.** The file format belongs to SQLite, not to Node. The risk is to the code that calls it.
 
-**A Node update can break the store's code.** Node may change this API in a release without a major version. Node 26 has already renamed it, still at stability 1.2: `DatabaseSync` and `StatementSync` become deprecated aliases of `Database` and `Statement` ([DEP0210, DEP0211](https://nodejs.org/docs/latest/api/sqlite.html)). So the API should stay behind the audit store interface, the base image should be pinned by digest, and each Node update should run the store's tests.
+**A Node update can break the store's code.** Node may change this API in a release without a major version. Node 26 has already renamed it, still at stability 1.2: `DatabaseSync` and `StatementSync` become deprecated aliases of `Database` and `Statement` ([DEP0210, DEP0211](https://nodejs.org/docs/latest/api/sqlite.html)). So the API should stay behind the audit store interface, and each Node update should run the store's tests, which the base image's digest pin makes happen: the update is a pull request, and CI runs on it.
 
 **Node 24 sets a date.** It is supported until 30 April 2028 ([release schedule](https://github.com/nodejs/Release)), so a promise lasting past that means moving to Node 26 and its new names.
 

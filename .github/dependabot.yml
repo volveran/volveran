@@ -1,0 +1,40 @@
+# Keeps what is pinned moving: a workflow's `uses: action@<commit> # v1.2.3` and
+# the Dockerfile's `node:24-slim@sha256:...` get a pull request when a new
+# version or digest appears, which updates the commit or digest and the version
+# beside it (test/unit/supply-chain.test.ts checks both stay pinned).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # A new digest of node:24-slim is a pull request. Moving to another major of
+  # Node is a decision of its own (package.json `engines`, CI's node-version).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The lint tool has a lockfile of its own.
+  - package-ecosystem: npm
+    directory: /tools/lint
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
