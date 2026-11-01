@@ -128,6 +128,10 @@ export interface StartAppOptions {
   onRouteRegistered?: ServerOptions['onRouteRegistered'];
   /** How often a Replica renews its lease and how long that holds. */
   replicaLeaseTiming?: ServerOptions['replicaLeaseTiming'];
+  /** The session idle timeout in ms (tests use seconds, not the minutes of VOLVERAN_SESSION_IDLE_MINUTES). */
+  sessionIdleMs?: ServerOptions['sessionIdleMs'];
+  /** How many sign-ins in progress the store keeps. */
+  maxSignInsInProgress?: ServerOptions['maxSignInsInProgress'];
 }
 
 /**
@@ -170,6 +174,8 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       webRoot: options.webRoot,
       onRouteRegistered: options.onRouteRegistered,
       replicaLeaseTiming: options.replicaLeaseTiming,
+      sessionIdleMs: options.sessionIdleMs,
+      maxSignInsInProgress: options.maxSignInsInProgress,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {
