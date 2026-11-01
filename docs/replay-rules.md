@@ -13,6 +13,8 @@ Every `every`, plus a few seconds of jitter, a running rule makes a **Rule Pass*
    - **not due**: the filter selects it, but its back-off delay has not passed yet (or the pass already has `maxPerPass` Messages to Replay);
    - **no match**: the filter does not select it.
 3. It Replays up to `maxPerPass` due Messages at the rule's `rate`, Moves the used-up ones to the parking queue when `whenAttemptsUsedUp` says so, and Keeps every other Message in order.
+
+   In a pass's counts, **failed** also holds Replays and Moves not attempted because of a time limit or a Lost Checkout: their Messages went back to the queue. A pass stopped by a pause counts its unattempted Replays as not due, and shows what stopped it.
 4. It ends the Checkout.
 
 Every Replay and Move is an Audit Entry naming the rule and the pass; search them with the **Rule** filter of the Audit view (`GET /api/v1/audit-entries?rule=<name>`). The Replay rules view shows each rule's state, its next pass and its last 20 passes with their counts.
