@@ -9,7 +9,7 @@ import path from 'node:path';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 
 /** Every released version, oldest first, a pre-release in the form of its tag (`1.0.0-rc.1`). Add a new release here, then generate its fixture. */
-export const RELEASED_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.5.1', '0.6.0', '0.6.1'] as const;
+export const RELEASED_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.5.1', '0.6.0', '0.6.1', '1.0.0'] as const;
 
 export type ReleasedVersion = (typeof RELEASED_VERSIONS)[number];
 
