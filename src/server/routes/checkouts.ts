@@ -7,7 +7,7 @@
 //   GET    /api/checkouts/:id/compare?a=<handle>&b=<handle>              → { left, right, diff }
 //   POST   /api/checkouts/:id/heartbeat  the browser still shows it        → { checkout }
 //   DELETE /api/checkouts/:id                                            → { checkout }
-//   POST   /api/checkouts/:id/end   same as DELETE, for navigator.sendBeacon
+//   POST   /api/checkouts/:id/end   same as DELETE, for leaving the page
 //
 // Every /api/checkouts/:id… route (these and routes/decisions.ts) is for the
 // Checkout's owner only: another Operator gets 403 `not_checkout_owner`

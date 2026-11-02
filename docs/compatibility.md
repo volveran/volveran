@@ -44,7 +44,7 @@ Through 1.x, `/api` keeps working as an alias of `/api/v1`, and a profiles file 
 
 ## Supported upgrades
 
-- **Directly from 0.5 to 1.0, and from any 1.x to any later 1.x.** There is no need to step through versions.
+- **Directly from 0.5 to 1.0, and from any 1.x to any later 1.x.** There is no need to step through versions. The [upgrade guide](upgrading-to-1.0.md) lists what 1.0 refuses and changes.
 - **No downgrades.** A store newer than the version starting is refused at startup, on both stores. So a rollback after an upgrade that migrated the store needs the store from before it.
 
 The upgrade suite starts this version on a real store and profiles file written by every release, on SQLite and, after `copy-audit-store`, on PostgreSQL, in CI on every change.

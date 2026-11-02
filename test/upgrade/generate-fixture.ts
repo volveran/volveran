@@ -46,7 +46,6 @@ const RULE_QUEUE = 'payments.dlq';
 const WEBHOOK_PORT = 39999;
 
 function profilesFile(fixture: UpgradeFixture): string {
-  const minor = Number(fixture.version.split('.')[1]);
   const rule = (name: string) => ({
     name,
     vhost: '/',
@@ -71,7 +70,7 @@ function profilesFile(fixture: UpgradeFixture): string {
         vhosts: 'all',
         defaultQueueFilter: '*.dlq',
         protected: false,
-        ...(minor >= 3 && { roles: { admin: ['fixture-admins'] } }),
+        ...(fixture.hasRoles && { roles: { admin: ['fixture-admins'] } }),
         ...(fixture.hasReplayRules && {
           replayRate: { default: 100, max: 100 },
           canary: { watchWindow: '30s' },

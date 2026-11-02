@@ -39,3 +39,5 @@ What this does not promise:
 - The scan runs on the amd64 image, built in the release's first job. The arm64 image, and the image pushed by the later job, are built from the same Dockerfile and pins but are not scanned themselves.
 
 Dependabot proposes updates to dependencies, GitHub Actions and the base image, which are pinned by commit and by digest.
+
+The project reviewed its own security for 1.0, with the tools at hand and no outside firm: [what was tested and what was not](docs/security-review.md).

@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.6.0 is released** (October 2026) as `ghcr.io/volveran/volveran:0.6.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version; see the [changelog](CHANGELOG.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v0.6.1 is the latest release** (October 2026), as `ghcr.io/volveran/volveran:0.6.1`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version. **v1.0 is in release candidates**, starting with `1.0.0-rc.1`; see the [changelog](CHANGELOG.md) and the [upgrade guide](docs/upgrading-to-1.0.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -122,10 +122,25 @@ These things differ from the plan or remain open:
 - **Keep can use up Delivery Budget on quorum queues.** The broker-facts gate for returning Messages at shutdown did not hold: closing a channel straight after `nack` uses up Delivery Budget, and ending a Checkout does that ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). It is a known issue in 0.6.0, not fixed.
 - **`node:sqlite` is a release candidate on Node 24**, not stable. The status and what follows from it are [recorded](docs/rabbitmq-behaviour.md#nodejs-runtime-nodesqlite).
 
-## v1.0: Production hardening
+## v1.0: Production hardening (in release candidates)
 
-- Several replicas with Checkout coordination between them.
-- Security review, upgrade guarantees and a stable configuration format.
+Everything still works on one Replica on SQLite, and in Solo Mode. Upgrading from 0.x has refusals to deal with first, unknown keys in the profiles file above all: see the [upgrade guide](docs/upgrading-to-1.0.md).
+
+What is in it:
+
+- Several Replicas on PostgreSQL behind an ordinary load balancer, with a rolling update ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md), [guide](docs/replicas.md)). A Checkout stays on its Owner Replica, and any Replica forwards to it. Sessions are shared. A Background Leader runs the sampler, Alerts, Replay Rules and retention, and another takes over. A Replica shutting down hands Messages back through Keep.
+- A security review, done by the project with the tools at hand and not by an outside firm ([report](docs/security-review.md), [threat model](docs/threat-model.md)), with its fixes, a [`SECURITY.md`](SECURITY.md), and scanning in CI.
+- Upgrade guarantees: a [compatibility policy](docs/compatibility.md), a test that fails on an unrecorded change to a public contract, and upgrades tested from real stores of every release.
+- A stable configuration format: `version: 1` and unknown keys refused in the profiles file, its JSON Schema, and `/api/v1` with an OpenAPI description.
+- Keep costs no Delivery Budget, the known issue of 0.6 ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)).
+
+These things differ from the plan or remain open:
+
+- **The image moved to Alpine,** which the plan did not name, because no other way cleared the image scan's high and critical findings.
+- **The forwarding port stays plain HTTP, with a shared secret.** What remains of N3 and N4 is accepted by the maintainer. Signing requests was not done.
+- **Return order.** A quorum queue does not keep the order of a large Checkout's returned Messages, so the promise was corrected, not met.
+- **What was run.** Up to three Replicas, on kind and kindnet. TLS to PostgreSQL with several Replicas, a real lost host and long running were not ([what was tested](docs/replicas.md#what-was-tested)). Two real versions have not run side by side, as no later 1.x exists yet.
+- **OpenAPI response schemas** are exact only at their top level.
 
 ## Later, if needed
 

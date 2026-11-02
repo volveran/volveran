@@ -31,10 +31,12 @@ docker build -t volveran .   # the image, as the release workflow builds it
    - `site/index.html` (the image tag).
    - `docs/team-mode.md` (the image tag) and `docs/kubernetes.md` (`helm install --version`).
    - `docker-compose.example.yml` (the image tag).
-   - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `0.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
+   - On a new minor version: `ref.semver` in `examples/flux/app/ocirepository.yaml` and, not checked, the `<major>.<minor>.x` mentions in `examples/flux/README.md` and `docs/kubernetes.md`.
    - On a release that finishes a roadmap version: `ROADMAP.md` (not checked).
 
-After the release's image is published, add its upgrade fixture (see **Upgrade suite** below) and commit it. `test/integration/upgrade.test.ts` fails at the next version bump if it is missing.
+On a release candidate, also run the browser check by hand, since no suite has a browser: `npm run build`, then `node scripts/test-broker.mjs run -- node scripts/screenshots/browser-check.mjs <outdir>` (needs Firefox). It walks Approvals, Compare, Canary and Restore under the CSP, and tries a foreign Origin and Host. Say what ran in `docs/threat-model.md`.
+
+After the release's image is published, add its upgrade fixture (see **Upgrade suite** below) and commit it. `test/integration/upgrade.test.ts` fails at the next version bump if it is missing. A pre-release needs none, as nothing promises an upgrade from it, but may have one, in the form of its tag (`1.0.0-rc.1`), to try the fixture on the real image.
 
 **Pinning and scanning.** A workflow names an action as `owner/repo@<commit> # v1.2.3` and the Dockerfile its base image as `node:24-alpine@sha256:<digest>`; `test/unit/supply-chain.test.ts` fails on anything else. Dependabot (`.github/dependabot.yml`) updates both, so take its pull requests rather than editing a pin by hand. To add an action, resolve its commit from the tag (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`). `.github/workflows/security.yml` runs CodeQL, `npm audit` and the image scan, with a cut-off of high; the image scan counts findings with no fix too, apart from the reviewed list in `.grype.yaml`, one rule per vulnerability with a reason from checking whether Volverán can reach it. The release workflow's first job repeats the last two. Reports of vulnerabilities go through [`SECURITY.md`](SECURITY.md).
 

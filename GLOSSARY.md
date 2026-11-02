@@ -147,6 +147,9 @@ _Avoid_: Server mode, hosted mode, SSO mode
 One running Volverán server. Several share an audit store on PostgreSQL; on SQLite there is exactly one.
 _Avoid_: Pod, node
 
+**Lease**:
+A row in the audit store that a Replica keeps renewing to say it is alive. Others treat a Replica whose lease has run out as gone, and one that cannot renew its own ends its Checkouts through Keep. The Background Leader holds a lease of its own for that role.
+
 **Background Leader**:
 The one Replica currently running what must run once however many Replicas there are: the sampler, Alerts, Replay Rules and retention. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
 _Avoid_: Master, primary, active Replica
