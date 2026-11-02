@@ -22,6 +22,7 @@ import {
   type TestApp,
 } from './harness.js';
 import { startFakeDestination, type FakeDestination } from './fake-destination.js';
+import { escapeRegex } from '../support/escape-regex.js';
 
 const dlq = deadLetterRoutes.classic.dlq;
 const MINUTE = 60_000;
@@ -224,7 +225,7 @@ describe('Alert Rules on Volverán itself', () => {
 
     const put = await management(POLICY, {
       method: 'PUT',
-      body: { pattern: `^${dlq.replace(/\./g, '\\.')}$`, definition: { 'message-ttl': 60_000 }, 'apply-to': 'queues' },
+      body: { pattern: `^${escapeRegex(dlq)}$`, definition: { 'message-ttl': 60_000 }, 'apply-to': 'queues' },
     });
     expect(put.status).toBeLessThan(300);
     await hasWarning(true);

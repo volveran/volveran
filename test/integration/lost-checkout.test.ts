@@ -27,6 +27,7 @@ import {
   withChannel,
   type TestApp,
 } from './harness.js';
+import { escapeRegex } from '../support/escape-regex.js';
 import { startTcpProxy } from '../support/tcp-proxy.js';
 
 const checkoutPath = (queue: string) => `/api/profiles/local/vhosts/%2F/queues/${encodeURIComponent(queue)}/checkouts`;
@@ -137,7 +138,7 @@ describe('Lost Checkout', () => {
           nudges++;
           const put = await management(nudgePolicyPath(), {
             method: 'PUT',
-            body: { pattern: `^${queue.replace(/\./g, '\\.')}$`, definition: { 'max-length': 1_000_000 + nudges }, 'apply-to': 'queues' },
+            body: { pattern: `^${escapeRegex(queue)}$`, definition: { 'max-length': 1_000_000 + nudges }, 'apply-to': 'queues' },
           });
           expect(put.status).toBeLessThan(300);
         }
