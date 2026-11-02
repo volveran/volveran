@@ -167,7 +167,7 @@ So this did **not** take the service down, which is why it is not high. Throughp
 - Sessions on PostgreSQL store the session id in clear, as the primary key, equal to the id in the cookie. A dump alone does not give a session, because the cookie's signature needs the session secret (tested: 401), but a dump plus that secret does. Hashing the id would remove this. Operator identity and groups are in clear in the same row.
 - `/api/profiles` shows broker URLs and the name of the password variable to a signed-in Operator (seen as `admin`; other Roles not compared), and `broker_unreachable` names the management URL. No password appears in any answer tested.
 - Groups are fixed at sign-in, so losing a group takes effect only at the next sign-in, up to 12 hours later (documented in `operator.ts`, not tested for the full period). The session idle timeout (#125) shortens this for abandoned sessions only.
-- From the note on #127: the `# syntax=` line in the `Dockerfile` is now pinned by digest, and `corepack` and `yarn` are gone from the image. `npm audit` moderates and test images pinned by tag are under [Accepted risks](#accepted-risks), as proposed.
+- From the note on #127: the `# syntax=` line in the `Dockerfile` is now pinned by digest, and `corepack` and `yarn` are gone from the image. `npm audit` moderates and test images pinned by tag are under [Accepted risks](#accepted-risks).
 
 ## Accepted risks
 
@@ -185,12 +185,9 @@ Accepted by the maintainer:
 - **Silent re-sign-in after an idle timeout.** The idle timeout ends Volverán's session, not the provider's: while that one lasts, the web app's return to sign-in can sign an abandoned browser back in with no prompt, and the browser's own page does this by itself on its next request. Mitigation: shorten the provider's session.
 - **What remains of N3 after #121.** Write access to the store can still capture the forwarding secret and answer Operators with a forged Checkout, and the secret still crosses the pod network in clear. Mitigation: the always-rendered NetworkPolicy limits who reaches the port, `networkPolicy.egress` limits where a Replica can send the secret, and the store has its own access control.
 - **What remains of N4 after #121.** The policy needs a CNI that enforces it, anyone able to create pods in the namespace can give them the labels, the port takes every `/api/` route and any identity from a holder of the secret, and rotating the secret restarts all Replicas together. Mitigation: use an enforcing CNI and try the port from another pod ([guide](replicas.md)), and treat creating pods in the namespace as the same trust as the secret.
-
-Proposed, **awaiting a maintainer's decision**:
-
-- Dependabot's alerts on `glob` and `minimatch` stay open: 3 moderate in `npm audit`, reached through `@fastify/static`, which needs `glob` 13 even at its latest version, while the fixes are in 14 and in `minimatch` 11. `@fastify/static` calls `glob` at startup on the built web app's own directory, with no pattern or signal from a request, so from reading its code nothing a client sends reaches either. The alerts on `fast-uri` are fixed by updating it.
-- `npm audit` in `tools/lint`: 10 moderate, in the lint tooling's own dependencies. They run on a developer's or CI's own code and are not in the image.
-- Test images (`test/broker/`, `test/smoke/deps.yaml`) are pinned by tag, not digest: they run only in tests, and the weekly broker run follows a moving tag on purpose. A moved tag could change what a test run sees, not what a release contains.
+- **Dependabot's alerts on `glob` and `minimatch` stay open:** 3 moderate in `npm audit`, reached through `@fastify/static`, which needs `glob` 13 even at its latest version, while the fixes are in 14 and in `minimatch` 11. `@fastify/static` calls `glob` at startup on the built web app's own directory, with no pattern or signal from a request, so from reading its code nothing a client sends reaches either. The alerts on `fast-uri` are fixed by updating it.
+- **`npm audit` in `tools/lint`:** 10 moderate, in the lint tooling's own dependencies. They run on a developer's or CI's own code and are not in the image.
+- **Test images (`test/broker/`, `test/smoke/deps.yaml`) are pinned by tag, not digest.** They run only in tests, and the weekly broker run follows a moving tag on purpose. A moved tag could change what a test run sees, not what a release contains.
 
 ## OWASP ASVS Level 2
 

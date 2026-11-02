@@ -29,7 +29,7 @@ The full results, what was seen for each, are in the [threat model](threat-model
 
 - **Image:** 0 high and 0 critical in Grype v0.121.0 and Trivy 0.69.3, when #141 moved to Alpine. `security.yml` repeats Grype on every pull request, and the release's first job repeats it and stops on one. Alpine's vulnerability data may be thinner than Debian's, and only the amd64 image is scanned ([`SECURITY.md`](../SECURITY.md)).
 - **`npm audit --audit-level=high`:** passes. It reports 3 moderate, on `glob` and `minimatch` through `@fastify/static`.
-- **Dependabot on the default branch:** 7 medium and 4 low, on `glob`, `minimatch` and `fast-uri`. `fast-uri`'s are fixed by updating it, which 1.0 does. The rest are among the proposed risks below.
+- **Dependabot on the default branch:** 7 medium and 4 low, on `glob`, `minimatch` and `fast-uri`. `fast-uri`'s are fixed by updating it, which 1.0 does. The rest are among the accepted risks below.
 - **CodeQL:** no open alert.
 
 "Known" means known to these tools on the day they ran. A clean scan is not proof that nothing is vulnerable.
@@ -60,6 +60,4 @@ That browser run found a real bug the suites could not: `Referrer-Policy: no-ref
 
 ## The risks accepted
 
-Written out, with mitigations, in the [threat model](threat-model.md#accepted-risks): a profile without `roles` keeps everyone `admin`; the metrics port has no sign-in; Discarded bodies and Audit Entries are not encrypted by Volverán; Solo Mode's protection is the loopback address; whoever writes the profiles file or reads the environment has every credential; no login throttling; silent re-sign-in after an idle timeout; and what remains of N3 and N4.
-
-**Three more are proposed and not decided:** the moderate `npm audit` findings on `glob` and `minimatch`, those in `tools/lint`, and test images pinned by tag. They wait for the maintainer.
+Written out, with mitigations, in the [threat model](threat-model.md#accepted-risks): a profile without `roles` keeps everyone `admin`; the metrics port has no sign-in; Discarded bodies and Audit Entries are not encrypted by Volverán; Solo Mode's protection is the loopback address; whoever writes the profiles file or reads the environment has every credential; no login throttling; silent re-sign-in after an idle timeout; what remains of N3 and N4; the moderate `npm audit` findings on `glob` and `minimatch`, and those in `tools/lint`; and test images pinned by tag.
