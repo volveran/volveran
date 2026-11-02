@@ -4,11 +4,13 @@
 //   npm run fixture:upgrade -- 0.5.1
 //
 // Only ever talks to the release through its API, as an Operator would, so the
-// store holds exactly what that release writes.
+// store holds exactly what that release writes. test/upgrade/published-upgrade.test.ts
+// plays the same scenario on a store it keeps.
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { stringify } from 'yaml';
 import { repoRoot, testBrokerSettings } from '../../scripts/test-broker-env.mjs';
@@ -45,7 +47,7 @@ const RULE_QUEUE = 'payments.dlq';
 /** Where the test notification goes, inside the image's container. */
 const WEBHOOK_PORT = 39999;
 
-function profilesFile(fixture: UpgradeFixture): string {
+export function profilesFile(fixture: UpgradeFixture): string {
   const rule = (name: string) => ({
     name,
     vhost: '/',
@@ -96,7 +98,7 @@ type Call = (method: string, urlPath: string, body?: unknown) => Promise<any>;
 // rootless Docker, whose host network is not the host's. So the image shares the
 // network of the test broker's container, where the checked-in URLs are simply
 // true, and requests are made from inside it.
-const REQUEST = `const [url, method, body] = process.argv.slice(1);
+export const REQUEST = `const [url, method, body] = process.argv.slice(1);
 fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body || undefined })
   .then(async (r) => console.log(r.status + '\\n' + (await r.text())));`;
 
@@ -172,6 +174,26 @@ async function playRules(call: Call) {
   await call('POST', `/api/profiles/${FIXTURE_PROFILE}/replay-rules/${FIXTURE_PAUSED_RULE}/pause`, { reason: FIXTURE_PAUSE_REASON });
 }
 
+/** Plays the whole scenario through the API of the release running in `container`. */
+export async function playScenario(container: string, fixture: UpgradeFixture) {
+  const call = client(container);
+  await eventually(() => call('GET', '/api/session'), 60_000, 1000);
+  await seedDirect();
+  await playMessages(call);
+  if (fixture.hasReplayRules) await playRules(call);
+  if (fixture.hasNotifications) {
+    execFileSync('docker', ['exec', '-d', container, 'node', '-e', WEBHOOK]);
+    const { delivery } = await eventually(() => call('POST', `/api/alert-destinations/${FIXTURE_DESTINATION}/test`, {}).then((r) => {
+      if (r.delivery.outcome !== 'delivered') throw new Error(`The test notification ended as ${r.delivery.outcome}`);
+      return r;
+    }));
+    console.log(`test notification ${delivery.outcome}`);
+  }
+}
+
+/** The environment the scenario's release runs with: its test notification goes to a listener in its own container. */
+export const scenarioEnv = () => fixtureEnv(`http://127.0.0.1:${WEBHOOK_PORT}/`);
+
 async function generate(fixture: UpgradeFixture) {
   const image = `ghcr.io/volveran/volveran:${fixture.version}`;
   const work = await mkdtemp(path.join(tmpdir(), `volveran-fixture-${fixture.version}-`));
@@ -185,7 +207,7 @@ async function generate(fixture: UpgradeFixture) {
   const { project } = testBrokerSettings(repoRoot, process.env);
   const broker = execFileSync('docker', ['compose', '-p', project, 'ps', '-q', 'rabbitmq'], { encoding: 'utf8' }).trim();
   const container = `volveran-fixture-${fixture.version.replaceAll('.', '-')}-${process.pid}`;
-  const env = fixtureEnv(`http://127.0.0.1:${WEBHOOK_PORT}/`);
+  const env = scenarioEnv();
   await purgeQueues('/', fixtureQueues);
   execFileSync('docker', [
     'run', '-d', '--name', container, '--network', `container:${broker}`,
@@ -195,19 +217,7 @@ async function generate(fixture: UpgradeFixture) {
   ], { stdio: ['ignore', 'ignore', 'inherit'] });
 
   try {
-    const call = client(container);
-    await eventually(() => call('GET', '/api/session'), 60_000, 1000);
-    await seedDirect();
-    await playMessages(call);
-    if (fixture.hasReplayRules) await playRules(call);
-    if (fixture.hasNotifications) {
-      execFileSync('docker', ['exec', '-d', container, 'node', '-e', WEBHOOK]);
-      const { delivery } = await eventually(() => call('POST', `/api/alert-destinations/${FIXTURE_DESTINATION}/test`, {}).then((r) => {
-        if (r.delivery.outcome !== 'delivered') throw new Error(`The test notification ended as ${r.delivery.outcome}`);
-        return r;
-      }));
-      console.log(`test notification ${delivery.outcome}`);
-    }
+    await playScenario(container, fixture);
     // A clean stop, so the store is what a stopped release leaves behind.
     execFileSync('docker', ['stop', '-t', '30', container], { stdio: 'ignore' });
     const state = JSON.parse(execFileSync('docker', ['inspect', '--format', '{{json .State}}', container], { encoding: 'utf8' }));
@@ -229,11 +239,13 @@ async function generate(fixture: UpgradeFixture) {
   }
 }
 
-const version = process.argv[2];
-const fixture = upgradeFixtures.find((f) => f.version === version);
-if (!fixture) {
-  console.error(`usage: npm run fixture:upgrade -- <version>: ${version ?? 'no version'} is not in RELEASED_VERSIONS (test/support/upgrade-fixtures.ts)`);
-  process.exit(2);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const version = process.argv[2];
+  const fixture = upgradeFixtures.find((f) => f.version === version);
+  if (!fixture) {
+    console.error(`usage: npm run fixture:upgrade -- <version>: ${version ?? 'no version'} is not in RELEASED_VERSIONS (test/support/upgrade-fixtures.ts)`);
+    process.exit(2);
+  }
+  await generate(fixture);
+  process.exit(0);
 }
-await generate(fixture);
-process.exit(0);

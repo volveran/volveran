@@ -43,8 +43,15 @@ export const appNamespace = 'volveran-smoke';
 /** RabbitMQ, PostgreSQL and the mock OIDC provider (their images do not run under restricted). */
 export const depsNamespace = 'volveran-smoke-deps';
 export const releaseName = 'volveran';
-/** The image built from this checkout and loaded into kind. */
-export const image = { repository: 'volveran', tag: 'smoke' };
+/**
+ * VOLVERAN_SMOKE_PUBLISHED=<version> runs the smoke test on what a release published,
+ * from ghcr.io, rather than on an image built from this checkout and the chart in it.
+ */
+export const publishedVersion = env.VOLVERAN_SMOKE_PUBLISHED || undefined;
+/** With VOLVERAN_SMOKE_RUN=chart-upgrade, the published version it upgrades from. */
+export const upgradeFromVersion = env.VOLVERAN_SMOKE_UPGRADE_FROM || '0.5.1';
+/** The image loaded into kind. */
+export const image = publishedVersion ? { repository: 'ghcr.io/volveran/volveran', tag: publishedVersion } : { repository: 'volveran', tag: 'smoke' };
 
 /**
  * Local ports of the port-forwards. The app port is part of the OIDC redirect
@@ -99,7 +106,7 @@ export function dependencyImages() {
 }
 
 /**
- * The arguments of `helm upgrade --install` for the chart in this checkout, plus `valuesFiles`.
+ * The arguments of `helm upgrade --install` for the chart in this checkout, or the published one, plus `valuesFiles`.
  * @param {string[]} [valuesFiles]
  * @returns {string[]}
  */
@@ -108,7 +115,7 @@ export function helmInstallArgs(valuesFiles = []) {
     'upgrade',
     '--install',
     releaseName,
-    path.join(repoRoot, 'charts/volveran'),
+    ...(publishedVersion ? ['oci://ghcr.io/volveran/charts/volveran', '--version', publishedVersion] : [path.join(repoRoot, 'charts/volveran')]),
     '--kubeconfig',
     kubeconfig,
     '--kube-context',

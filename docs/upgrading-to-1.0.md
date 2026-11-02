@@ -10,9 +10,11 @@ Most of this guide is about what 1.0 **refuses**, and what to do before it does.
 2. **Team Mode on PostgreSQL: add the session encryption key** ([refusal 3](#3-no-session-encryption-key-in-team-mode-on-postgresql)).
 3. **Solo Mode: if you reach Volverán at any name but a loopback address, set `VOLVERAN_PUBLIC_URL`** ([refusal 7](#7-solo-mode-a-host-that-is-not-loopback)).
 4. **Team Mode: if the browser reaches Volverán at more than one address, choose one** ([refusal 9](#9-team-mode-a-state-changing-request-from-a-foreign-origin)).
-5. **Take a backup of the audit store**, since the upgrade migrates it and [there is no way back](#5-a-store-newer-than-the-version-starting). See [Kubernetes](kubernetes.md#backup-and-restore-of-the-audit-store) or [PostgreSQL](postgresql.md#backup-and-restore).
+5. **Take a backup of the audit store**, since the upgrade migrates it and [there is no way back](#5-a-store-newer-than-the-version-starting). See [Kubernetes](kubernetes.md#backup-and-restore-of-the-audit-store) or [PostgreSQL](postgresql.md#backup-and-restore). On Docker, stop Volverán and copy the volume, which holds the store and its write-ahead log: `docker run --rm --user 0 -v volveran-data:/from:ro -v volveran-data-backup:/to --entrypoint sh ghcr.io/volveran/volveran:<version> -c 'cp -a /from/. /to/'`.
 6. **Pick a time outside triage work.** The upgrade ends open Checkouts. Their Messages go back to their queues, but Decisions not yet Applied are lost.
 7. **If you build on Volverán's image, or `exec` into it, read [the image](#the-image-moved-to-alpine).**
+
+Then upgrade. On the chart, `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`; name the version, as Helm skips a release candidate otherwise. On Docker, stop the old container with time to finish (`docker stop -t 90`) and start the new image on the same volume, profiles file and variables.
 
 ## What it refuses at startup
 
@@ -74,14 +76,14 @@ If SOPS, Sealed Secrets or External Secrets manage that Secret, add it there, or
 
 ### 4. Settings that are checked if you set them
 
-Each of these is new, and is refused only when you set it wrongly.
+Each of these is new, and is refused only when you set it wrongly and it is read. `VOLVERAN_SESSION_IDLE_MINUTES` is read only in Team Mode. The `VOLVERAN_FORWARDING_*` variables are read only in Team Mode on PostgreSQL with `VOLVERAN_FORWARDING_SECRET` set, and then the port and address are both required. Elsewhere a wrong value passes `check-config` and is ignored.
 
 | Setting | Refused when | Note |
 |---|---|---|
 | `VOLVERAN_SESSION_IDLE_MINUTES` | Not a whole number from 1 to 720 | Default 60: see [sessions](#sessions-now-end-when-idle) |
 | `VOLVERAN_FORWARDING_SECRET` | Under 32 characters | Only for several Replicas: [guide](replicas.md) |
 | `VOLVERAN_FORWARDING_PORT` | Not a port, or equal to the web or metrics port | |
-| `VOLVERAN_FORWARDING_ADDRESS` | Not `host:port`. IPv6 pod addresses are not supported | |
+| `VOLVERAN_FORWARDING_ADDRESS` | Not `host:port` | IPv6 pod addresses are not supported, though `check-config` does not refuse one |
 | `VOLVERAN_POSTGRES_URL` | Not a `postgres://` or `postgresql://` URL | The database must also be UTF8 and reachable, and its user able to create tables: [guide](postgresql.md) |
 | `VOLVERAN_POSTGRES_REQUIRE_TLS`, `VOLVERAN_POSTGRES_CA_FILE` | Not `true` or `false`; without a URL; a CA with TLS off; `ssl`, `sslmode` or `sslrootcert` in the URL as well; a file that cannot be read | |
 
@@ -100,7 +102,7 @@ To go back, restore the store from your backup, and accept losing what was recor
 New since 0.5, each with a message naming the value:
 
 - `replicaCount` above 1 without `postgres.existingSecret`, or without `forwarding.existingSecret`. Below 1 is refused as well. 0.x refused anything but 1.
-- `forwarding.port` equal to 8080 or `metrics.port`.
+- `forwarding.port` equal to 8080 or `metrics.port`, with `replicaCount` above 1. On one replica the port is not used, and is not checked.
 - `postgres.ca.bundle` without `postgres.existingSecret`, with `postgres.requireTls: false`, or naming a bundle not in `caBundles.bundles`.
 - `persistence.existingClaim` together with `postgres.existingSecret`.
 - `extraEnv` setting a `VOLVERAN_POSTGRES_*` or `VOLVERAN_FORWARDING_*` variable. Use the values, which also add the port and close it.
@@ -220,3 +222,12 @@ These arrived in 0.6, so 0.6 users already have them:
 ## How this was checked
 
 Every refusal above was read from the code of this release. The profile, session key and idle timeout refusals were also run through the built `check-config`, and the Host and Origin refusals in real Firefox. The upgrade suite starts this version on real stores written by each release's own image, 0.1 to 0.6.1, on SQLite and after `copy-audit-store` on PostgreSQL, and those stores' profiles files load unchanged. They prove only the scenario's own files, not yours, which is why `check-config` comes first. Two real versions have not yet run side by side, as no later 1.x exists ([details](compatibility.md#during-a-rolling-update)).
+
+**The upgrade from 0.5, run for real on the published `1.0.0-rc.1`** (image `sha256:75371eee...`, chart `sha256:3a2e83dd...`, from commit `86bb9c8`), with `test/upgrade/published-upgrade.test.ts` and `test/smoke/published-chart-upgrade.test.ts`, on 2026-11-02:
+
+- **Docker, SQLite.** The image `0.5.1` played the fixture scenario against the test broker on a Docker volume and stopped cleanly, then `1.0.0-rc.1` started on that volume and profiles file. `upgradeChecks` passed through the HTTP API: Audit Entries, Discarded bodies byte for byte, Replay Rule state, Restore. It warned of the file's missing `version`, stopped and started again, and `0.6.1` then refused the store with the words of [refusal 5](#5-a-store-newer-than-the-version-starting).
+- **Docker, PostgreSQL.** `copy-audit-store` from the `1.0.0-rc.1` image, run as [its guide](postgresql.md#copying-the-audit-trail) gives it on a copy of the store `0.5.1` left, left the source unchanged. `upgradeChecks` passed on `1.0.0-rc.1` started on that database.
+- **`helm upgrade` on kind, Kubernetes 1.36.4.** The chart at `0.5.1`, running its own image with Team Mode on SQLite, in a namespace enforcing `restricted`. An Operator Discarded and Restored and paused a Replay rule. `check-config` passed on the file the new chart renders, and the [online backup](kubernetes.md#backup-and-restore-of-the-audit-store) worked from the old pod. After `helm upgrade` to `1.0.0-rc.1` the entries, a body, the rule's state and a new Restore were all there, a Restore already done was refused, and there was no version warning.
+- **Then to PostgreSQL on kind.** The [Job](postgresql.md#on-kubernetes) as that guide writes it, changing only the namespace, version, Secret name, `VOLVERAN_POSTGRES_REQUIRE_TLS: "false"` (the test database has no TLS) and `imagePullPolicy`, from the store `1.0.0-rc.1` had migrated, then `helm upgrade` with `postgres.existingSecret`. The same checks passed.
+
+The kind run used fewer checks than `upgradeChecks`, one Message body of text, and no Move, Replay or Rule Pass. The refusals in sections 1 to 4 and 6, and 7 and 8 at a request, were also tried on the published image and chart. Refusal 9, 10's browser behaviour and an upgrade from 0.6 did not run on the published artifacts, nor did anything on real data.
