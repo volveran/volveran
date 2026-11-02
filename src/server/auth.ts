@@ -22,7 +22,9 @@
 // A session's OperatorToken is live in each process that has served it, because
 // a Checkout's connections listen to it. Each refreshes when its token comes due,
 // holding the session's lock in the store: a Replica that finds a later token there
-// takes it, as if it had refreshed, so the provider sees each refresh token once.
+// takes it, as if it had refreshed, so the provider sees each refresh token once. One that
+// finds the lock held too long (RefreshBusy) has refreshed nothing, and tries again like any
+// failed refresh: the Operator stays signed in.
 import { randomBytes } from 'node:crypto';
 import fastifyCookie from '@fastify/cookie';
 import type { FastifyInstance, FastifyRequest } from 'fastify';

@@ -2,7 +2,7 @@
 // by all, a removal takes effect on all, and a restart keeps them. Tokens arrive sealed
 // (token-seal.ts). Each call is one statement or one transaction.
 import type pg from 'pg';
-import type { SessionStore, StoredSession, StoredSignIn } from './audit-store.js';
+import { REFRESH_LOCK_WAIT_MS, RefreshBusy, type SessionStore, type StoredSession, type StoredSignIn } from './audit-store.js';
 import { transaction } from './postgres-connection.js';
 
 // A refresh holds a connection while it waits for the provider or for another Replica's
@@ -10,6 +10,13 @@ import { transaction } from './postgres-connection.js';
 // is an advisory one on the session's id and not on the row, so that nothing else waits for
 // the provider: signing out, the sweep and a move of the idle expiry all go straight through.
 const MAX_REFRESHES_AT_ONCE = 3;
+// The server bounds both sides of the lock, as a connection the client gives up on goes unnoticed
+// while it waits or sits idle. A waiter is cancelled after REFRESH_LOCK_WAIT_MS, and is gone with it.
+// A holder that goes silent, as a frozen Replica or one cut off, loses its connection and the lock
+// once idle this long: twice the 10 s its caller gives the provider (ADR 0013).
+const HOLDER_IDLE_LIMIT_MS = 20_000;
+/** PostgreSQL's lock_not_available: lock_timeout ran out. */
+const LOCK_NOT_AVAILABLE = '55P03';
 
 export class PostgresSessionStore implements SessionStore {
   private refreshSlotsInUse = 0;
@@ -35,7 +42,12 @@ export class PostgresSessionStore implements SessionStore {
     else this.refreshSlotsInUse++;
     try {
       return await transaction(this.pool, async (client) => {
-        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [id]);
+        await client.query("SELECT set_config('lock_timeout', $1, true), set_config('idle_in_transaction_session_timeout', $2, true)", [`${REFRESH_LOCK_WAIT_MS}ms`, `${HOLDER_IDLE_LIMIT_MS}ms`]);
+        try {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [id]);
+        } catch (err) {
+          throw (err as { code?: string }).code === LOCK_NOT_AVAILABLE ? new RefreshBusy() : err;
+        }
         const { rows } = await client.query<{ tokens: string }>('SELECT tokens FROM sessions WHERE id = $1 AND expires_at > $2 AND idle_expires_at > $2', [id, now]);
         const row = rows[0];
         if (!row) return false;
