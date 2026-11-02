@@ -6,7 +6,13 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
-**Upgrading in Team Mode on PostgreSQL:** set the new `VOLVERAN_SESSION_ENCRYPTION_KEY` (chart: add `session-encryption-key` to the Secret named in `oidc.existingSecret`), or Volverán refuses to start. Nothing changes on SQLite or in Solo Mode.
+## [1.0.0-rc.1] - 2026-11-02
+
+The first release candidate of 1.0: several Replicas on PostgreSQL, a security review, upgrade guarantees and a stable configuration format (see the [roadmap](ROADMAP.md)).
+
+**Upgrading from 0.x:** read the [upgrade guide](docs/upgrading-to-1.0.md), which lists every refusal. First among them, an unknown key anywhere in the profiles file stops startup, so run `check-config` beforehand. **In Team Mode on PostgreSQL**, set the new `VOLVERAN_SESSION_ENCRYPTION_KEY` (chart: add `session-encryption-key` to the Secret named in `oidc.existingSecret`), or Volverán refuses to start. Nothing changes there on SQLite or in Solo Mode.
+
+**Security review:** done by the project with the tools at hand, not by a paid outside firm. No known high or critical finding is open. The [report](docs/security-review.md) says what was tested and what was not.
 
 ### Changed
 
@@ -50,6 +56,7 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ### Fixed
 
+- Leaving the page ends a Checkout again. Since the Origin check and `Referrer-Policy: no-referrer`, a browser gave the web app's beacon `Origin: null`, which was refused, so the Messages stayed held until the heartbeat limit. It was never released. Found in Firefox.
 - Stopping with a live Checkout no longer hangs when the broker connection has just dropped or the broker has gone silent: closing a channel or connection now has a time limit of 5 s. (#119)
 - Ending a Checkout through Keep no longer uses up Delivery Budget on quorum queues, however it ends, including at shutdown. (#134) It now waits for the queue to take the Messages back before closing the channel, which took about 20 seconds per 1,000 Messages on a busy machine, so ending a large Checkout answers later. The wait stops after 40 ms per Message returned, at least 5 seconds (40 seconds at the default limit of 1,000 Messages), and logs a warning; another consumer on the queue can cause that, and any Message not yet taken back then costs one delivery. If you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, raise `pod.terminationGracePeriodSeconds` to match.
 
@@ -69,6 +76,10 @@ All notable changes to Volverán are recorded here. The format is based on
 - `/auth/login` without a session can no longer add sign-ins in progress without limit: Volverán keeps the newest 10,000.
 - The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.
 - GitHub Actions are pinned by commit and the base image by digest, and Dependabot proposes their updates and those of npm dependencies.
+
+### Known limits
+
+- A publisher confirm has no time limit of its own: AMQP heartbeats end the wait on a broker gone silent. A profile with `?heartbeat=0` in its `amqpUrl` can hold shutdown until `SIGKILL` ([guide](docs/kubernetes.md#upgrades-and-restarts)).
 
 ## [0.6.1] - 2026-10-31
 
@@ -320,7 +331,8 @@ First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/volveran/volveran/compare/v1.0.0-rc.1...HEAD
+[1.0.0-rc.1]: https://github.com/volveran/volveran/releases/tag/v1.0.0-rc.1
 [0.6.1]: https://github.com/volveran/volveran/releases/tag/v0.6.1
 [0.6.0]: https://github.com/volveran/volveran/releases/tag/v0.6.0
 [0.5.1]: https://github.com/volveran/volveran/releases/tag/v0.5.1

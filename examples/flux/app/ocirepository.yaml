@@ -11,9 +11,10 @@ spec:
   interval: 1h
   url: oci://ghcr.io/volveran/charts/volveran
   ref:
-    # Patch releases of 0.6 are picked up on their own. Pre-releases
-    # (0.6.1-rc.1) are skipped; a range like ">=0.6.0-0" asks for them.
-    semver: "0.6.x"
+    # Patch releases of 1.0 are picked up on their own. Pre-releases
+    # (1.0.0-rc.1) are skipped, so until 1.0.0 is out this range finds nothing;
+    # a range like ">=1.0.0-0" asks for them.
+    semver: "1.0.x"
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy

@@ -1,7 +1,7 @@
 // A Checkout: how many Messages it holds, the list of held Messages with
 // their Decisions, the Selection (ticked by hand or "Select all matching" a
 // filter) and the detail of the Message being looked at. Ending it returns every Message to the queue;
-// leaving the page ends it too (a beacon), so nothing stays held by accident.
+// leaving the page ends it too, so nothing stays held by accident.
 // While the page shows the Checkout it sends heartbeats (without them the
 // server ends it), and it counts down to the Checkout's time limit. Apply
 // carries out the Decisions in the background and ends the Checkout: while
@@ -132,7 +132,9 @@ export function CheckoutView({ id, hidden = false, onClose }: { id: string; hidd
   );
 
   useEffect(() => {
-    const end = () => navigator.sendBeacon(`/api/v1/checkouts/${encodeURIComponent(id)}/end`);
+    // Not sendBeacon: under Referrer-Policy: no-referrer a browser gives a beacon `Origin: null`,
+    // which the server refuses as foreign. A same-origin fetch keeps its Origin.
+    const end = () => void fetch(`/api/v1/checkouts/${encodeURIComponent(id)}/end`, { method: 'POST', keepalive: true }).catch(() => undefined);
     window.addEventListener('pagehide', end);
     return () => window.removeEventListener('pagehide', end);
   }, [id]);

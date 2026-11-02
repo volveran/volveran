@@ -9,7 +9,7 @@ app/
   kustomization.yaml        # the objects below
   namespace.yaml            # namespace volveran, enforcing restricted pod security, never pruned
   secrets.yaml              # TEMPLATE: OIDC and broker secrets, to fill in and encrypt
-  ocirepository.yaml        # the chart, semver 0.6.x, cosign-verified
+  ocirepository.yaml        # the chart, semver 1.0.x, cosign-verified
   helmrelease.yaml          # OIDC, inline Broker Profiles, persistence, HTTPRoute
 ```
 
@@ -59,7 +59,7 @@ app/
 
 ## Upgrades
 
-`ref.semver: "0.6.x"` installs every 0.6 patch release once it is published and signed. To move to a new minor version, change the range after reading the [changelog](../../CHANGELOG.md). A deploy signs everyone out and ends open Checkouts (their Messages go back to their queues), so `flux suspend helmrelease volveran -n volveran` holds upgrades back during triage work and `flux resume` releases them.
+`ref.semver: "1.0.x"` installs every 1.0 patch release once it is published and signed. It skips pre-releases, so until 1.0.0 is out it finds nothing: to try a release candidate, set `">=1.0.0-0"`. To move to a new minor version, change the range after reading the [changelog](../../CHANGELOG.md). Coming from 0.x, read the [upgrade guide](../../docs/upgrading-to-1.0.md) first. A deploy signs everyone out and ends open Checkouts (their Messages go back to their queues), so `flux suspend helmrelease volveran -n volveran` holds upgrades back during triage work and `flux resume` releases them.
 
 ## Removing it
 

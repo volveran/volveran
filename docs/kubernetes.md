@@ -6,7 +6,7 @@ The chart is Team Mode only: Solo Mode has no sign-in and never listens off loop
 
 ## What you need
 
-- A Kubernetes cluster (the chart is validated against the 1.33 API) and Helm 3.8 or later, for OCI charts.
+- A Kubernetes cluster, 1.33 to 1.37 ([what was run](compatibility.md#supported-versions)), and Helm 3.8 or later, for OCI charts.
 - A default StorageClass, or a `persistence.storageClass` to use. The claim is `ReadWriteOnce` by default.
 - An OIDC provider and a confidential client registered for Volverán, with redirect URL `https://<volveran-host>/auth/callback` ([Team Mode guide](team-mode.md)). The pod must reach the provider: it reads the discovery document at startup and is not ready until it has.
 - A Gateway API Gateway or an ingress controller that terminates TLS for `<volveran-host>`. Without one, you can still try Volverán through `kubectl port-forward`.
@@ -66,7 +66,7 @@ The chart version always equals the Volverán version, and the chart runs the im
 4. Install:
 
    ```sh
-   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.6.1 \
+   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 1.0.0-rc.1 \
      --namespace volveran -f values.yaml
    kubectl -n volveran rollout status deployment/volveran
    ```
@@ -99,7 +99,7 @@ The same command with `ghcr.io/volveran/volveran:<version>` verifies the image.
 
 ## Install with Flux CD
 
-[`examples/flux/`](../examples/flux/) is a complete layout to copy into a fleet repository: a namespace enforcing `restricted` pod security, an `OCIRepository` that follows `0.6.x` and only accepts a chart signed by Volverán's release workflow, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, a Secret template encrypted with SOPS and your own age key, and the Flux `Kustomization` that decrypts it. Its [README](../examples/flux/README.md) walks through it.
+[`examples/flux/`](../examples/flux/) is a complete layout to copy into a fleet repository: a namespace enforcing `restricted` pod security, an `OCIRepository` that follows `1.0.x` and only accepts a chart signed by Volverán's release workflow, a `HelmRelease` with OIDC, inline Broker Profiles, persistence and an `HTTPRoute`, a Secret template encrypted with SOPS and your own age key, and the Flux `Kustomization` that decrypts it. Its [README](../examples/flux/README.md) walks through it.
 
 The OIDC identity the `OCIRepository` matches is the one above:
 
@@ -111,7 +111,7 @@ verify:
       subject: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
 ```
 
-The `ref.semver` range `0.6.x` picks up patch releases on its own and skips pre-releases (`0.6.1-rc.1`); a range such as `>=0.6.0-0` asks for them.
+The `ref.semver` range `1.0.x` picks up patch releases on its own and skips pre-releases (`1.0.0-rc.1`), so until 1.0.0 is out it finds nothing; a range such as `>=1.0.0-0` asks for them.
 
 ## Values
 
@@ -194,13 +194,14 @@ caBundles:
 
 ## Upgrades and restarts
 
-Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`, or let Flux's `semver` range pick the new version up. Read the [changelog](../CHANGELOG.md) first; the chart and the app share one version.
+Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`, or let Flux's `semver` range pick the new version up. Read the [changelog](../CHANGELOG.md) first; the chart and the app share one version. **Coming from 0.x, follow the [upgrade guide](upgrading-to-1.0.md)**: on PostgreSQL the Secret needs a new key before the upgrade, and on SQLite the pod rolls and ends open Checkouts.
 
 **A deploy ends open Checkouts and, on SQLite, signs everyone out.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
 
 - On SQLite, sessions live in the Volverán process, so every Operator signs in again afterwards. On PostgreSQL they live in the database and survive it.
 - On `SIGTERM`, Volverán reports not ready at once (`/healthz` stays `200`), refuses new Checkouts with `503` `replica_shutting_down`, gives up the Background Leader lease, and ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, with no Delivery Budget used. An Apply in progress stops at its next step: the step under way finishes, and the rest go back as Keep. Decisions not yet Applied are lost. The Checkout's end reason is `shutdown`, which the web app says, through any Replica, for as long as a Checkout that is over stays readable. With one Replica there is no other to say so: after the restart the Checkout is simply not found. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
 - `pod.terminationGracePeriodSeconds` (90 by default) is the time it has for that before `SIGKILL`. At the default limit of 1,000 Messages the worst case per Checkout is about 70 seconds: up to 15 for the Apply step or start under way on a broker going silent (its heartbeats), up to 40 for a quorum queue to take its Messages back (40 ms per Message, at least 5 seconds; about 20 measured on a busy machine), and up to 5 each for closing the channel, deleting the lock queue and closing the connection. Checkouts end side by side, so this does not add up across them, and background work stops alongside rather than before, notifications in progress included (up to 5 seconds). The other 20 seconds are for writing the records and ending the lease, which are milliseconds with a healthy database, and up to 5 for requests still in progress; running out there costs no Delivery Budget. To keep the margin, add 40 ms for each Message above 1,000 when you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`: 5,000 needs about 250 seconds.
+- **A known limit: `?heartbeat=0`.** The 15 seconds above come from AMQP heartbeats, because the wait for a publisher confirm has no time limit of its own. A profile whose `amqpUrl` says `?heartbeat=0` turns them off, so on a broker gone silent an Apply step can wait for its confirm until `SIGKILL`, and each Message not yet taken back then costs one delivery on a quorum queue. Leave the heartbeat on (5 s unless the URL names another).
 - With one replica, the `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready. With [several Replicas](replicas.md), a rolling update keeps one serving, and each pod's Checkouts end as it goes.
 
 Plan deploys outside triage work, and tell Operators before one.

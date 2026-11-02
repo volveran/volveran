@@ -59,7 +59,7 @@ It uses the same parser and checks as startup, so the two cannot disagree. It co
 
 ### Unknown keys
 
-A key the profiles file does not have is refused at every level, at startup and by `check-config`, and the refusal names its path, for example `profiles[0] ("prod").protekted is not a key of a Broker Profile`. Otherwise `protekted: true` would leave a profile unprotected without a word. Releases before 1.0 ignored unknown keys at the top level and in a Broker Profile, so try your file with `check-config` before upgrading. On 0.6, `check-config` exits `2` and lists those keys.
+A key the profiles file does not have is refused at every level, at startup and by `check-config`, and the refusal names its path, for example `profiles[0] ("prod").protekted is not a key of a Broker Profile`. Otherwise `protekted: true` would leave a profile unprotected without a word. Releases before 1.0 ignored unknown keys at the top level and in a Broker Profile, so try your file with `check-config` before upgrading ([upgrade guide](upgrading-to-1.0.md)). On 0.6, `check-config` exits `2` and lists those keys.
 
 ### The schema of the profiles file
 
@@ -73,7 +73,7 @@ The parser stays the authority. The schema checks the shape of the file and its 
 
 ### The version of the profiles file
 
-`version: 1` goes at the top of the file. A file without it is read as version 1, with a warning at startup. Any other value is refused, at startup and by `check-config`. The chart writes the version into the file it renders only with `postgres.existingSecret`: on SQLite it leaves the file as 0.5 rendered it, so an upgrade does not change the ConfigMap, and you see the warning, harmless until 1.0. A ConfigMap of your own (`brokerProfiles.existingConfigMap`) should carry it.
+`version: 1` goes at the top of the file. A file without it is read as version 1, with a warning at startup. Any other value is refused, at startup and by `check-config`. The chart writes the version into the file it renders, on either store. A ConfigMap of your own (`brokerProfiles.existingConfigMap`) should carry it.
 
 ## Team Mode settings
 

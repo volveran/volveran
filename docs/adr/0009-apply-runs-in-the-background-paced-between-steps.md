@@ -14,5 +14,5 @@ Anything that changes the pace of an Apply happens between steps, never inside o
 
 - **Breaking API change.** The Apply and approve answers no longer carry `outcomes`; clients read them from the Checkout view (`GET /api/checkouts/:id`), polling while its status is `applying`.
 - An Apply in progress no longer depends on the browser: the heartbeat window is suspended while it runs (and restarts if the Apply leaves the Checkout active), so closing the tab does not stop it.
-- The time limit remains a hard bound: at the limit the executor attempts no further step, the rest is reported `not-attempted` and back in the queue in order, and the Checkout ends (`time-limit`). An Operator's end and shutdown still wait for the Apply to finish.
+- The time limit remains a hard bound: at the limit the executor attempts no further step, the rest is reported `not-attempted` and back in the queue, and the Checkout ends (`time-limit`). An Operator's end and shutdown still wait for the Apply to finish.
 - A Lost Checkout mid-Apply is reported as before: the step in progress fails or completes, the rest is `not-attempted`, and the broker has already returned those Messages.

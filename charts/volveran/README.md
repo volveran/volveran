@@ -3,7 +3,7 @@
 Runs [Volverán](https://github.com/volveran/volveran) on Kubernetes as a shared service: Team Mode (OIDC sign-in), one
 replica, and a PersistentVolumeClaim for the audit store, or PostgreSQL, which also allows several Replicas. The pod passes the `restricted` Pod Security Standard.
 
-The chart version always equals the Volverán version, and the default image tag is the chart's `appVersion`.
+The chart version always equals the Volverán version, and the default image tag is the chart's `appVersion`. A pre-release such as `1.0.0-rc.1` is a pre-release chart too: name it with `--version`. Chart values are a public contract through 1.x ([compatibility policy](../../docs/compatibility.md)).
 
 ## What the chart fixes
 
@@ -25,8 +25,10 @@ These follow from Volverán's design and are not values:
 - **The audit store PersistentVolumeClaim is kept on uninstall** (`helm.sh/resource-policy: keep`). Delete it by hand
   to delete the audit trail.
 
-A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues,
-which on a quorum queue can take about a minute at worst at the default limit of 1,000 Messages; `pod.terminationGracePeriodSeconds` (90) gives that time to finish.
+A deploy or pod restart ends open Checkouts and, on SQLite, signs every Operator out (on PostgreSQL sessions survive it). Messages return to their queues,
+which on a quorum queue can take about a minute at worst at the default limit of 1,000 Messages; `pod.terminationGracePeriodSeconds` (90) gives that time to finish. A profile whose `amqpUrl` says `?heartbeat=0` can outlast it on a silent broker ([known limit](../../docs/kubernetes.md#upgrades-and-restarts)).
+
+Coming from 0.x, read the [upgrade guide](../../docs/upgrading-to-1.0.md) first. On PostgreSQL, the Secret in `oidc.existingSecret` needs `session-encryption-key` before you upgrade, or the pod cannot start.
 
 ## Install
 
@@ -40,6 +42,8 @@ kubectl -n volveran create secret generic volveran-oidc \
 kubectl -n volveran create secret generic volveran-broker-passwords \
   --from-literal=VOLVERAN_PROD_PASSWORD='<broker password>'
 ```
+
+With `postgres.existingSecret`, `volveran-oidc` also needs `session-encryption-key` (`openssl rand -hex 32`).
 
 Then write the values:
 

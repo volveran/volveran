@@ -130,7 +130,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:0.6.1
+  ghcr.io/volveran/volveran:1.0.0-rc.1
 ```
 
 Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audit trail and every Discarded Message. On Docker Desktop, turn on host networking first ([details](docs/configuration.md#why-solo-mode-uses-the-host-network)). With Compose, use [`docker-compose.example.yml`](docker-compose.example.yml).
@@ -140,24 +140,25 @@ Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audi
 **Kubernetes:** a signed Helm chart, also with a [Flux CD example](examples/flux/). See the [Kubernetes guide](docs/kubernetes.md).
 
 ```sh
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.6.1 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 1.0.0-rc.1 \
   --namespace volveran -f values.yaml
 ```
 
 ## Where it's going
 
-Not available yet ([roadmap](ROADMAP.md)): a security review, upgrade guarantees and a stable configuration format.
+Volverán 1.0 is in release candidates. It brings several Replicas, a stable configuration format, [upgrade guarantees](docs/compatibility.md) and a [security review](docs/security-review.md) done by the project itself. Coming from 0.x, read the [upgrade guide](docs/upgrading-to-1.0.md). What comes after is in the [roadmap](ROADMAP.md).
 
 ## Learn more
 
 - [Observability](docs/observability.md): sizing, Alert Rules, the webhook schema and the metric reference.
 - [Configuration](docs/configuration.md): every setting and the health checks.
 - [Running several Replicas](docs/replicas.md): setting it up, what failover protects and not, and what was tested.
+- [Upgrading from 0.x to 1.0](docs/upgrading-to-1.0.md): everything 1.0 refuses, and what to do about it first.
 - [Compatibility policy](docs/compatibility.md): what a version may change, supported upgrades, and the RabbitMQ, PostgreSQL, Kubernetes and Node versions tested.
 - [PostgreSQL](docs/postgresql.md): keeping the audit store in your own database, with TLS, what happens when it goes away, and sizing.
 - [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
-- [Threat model](docs/threat-model.md): what Volverán protects, what was tested, and the risks it accepts.
+- [Security review](docs/security-review.md): who did it, what was tested and what was not. [Threat model](docs/threat-model.md): what Volverán protects, each result in full, and the risks it accepts.
 - [Architecture decisions](docs/adr/).
 - [Changelog](CHANGELOG.md).
 - [Contributing](CONTRIBUTING.md): development, tests and releases.

@@ -12,8 +12,15 @@ const callsIn = (text: string) => text.match(/['"`]\/api\/[^'"`\s]*/g) ?? [];
 describe('The web app', () => {
   const calls = webFiles.flatMap((file) => callsIn(readFileSync(path.join(root, 'src/web', file), 'utf8')).map((call) => ({ file, call })));
 
-  it('makes its calls, its beacon and its links too, under /api/v1', () => {
+  it('makes its calls, its end on leaving the page and its links too, under /api/v1', () => {
     expect(calls.map(({ file }) => file)).toEqual(expect.arrayContaining(['api.ts', 'CheckoutView.tsx', 'MessageList.tsx']));
     expect(calls.filter(({ call }) => !call.slice(1).startsWith('/api/v1/'))).toEqual([]);
+  });
+
+  // Under Referrer-Policy: no-referrer a browser gives a beacon `Origin: null`, which the Origin check refuses.
+  it('sends no beacon, and ends a Checkout on leaving the page with a keepalive fetch', () => {
+    const uses = webFiles.filter((file) => /\bsendBeacon\s*\(/.test(readFileSync(path.join(root, 'src/web', file), 'utf8')));
+    expect(uses).toEqual([]);
+    expect(readFileSync(path.join(root, 'src/web/CheckoutView.tsx'), 'utf8')).toMatch(/\/end`, \{ method: 'POST', keepalive: true \}/);
   });
 });

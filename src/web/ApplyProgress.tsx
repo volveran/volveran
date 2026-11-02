@@ -77,7 +77,7 @@ export function ApplyProgressPanel({
             <strong>Stop the Apply?</strong>
             <span>
               The step in progress finishes, and no further step is attempted. Every Message left is reported not
-              attempted and goes back to the queue in its original order, as Keep.
+              attempted and goes back to the queue, as Keep.
             </span>
             <span>
               <button className="danger" onClick={() => void stop()}>

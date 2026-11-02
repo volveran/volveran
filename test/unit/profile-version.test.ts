@@ -20,6 +20,21 @@ vi.setConfig({ testTimeout: 60_000 });
 
 const parse = (text: string) => parseProfilesFile(text, {}, 'profiles.yaml');
 
+describe('YAML that a file from before 1.0 may use', () => {
+  it('refuses a top-level key that holds anchors, and names it', () => {
+    expect(() => parse(`x-common: &common\n  username: volveran\n${profile}`)).toThrow(/x-common is not a key of the profiles file/);
+  });
+
+  it('refuses a merge key, and names it', () => {
+    expect(() => parse(`${profile}\n    <<: { defaultQueueFilter: "*" }`)).toThrow(/prod"\)\.<< is not a key of a Broker Profile/);
+  });
+
+  it('reads an alias of a value under a key the file has', () => {
+    const file = parse(`${profile}\n    roles:\n      viewer: &people [support]\n      operator: *people`);
+    expect(file.profiles[0]?.roles).toMatchObject({ operator: ['support'] });
+  });
+});
+
 describe('the version of the profiles file', () => {
   it('reads version 1', () => {
     expect(parse(`version: 1\n${profile}`).versionDeclared).toBe(true);
