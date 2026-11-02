@@ -1,6 +1,6 @@
 # Roadmap
 
-Volverán **v0.6.1 is the latest release** (October 2026), as `ghcr.io/volveran/volveran:0.6.1`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version. **v1.0 is in release candidates**, starting with `1.0.0-rc.1`; see the [changelog](CHANGELOG.md) and the [upgrade guide](docs/upgrading-to-1.0.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
+Volverán **v1.0.0 is the latest release** (November 2026), as `ghcr.io/volveran/volveran:1.0.0`, with the Helm chart `oci://ghcr.io/volveran/charts/volveran` at the same version. See the [changelog](CHANGELOG.md) and the [upgrade guide](docs/upgrading-to-1.0.md). The vocabulary is in [`GLOSSARY.md`](GLOSSARY.md) and the key decisions in [`docs/adr/`](docs/adr/). Later versions are ordered by priority. Dates are not promised.
 
 ## v0.1: Triage core and identity (released in 0.1.0)
 
@@ -122,7 +122,7 @@ These things differ from the plan or remain open:
 - **Keep can use up Delivery Budget on quorum queues.** The broker-facts gate for returning Messages at shutdown did not hold: closing a channel straight after `nack` uses up Delivery Budget, and ending a Checkout does that ([RabbitMQ behaviour](docs/rabbitmq-behaviour.md#returning-messages-before-closing)). It is a known issue in 0.6.0, not fixed.
 - **`node:sqlite` is a release candidate on Node 24**, not stable. The status and what follows from it are [recorded](docs/rabbitmq-behaviour.md#nodejs-runtime-nodesqlite).
 
-## v1.0: Production hardening (in release candidates)
+## v1.0: Production hardening (released in 1.0.0)
 
 Everything still works on one Replica on SQLite, and in Solo Mode. Upgrading from 0.x has refusals to deal with first, unknown keys in the profiles file above all: see the [upgrade guide](docs/upgrading-to-1.0.md).
 

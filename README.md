@@ -130,7 +130,7 @@ docker run --rm --read-only --network host \
   -v volveran-data:/data \
   -e VOLVERAN_OPERATOR="$USER" \
   -e VOLVERAN_DEV_PASSWORD \
-  ghcr.io/volveran/volveran:1.0.0-rc.1
+  ghcr.io/volveran/volveran:1.0.0
 ```
 
 Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audit trail and every Discarded Message. On Docker Desktop, turn on host networking first ([details](docs/configuration.md#why-solo-mode-uses-the-host-network)). With Compose, use [`docker-compose.example.yml`](docker-compose.example.yml).
@@ -140,13 +140,13 @@ Open <http://127.0.0.1:8080>. Keep the `volveran-data` volume: it holds the audi
 **Kubernetes:** a signed Helm chart, also with a [Flux CD example](examples/flux/). See the [Kubernetes guide](docs/kubernetes.md).
 
 ```sh
-helm install volveran oci://ghcr.io/volveran/charts/volveran --version 1.0.0-rc.1 \
+helm install volveran oci://ghcr.io/volveran/charts/volveran --version 1.0.0 \
   --namespace volveran -f values.yaml
 ```
 
 ## Where it's going
 
-Volverán 1.0 is in release candidates. It brings several Replicas, a stable configuration format, [upgrade guarantees](docs/compatibility.md) and a [security review](docs/security-review.md) done by the project itself. Coming from 0.x, read the [upgrade guide](docs/upgrading-to-1.0.md). What comes after is in the [roadmap](ROADMAP.md).
+Volverán 1.0 brings several Replicas, a stable configuration format, [upgrade guarantees](docs/compatibility.md) and a [security review](docs/security-review.md) done by the project itself. Coming from 0.x, read the [upgrade guide](docs/upgrading-to-1.0.md). What comes after is in the [roadmap](ROADMAP.md).
 
 ## Learn more
 

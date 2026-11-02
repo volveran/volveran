@@ -66,7 +66,7 @@ The chart version always equals the Volverán version, and the chart runs the im
 4. Install:
 
    ```sh
-   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 1.0.0-rc.1 \
+   helm install volveran oci://ghcr.io/volveran/charts/volveran --version 1.0.0 \
      --namespace volveran -f values.yaml
    kubectl -n volveran rollout status deployment/volveran
    ```
@@ -111,7 +111,7 @@ verify:
       subject: '^https://github\.com/volveran/volveran/\.github/workflows/release\.yml@refs/tags/v.*$'
 ```
 
-The `ref.semver` range `1.0.x` picks up patch releases on its own and skips pre-releases (`1.0.0-rc.1`), so until 1.0.0 is out it finds nothing; a range such as `>=1.0.0-0` asks for them.
+The `ref.semver` range `1.0.x` picks up patch releases on its own and skips pre-releases (`1.0.0-rc.1`); a range such as `>=1.0.0-0` asks for them.
 
 ## Values
 

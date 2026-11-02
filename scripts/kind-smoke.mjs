@@ -5,13 +5,16 @@
 // then replaces the release with two Replicas on PostgreSQL (test/smoke/values-replicas.yaml)
 // and runs test/smoke/replicas.test.ts. Needs docker, kind, kubectl and helm on PATH. See
 // CONTRIBUTING.md. VOLVERAN_SMOKE_RUN=single or replicas runs only that one.
+// VOLVERAN_SMOKE_PUBLISHED=<version> pulls that version's image and chart from ghcr.io
+// instead of building the image and using the chart in this checkout; the tests stay this checkout's.
+// With it, VOLVERAN_SMOKE_RUN=chart-upgrade runs test/smoke/published-chart-upgrade.test.ts instead.
 // VOLVERAN_TEST_LOCK_FILE makes it take turns with the broker suites, as they do.
 //
 // When a step fails it prints the pods, events and logs of both namespaces.
 // The cluster is deleted at the end unless VOLVERAN_SMOKE_KEEP_CLUSTER=1,
 // which also reuses a kept cluster on the next run.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -29,11 +32,13 @@ import {
   kubectl,
   oidc,
   postgresUrl,
+  publishedVersion,
   releaseName,
   replicasValues,
   repoRoot,
   sessionEncryptionKey,
   sessionSecret,
+  upgradeFromVersion,
   brokerAdmin,
   smokeDir,
 } from '../test/smoke/kind-env.mjs';
@@ -73,7 +78,7 @@ function step(/** @type {string} */ name) {
 }
 
 /**
- * Loads the dependency images into kind from the host's Docker, pulling
+ * Loads images from a registry into kind from the host's Docker, pulling
  * them there first (a no-op when cached), so the rollout timeout below
  * covers readiness only, not a pull by the kind node. `kind load
  * docker-image` cannot load these: it imports all platforms, and with
@@ -81,8 +86,7 @@ function step(/** @type {string} */ name) {
  * platform only ("content digest ... not found"). So the images are saved
  * for the node's platform and loaded as an archive.
  */
-function loadDependencyImages() {
-  const images = dependencyImages();
+function loadPulledImages(/** @type {string[]} */ images) {
   const platform = sh('docker', ['version', '--format', '{{.Server.Os}}/{{.Server.Arch}}'], { capture: true }).stdout.trim();
   for (const ref of images) sh('docker', ['pull', '--platform', platform, ref]);
   const dir = mkdtempSync(path.join(os.tmpdir(), 'volveran-smoke-'));
@@ -94,7 +98,16 @@ function loadDependencyImages() {
       // Docker before 28 has no `save --platform`; its classic image store holds one platform anyway.
       sh('docker', ['save', '-o', archive, ...images]);
     }
-    sh('kind', ['load', 'image-archive', archive, '--name', clusterName]);
+    try {
+      sh('kind', ['load', 'image-archive', archive, '--name', clusterName]);
+    } catch {
+      // A kind older than the node image cannot read its containerd config. This is what it would run.
+      console.log('[kind-smoke] kind load failed: importing into the node with ctr instead');
+      const fd = openSync(archive, 'r');
+      const imported = spawnSync('docker', ['exec', '-i', `${clusterName}-control-plane`, 'ctr', '--namespace=k8s.io', 'images', 'import', '--digests', '--snapshotter=overlayfs', '-'], { stdio: [fd, 'inherit', 'inherit'] });
+      closeSync(fd);
+      if (imported.status !== 0) throw new Error(`ctr images import exited with ${imported.status}`);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -128,7 +141,7 @@ function diagnostics() {
 
 /** Installs the chart with these values, refusing any Pod Security warning, and plays an Operator with this test file. */
 function installAndPlay(/** @type {string} */ testFile, /** @type {string[]} */ valuesFiles) {
-  step(`helm install the chart from this checkout, for ${testFile}`);
+  step(`helm install the chart ${publishedVersion ? `published as ${publishedVersion}` : 'from this checkout'}, for ${testFile}`);
   const installed = sh('helm', helmInstallArgs(valuesFiles), { capture: true });
   // The namespace's warn label makes Kubernetes report any violation, even one enforce would only refuse later.
   if (/PodSecurity|would violate/i.test(installed.stderr)) throw new Error('the install reported Pod Security violations');
@@ -151,12 +164,18 @@ try {
     sh('kind', ['create', 'cluster', '--name', clusterName, '--image', kubernetesNodeImage, '--kubeconfig', kubeconfig, '--wait', '5m']);
   }
 
-  step(`build ${imageRef} and load it into kind`);
-  sh('docker', ['build', '-t', imageRef, '.']);
-  sh('kind', ['load', 'docker-image', imageRef, '--name', clusterName]);
+  if (publishedVersion) {
+    step(`pull the published ${imageRef} and load it into kind`);
+    loadPulledImages([imageRef]);
+    sh('docker', ['image', 'inspect', '--format', '{{range .RepoDigests}}{{println .}}{{end}}', imageRef]);
+  } else {
+    step(`build ${imageRef} and load it into kind`);
+    sh('docker', ['build', '-t', imageRef, '.']);
+    sh('kind', ['load', 'docker-image', imageRef, '--name', clusterName]);
+  }
 
   step('load the RabbitMQ, PostgreSQL and mock OIDC provider images into kind');
-  loadDependencyImages();
+  loadPulledImages(dependencyImages());
 
   step('RabbitMQ, PostgreSQL and the mock OIDC provider');
   applyGenerated('create', 'namespace', depsNamespace);
@@ -200,6 +219,14 @@ try {
     }
   }
   if (runs.includes('replicas')) installAndPlay('test/smoke/replicas.test.ts', [replicasValues]);
+  if (runs.includes('chart-upgrade')) {
+    if (!publishedVersion) throw new Error('VOLVERAN_SMOKE_RUN=chart-upgrade needs VOLVERAN_SMOKE_PUBLISHED');
+    step(`load the published image of ${upgradeFromVersion} into kind, and upgrade from its chart`);
+    loadPulledImages([`${image.repository}:${upgradeFromVersion}`]);
+    sh(path.join(repoRoot, 'node_modules/.bin/vitest'), ['run', '--config', 'vitest.smoke.config.ts', '--reporter=verbose', 'test/smoke/published-chart-upgrade.test.ts'], {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: caFile },
+    });
+  }
   status = 0;
 } catch (err) {
   console.error(`\n[kind-smoke] failed: ${err instanceof Error ? err.message : err}`);
