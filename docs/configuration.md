@@ -23,14 +23,17 @@ Every setting is an environment variable.
 | `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES` | `60` | how often retention runs (1 to 1440); it also runs at startup |
 | `VOLVERAN_HISTORY_INTERVAL_SECONDS` | `60` | how often Volverán samples the dead-letter queues of every Broker Profile with shared credentials, reading only the management API (15 to 3600) |
 | `VOLVERAN_HISTORY_RETENTION_DAYS` | `14` | how long Samples and the outcomes of notifications are kept (1 to 90); the retention job removes older ones ([sizing](observability.md#sizing)) |
-| `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link |
+| `VOLVERAN_PUBLIC_URL` | in Team Mode, the origin of `VOLVERAN_OIDC_REDIRECT_URL` | the base of the links in notifications; with neither, they carry no link. Also an address the browser may reach Volverán at: its origin is accepted by the [Origin and Host checks](team-mode.md#what-volverán-does). An `https` value also sends `Strict-Transport-Security` on every answer, as does a request with `X-Forwarded-Proto: https` |
 | `VOLVERAN_METRICS_PORT` | off | serves Prometheus metrics at `/metrics` on this port, at `VOLVERAN_HOST`'s address, with no session; never on the web app's port ([metric reference](observability.md#metrics)) |
+| `VOLVERAN_FORWARDING_SECRET` | unset | several Replicas, in Team Mode on PostgreSQL only (ignored elsewhere): at least 32 characters, the same on every Replica. Setting it makes this Replica register in the database, and serve a Checkout it does not own by forwarding to its Owner Replica. Anyone holding it can act as any Operator on the forwarding port, so let only other Replicas reach that port (the [chart](replicas.md) does). Unset, nothing registers |
+| `VOLVERAN_FORWARDING_PORT` | required with the secret | this Replica's internal port, at `VOLVERAN_HOST`'s address; differs from the web app's and metrics ports |
+| `VOLVERAN_FORWARDING_ADDRESS` | required with the secret | the `host:port` where other Replicas reach that port |
 
 A Checkout declares an exclusive lock queue `volveran.checkout.<queue>`, so each Broker Profile's broker user needs configure permission on queues matching `^volveran\.` in the vhosts it triages (see [ADR 0006](adr/0006-checkout-mechanics-on-rabbitmq-4.md)). A Canary's watch queue `volveran.canary.<checkout id>` falls under the same configure permission; the broker user also needs write and read on it (`^volveran\.`) and read on the dead-letter exchanges of the queues it Replays to. Without them the Canary is unwatched, not refused.
 
 ### Health checks
 
-`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that), `503` once shutdown starts, and on PostgreSQL `503` with `{"status":"unavailable"}` while the database cannot be reached, [recovering by itself](postgresql.md#when-the-database-goes-away). Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), otherwise return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
+`GET /healthz` answers `200` whenever the process serves HTTP; `GET /readyz` answers `200` once startup has finished (configuration and Broker Profiles loaded, OIDC discovery done in Team Mode, audit store open; the server only starts listening after that), `503` with `{"status":"unavailable"}` from the moment shutdown starts, and on PostgreSQL `503` with `{"status":"unavailable"}` while the database cannot be reached, [recovering by itself](postgresql.md#when-the-database-goes-away). Both answer without a session in either mode, never check a broker (one unreachable broker does not make Volverán unready), otherwise return only `{"status":"ok"}` and are left out of the request log. Use them for Kubernetes probes or a Compose `healthcheck`.
 
 ## Checking the configuration
 
@@ -47,15 +50,26 @@ From a checkout, `npm run build`, then `node dist/server/main.js check-config`. 
 
 | Exit status | Meaning |
 |---|---|
-| `0` | Volverán would start with this, and 1.0 will read the file. There may be warnings |
+| `0` | Volverán would start with this. There may be warnings |
 | `1` | Startup would refuse this. The first problem is printed; fix it and run again to see the next |
-| `2` | Volverán would start with this, ignoring keys that 1.0 will refuse. Each is listed |
 
-To accept unknown keys for now, treat `2` as a pass in your pipeline. A misspelt key is why it fails by default: `protekted: true` leaves a profile unprotected without a word.
-
-It prints one finding a line, on stdout, starting `error:`, `refused in 1.0:` or `warning:`, then a summary. It names keys and variables, never their values. Warnings are a file without a version and a password variable that is not set, which startup also accepts (using that profile reports `password_not_set`).
+It prints one finding a line, on stdout, starting `error:` or `warning:`, then a summary. It names keys and variables, never their values. Warnings are a file without a version and a password variable that is not set, which startup also accepts (using that profile reports `password_not_set`).
 
 It uses the same parser and checks as startup, so the two cannot disagree. It contacts no broker, opens no audit store and listens on nothing, which also means it cannot tell whether a broker is reachable, a password is right, or (in Team Mode) the OIDC issuer answers.
+
+### Unknown keys
+
+A key the profiles file does not have is refused at every level, at startup and by `check-config`, and the refusal names its path, for example `profiles[0] ("prod").protekted is not a key of a Broker Profile`. Otherwise `protekted: true` would leave a profile unprotected without a word. Releases before 1.0 ignored unknown keys at the top level and in a Broker Profile, so try your file with `check-config` before upgrading. On 0.6, `check-config` exits `2` and lists those keys.
+
+### The schema of the profiles file
+
+Each [GitHub Release](https://github.com/volveran/volveran/releases) has a JSON Schema of the file for that version, `profiles.schema.json`, for your editor or pipeline. In an editor using the YAML language server, put this at the top of the file:
+
+```yaml
+# yaml-language-server: $schema=https://github.com/volveran/volveran/releases/download/v<version>/profiles.schema.json
+```
+
+The parser stays the authority. The schema checks the shape of the file and its keys, and never refuses a file the parser reads. It cannot see some things the parser refuses: a duration out of range, a name used twice, a variable that is not set, or a reference to another part of the file. `check-config` has the final word.
 
 ### The version of the profiles file
 
@@ -74,8 +88,25 @@ It uses the same parser and checks as startup, so the two cannot disagree. It co
 | `VOLVERAN_OIDC_SCOPES` | `openid email profile` | space-separated; must include `openid` |
 | `VOLVERAN_OIDC_GROUPS_CLAIM` | `groups` | the claim listing the Operator's groups, which each Broker Profile's `roles` maps to a Role: a name or dotted path (`realm_access.roles`), read from the ID token, else from userinfo ([Team Mode guide](team-mode.md#the-groups-claim)) |
 | `VOLVERAN_SESSION_SECRET` | required | at least 32 characters (`openssl rand -hex 32`); signs the session cookie |
+| `VOLVERAN_SESSION_ENCRYPTION_KEY` | required with `VOLVERAN_POSTGRES_URL` | at least 32 characters, different from the session secret (`openssl rand -hex 32`); encrypts the access and refresh tokens of sessions in the database. Not read on SQLite |
+| `VOLVERAN_SESSION_IDLE_MINUTES` | `60` | 1 to 720; a session its Operator has not used for this long ends. See [below](#session-idle-timeout) |
 
-The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions live in the Volverán process (one replica, see [ADR 0003](adr/0003-single-replica-on-kubernetes.md)): they last 12 hours, **Sign out** ends them at once, and a restart signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+The issuer and redirect URL must use `https`, except on `localhost`/`127.0.0.1`. Sessions last 12 hours at most and **Sign out** ends them at once. On SQLite they live in the Volverán process, so a restart signs everyone out. On PostgreSQL they live in the database, so a restart signs nobody out; a new encryption key signs everyone out. The session cookie is HTTP-only and `SameSite=Lax`, and `Secure` when the redirect URL is `https`.
+
+### Session idle timeout
+
+A session ends when its Operator has done nothing for `VOLVERAN_SESSION_IDLE_MINUTES`, on both audit stores, on top of the 12 hours. It can end up to a minute early, as a session in use is written to the store at most once a minute.
+
+- **What counts.** Any `/api/` request, through any Replica, including the heartbeat of an open Checkout. An open page on a Checkout therefore keeps the session until the Checkout has ended, which its time limit bounds. What a page keeps asking with nobody needed there does not count: the heartbeat of a Checkout that is over, and the Approvals page's polling.
+- **What happens next.** The next request answers `401 not_signed_in`, and the web app goes to the provider's sign-in and returns to the same page. If the Operator is still signed in at the provider, that takes no password: to require one, shorten the provider's own session too.
+- **`credentials: operatorToken`.** A session that has ended stops refreshing its access token, so a Checkout's connections close when the token expires. Keep the page open during a long Apply, as its heartbeat keeps the session.
+- **After an upgrade.** A session from before this setting, or after the timeout is shortened, takes the new timeout at its next request.
+
+## The HTTP API
+
+The API is served under `/api/v1`. `/api`, where it lived before 1.0, is an alias through 1.x, with the same routes, checks and answers, so scripts written for 0.x keep working. An answer that holds a link, such as `auditUrl` in a queue's history, names `/api/v1` under either.
+
+Each [GitHub Release](https://github.com/volveran/volveran/releases) has an OpenAPI 3.1 description of the API for that version, `openapi.json`.
 
 ## The audit store volume
 

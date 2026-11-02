@@ -1,6 +1,8 @@
 # Exporting Messages
 
-The owner of an active Checkout can download its held Messages as NDJSON, every one or only those matching the current filter (the **Export** buttons, or `POST /api/checkouts/:id/export` with an optional `{ "filter": [...] }`). Exporting only reads: it never acks, rejects or reorders a Message, and leaves the Decisions as they are. The file is named `volveran-<profile>-<queue>-<UTC time>.ndjson` and is streamed, so even a Checkout at the 100 MB limit is never copied whole into memory. Each export is recorded as an Audit Entry (action `export`) with the Operator, profile, queue, Checkout, filter and number of Messages, but no copy of the Messages.
+The owner of an active Checkout can download its held Messages as NDJSON, every one or only those matching the current filter (the **Export** buttons, or `POST /api/v1/checkouts/:id/export` with an optional `{ "filter": [...] }`). Exporting only reads: it never acks, rejects or reorders a Message, and leaves the Decisions as they are. The file is named `volveran-<profile>-<queue>-<UTC time>.ndjson` and is streamed, so even a Checkout at the 100 MB limit is never copied whole into memory. Each export is recorded as an Audit Entry (action `export`) with the Operator, profile, queue, Checkout, filter and number of Messages, but no copy of the Messages.
+
+An export abandoned while its last line is being written is recorded `done`: the line was handed over, and Volverán cannot tell whether it arrived.
 
 Each line is one JSON object per Message, in queue order:
 

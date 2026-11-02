@@ -146,15 +146,18 @@ helm install volveran oci://ghcr.io/volveran/charts/volveran --version 0.6.1 \
 
 ## Where it's going
 
-Not available yet ([roadmap](ROADMAP.md)): several replicas (Team Mode runs one today), a security review, upgrade guarantees and a stable configuration format.
+Not available yet ([roadmap](ROADMAP.md)): a security review, upgrade guarantees and a stable configuration format.
 
 ## Learn more
 
 - [Observability](docs/observability.md): sizing, Alert Rules, the webhook schema and the metric reference.
 - [Configuration](docs/configuration.md): every setting and the health checks.
+- [Running several Replicas](docs/replicas.md): setting it up, what failover protects and not, and what was tested.
+- [Compatibility policy](docs/compatibility.md): what a version may change, supported upgrades, and the RabbitMQ, PostgreSQL, Kubernetes and Node versions tested.
 - [PostgreSQL](docs/postgresql.md): keeping the audit store in your own database, with TLS, what happens when it goes away, and sizing.
 - [Replaying many Messages](docs/replaying.md), [Exporting Messages](docs/exporting.md).
 - [Glossary](GLOSSARY.md): the vocabulary used everywhere in Volverán.
+- [Threat model](docs/threat-model.md): what Volverán protects, what was tested, and the risks it accepts.
 - [Architecture decisions](docs/adr/).
 - [Changelog](CHANGELOG.md).
 - [Contributing](CONTRIBUTING.md): development, tests and releases.

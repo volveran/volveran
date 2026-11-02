@@ -1,8 +1,8 @@
 # Running Volverán on Kubernetes
 
-The Helm chart `oci://ghcr.io/volveran/charts/volveran` runs Volverán as a shared service: Team Mode (OIDC sign-in), one replica, and a PersistentVolumeClaim for the audit store. This guide covers installing it with Helm or Flux CD, the values, exposure, secrets, private CAs, upgrades, and backing up the audit store. Every value is listed in the [chart README](../charts/volveran/README.md#values).
+The Helm chart `oci://ghcr.io/volveran/charts/volveran` runs Volverán as a shared service: Team Mode (OIDC sign-in), one replica, and a PersistentVolumeClaim for the audit store, or [several Replicas](replicas.md) on PostgreSQL. This guide covers installing it with Helm or Flux CD, the values, exposure, secrets, private CAs, upgrades, and backing up the audit store. Every value is listed in the [chart README](../charts/volveran/README.md#values).
 
-The chart is Team Mode only: Solo Mode has no sign-in and never listens off loopback ([ADR 0002](adr/0002-solo-and-team-modes.md)). It always runs exactly one replica with the `Recreate` strategy ([ADR 0003](adr/0003-single-replica-on-kubernetes.md)), and its pod passes the `restricted` Pod Security Standard.
+The chart is Team Mode only: Solo Mode has no sign-in and never listens off loopback ([ADR 0002](adr/0002-solo-and-team-modes.md)). By default it runs one replica with the `Recreate` strategy. Above that it needs PostgreSQL, and uses a rolling update ([Running several Replicas](replicas.md), [ADR 0014](adr/0014-replicas-forwarding-and-the-background-leader.md)). Its pods pass the `restricted` Pod Security Standard.
 
 ## What you need
 
@@ -75,7 +75,7 @@ The chart version always equals the Volverán version, and the chart runs the im
 
 5. Open `https://volveran.example.com`. The browser goes to your provider and back, and the top bar shows the signed-in Operator.
 
-The chart refuses to render, naming the value, when a required value is missing (`oidc.issuer`, `oidc.clientId`, `oidc.redirectUrl`, `oidc.existingSecret`, a Broker Profile) or wrong (`replicaCount` other than 1, a `password` in a Broker Profile). `helm template` and Flux's HelmRelease status show the same message.
+The chart refuses to render, naming the value, when a required value is missing (`oidc.issuer`, `oidc.clientId`, `oidc.redirectUrl`, `oidc.existingSecret`, a Broker Profile) or wrong (`replicaCount` above 1 on SQLite or without `forwarding.existingSecret`, a `password` in a Broker Profile). `helm template` and Flux's HelmRelease status show the same message.
 
 To try Volverán without a route, leave `httpRoute` out and port-forward:
 
@@ -126,9 +126,10 @@ The [chart README](../charts/volveran/README.md#values) lists every value with i
 | `settings`, `extraEnv` | Checkout limits, time limit, heartbeat, body retention, and the depth history's interval and retention; other `VOLVERAN_*` variables. |
 | `persistence` | The audit store claim: size, StorageClass, access mode, or an `existingClaim`. |
 | `postgres` | The audit store on PostgreSQL instead: the Secret holding the URL, required TLS and a CA ([PostgreSQL guide](postgresql.md)). |
+| `replicaCount`, `forwarding` | Several Replicas on PostgreSQL, the Secret they forward requests under, and their internal port ([guide](replicas.md)). |
 | `httpRoute`, `ingress` | Exposure. Neither is rendered by default. |
 | `metrics` | The Prometheus metrics port, off by default, and an optional `ServiceMonitor`. |
-| `networkPolicy` | Who may reach the pod (`ingressFrom` the web app, `metricsFrom` the metrics port), and optionally where it may connect. |
+| `networkPolicy` | Who may reach the pod (`ingressFrom` the web app, `metricsFrom` the metrics port), and optionally where it may connect. With several Replicas, a policy always closes the internal port. |
 | `image`, `pod`, `service` | Image repository, tag or digest, pull Secrets; resources, grace period, scheduling; the Service port. |
 
 Pin the image by digest with `image.digest: sha256:<digest>`, and pull from a private mirror with `image.repository` and `image.pullSecrets`. Raise `pod.resources` memory together with `settings.checkoutMaxMb`: a Checkout holds its Message bodies in memory.
@@ -165,13 +166,13 @@ The chart only references Secrets by name, so SOPS, Sealed Secrets, External Sec
 
 | Secret | Value | Keys |
 |---|---|---|
-| OIDC | `oidc.existingSecret` | `client-secret` (`oidc.clientSecretKey`): the OIDC client secret. `session-secret` (`oidc.sessionSecretKey`): at least 32 characters, signs the session cookies. |
+| OIDC | `oidc.existingSecret` | `client-secret` (`oidc.clientSecretKey`): the OIDC client secret. `session-secret` (`oidc.sessionSecretKey`): at least 32 characters, signs the session cookies. On PostgreSQL, `session-encryption-key` (`oidc.sessionEncryptionKeyKey`): at least 32 characters, encrypts the tokens of sessions in the database. |
 | Broker passwords | `brokerProfiles.passwordsSecret` | One key per Broker Profile, named as its `passwordEnv`. Every key becomes an environment variable of the pod, so name keys as environment variables (`VOLVERAN_PROD_PASSWORD`). |
 | Alert Destinations | `alerts.existingSecret` | One key per `urlEnv` and `signingSecretEnv`. Every key becomes an environment variable of the pod. |
 
 Adding a Broker Profile means adding its profile to the values and its key to the passwords Secret, with no template change.
 
-The pod reads Secrets at startup. After changing one, restart Volverán (`kubectl -n volveran rollout restart deployment/volveran`), which signs everyone out (see [Upgrades](#upgrades-and-restarts)). A new session secret also invalidates every session cookie.
+The pod reads Secrets at startup. After changing one, restart Volverán (`kubectl -n volveran rollout restart deployment/volveran`), which signs everyone out on SQLite (see [Upgrades](#upgrades-and-restarts)). A new session secret also invalidates every session cookie, and a new session encryption key every session in the database.
 
 ## Private CAs
 
@@ -195,12 +196,12 @@ caBundles:
 
 Upgrade with `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`, or let Flux's `semver` range pick the new version up. Read the [changelog](../CHANGELOG.md) first; the chart and the app share one version.
 
-**A deploy signs everyone out and ends open Checkouts.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
+**A deploy ends open Checkouts and, on SQLite, signs everyone out.** The same is true of every pod restart: a values change that rolls the pod, a node drain or an eviction.
 
-- Sessions live in the Volverán process, so every Operator signs in again afterwards.
-- On `SIGTERM`, Volverán ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, in order (on a quorum queue, a large Checkout can use up Delivery Budget as it ends; see the [changelog](../CHANGELOG.md)). An Apply in progress finishes first. Decisions not yet Applied are lost. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
-- `pod.terminationGracePeriodSeconds` (60 by default) is the time it has for that before `SIGKILL`. Raise it if Checkouts on slow brokers need longer.
-- The `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready.
+- On SQLite, sessions live in the Volverán process, so every Operator signs in again afterwards. On PostgreSQL they live in the database and survive it.
+- On `SIGTERM`, Volverán reports not ready at once (`/healthz` stays `200`), refuses new Checkouts with `503` `replica_shutting_down`, gives up the Background Leader lease, and ends every open Checkout the way **End Checkout** does: its held Messages go back to their queues, with no Delivery Budget used. An Apply in progress stops at its next step: the step under way finishes, and the rest go back as Keep. Decisions not yet Applied are lost. The Checkout's end reason is `shutdown`, which the web app says, through any Replica, for as long as a Checkout that is over stays readable. With one Replica there is no other to say so: after the restart the Checkout is simply not found. If the pod is killed before that is done, the broker returns every unsettled Message when the connection drops ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)).
+- `pod.terminationGracePeriodSeconds` (90 by default) is the time it has for that before `SIGKILL`. At the default limit of 1,000 Messages the worst case per Checkout is about 70 seconds: up to 15 for the Apply step or start under way on a broker going silent (its heartbeats), up to 40 for a quorum queue to take its Messages back (40 ms per Message, at least 5 seconds; about 20 measured on a busy machine), and up to 5 each for closing the channel, deleting the lock queue and closing the connection. Checkouts end side by side, so this does not add up across them, and background work stops alongside rather than before, notifications in progress included (up to 5 seconds). The other 20 seconds are for writing the records and ending the lease, which are milliseconds with a healthy database, and up to 5 for requests still in progress; running out there costs no Delivery Budget. To keep the margin, add 40 ms for each Message above 1,000 when you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`: 5,000 needs about 250 seconds.
+- With one replica, the `Recreate` strategy stops the old pod before the new one starts, so two pods never write the audit store. Volverán is unavailable until the new pod is ready. With [several Replicas](replicas.md), a rolling update keeps one serving, and each pod's Checkouts end as it goes.
 
 Plan deploys outside triage work, and tell Operators before one.
 

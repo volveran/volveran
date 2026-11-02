@@ -4,9 +4,9 @@
 // Checkouts, the in-process locks, the timers, and how a Checkout ends.
 //
 // Ending a Checkout nack-requeues every held Message one at a time in queue
-// order, then the overflow, before closing the channel: on quorum queues that
-// keeps the order, and costs no Delivery Budget only for what the queue has
-// taken back when the channel closes (ADR 0006). A closed channel or
+// order, then the overflow, and on a quorum queue waits for the queue to take
+// them back before closing the channel, up to a time limit: that keeps the
+// order and costs no Delivery Budget (return-messages.ts, ADR 0006). A closed channel or
 // connection (a crash, the network, a quorum consumer timeout arriving as a
 // channel close) makes it a Lost Checkout: the broker has returned
 // everything, at the cost of one delivery on quorum queues.
@@ -21,10 +21,11 @@
 // It ends the Checkout ('applied') once it has run: what is still held
 // (Keep, failed, not attempted) goes back to the queue in order. While it
 // runs, the heartbeat window is suspended (closing the browser does not
-// cancel an Apply), and an Operator's end and shutdown wait for it. The time
+// cancel an Apply), and an Operator's end waits for it. The time
 // limit stays a hard bound: it asks the Apply to attempt no further step
 // (the rest is reported not attempted), and the Checkout then ends
-// ('time-limit'). The broker can still cut it short (Lost Checkout). The
+// ('time-limit'). Shutdown does the same (endAll, 'shutdown'), and so does a lease that
+// ran out (endAllOnLeaseRanOut, 'lease-ran-out'). The broker can still cut it short (Lost Checkout). The
 // owner, or the approver of an approved Apply, can stop it the same way
 // (stopApplyBy); the Checkout then ends ('applied'). Every stop checks and
 // sets the request without awaiting, so the first of a stop, the time limit,
@@ -60,11 +61,12 @@
 // says what happened to it). Ending the Checkout cancels it.
 //
 // In-process, an Operator (keyed by `Operator.id`) has at most one active Checkout, and a queue at
-// most one (checked before the broker's lock, so the holder is known exactly).
+// most one (checked before the broker's lock, so the holder is known exactly). Across Replicas,
+// the Operator's limit is a claim on the Live Checkout records, and the queue's is the lock queue.
 import { randomUUID } from 'node:crypto';
 import type { Operator } from '../operator.js';
 import type { QueueAccess } from '../profile-access.js';
-import { queueRefOf, type QueueRef } from '../profiles.js';
+import { queueRefOf, type BrokerProfile, type QueueRef } from '../profiles.js';
 import { STOP_REASONS } from '../apply/stop-reasons.js';
 import type { ApplyOptions, MessageOutcome, RuleActing } from '../apply/types.js';
 import type { CheckoutLimits } from '../triage/checkout-collection.js';
@@ -75,7 +77,7 @@ import { messageDetail, type HeldForBadge, type MessageDetail } from '../triage/
 import type { RuleSchedulerTestHooks } from '../replay-rules/rule-clock.js';
 import type { RuleBadge } from '../../shared/replay-rules.js';
 import { replayTrail } from '../audit/replay-trail.js';
-import type { AuditStore, ProfileScope } from '../audit/audit-store.js';
+import type { AuditStore, LiveCheckoutRecord, OperatorHolding, ProfileScope } from '../audit/audit-store.js';
 import { diedAgain } from '../triage/died-again.js';
 import type { Role } from '../../shared/roles.js';
 import { runApply } from './apply.js';
@@ -96,9 +98,11 @@ import {
   notAwaitingApproval,
   notCheckoutOwner,
   operatorHasCheckout,
+  replicaShuttingDown,
 } from './errors.js';
 import { startExport, type CheckoutExport } from './export.js';
-import { closeCheckoutConnection, openCheckout, type StartOptions } from './open.js';
+import { closeCheckoutConnection, closedOrGone, openCheckout, type StartOptions } from './open.js';
+import { returnMessages } from './return-messages.js';
 import type { ApplyStop, ApprovalClosed, ApprovalRequest, Checkout, EndReason, RunningApply } from './state.js';
 import { approvalSummary, pacedSteps, queueInfo, view as checkoutView, type ApprovalSummary, type CheckoutView } from './view.js';
 
@@ -109,6 +113,8 @@ export { checkoutConnectionName, type StartOptions } from './open.js';
  * decides the outcome, so a test can act there deterministically.
  */
 export interface CheckoutTestHooks {
+  /** A Checkout has ended, and its Messages are about to go back. */
+  beforeReturn?(checkout: Checkout): Promise<void>;
   /** A start holds the queue's lock queue; next it reads the ready count and collects. */
   afterLock?(ref: QueueRef): Promise<void>;
   /** A start has stopped waiting for deliveries; next it cancels its consumer. */
@@ -121,6 +127,8 @@ export interface CheckoutTestHooks {
   beforeApplyStep?(entryId: number): Promise<void>;
   /** An export is about to make the line of the Message at `position` (1 is the head of the queue). */
   beforeExportLine?(position: number): Promise<void>;
+  /** Replaces how long a Checkout's end waits for a quorum queue to take its Messages back (returnWaitMs). */
+  returnWaitMs?: number;
   /** The Replay Rule scheduler's clock and "run a pass now" (replay-rules/rule-clock.ts); the server hands them to it. */
   ruleScheduler?: RuleSchedulerTestHooks;
 }
@@ -137,6 +145,22 @@ export interface CheckoutStartOptions extends StartOptions {
   auditScope?: ProfileScope;
   /** Holds at most this many Messages, below the Checkout Message limit (a Rule Pass). */
   maxMessages?: number;
+}
+
+/**
+ * Told of each Checkout, for the records other Replicas read. `started` is awaited before
+ * the start answers; the others are called inside first-wins sections and must not make them wait.
+ */
+export interface LiveCheckoutListener {
+  /** Awaited before a start touches the broker: the Operator's Checkout on any Replica, if they have one. */
+  claim(checkout: Checkout): Promise<OperatorHolding | null>;
+  started(checkout: Checkout): Promise<void>;
+  /** Awaited when a start fails before it held anything, so the Operator can start again anywhere at once. */
+  abandoned(id: string): Promise<void>;
+  /** Awaited before an end answers, so no Replica still finds the Checkout active after it. Never rejects. */
+  writesDone(id: string): Promise<void>;
+  changed(checkout: Checkout): void;
+  forgotten(id: string): void;
 }
 
 export interface CheckoutManagerOptions {
@@ -161,6 +185,10 @@ export interface CheckoutManagerOptions {
   onApplyError?(checkoutId: string, err: unknown): void;
   /** An Apply ended with these outcomes, one per Message of the Checkout. */
   onApplyEnded?(checkout: Checkout, outcomes: readonly MessageOutcome[]): void;
+  /** A Checkout's end stopped waiting for its queue to take its Messages back; the channel closes anyway. */
+  onReturnWaitRanOut?(checkout: Checkout, waited: { returned: number; waitedMs: number }): void;
+  /** Left out when this Replica is on its own. */
+  liveCheckouts?: LiveCheckoutListener;
 }
 
 /**
@@ -174,10 +202,50 @@ export interface ApplyActor {
 
 /** What stopped an Apply first, as a refused stop or Continue says it. */
 function stopperText(stop: ApplyStop): string {
-  return stop.stoppedBy ?? (stop.endReason === 'time-limit' ? 'the time limit' : 'the Checkout ending');
+  if (stop.stoppedBy) return stop.stoppedBy;
+  if (stop.endReason === 'time-limit') return 'the time limit';
+  if (stop.endReason === 'lease-ran-out') return "the Replica's lease running out";
+  return stop.endReason === 'shutdown' ? 'the Replica shutting down' : 'the Checkout ending';
 }
 
-const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
+export const DEFAULT_ENDED_RETENTION_MS = 15 * 60_000;
+
+/** A Checkout holding nothing yet, `active`. */
+function blankCheckout(ref: QueueRef, fields: Pick<Checkout, 'id' | 'operator' | 'startedAt' | 'endsAt' | 'timing' | 'requireApproval' | 'limits'>): Checkout {
+  return {
+    ...ref,
+    ...fields,
+    // Set from the credentials the connection opens with (open.ts).
+    brokerUser: '',
+    queueType: 'classic',
+    deliveryLimit: null,
+    deadLetterExchange: false,
+    timeLimitTimer: undefined,
+    heartbeatTimer: undefined,
+    status: 'active',
+    approvalRequest: null,
+    approvalClosed: null,
+    rejection: null,
+    lostReason: null,
+    ownerGone: false,
+    endReason: null,
+    readyAtStart: 0,
+    limitedBy: null,
+    connection: undefined,
+    channel: undefined,
+    onlyConsumer: false,
+    held: new Map(),
+    overflow: [],
+    heldBytes: 0,
+    diedAgain: new Map(),
+    decisions: new Map(),
+    applying: null,
+    applyProgress: null,
+    lastApply: null,
+    canaryWatch: new Map(),
+    canary: null,
+  };
+}
 
 export class CheckoutManager {
   private readonly checkouts = new Map<string, Checkout>();
@@ -188,6 +256,9 @@ export class CheckoutManager {
   private readonly hooks: CheckoutTestHooks;
   private readonly endedRetentionMs: number;
   private readonly timing: CheckoutTiming;
+  /** Starts and ends under way, which shutdown must see out before the store closes. */
+  private readonly underWay = new Set<Promise<unknown>>();
+  private stopping = false;
 
   constructor(private readonly options: CheckoutManagerOptions) {
     this.hooks = options.testHooks ?? {};
@@ -199,7 +270,12 @@ export class CheckoutManager {
    * Starts a Checkout of `target`, a queue resolved through the access check
    * (its management client and the Operator's broker credentials included).
    */
-  async start(target: QueueAccess, operator: Operator, options: CheckoutStartOptions = {}): Promise<CheckoutView> {
+  start(target: QueueAccess, operator: Operator, options: CheckoutStartOptions = {}): Promise<CheckoutView> {
+    return this.seenOut(this.startCheckout(target, operator, options));
+  }
+
+  private async startCheckout(target: QueueAccess, operator: Operator, options: CheckoutStartOptions): Promise<CheckoutView> {
+    if (this.stopping) throw replicaShuttingDown();
     const ref = queueRefOf(target);
     const mine = this.byOperator.get(operator.id);
     if (mine) throw operatorHasCheckout(operator.displayName, mine);
@@ -208,50 +284,23 @@ export class CheckoutManager {
     if (other) throw inCheckout(ref, { operator: other.operator.displayName, since: other.startedAt.toISOString() });
 
     const startedAt = new Date();
-    const checkout: Checkout = {
-      ...ref,
+    const checkout = blankCheckout(ref, {
       id: randomUUID(),
       operator,
-      // Set from the credentials the connection opens with (open.ts).
-      brokerUser: '',
-      queueType: 'classic',
-      deliveryLimit: null,
-      deadLetterExchange: false,
       startedAt,
-      timing: this.timing,
       endsAt: new Date(startedAt.getTime() + this.timing.timeLimitMs),
-      timeLimitTimer: undefined,
-      heartbeatTimer: undefined,
-      status: 'active',
+      timing: this.timing,
       requireApproval: (this.options.enforceApproval ?? false) && target.profile.protected && target.profile.requireApproval,
-      approvalRequest: null,
-      approvalClosed: null,
-      rejection: null,
-      lostReason: null,
-      endReason: null,
-      readyAtStart: 0,
       limits:
         options.maxMessages === undefined
           ? this.options.limits
           : { ...this.options.limits, maxMessages: Math.min(options.maxMessages, this.options.limits.maxMessages) },
-      limitedBy: null,
-      connection: undefined,
-      channel: undefined,
-      onlyConsumer: false,
-      held: new Map(),
-      overflow: [],
-      heldBytes: 0,
-      diedAgain: new Map(),
-      decisions: new Map(),
-      applying: null,
-      applyProgress: null,
-      lastApply: null,
-      canaryWatch: new Map(),
-      canary: null,
-    };
+    });
     this.locks.set(lockKey, checkout);
     this.byOperator.set(operator.id, checkout);
     try {
+      const holding = await this.options.liveCheckouts?.claim(checkout);
+      if (holding) throw operatorHasCheckout(operator.displayName, holding);
       await openCheckout(checkout, target, options, {
         onLost: (reason) => this.markLost(checkout, reason),
         afterLock: this.hooks.afterLock,
@@ -261,10 +310,14 @@ export class CheckoutManager {
     } catch (err) {
       this.release(checkout);
       await closeCheckoutConnection(checkout);
+      await this.options.liveCheckouts?.abandoned(checkout.id);
       throw err;
     }
     try {
       await this.findDiedAgain(checkout, options.auditScope);
+      await this.options.liveCheckouts?.started(checkout);
+      // No await from here to where it is registered, so endAll either finds it or it refuses.
+      if (this.stopping) throw replicaShuttingDown();
     } catch (err) {
       // It holds Messages by now, so they go back as at any end. If it was lost
       // during the search that has been done, and the queue may be someone else's.
@@ -274,6 +327,40 @@ export class CheckoutManager {
     this.checkouts.set(checkout.id, checkout);
     if (checkout.status === 'active') this.startTimers(checkout);
     return this.view(checkout);
+  }
+
+  /** Whether this Replica knows Checkout `id`, which makes it the Owner Replica. */
+  owns(id: string): boolean {
+    return this.checkouts.has(id);
+  }
+
+  /**
+   * Another Replica owned this Checkout and has gone (`record`, already saying lost or ended):
+   * from here on this Replica answers for it, as an owner does for a Checkout that is over,
+   * through the same routes and checks, and forgets it after the same while. It holds nothing,
+   * and takes neither queue nor Operator. Nothing awaits, so of two requests one adds it.
+   */
+  answerForGoneOwner(record: LiveCheckoutRecord, profile: BrokerProfile): void {
+    if (this.checkouts.has(record.id)) return;
+    const ref: QueueRef = { profile, vhost: record.vhost, queue: record.queue };
+    const checkout = blankCheckout(ref, {
+      id: record.id,
+      operator: record.operator,
+      startedAt: new Date(record.startedAt),
+      endsAt: new Date(record.endsAt),
+      timing: this.timing,
+      requireApproval: false,
+      limits: this.options.limits,
+    });
+    checkout.queueType = record.queueType;
+    checkout.deliveryLimit = record.deliveryLimit;
+    checkout.readyAtStart = record.readyAtStart;
+    checkout.status = record.status === 'ended' ? 'ended' : 'lost';
+    checkout.endReason = record.endReason;
+    checkout.lostReason = record.lostReason;
+    checkout.ownerGone = checkout.status === 'lost';
+    this.checkouts.set(checkout.id, checkout);
+    this.release(checkout);
   }
 
   /** The browser still shows the Checkout: it stays until the next heartbeat window passes. */
@@ -446,6 +533,7 @@ export class CheckoutManager {
     checkout.approvalRequest = { requestedAt: new Date(), role, rate: frozenRate, canary: frozenCanary };
     checkout.approvalClosed = null;
     checkout.rejection = null;
+    this.options.liveCheckouts?.changed(checkout);
     return this.view(checkout);
   }
 
@@ -454,6 +542,15 @@ export class CheckoutManager {
     const checkout = this.find(id);
     this.takeApprovalRequest(checkout, { how: 'withdrawn' });
     return this.view(checkout);
+  }
+
+  /**
+   * Resolves once the other Replicas can read Checkout `id` as it is now, or that was tried, so
+   * the approvers' list agrees with an answer about a request. Never rejects. Call it after a
+   * first-wins section, never in one (ADR 0013).
+   */
+  async liveRecordWritten(id: string): Promise<void> {
+    await this.options.liveCheckouts?.writesDone(id);
   }
 
   /** How many Checkouts are active now, and how many of those wait for Approval. */
@@ -528,6 +625,7 @@ export class CheckoutManager {
     if (checkout.status !== 'active' || !request) throw notAwaitingApproval(checkout);
     checkout.approvalRequest = null;
     checkout.approvalClosed = closed;
+    this.options.liveCheckouts?.changed(checkout);
     return request;
   }
 
@@ -697,17 +795,34 @@ export class CheckoutManager {
     if (checkout.status !== 'active') return this.view(checkout);
     checkout.status = 'ended';
     checkout.endReason = reason;
+    // The Operator is free at once, as every other Replica finds from the record, so the rule
+    // does not depend on the Replica. The queue stays taken until its Messages are back.
+    if (this.byOperator.get(checkout.operator.id) === checkout) this.byOperator.delete(checkout.operator.id);
     this.cancelApprovalRequest(checkout);
-    const { channel } = checkout;
+    this.options.liveCheckouts?.changed(checkout);
+    return this.seenOut(this.returnAndRelease(checkout));
+  }
+
+  /** Counts `work` as under way until it settles. */
+  private seenOut<T>(work: Promise<T>): Promise<T> {
+    const counted: Promise<void> = work.then(
+      () => {},
+      () => {},
+    ).finally(() => this.underWay.delete(counted));
+    this.underWay.add(counted);
+    return work;
+  }
+
+  private async returnAndRelease(checkout: Checkout): Promise<CheckoutView> {
+    const { channel, connection } = checkout;
+    await this.hooks.beforeReturn?.(checkout);
     try {
       if (channel) {
-        // Keep = basic.nack(requeue), one at a time in queue order: unlike
-        // reject it uses up no Delivery Budget by itself, and a quorum queue
-        // puts them back in the order returned. Closing straight after can
-        // overtake the nacks, which does use it up (ADR 0006).
-        for (const m of checkout.held.values()) channel.nack(m, false, true);
-        for (const m of checkout.overflow) channel.nack(m, false, true);
-        await channel.close();
+        await returnMessages(checkout, channel, {
+          waitMs: this.hooks.returnWaitMs,
+          onWaitRanOut: (waited) => this.options.onReturnWaitRanOut?.(checkout, waited),
+        });
+        if (connection) await closedOrGone(connection, channel.close());
       }
     } catch {
       // The channel is already gone: the broker has returned everything.
@@ -717,13 +832,44 @@ export class CheckoutManager {
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);
+    await this.options.liveCheckouts?.writesDone(checkout.id);
     return this.view(checkout);
   }
 
-  /** Ends every active Checkout (on shutdown). */
+  /**
+   * This Replica's lease has run out, so the others no longer forward to it: it ends its
+   * Checkouts through Keep, which needs only the broker, so no delivery is counted and no
+   * Message drops, however long the store is away. An Apply attempts no further step. A start
+   * still under way cannot finish without the store, and a call at the next renewal time finds
+   * one that did. Nothing awaits.
+   */
+  endAllOnLeaseRanOut(): void {
+    for (const checkout of [...this.checkouts.values()]) {
+      if (checkout.status !== 'active') continue;
+      this.stopApply(checkout, { reason: STOP_REASONS.leaseRanOut, endReason: 'lease-ran-out', stoppedBy: null });
+      void this.end(checkout.id, 'lease-ran-out').catch(() => {});
+    }
+  }
+
+  /** From the first call of endAll: this Replica is on its way out. */
+  get shuttingDown(): boolean {
+    return this.stopping;
+  }
+
+  /**
+   * Shutdown. Before any await, no new Checkout starts, and every Apply is told to attempt no
+   * further step; a Checkout with none ends now. Resolves when every Checkout is over and its
+   * Messages are back, including those ending by themselves and a start on its way, which refuses.
+   */
   async endAll(): Promise<void> {
+    this.stopping = true;
+    const applying = [...this.checkouts.values()].flatMap((c) => c.applying?.settled ?? []);
+    for (const checkout of this.checkouts.values()) {
+      this.stopApply(checkout, { reason: STOP_REASONS.replicaShutDown, endReason: 'shutdown', stoppedBy: null });
+    }
     const active = [...this.checkouts.values()].filter((c) => c.status === 'active');
-    await Promise.all(active.map((c) => this.end(c.id, 'shutdown')));
+    await Promise.allSettled([...active.map((c) => this.end(c.id, 'shutdown')), ...applying]);
+    while (this.underWay.size > 0) await Promise.allSettled([...this.underWay]);
   }
 
   private lockKey(ref: QueueRef): string {
@@ -743,7 +889,10 @@ export class CheckoutManager {
     if (this.byOperator.get(checkout.operator.id) === checkout) this.byOperator.delete(checkout.operator.id);
     clearTimeout(checkout.timeLimitTimer);
     clearTimeout(checkout.heartbeatTimer);
-    setTimeout(() => this.checkouts.delete(checkout.id), this.endedRetentionMs).unref();
+    setTimeout(() => {
+      this.checkouts.delete(checkout.id);
+      this.options.liveCheckouts?.forgotten(checkout.id);
+    }, this.endedRetentionMs).unref();
   }
 
   private startTimers(checkout: Checkout) {
@@ -779,6 +928,7 @@ export class CheckoutManager {
     // A wait for the next paced step ends now; the executor then finds the Checkout not active.
     checkout.applying?.stopController.abort();
     this.cancelApprovalRequest(checkout);
+    this.options.liveCheckouts?.changed(checkout);
     checkout.held.clear();
     checkout.overflow = [];
     this.release(checkout);

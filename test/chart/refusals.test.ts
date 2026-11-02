@@ -11,12 +11,6 @@ const withAndWithoutSchema = [
 ];
 
 describe.each(withAndWithoutSchema)('refusals $schema', ({ skipSchemaValidation }) => {
-  it.each([0, 2, 3])('refuses replicaCount: %i, citing ADR 0003', (replicaCount) => {
-    const message = renderRefusal({ replicaCount }, { skipSchemaValidation });
-    expect(message).toContain('replicaCount must be 1');
-    expect(message).toContain('docs/adr/0003-single-replica-on-kubernetes.md');
-  });
-
   it.each(['issuer', 'clientId', 'redirectUrl', 'existingSecret'])('refuses a missing oidc.%s', (key) => {
     const values = fixtureValues();
     delete (values['oidc'] as Values)[key];

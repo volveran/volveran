@@ -40,10 +40,14 @@ export class RefreshRefused extends Error {
 }
 
 export interface RefreshOptions {
+  /** The session it belongs to, which forwarding names so that the Owner Replica can use the same session's token. */
+  sessionId?: string;
   /** The refresh grant at the provider; throws RefreshRefused when refused, anything else when it may pass. */
   refresh?: (refreshToken: string) => Promise<TokenGrant>;
   /** No refresh after this time (ms since the epoch): the session's end. */
   until?: number;
+  /** Refresh even when the access token has already expired: one read back from a session store after a restart. */
+  refreshPastExpiry?: boolean;
   /** Told why a refresh failed (never a token); `final` when it stops refreshing. */
   onFailure?: (reason: string, final: boolean) => void;
 }
@@ -62,6 +66,11 @@ function expiryOf(claims: Record<string, unknown>, grant: TokenGrant, now: numbe
   return typeof exp === 'number' ? exp * 1000 : grant.expiresIn !== undefined ? now + grant.expiresIn * 1000 : undefined;
 }
 
+/** When a grant's access token expires, as an OperatorToken holding it would say. */
+export function grantExpiresAt(grant: TokenGrant, now: number): number | undefined {
+  return expiryOf(claimsOf(grant.accessToken), grant, now);
+}
+
 export class OperatorToken {
   private accessToken!: string;
   private refreshToken: string | undefined;
@@ -78,6 +87,10 @@ export class OperatorToken {
   ) {
     this.take(grant, now);
     this.schedule(now);
+  }
+
+  get sessionId(): string | undefined {
+    return this.options.sessionId;
   }
 
   get claims(): Record<string, unknown> {
@@ -127,14 +140,14 @@ export class OperatorToken {
 
   private schedule(now: number): void {
     if (this._expiresAt === undefined) return;
-    this.refreshAt(this._expiresAt - refreshMarginMs(this._expiresAt - now), now);
+    this.refreshAt(now >= this._expiresAt ? now : this._expiresAt - refreshMarginMs(this._expiresAt - now), now);
   }
 
   /** Refreshes at `when`, if it can still refresh then. */
   private refreshAt(when: number, now: number): void {
-    const { refresh, until } = this.options;
+    const { refresh, until, refreshPastExpiry } = this.options;
     if (this.stopped || !refresh || this.refreshToken === undefined || this._expiresAt === undefined) return;
-    if (when >= this._expiresAt || (until !== undefined && when >= until)) return;
+    if ((when >= this._expiresAt && !refreshPastExpiry) || (until !== undefined && when >= until)) return;
     // refresh reports its failures through onFailure, and nothing waits for it.
     this.timer = setTimeout(() => void this.refresh(refresh), Math.max(0, when - now));
     this.timer.unref();

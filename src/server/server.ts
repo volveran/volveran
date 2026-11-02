@@ -1,36 +1,47 @@
 // HTTP JSON API and the built web app, served by one Fastify process.
 // startServer is the in-process entry point of both main.ts and the
 // integration test harness (test/integration/harness.ts).
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { bodyStoreUsage, type BodyRetention } from './audit/body-retention.js';
 import { Notifier } from './alerts/notifier.js';
 import { Alerting } from './alerts/alerting.js';
 import type { AlertDestination } from './alerts/destinations.js';
 import { RestoreService } from './audit/restore.js';
-import type { AuditStore } from './audit/audit-store.js';
+import { LeaderLeaseLost, type AuditStore } from './audit/audit-store.js';
 import { PostgresAuditStore } from './audit/postgres-audit-store.js';
 import { SqliteAuditStore } from './audit/sqlite-audit-store.js';
-import { createTeamAuth, type TeamAuth } from './auth.js';
-import { CheckoutManager, type CheckoutTestHooks } from './checkout/manager.js';
+import { createTeamAuth, DEFAULT_MAX_SIGN_INS_IN_PROGRESS, type TeamAuth } from './auth.js';
+import { CheckoutManager, DEFAULT_ENDED_RETENTION_MS, type CheckoutTestHooks } from './checkout/manager.js';
 import { AlertMetrics } from './metrics/alerts.js';
 import { startMetricsListener, type MetricsListener } from './metrics/listener.js';
 import { QueueMetrics } from './metrics/queues.js';
+import { ReplicaMetrics } from './metrics/replicas.js';
 import { startRuntimeMetrics } from './metrics/runtime.js';
+import { reportingStoreErrors } from './metrics/store-errors.js';
 import { StoreReadings } from './metrics/store-readings.js';
 import { TriageMetrics } from './metrics/triage.js';
 import { QueueSampler, type SamplerTestHooks } from './history/sampler.js';
 import { HttpError } from './http-error.js';
+import { BackgroundLeader, type LeaderTestHooks } from './leader/background-leader.js';
+import { retentionJob } from './leader/retention-job.js';
 import { NO_VERSION_WARNING, type BrokerProfile } from './profiles.js';
 import { readStartupConfig, type StartupConfig } from './startup-config.js';
+import { createForwarder, replicaUnreachable, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
+import { goneReplicasJob } from './replicas/gone-replicas-job.js';
+import { LiveCheckouts } from './replicas/live-checkouts.js';
+import { DEFAULT_REPLICA_LEASE_TIMING, ReplicaLease, type ReplicaLeaseTiming } from './replicas/replica-lease.js';
+import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
 import { ReplayRules } from './replay-rules/rules.js';
 import type { CheckoutLimits } from './triage/checkout-collection.js';
-import type { CheckoutTiming } from './triage/checkout-timing.js';
+import { endAnswersWithinMs, type CheckoutTiming } from './triage/checkout-timing.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerApplyRoutes } from './routes/apply.js';
+import { serveApiUnderVersionToo } from './routes/api-prefix.js';
 import { registerAlertDestinationRoutes } from './routes/alert-destinations.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
@@ -41,13 +52,15 @@ import { registerHistoryRoutes, type HistoryRouteDeps } from './routes/history.j
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
-import { attachOperator } from './operator.js';
+import { sendSecurityHeaders } from './security-headers.js';
+import { attachOperator, type Operator } from './operator.js';
 import { ProfileAccessCheck } from './profile-access.js';
+import { requestOriginCheck, type RequestOriginCheck } from './request-origin.js';
 
 export interface ServerOptions {
   /** The Broker Profiles YAML file. */
   profilesFile: string;
-  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET. */
+  /** Environment: password variables of the profiles, VOLVERAN_AUTH, VOLVERAN_OPERATOR, USER, VOLVERAN_OIDC_*, VOLVERAN_SESSION_SECRET, VOLVERAN_SESSION_ENCRYPTION_KEY, VOLVERAN_SESSION_IDLE_MINUTES. */
   env: Record<string, string | undefined>;
   host: string;
   /** 0 picks a free port. */
@@ -72,6 +85,16 @@ export interface ServerOptions {
   checkoutTestHooks?: CheckoutTestHooks;
   /** Test seams of the queue sampler; unset in production. */
   samplerTestHooks?: SamplerTestHooks;
+  /** Test seams of the Background Leader; unset in production. */
+  leaderTestHooks?: LeaderTestHooks;
+  /** Test seam: how often a Replica renews its lease and how long that holds; unset in production. */
+  replicaLeaseTiming?: Partial<ReplicaLeaseTiming>;
+  /** Test seam: told of each route as it is registered (the authorization matrix); unset in production. */
+  onRouteRegistered?(route: { method: string; url: string }): void;
+  /** Test seam: overrides the session idle timeout from VOLVERAN_SESSION_IDLE_MINUTES; unset in production. */
+  sessionIdleMs?: number;
+  /** Test seam: how many sign-ins in progress the store keeps; unset in production. */
+  maxSignInsInProgress?: number;
 }
 
 export interface RunningServer {
@@ -83,6 +106,9 @@ export interface RunningServer {
 
 /** How often the metrics read the audit store when nothing has told them to. */
 const METRICS_READING_INTERVAL_MS = 15_000;
+
+/** How long requests in progress get to finish once shutdown has ended every Checkout. */
+const IN_FLIGHT_REQUESTS_MS = 5_000;
 
 /** Checks the configuration (throwing a ConfigError), then listens. */
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
@@ -104,11 +130,16 @@ async function serve(
   openedStore: AuditStore,
 ): Promise<RunningServer> {
   const retention = { ...config.bodyRetention, ...options.bodyRetention };
-  const auditStore = options.wrapAuditStore?.(openedStore) ?? openedStore;
-  // A scrape takes the last of these readings and never waits on the store. Replay
-  // Rules are created below; this reads only once it has started.
+  // The leader below exists before anything scrapes.
+  const replicaMetrics = new ReplicaMetrics(() => leader.isLeader);
+  const auditStore = reportingStoreErrors(options.wrapAuditStore?.(openedStore) ?? openedStore, () => replicaMetrics.storeFailed());
+  // A scrape takes the last of these readings and never waits on the store. They describe
+  // shared state, so only the Background Leader shows them, and only it reads them: a
+  // Replica that stops leading forgets them, and takes new ones as soon as it leads again.
+  // Replay Rules and the leader are created below; this reads only once it has started.
   const metricsReadings = new StoreReadings({
     read: async () => {
+      if (!leader.isLeader) return null;
       const [ruleStates, storedBodyBytes, memories] = await Promise.all([
         replayRules.states(),
         auditStore.storedBodyBytes(),
@@ -122,12 +153,19 @@ async function serve(
     onError: (err) => app.log.error({ err }, 'The metrics could not read the audit store; they keep their last values'),
   });
   // The Checkout manager and Replay Rules below tell it what happens; it reads them only at a scrape.
+  const sharedReadings = () => (leader.isLeader ? metricsReadings.current() : null);
   const triageMetrics = new TriageMetrics({
-    ruleStates: () => metricsReadings.current()?.ruleStates ?? [],
+    ruleStates: () => sharedReadings()?.ruleStates ?? [],
     checkoutCounts: () => checkouts.counts(),
-    storedBodyBytes: () => metricsReadings.current()?.storedBodyBytes ?? null,
+    storedBodyBytes: () => sharedReadings()?.storedBodyBytes ?? null,
   });
+  // Each start of the process is a new Replica: a Checkout does not survive a restart.
+  const replicaId = randomUUID();
+  const replicaLeaseTiming = { ...DEFAULT_REPLICA_LEASE_TIMING, ...options.replicaLeaseTiming };
+  // Called only once the app below is listening or starting up.
+  const liveCheckouts = config.forwarding ? new LiveCheckouts(auditStore.replicas, replicaId, (err) => app.log.error({ err }, 'A Live Checkout record could not be written; trying again')) : null;
   const checkouts = new CheckoutManager({
+    ...(liveCheckouts && { liveCheckouts }),
     audit: auditStore,
     limits,
     enforceApproval: config.mode.kind === 'team',
@@ -140,6 +178,12 @@ async function serve(
     onRuleBadgesError: (err) => app.log.error({ err }, 'The rule badges of a Checkout could not be read'),
     // Called only once the app below is listening.
     onApplyError: (checkoutId, err) => app.log.error({ err, checkoutId }, 'An Apply failed unexpectedly; its Checkout ended'),
+    // Called only once the app below is listening.
+    onReturnWaitRanOut: (checkout, waited) =>
+      app.log.warn(
+        { checkoutId: checkout.id, queue: checkout.queue, ...waited },
+        'A Checkout stopped waiting for its quorum queue to take its Messages back, so some may have used up Delivery Budget',
+      ),
     onApplyEnded: (checkout, outcomes) => {
       triageMetrics.applyEnded(checkout.profile.name, outcomes);
       // Never rejects, and an Apply's end should not wait for a reading.
@@ -152,9 +196,19 @@ async function serve(
       : { kind: 'team', auth: await createTeamAuth(config.mode.oidc, config.mode.sessionSecret, {
           // Refreshing the access token is for profiles that connect with it.
           refreshBrokerTokens: profiles.some((p) => p.credentials.kind === 'operatorToken'),
+          sessions: auditStore.sessions,
+          seal: config.mode.sessionEncryptionKey ? keySeal(config.mode.sessionEncryptionKey) : noSeal,
+          sessionIdleMs: options.sessionIdleMs ?? config.mode.sessionIdleMs,
+          maxSignInsInProgress: options.maxSignInsInProgress ?? DEFAULT_MAX_SIGN_INS_IN_PROGRESS,
         }),
       };
-  const restore = new RestoreService(auditStore, (id) => checkouts.isRunning(id));
+  const forwarder = config.forwarding && createForwarder(config.forwarding.secret, (reason) => replicaMetrics.forwardingFailed(reason));
+  /** Where the Background Leader can be reached: null when nobody holds the lease or its holder's own lease is over. */
+  const leaderAddress = async (): Promise<string | null> => {
+    const holder = await auditStore.leaderLease.currentHolder();
+    return holder === null ? null : auditStore.replicas.liveAddress(holder, Date.now());
+  };
+  const restore = new RestoreService(auditStore, async (id) => checkouts.isRunning(id) || ((await liveCheckouts?.runningElsewhere(id)) ?? false));
   const replayRules = new ReplayRules({
     checkouts,
     state: auditStore.ruleState,
@@ -168,6 +222,18 @@ async function serve(
       await alerting.replayRuleChanged(profile);
       await metricsReadings.refresh();
     },
+    ...(forwarder && {
+      // The pause or resume is in the store: a leader that cannot be told finds it there by itself.
+      tellLeader: async (profile: string, rule: string, by: Operator) => {
+        try {
+          const address = await leaderAddress();
+          if (address) await forwarder.tell(address, `/api/v1/profiles/${encodeURIComponent(profile)}/replay-rules/${encodeURIComponent(rule)}/changed`, by, TELL_LEADER_WITHIN_MS);
+        } catch (err) {
+          app.log.info({ err, profile, rule }, 'The Background Leader could not be told of a Replay rule pause or resume; it will read it from the store');
+        }
+      },
+    }),
+    onLeaseLost: () => app.log.info('A Replay rule pass or schedule wrote nothing: this Replica is no longer the Background Leader'),
   });
   const samplerClock = options.samplerTestHooks?.clock ?? systemClock;
   const sampler = new QueueSampler({
@@ -176,11 +242,15 @@ async function serve(
     intervalMs: config.historyIntervalMs,
     testHooks: options.samplerTestHooks,
     // Called only once the app below is listening.
-    onError: (profile, err) => app.log.error({ err, profile }, 'A sampling run failed unexpectedly'),
+    onError: (profile, err) => {
+      if (err instanceof LeaderLeaseLost) app.log.info({ profile }, 'A sampling run wrote nothing: this Replica is no longer the Background Leader');
+      else app.log.error({ err, profile }, 'A sampling run failed unexpectedly');
+    },
   });
-  const queueMetrics = new QueueMetrics(() => sampler.latest());
+  // A former leader's snapshot stays for its next term, but it no longer says what is true now.
+  const queueMetrics = new QueueMetrics(() => (leader.isLeader ? sampler.latest() : { profiles: [] }));
   sampler.onRun((finished) => queueMetrics.runFinished(finished));
-  const alertMetrics = new AlertMetrics({ profiles, firingRules: (profile) => metricsReadings.current()?.firingRules.get(profile) ?? null });
+  const alertMetrics = new AlertMetrics({ profiles, firingRules: (profile) => sharedReadings()?.firingRules.get(profile) ?? null });
   const notifier = new Notifier({
     onDelivered: (delivery) => alertMetrics.delivered(delivery),
     destinations: alertDestinations,
@@ -188,6 +258,7 @@ async function serve(
     publicUrl: config.publicUrl,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'The outcome of a notification could not be recorded'),
+    onCloseWaitRanOut: (inProgress) => app.log.warn({ inProgress }, 'Stopping: notifications still being delivered at the limit were cut short'),
   });
   const alerting = new Alerting({
     profiles,
@@ -198,13 +269,29 @@ async function serve(
     lastSuccessAt: (profile) => sampler.latest().profiles.find((p) => p.profile === profile)?.lastSuccessAt ?? null,
     // Called only once the app below is listening.
     onError: (err) => app.log.error({ err }, 'An Alert notification could not be delivered'),
+    onLeaseLost: () => app.log.info('Alerting wrote nothing: this Replica is no longer the Background Leader'),
   });
   sampler.onRun(async (finished) => {
     await alerting.evaluate(finished);
     await metricsReadings.refresh();
   });
   const usage = async () => bodyStoreUsage(await auditStore.storedBodyBytes(), retention);
+  const originCheck = requestOriginCheck(config.mode, config.publicUrl);
   const app = await buildApp({
+    forwarder,
+    // Called only once the app is listening, when the leader below exists.
+    leaderAddressForRoute: async () => {
+      if (leader.isLeader) return null;
+      const address = await leaderAddress();
+      if (!address) {
+        replicaMetrics.forwardingFailed('no_address');
+        throw replicaUnreachable();
+      }
+      return address;
+    },
+    originCheck,
+    liveCheckouts,
+    endWithinMs: endAnswersWithinMs({ ...config.checkoutTiming, ...options.checkoutTiming }, limits.maxMessages),
     profiles,
     access,
     checkouts,
@@ -215,6 +302,8 @@ async function serve(
     history: { history: auditStore.history, clock: samplerClock, intervalMs: config.historyIntervalMs, retentionMs: config.historyRetentionMs },
     webRoot: options.webRoot,
     logger: options.logger ?? false,
+    onRouteRegistered: options.onRouteRegistered,
+    publicUrl: config.publicUrl,
   });
 
   // Roles (profile-access.ts): say which profiles anyone can act on, or that Solo Mode ignores them.
@@ -255,68 +344,86 @@ async function serve(
     }
   }
 
-  // Retention: evict Discarded bodies past the limits at startup, then on a schedule.
-  const evict = async () => {
-    try {
-      const { evicted } = await auditStore.evictBodies({ now: new Date(), ...retention });
-      if (evicted > 0) app.log.info({ evicted }, 'Retention evicted Discarded Message bodies');
-    } catch (err) {
-      app.log.error(err, 'Retention could not evict Discarded Message bodies');
-    }
-    try {
-      await auditStore.notifications.removeOlderThan(new Date(Date.now() - config.historyRetentionMs));
-    } catch (err) {
-      app.log.error(err, 'Retention could not remove old notification outcomes');
-    }
-  };
-  // The same job removes Samples and sampling runs past the history retention.
-  const removeOldHistory = async () => {
-    try {
-      const { samples } = await auditStore.history.removeOlderThan(Date.now() - config.historyRetentionMs);
-      if (samples > 0) app.log.info({ samples }, 'Retention removed old Samples');
-    } catch (err) {
-      app.log.error(err, 'Retention could not remove old Samples');
-    }
-  };
-  // Never rejects, so the timer can leave it running. A run still going when the next is due is left to finish.
-  let retentionRun: Promise<void> | null = null;
-  const runRetention = () => {
-    retentionRun ??= (async () => {
-      await evict();
-      await removeOldHistory();
-      await metricsReadings.refresh();
-    })().finally(() => {
-      retentionRun = null;
-    });
-    return retentionRun;
-  };
-  await runRetention();
-  const retentionTimer = setInterval(() => void runRetention(), retention.intervalMs);
-  retentionTimer.unref();
+  // One Replica at a time runs what must run once. It claims the lease below, once Alerting has started.
+  const leaderClock = options.leaderTestHooks?.clock ?? systemClock;
+  const leader = new BackgroundLeader({
+    holder: replicaId,
+    lease: auditStore.leaderLease,
+    clock: leaderClock,
+    timing: options.leaderTestHooks?.timing,
+    jobs: [
+      alerting,
+      retentionJob({
+        store: auditStore,
+        retention,
+        historyRetentionMs: config.historyRetentionMs,
+        clock: leaderClock,
+        log: app.log,
+        afterRun: () => metricsReadings.refresh(),
+      }),
+      sampler,
+      ...(config.forwarding
+        ? [
+            goneReplicasJob({
+              store: auditStore,
+              everyMs: replicaLeaseTiming.renewEveryMs,
+              keepMs: options.endedCheckoutRetentionMs ?? DEFAULT_ENDED_RETENTION_MS,
+              log: app.log,
+            }),
+          ]
+        : []),
+      // Last, so that it starts after the sampler and stops first.
+      replayRules,
+    ],
+    onError: (err, job) => app.log.error({ err, job }, job ? `The Background Leader's job "${job}" failed` : 'The leader lease could not be claimed or given up'),
+    onChange: (isLeader) => {
+      app.log.info(isLeader ? 'This Replica is now the Background Leader' : 'This Replica is no longer the Background Leader');
+      // Never rejects.
+      void metricsReadings.refresh();
+    },
+  });
+  options.leaderTestHooks?.leader?.(leader);
 
-  // No new Rule Pass starts and the ones in progress end (and are recorded);
-  // then every held Message goes back to its queue (an Apply in progress
-  // finishes first) before the audit store closes and the process exits.
   let metricsListener: MetricsListener | undefined;
-  app.addHook('onClose', async () => {
+  let forwardingListener: ForwardingListener | undefined;
+  let replicaLease: ReplicaLease | undefined;
+  // Shutdown, with the ports still serving, so Operators can read their Checkouts to the end, and
+  // /readyz says not ready at once. Its two halves run side by side, so neither's wait adds to the
+  // other's, and `pod.terminationGracePeriodSeconds` needs to cover only the longer (docs/kubernetes.md).
+  const stopBackgroundWork = async () => {
     await metricsListener?.close();
     await metricsReadings.stop();
-    clearInterval(retentionTimer);
-    await retentionRun;
-    await sampler.stop();
-    // Before the notifier: a last pass can pause its rule, which sends a notification.
-    await replayRules.stop();
-    await alerting.stop();
+    // A single Replica has no next leader to tell of a last pass's pause, so it stays the leader until its passes end.
+    if (!config.forwarding) {
+      await replayRules.stop();
+      await replayRules.drained();
+    }
+    // With several, the lease moves without waiting for a Rule Pass to give its Messages back.
+    await leader.stop();
+    // Before the notifier and the store. A former leader writes no Alert state: the next leader's next Sample tells of a last pass's pause.
+    await replayRules.drained();
+    // Up to CLOSE_WAIT_MS, so that what a last pass paused can still be told.
     await notifier.close();
-    await checkouts.endAll();
+    await alerting.drained();
+  };
+  let stopped: Promise<void> | undefined;
+  const stopWork = () =>
+    (stopped ??= (async () => {
+      app.log.info('Shutting down: no new Checkouts, and every Checkout on this Replica ends');
+      // endAll first: before its first await it refuses starts and stops every Apply.
+      await Promise.all([checkouts.endAll(), stopBackgroundWork()]);
+      await liveCheckouts?.settled();
+      // Their records stay, saying why they ended, for the others to answer from.
+      await replicaLease?.end().catch((err: unknown) => app.log.error({ err }, 'This Replica could not end its lease; it runs out by itself'));
+    })());
+  app.addHook('onClose', async () => {
+    await stopWork();
+    await forwardingListener?.close();
     await auditStore.close();
   });
   try {
-    await alerting.start();
-    // The sampler before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
-    await sampler.start();
-    // Replay Rules: give each its state and schedule the running ones.
-    await replayRules.start();
+    // The leader's jobs. Alerting and the sampler come before the rules: a rule overdue from before a restart passes at once, and an automatic stop reads the sampler's snapshot.
+    await leader.start();
   } catch (err) {
     await app.close();
     throw err;
@@ -331,9 +438,40 @@ async function serve(
       metricsListener = await startMetricsListener({
         host: options.host,
         port: config.metricsPort,
-        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...runtimeMetrics.families()],
+        families: () => [...queueMetrics.families(), ...triageMetrics.families(), ...alertMetrics.families(), ...replicaMetrics.families(), ...runtimeMetrics.families()],
+        // A scraper in Team Mode comes from the network by any address; Solo Mode has only loopback to protect it.
+        ...(config.mode.kind === 'solo' && { refuses: (headers) => originCheck('GET', headers) !== null }),
         onError: (err) => app.log.error(err, 'A metrics scrape failed'),
       });
+    } catch (err) {
+      await app.close();
+      throw err;
+    }
+  }
+
+  // The internal port before the lease says where it is, and the lease before the web port takes a Checkout.
+  if (config.forwarding && liveCheckouts) {
+    const { forwarding } = config;
+    try {
+      await app.ready();
+      forwardingListener = await startForwardingListener({
+        host: options.host,
+        port: forwarding.port,
+        secret: forwarding.secret,
+        serve: (req, res) => app.routing(req, res),
+        onRefused: () => replicaMetrics.forwardingFailed('refused'),
+      });
+      const lease = new ReplicaLease({
+        store: auditStore.replicas,
+        replicaId,
+        forwardingAddress: forwarding.address,
+        timing: replicaLeaseTiming,
+        afterRenewal: () => liveCheckouts.writeAgain(),
+        onRanOut: () => checkouts.endAllOnLeaseRanOut(),
+        onError: (err) => app.log.error({ err }, "This Replica's lease could not be renewed; trying again"),
+      });
+      await lease.start();
+      replicaLease = lease;
     } catch (err) {
       await app.close();
       throw err;
@@ -353,9 +491,21 @@ async function serve(
   return {
     url: `http://${host}:${port}`,
     metricsUrl: metricsListener && `http://${host}:${metricsListener.port}/metrics`,
-    close: () => app.close(),
+    close: async () => {
+      await stopWork();
+      // Everything of value is done: a client still reading must not hold the store open until SIGKILL.
+      const cutOff = setTimeout(() => app.server.closeAllConnections(), IN_FLIGHT_REQUESTS_MS);
+      try {
+        await app.close();
+      } finally {
+        clearTimeout(cutOff);
+      }
+    },
   };
 }
+
+/** A pause or resume answers no later than this for a leader that does not. It reads the store soon anyway. */
+const TELL_LEADER_WITHIN_MS = 2_000;
 
 /** Who acts: Solo Mode's configured Operator, or Team Mode's sign-in. */
 type Access = { kind: 'solo'; operator: string } | { kind: 'team'; auth: TeamAuth };
@@ -372,21 +522,81 @@ interface AppOptions {
   /** Directory with the built web app; omitted or missing means API only. */
   webRoot: string | undefined;
   logger: boolean | { stream: { write(line: string): void } };
+  onRouteRegistered: ServerOptions['onRouteRegistered'];
+  /** With other Replicas: how requests reach them. */
+  forwarder: Forwarder | null;
+  liveCheckouts: LiveCheckouts | null;
+  /** Where to forward what must run on the Background Leader; null when this Replica is it. */
+  leaderAddressForRoute(): Promise<string | null>;
+  /** Refuses what a malicious page sends through an Operator's browser. */
+  originCheck: RequestOriginCheck;
+  /** Where Volverán is reached from outside, if known. */
+  publicUrl: string | null;
+  /** How long a forwarded end of a Checkout may take to answer. */
+  endWithinMs: number;
 }
 
-async function buildApp({ profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger }: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger });
+/** What the log says of a request: what Fastify's default says, without the query, which carries the OIDC code and state of /auth/callback. */
+function requestLogLine(req: FastifyRequest) {
+  return {
+    method: req.method,
+    url: req.url.split('?', 1)[0],
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
 
-  app.setErrorHandler((err, _req, reply) => {
+/** What a client is told of a request the framework or a plugin refused. */
+function refusal(statusCode: number): { code: string; message: string } {
+  switch (statusCode) {
+    case 403:
+      return { code: 'forbidden', message: 'This request is not allowed.' };
+    case 404:
+      return { code: 'not_found', message: 'Nothing is here.' };
+    case 413:
+      return { code: 'body_too_large', message: 'The request body is too large.' };
+    case 415:
+      return { code: 'unsupported_media_type', message: "The request body's content type is not supported." };
+    default:
+      return { code: 'invalid_request', message: 'The request could not be read.' };
+  }
+}
+
+async function buildApp({ originCheck, profiles, access, checkouts, replayRules, notifier, alertDestinations, audit, history, webRoot, logger, onRouteRegistered, forwarder, leaderAddressForRoute, liveCheckouts, publicUrl, endWithinMs }: AppOptions): Promise<FastifyInstance> {
+  const app = Fastify({ logger: logger && { ...(logger === true ? {} : logger), serializers: { req: requestLogLine } } });
+  sendSecurityHeaders(app.server, publicUrl);
+
+  // Before any route, so none is missed.
+  if (onRouteRegistered) {
+    app.addHook('onRoute', ({ method, url }) => {
+      for (const m of [method].flat()) onRouteRegistered({ method: m, url });
+    });
+  }
+  serveApiUnderVersionToo(app);
+
+  app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {
       return reply.status(err.status).send({ error: { ...err.details, code: err.code, message: err.message } });
     }
-    app.log.error(err);
-    return reply.status(500).send({ error: { code: 'internal_error', message: (err as Error).message } });
+    const { statusCode, code } = err as { statusCode?: number; code?: string };
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      // Its message can quote the request's body, so neither the answer nor the log carries it.
+      req.log.info({ statusCode, code }, 'A request was refused');
+      return reply.status(statusCode).send({ error: refusal(statusCode) });
+    }
+    req.log.error({ err }, 'A request failed unexpectedly');
+    return reply.status(500).send({ error: { code: 'internal_error', message: 'Something went wrong on the server. The details are in its log.' } });
+  });
+
+  // Before anything reads a session or forwards.
+  app.addHook('onRequest', async (req) => {
+    const refused = originCheck(req.method, req.headers);
+    if (refused) throw refused;
   });
 
   // Probes answer without a session in both modes (routes/health.ts).
-  registerHealthRoutes(app, audit.audit);
+  registerHealthRoutes(app, audit.audit, () => checkouts.shuttingDown);
 
   // Every request carries its Operator (operator.ts); in Team Mode, /api/
   // routes refuse requests without a session before any handler runs.
@@ -400,17 +610,47 @@ async function buildApp({ profiles, access, checkouts, replayRules, notifier, al
   // Every route on a Broker Profile, a Checkout or an Audit Entry resolves
   // the profile through this one check (profile-access.ts).
   const profileAccess = new ProfileAccessCheck(profiles, access.kind);
-  const checkoutDeps = { checkouts, access: profileAccess };
-  registerSessionRoutes(app, { mode: access.kind, checkouts, access: profileAccess });
+  const ownerOfCheckout = async (id: string) => {
+    if (!liveCheckouts || checkouts.owns(id)) return null;
+    const owner = await liveCheckouts.ownerOf(id);
+    if (!owner) return null;
+    if ('address' in owner) return owner.address;
+    const profile = profiles.find((p) => p.name === owner.gone.profile);
+    if (!profile) {
+      // Its route and Role checks need the profile, so nothing more can be said, and it did exist.
+      throw new HttpError(404, 'profile_not_found', `The Replica that held Checkout ${id} has gone, and its Broker Profile is no longer configured. Its Messages are back in the queue, or will be once the broker sees the connection gone.`);
+    }
+    // Answered here from now on.
+    checkouts.answerForGoneOwner(owner.gone, profile);
+    return null;
+  };
+  const ownerOf = (req: FastifyRequest<{ Params: { id: string } }>) => ownerOfCheckout(req.params.id);
+  const checkoutDeps = {
+    checkouts,
+    access: profileAccess,
+    toOwner: forwarder ? forwarder.toOwner(ownerOf) : {},
+    toOwnerToEnd: forwarder ? forwarder.toOwner(ownerOf, { answerWithinMs: endWithinMs }) : {},
+  };
+  registerSessionRoutes(app, {
+    mode: access.kind,
+    checkouts,
+    access: profileAccess,
+    ...(liveCheckouts && { activeElsewhere: (operatorId: string) => liveCheckouts.activeCheckoutOf(operatorId) }),
+  });
   const alertReadings = { alerts: audit.audit.alerts, notifications: audit.audit.notifications, destinations: alertDestinations };
   registerProfileRoutes(app, profileAccess, history, alertReadings);
-  registerReplayRuleRoutes(app, replayRules, profileAccess);
+  // A Run now takes as long as a Checkout can.
+  registerReplayRuleRoutes(app, replayRules, profileAccess, forwarder ? forwarder.toOwner(leaderAddressForRoute, { answerWithinMs: endWithinMs }) : {});
   registerAlertDestinationRoutes(app, notifier, profileAccess);
   registerAlertRoutes(app, alertReadings, profileAccess);
   registerCheckoutRoutes(app, checkoutDeps);
   registerDecisionRoutes(app, checkoutDeps);
   registerApplyRoutes(app, checkoutDeps);
-  registerApprovalRoutes(app, checkoutDeps);
+  registerApprovalRoutes(app, {
+    ...checkoutDeps,
+    toOwnerOfApproval: forwarder ? forwarder.toOwner((req: FastifyRequest<{ Params: { checkoutId: string } }>) => ownerOfCheckout(req.params.checkoutId)) : {},
+    ...(liveCheckouts && { waitingElsewhere: (approver: Operator) => liveCheckouts.waitingElsewhere(approver.id) }),
+  });
   registerExportRoutes(app, checkoutDeps);
   registerAuditRoutes(app, audit, profileAccess);
   registerHistoryRoutes(app, history, profileAccess);

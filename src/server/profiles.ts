@@ -105,17 +105,15 @@ export interface ProfilesFile {
   alertDestinations: AlertDestination[];
   /** Whether the file says `version: 1`; a file without it is read as version 1, with a startup warning. */
   versionDeclared: boolean;
-  /** Where the file has a top-level or profile-level key that this release ignores and 1.0 will refuse. */
-  unknownKeys: string[];
 }
 
 /** The startup warning for a file without a version, which check-config repeats. */
 export const NO_VERSION_WARNING = `The profiles file has no version; it is read as version 1. Add "version: 1" at its top`;
 
-/** Every key of the file's top level; 1.0 refuses any other. */
-const TOP_LEVEL_KEYS = ['version', 'profiles', 'alertDestinations'];
-/** Every key of a Broker Profile; 1.0 refuses any other. */
-const PROFILE_KEYS = [
+/** Every key of the file's top level; any other is refused. */
+export const TOP_LEVEL_KEYS = ['version', 'profiles', 'alertDestinations'];
+/** Every key of a Broker Profile; any other is refused. */
+export const PROFILE_KEYS = [
   'name',
   'managementUrl',
   'amqpUrl',
@@ -203,6 +201,12 @@ export function parseProfilesFile(
   if (isRecord(doc) && 'version' in doc && doc.version !== 1) {
     throw new ProfilesConfigError(`${source}: version must be 1, the only version of the profiles file this release reads`);
   }
+  // Before the list: a misspelt "profiles" is reported as the key it is.
+  for (const key of isRecord(doc) ? Object.keys(doc) : []) {
+    if (!TOP_LEVEL_KEYS.includes(key)) {
+      throw new ProfilesConfigError(`${source}: ${key} is not a key of the profiles file; it takes ${TOP_LEVEL_KEYS.join(', ')}`);
+    }
+  }
   const list = isRecord(doc) ? doc.profiles : undefined;
   if (!Array.isArray(list) || list.length === 0) {
     throw new ProfilesConfigError(`${source} must contain a non-empty "profiles" list`);
@@ -210,7 +214,6 @@ export function parseProfilesFile(
 
   const alertDestinations = parseAlertDestinations(isRecord(doc) ? doc.alertDestinations : undefined, env, source);
 
-  const unknownKeys = isRecord(doc) ? Object.keys(doc).filter((key) => !TOP_LEVEL_KEYS.includes(key)) : [];
   const seen = new Set<string>();
   const profiles = list.map((raw, i): BrokerProfile => {
     const where = `${source}: profiles[${i}]`;
@@ -224,7 +227,7 @@ export function parseProfilesFile(
     if (seen.has(name)) throw new ProfilesConfigError(`${where}: duplicate profile name "${name}"`);
     seen.add(name);
     for (const key of Object.keys(raw)) {
-      if (!PROFILE_KEYS.includes(key)) unknownKeys.push(`profiles[${i}] ("${name}").${key}`);
+      if (!PROFILE_KEYS.includes(key)) throw new ProfilesConfigError(`${where} ("${name}").${key} is not a key of a Broker Profile`);
     }
     const isProtected = parseProtected(raw.protected, where);
     const credentials = parseCredentials(raw, env, where, `${where} ("${name}")`);
@@ -257,7 +260,7 @@ export function parseProfilesFile(
       canary: parseCanary(raw.canary, `${where} ("${name}").canary`),
     };
   });
-  return { profiles, alertDestinations, versionDeclared: isRecord(doc) && 'version' in doc, unknownKeys };
+  return { profiles, alertDestinations, versionDeclared: isRecord(doc) && 'version' in doc };
 }
 
 function parseCredentials(

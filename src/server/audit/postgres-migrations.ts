@@ -164,6 +164,78 @@ export const MIGRATIONS: readonly string[] = [
      recent TEXT NOT NULL,
      PRIMARY KEY (profile, vhost, queue)
    );`,
+  // v2: sessions and sign-ins in progress, shared by Replicas. PostgreSQL only: on SQLite they stay in memory.
+  `CREATE TABLE sessions (
+     id TEXT PRIMARY KEY,
+     operator TEXT NOT NULL,
+     tokens TEXT NOT NULL,
+     expires_at BIGINT NOT NULL
+   );
+   CREATE INDEX sessions_expires_at ON sessions (expires_at);
+   CREATE TABLE sign_ins (
+     id TEXT PRIMARY KEY,
+     sealed TEXT NOT NULL,
+     expires_at BIGINT NOT NULL
+   );
+   CREATE INDEX sign_ins_expires_at ON sign_ins (expires_at);`,
+  // v3: who is the Background Leader. One row at most; its term only goes up.
+  `CREATE TABLE leader_lease (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     holder TEXT,
+     term BIGINT NOT NULL,
+     expires_at BIGINT NOT NULL
+   );`,
+  // v4: Replicas' leases and Live Checkout records. PostgreSQL only: on SQLite there is one Replica.
+  `CREATE TABLE replicas (
+     id TEXT PRIMARY KEY,
+     forwarding_address TEXT NOT NULL,
+     lease_expires_at BIGINT NOT NULL
+   );
+   CREATE TABLE live_checkouts (
+     id TEXT PRIMARY KEY,
+     owner_replica TEXT NOT NULL,
+     operator_id TEXT NOT NULL,
+     operator_name TEXT NOT NULL,
+     profile TEXT NOT NULL,
+     vhost TEXT NOT NULL,
+     queue TEXT NOT NULL,
+     status TEXT NOT NULL,
+     approval TEXT
+   );
+   CREATE INDEX live_checkouts_owner_replica ON live_checkouts (owner_replica);
+   CREATE INDEX live_checkouts_operator_id ON live_checkouts (operator_id);`,
+  // v5: what another Replica needs to show a Checkout whose owner has gone.
+  `ALTER TABLE live_checkouts
+     ADD COLUMN queue_type TEXT NOT NULL DEFAULT 'classic',
+     ADD COLUMN delivery_limit INTEGER,
+     ADD COLUMN ready_at_start INTEGER NOT NULL DEFAULT 0,
+     ADD COLUMN started_at BIGINT NOT NULL DEFAULT 0,
+     ADD COLUMN ends_at BIGINT NOT NULL DEFAULT 0,
+     ADD COLUMN end_reason TEXT,
+     ADD COLUMN lost_reason TEXT;`,
+  // v6: one Checkout per Operator. Records of crashed Replicas may break it until now: the one
+  // with the latest lease stays, and any left that is out of date goes at the next claim.
+  `UPDATE live_checkouts SET status = 'lost', approval = NULL
+   WHERE status = 'active' AND id NOT IN (
+     SELECT DISTINCT ON (c.operator_id) c.id
+     FROM live_checkouts c LEFT JOIN replicas r ON r.id = c.owner_replica
+     WHERE c.status = 'active'
+     ORDER BY c.operator_id, r.lease_expires_at DESC NULLS LAST
+   );
+   DROP INDEX live_checkouts_operator_id;
+   CREATE UNIQUE INDEX live_checkouts_one_per_operator ON live_checkouts (operator_id) WHERE status IN ('starting', 'active');`,
+  // v7: the session idle timeout. A session from before it, or one a Replica still on v6 adds
+  // during a rolling update, has no idle expiry until its next request gives it one.
+  `ALTER TABLE sessions ADD COLUMN idle_expires_at BIGINT NOT NULL DEFAULT 9007199254740991;`,
+  // v8: Notifications saved with their Alerts and not yet sent, for the next leader. On SQLite they are in memory.
+  `CREATE TABLE alert_unsent_notifications (
+     id BIGSERIAL PRIMARY KEY,
+     profile TEXT NOT NULL,
+     destination TEXT NOT NULL,
+     notification TEXT NOT NULL
+   );`,
+  // v9 (#118): when the leader next passes a rule, so that every Replica can show it.
+  `ALTER TABLE replay_rule_state ADD COLUMN next_pass_at BIGINT;`,
 ];
 
 /** Any number, the same on every Replica: advisory locks are per database, and this is the only one Volverán takes here. */

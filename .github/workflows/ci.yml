@@ -24,8 +24,8 @@ jobs:
     name: Lint and unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -40,12 +40,12 @@ jobs:
     env:
       KUBECONFORM_VERSION: v0.8.0
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.20.2
       - name: Install kubeconform
@@ -65,20 +65,26 @@ jobs:
         run: npm run test:chart:release
 
   smoke:
-    name: kind smoke test
+    name: kind smoke test (${{ matrix.kubernetes }})
     # The chart, image and server together; the weekly run is only for broker facts.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      # Each is what the table in docs/compatibility.md rests on, so one failing must not hide another's result.
+      fail-fast: false
+      matrix:
+        kubernetes: [v1.33.12, v1.34.11, v1.35.8, v1.36.4, v1.37.0]
     env:
       KIND_VERSION: v0.33.0
+      VOLVERAN_SMOKE_KUBERNETES: ${{ matrix.kubernetes }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.20.2
       - name: Install kind
@@ -102,8 +108,8 @@ jobs:
       # Empty means the pinned tag in test/broker/docker-compose.yml.
       VOLVERAN_TEST_RABBITMQ_IMAGE: ${{ github.event_name == 'schedule' && 'rabbitmq:4-management' || '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -113,8 +119,11 @@ jobs:
       - name: Broker-facts suite
         run: npm run test:broker
       - name: Integration suite on SQLite
+        id: integration-sqlite
         run: npm run test:integration
+      # Runs whatever SQLite's result, so a failure there hides nothing here; either failing fails the job.
       - name: Integration suite on PostgreSQL
+        if: ${{ !cancelled() && (steps.integration-sqlite.conclusion == 'success' || steps.integration-sqlite.conclusion == 'failure') }}
         run: npm run test:integration
         env:
           VOLVERAN_TEST_AUDIT_STORE: postgres

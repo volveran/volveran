@@ -26,6 +26,7 @@ export const testOidc = {
 };
 
 export const testSessionSecret = 'test-session-secret-0123456789abcdef';
+export const testSessionEncryptionKey = 'test-session-encryption-key-0123456789abcdef';
 
 /** The environment of a Team Mode app reached at `baseUrl` (startApp merges it over its defaults). */
 export function teamModeEnv(baseUrl: string, issuer = testOidc.issuer): Record<string, string | undefined> {
@@ -37,6 +38,7 @@ export function teamModeEnv(baseUrl: string, issuer = testOidc.issuer): Record<s
     VOLVERAN_OIDC_CLIENT_SECRET: testOidc.clientSecret,
     VOLVERAN_OIDC_REDIRECT_URL: `${baseUrl}/auth/callback`,
     VOLVERAN_SESSION_SECRET: testSessionSecret,
+    VOLVERAN_SESSION_ENCRYPTION_KEY: testSessionEncryptionKey,
   };
 }
 
@@ -63,14 +65,25 @@ export interface BrowserResponse {
  * the Operator's browser.
  */
 export class TestBrowser {
-  readonly cookies = new Map<string, string>();
+  /** Where this request goes: fixed, or chosen per request (two-replicas.ts). */
+  private readonly target: () => string;
 
-  constructor(readonly baseUrl: string) {}
+  constructor(
+    baseUrl: string | (() => string),
+    readonly cookies = new Map<string, string>(),
+  ) {
+    this.target = typeof baseUrl === 'string' ? () => baseUrl : baseUrl;
+  }
 
-  async request(method: string, url: string, init: { body?: unknown; form?: Record<string, string> } = {}): Promise<BrowserResponse> {
-    const absolute = new URL(url, this.baseUrl);
-    const headers: Record<string, string> = {};
-    if (absolute.origin === new URL(this.baseUrl).origin && this.cookies.size > 0) {
+  get baseUrl(): string {
+    return this.target();
+  }
+
+  async request(method: string, url: string, init: { body?: unknown; form?: Record<string, string>; headers?: Record<string, string> } = {}): Promise<BrowserResponse> {
+    const baseUrl = this.target();
+    const absolute = new URL(url, baseUrl);
+    const headers: Record<string, string> = { ...init.headers };
+    if (absolute.origin === new URL(baseUrl).origin && this.cookies.size > 0) {
       headers.cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
     }
     let body: string | undefined;
@@ -83,7 +96,7 @@ export class TestBrowser {
     }
     const res = await fetch(absolute, { method, headers, body, redirect: 'manual' });
     const setCookies = res.headers.getSetCookie();
-    if (absolute.origin === new URL(this.baseUrl).origin) {
+    if (absolute.origin === new URL(baseUrl).origin) {
       for (const c of setCookies) {
         const [pair = ''] = c.split(';');
         const eq = pair.indexOf('=');
@@ -183,6 +196,8 @@ export interface ShortTokenProvider {
   refreshes(): number;
   /** From now on, answer every refresh grant 400 `invalid_grant`, as for a revoked or expired refresh token. */
   refuseRefreshes(): void;
+  /** Refresh grants that sent a refresh token already rotated away, which were refused. */
+  reusedRefreshTokens(): number;
   close(): Promise<void>;
 }
 
@@ -207,17 +222,25 @@ function withLifetime(token: string, lifetimeSeconds: number, key: crypto.KeyObj
  * refresh (the mock's own refresh grant copies `exp`, so a refreshed token
  * would expire with the old one). It signs them again with the mock's key, so
  * the OAuth 2.0 test broker accepts them.
+ *
+ * Refresh tokens rotate as on a strict provider: each works once, and one already
+ * used is refused. `refreshDelayMs` holds each refresh grant's answer, so that two
+ * clients overlap.
  */
-export async function startShortTokenProvider(lifetimeSeconds: number): Promise<ShortTokenProvider> {
+export async function startShortTokenProvider(lifetimeSeconds: number, { refreshDelayMs = 0 }: { refreshDelayMs?: number } = {}): Promise<ShortTokenProvider> {
   const upstream = new URL(testOidc.issuer);
   const key = mockSigningKey();
   let refreshes = 0;
   let refusing = false;
+  let reused = 0;
+  let issued = 0;
+  /** The refresh tokens that still work, each with the mock's own behind it. */
+  const usable = new Map<string, string>();
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
-      const body = Buffer.concat(chunks);
+      let body = Buffer.concat(chunks);
       const isToken = req.method === 'POST' && req.url?.split('?')[0] === `${upstream.pathname}/token`;
       const grantType = isToken ? new URLSearchParams(body.toString('utf8')).get('grant_type') : null;
       if (grantType === 'refresh_token') {
@@ -227,6 +250,18 @@ export async function startShortTokenProvider(lifetimeSeconds: number): Promise<
           res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'The refresh token was revoked' }));
           return;
         }
+        const params = new URLSearchParams(body.toString('utf8'));
+        const sent = params.get('refresh_token') ?? '';
+        const behind = usable.get(sent);
+        if (behind === undefined) {
+          reused++;
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'The refresh token was already used' }));
+          return;
+        }
+        usable.delete(sent);
+        params.set('refresh_token', behind);
+        body = Buffer.from(params.toString());
       }
       const forward = http.request(
         {
@@ -248,8 +283,15 @@ export async function startShortTokenProvider(lifetimeSeconds: number): Promise<
             const tokens = JSON.parse(Buffer.concat(answerChunks).toString('utf8'));
             tokens.access_token = withLifetime(tokens.access_token, lifetimeSeconds, key);
             tokens.expires_in = lifetimeSeconds;
-            res.writeHead(200, { 'content-type': 'application/json' });
-            res.end(JSON.stringify(tokens));
+            if (typeof tokens.refresh_token === 'string') {
+              const rotated = `rotated-${++issued}`;
+              usable.set(rotated, tokens.refresh_token);
+              tokens.refresh_token = rotated;
+            }
+            setTimeout(() => {
+              res.writeHead(200, { 'content-type': 'application/json' });
+              res.end(JSON.stringify(tokens));
+            }, grantType === 'refresh_token' ? refreshDelayMs : 0);
           });
         },
       );
@@ -265,6 +307,7 @@ export async function startShortTokenProvider(lifetimeSeconds: number): Promise<
     refuseRefreshes: () => {
       refusing = true;
     },
+    reusedRefreshTokens: () => reused,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }

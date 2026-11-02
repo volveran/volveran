@@ -6,6 +6,70 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+**Upgrading in Team Mode on PostgreSQL:** set the new `VOLVERAN_SESSION_ENCRYPTION_KEY` (chart: add `session-encryption-key` to the Secret named in `oidc.existingSecret`), or Volverán refuses to start. Nothing changes on SQLite or in Solo Mode.
+
+### Changed
+
+- A written [compatibility policy](docs/compatibility.md) names the public contracts, what a minor version may change, how something is deprecated, the supported upgrades and the versions tested: RabbitMQ 4.4, PostgreSQL 17, Kubernetes 1.33 to 1.37 and Node 24. `engines` in `package.json` now says Node 24, not 24 or later, as nothing later is tested. A test fails when a contract changes without being recorded, and when a 1.x migration does more than add. (#130)
+- The chart writes `version: 1` into the profiles file on SQLite as well, so Volverán does not warn of its absence. This changes the ConfigMap's checksum, so the upgrade to 1.0 rolls a single SQLite pod once and ends its open Checkouts.
+- A Restore that a crash left `pending` becomes `uncertain` at the next try, once two minutes old, and answers 409 `restore_interrupted` rather than `already_restored`. It is not republished ([guide](docs/replicas.md)).
+- A refresh of an Operator's token gives the provider 10 s, and signing out or the sweep no longer waits for one in progress.
+- On a gone Replica's Checkout whose Broker Profile has left the file, any Replica answers 404 `profile_not_found`, not `checkout_not_found`.
+- An Operator is told `503 replica_unreachable`, to try again, when the internal port refuses a forwarded request or the store cannot say which Replica owns a Checkout, rather than a 401 or a 500. New header on that refusal: `x-volveran-forwarding-refused`.
+- An Operator can start a Checkout of another queue as soon as one ends, on the Replica that held it as on any other, while its Messages go back.
+- `returnTo` given twice no longer answers 500 at sign-in, and a path spelt `/%61pi/...` is forwarded as the route it reached.
+- Text about returning Messages no longer promises their order on a large Checkout of a quorum queue, which the queue does not keep.
+- The image has no `corepack` or `yarn` any more, as it had no `npm`, and the `Dockerfile` pins its syntax image by digest.
+- Forwarded requests carry a protocol version. A Replica refuses another version before reading anything else of the request, and the Operator is told to try again. New `reason` on `volveran_forwarding_failures_total`: `protocol_mismatch`. (#130)
+- With several Replicas, the metrics add up: the gauges of shared state (queue depth, set-up warnings, sampling, Alerts firing, Replay Rule state, stored body bytes) come from the Background Leader only, and counters stay per Replica. New metrics: `volveran_background_leader`, `volveran_forwarding_failures_total` and `volveran_audit_store_errors_total` ([guide](docs/observability.md#several-replicas)). A single Replica shows the same gauges as before, though on PostgreSQL they go away if it loses the store for longer than its lease. (#120)
+- A pause now stops a Rule Pass in progress at its next step. The step under way finishes; the Messages not reached go back to the queue and count as Not due. It used to carry on and Replay them all. With several Replicas, Rule Passes run on the Background Leader, and a pause or resume works through any Replica. Audit schema v18 on SQLite. (#118)
+- A stopping Replica gives notifications in progress up to 5 seconds to finish, then cuts them short and logs a warning. It used to cut them short at once, so a last automatic pause of a Replay Rule could go untold ([guide](docs/observability.md)). (#118)
+- **Unknown keys in the profiles file are refused.** This is the deliberate breaking change of 1.0. A key the file does not have stops startup at every level, including the top level, a Broker Profile and a Replay rule's filter clause, where they used to be ignored, and the refusal names its path. A misspelt safety setting such as `requireAproval` can no longer silently leave it at its default. Try your file with `check-config` before upgrading ([guide](docs/configuration.md#unknown-keys)).
+- `check-config` now exits `0` or `1`. It no longer exits `2`: an unknown key is something startup refuses, so it exits `1` and reports the first as an `error:` line, in place of a `refused in 1.0:` line for each.
+- In Team Mode on PostgreSQL, sessions and sign-ins in progress live in the database, with their access and refresh tokens encrypted. An Operator stays signed in across a restart, and a sign-in or a sign-out works whichever Replica it reaches. On SQLite they stay in memory. (#107)
+
+- The image is built on `node:24-alpine` instead of `node:24-slim` (Debian 12), which removes every high and critical finding of the image scan. An image you build on Volverán's now installs packages with `apk`, not `apt-get`, and has musl for its C library.
+
+### Added
+
+- The chart runs several Replicas: `replicaCount` above 1, with `postgres.existingSecret` and the new `forwarding.existingSecret`, gets a rolling update, a PodDisruptionBudget, topology spread (`pod.topologySpreadConstraints`), a headless Service and an internal port. Only other Replicas can reach that port: the chart always renders a NetworkPolicy saying so, whatever `networkPolicy.enabled` says, and it needs a CNI that enforces it. One replica renders as before, and `replicaCount` on SQLite stays at 1. [Running several Replicas](docs/replicas.md) says what failover protects and not, and what was tested: up to three Replicas. ADR 0014 supersedes ADR 0003. (#121)
+- The API is served under `/api/v1`, and the web app uses it. `/api` stays as an alias through 1.x, so scripts from 0.x keep working, with the same sign-in, Role, Origin and forwarding checks. An answer's `auditUrl` and a refusal's text now name `/api/v1`. Each Release has an OpenAPI description, `openapi.json` ([guide](docs/configuration.md#the-http-api)). (#129)
+- A Background Leader: one Replica holds a lease in the audit store and runs retention, the sampler and Alerts, and another takes over within 20 s if it goes away ([ADR 0014](docs/adr/0014-replicas-forwarding-and-the-background-leader.md)). It needs no Kubernetes API access. On SQLite it is simply its own leader, and nothing changes.
+- The sampler runs on the Background Leader, so several Replicas take one set of Samples. Estimated arrivals count Messages taken out through every Replica, and a failover shows in the history view as a gap, with no false arrivals. On SQLite nothing changes.
+- With `VOLVERAN_FORWARDING_SECRET`, `VOLVERAN_FORWARDING_PORT` and `VOLVERAN_FORWARDING_ADDRESS` set, in Team Mode on PostgreSQL, Replicas register in the database and an Operator's Checkout works through any of them, on an internal port that requires the shared secret: its view and heartbeat, reading Messages, Decisions, Apply, stop, Canary continue, a streamed export and ending it. Nothing changes without them, or on SQLite. (#108, #109)
+- With Replicas, when an Owner Replica dies its Operators see a Lost Checkout with the reason through any other Replica, within the 15 s its lease holds, and an Apply it was running leaves `uncertain` Audit Entries for what is not known. While its lease is live but it cannot be reached, requests answer 503 `replica_unreachable`, to try again. A Replica that cannot renew its lease ends its Checkouts through Keep, with the end reason `lease-ran-out`: a store outage uses up no Delivery Budget and drops no Message. (#112)
+- With Replicas, refreshing an Operator's access token on an `operatorToken` profile is safe with a provider that rotates refresh tokens: one Replica refreshes while holding the session's row, and the others use the new token, so a Checkout stays authenticated whichever Replica the Operator reaches, and Decisions work through any of them. (#114)
+- AMQP connections ask for a 5 s heartbeat, unless a profile's `amqpUrl` names its own `heartbeat`. A lost host or network now holds a queue's lock and Messages for about 15 s rather than about three minutes. (#112)
+- With those set, four-eyes works across Replicas: the Approvals view lists every waiting Approval from every Replica, and requesting, withdrawing, reading and comparing Messages, approving, rejecting, stopping, continuing and following an Apply work through any of them, with both people in the Audit Entries. (#111)
+- With those set, the limit of one active Checkout per Operator holds across Replicas: a start on any of them is refused with `operator_has_checkout` while the Operator has a Checkout on another that is alive. (#110)
+- With several Replicas, one notification goes out per Alert. A firing Alert survives a change of leader without being sent again as new. On PostgreSQL a notification in flight when the leader goes is sent again by the next, so it may arrive twice ([guide](docs/observability.md)). (#117)
+- A JSON Schema of the profiles file, `profiles.schema.json`, attached to each GitHub Release ([guide](docs/configuration.md#the-schema-of-the-profiles-file)). A test holds it and the parser to the same fixtures; the parser stays the authority.
+
+- A Replica shutting down reports not ready at once, refuses new Checkouts with `503` `replica_shutting_down`, and stops an Apply at its next step: the rest go back as Keep, reported `not-attempted`. Its Operators see through any Replica that the Checkout ended because the Replica shut down, where the other answered `checkout_not_found`. Before, an Apply in progress ran to its end. (#119)
+- **The chart's `pod.terminationGracePeriodSeconds` default goes from 60 to 90**, to cover that at the default limits. A value you set stays, and should allow about 70 seconds at 1,000 Messages plus 40 ms for each one above. (#119)
+
+### Fixed
+
+- Stopping with a live Checkout no longer hangs when the broker connection has just dropped or the broker has gone silent: closing a channel or connection now has a time limit of 5 s. (#119)
+- Ending a Checkout through Keep no longer uses up Delivery Budget on quorum queues, however it ends, including at shutdown. (#134) It now waits for the queue to take the Messages back before closing the channel, which took about 20 seconds per 1,000 Messages on a busy machine, so ending a large Checkout answers later. The wait stops after 40 ms per Message returned, at least 5 seconds (40 seconds at the default limit of 1,000 Messages), and logs a warning; another consumer on the queue can cause that, and any Message not yet taken back then costs one delivery. If you raise `VOLVERAN_CHECKOUT_MAX_MESSAGES`, raise `pod.terminationGracePeriodSeconds` to match.
+
+### Security
+
+- A state-changing request from a foreign `Origin` answers `403 foreign_origin`, on top of `SameSite=Lax`. In Team Mode the web app's origin is that of `VOLVERAN_OIDC_REDIRECT_URL` or `VOLVERAN_PUBLIC_URL`; API scripts send no `Origin` and are not affected. (#123)
+- Solo Mode refuses a foreign `Host` (`403 foreign_host`, on the metrics port too) or `Origin` on every request, so a website cannot reach it through DNS rebinding. If you reach it through another name, set `VOLVERAN_PUBLIC_URL`. (#123)
+- Sign-in no longer returns to another site through a tab or newline in `returnTo`. (#123)
+- A [threat model](docs/threat-model.md), with the result of testing each finding of the security review and the risks accepted.
+- Every answer now carries a strict `Content-Security-Policy` that also refuses framing, with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`, and `Strict-Transport-Security` when Volverán is reached over https (`VOLVERAN_PUBLIC_URL` or `X-Forwarded-Proto`). A hostile Message body or header cannot run script in an Operator's browser. Answers other than the web app's files are `Cache-Control: no-store`, so Message bodies stay out of the browser's cache. (#124)
+- A [security policy](SECURITY.md) with a private way to report a vulnerability, a response time and supported versions.
+- CI runs CodeQL, `npm audit` and an image scan on pull requests and every week, and scans the last released image every week. A release stops on a known high or critical finding in its dependencies or image, with a fix or without one, unless it is on the reviewed list in `.grype.yaml`.
+- OIDC codes and `state` no longer reach the logs: a request's log line has its path without the query. (#125)
+- An unhandled error answers a generic `internal_error` and logs the detail. A request Volverán cannot take keeps its status rather than answering 500: malformed or empty JSON `400 invalid_request`, a body over the limit `413 body_too_large`, an unsupported media type `415 unsupported_media_type`, a refusal from the static files `403 forbidden`. A sign-in that fails on Volverán's side says only that the provider's answer could not be used, with the reason in the log. (#125)
+- In Team Mode, a session ends after `VOLVERAN_SESSION_IDLE_MINUTES` (default 60) without activity, on both audit stores, as well as 12 hours after sign-in. ([details](docs/configuration.md#session-idle-timeout), #125)
+- The session guard reads the route, so `/%61pi/session` is refused like `/api/session`, and `/%61pi/checkouts/<id>` no longer answers 500 or tells an existing Checkout from an unknown one. (#126)
+- `/auth/login` without a session can no longer add sign-ins in progress without limit: Volverán keeps the newest 10,000.
+- The image no longer contains `npm` or `npx`, which nothing in it uses at runtime and which carried known high findings in their bundled packages.
+- GitHub Actions are pinned by commit and the base image by digest, and Dependabot proposes their updates and those of npm dependencies.
+
 ## [0.6.1] - 2026-10-31
 
 A queue can be Checked Out again straight after its Checkout ends.

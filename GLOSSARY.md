@@ -18,8 +18,19 @@ _Avoid_: Prod mode, locked profile
 An exclusive hold on the Messages at the head of one queue when it started (all of them, up to the Checkout limit), so the user can act on each one. Messages that arrive later, or lie beyond the limit, wait for the next Checkout. A Checkout has a time limit. Ending or losing a Checkout returns every Message that has no applied Decision to the queue.
 _Avoid_: Session, lock, snapshot, browse
 
+**Owner Replica**:
+The Replica whose AMQP connection holds a Checkout's Messages. Any other Replica passes requests about that Checkout on to it, which is forwarding.
+
+**Live Checkout**:
+What every Replica can read about a Checkout on any of them: a record in the audit store naming its Owner Replica, its Operator, its queue and its status. It is routing information. The held Messages and Decisions stay in the Owner Replica's memory.
+_Avoid_: Remote Checkout
+
+**Forwarding**:
+A Replica passing a request on to the one that must answer it, over the internal port, with the signed-in Operator's identity under a shared secret. The Operator never knows it happened.
+_Avoid_: Proxying
+
 **Lost Checkout**:
-A Checkout that ended without Volverán ending it, for example because the broker cancelled it. Its Messages are back in the queue and it can no longer be Applied.
+A Checkout that ended without Volverán ending it, for example because the broker cancelled it or its Owner Replica died. Its Messages are back in the queue, or will be once the broker sees the connection gone, and it can no longer be Applied.
 _Avoid_: Expired, timed out, dead Checkout
 
 **Delivery Budget**:
@@ -79,7 +90,7 @@ Sending a Message to a queue the user names, or to an exchange with a routing ke
 _Avoid_: Transfer, copy, shovel
 
 **Keep**:
-Returning a Message to its source queue unchanged at the end of a Checkout. The return costs no Delivery Budget while the channel stays open, but on a quorum queue the channel closing straight after it, as a Checkout's end does today, can use some up (ADR 0006).
+Returning a Message to its source queue unchanged at the end of a Checkout. The return costs no Delivery Budget while the channel stays open, so on a quorum queue a Checkout's end waits for the queue to take the Messages back before it closes the channel, up to a time limit (ADR 0006).
 _Avoid_: Skip, requeue, ignore
 
 **Died Again**:
@@ -119,7 +130,7 @@ A condition on dead-letter queues or on Volverán itself, declared under a Broke
 _Avoid_: Alarm, trigger, monitor
 
 **Alert**:
-One Alert Rule firing for one queue (or one paused Replay Rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay Rule resumes or sampling succeeds. A firing Alert survives a restart without being sent again; removing its rule from the file drops it quietly.
+One Alert Rule firing for one queue (or one paused Replay Rule, or the profile whose sampling fails), from when it fires until it resolves: pending while the condition has not yet held for `for`, firing once it has (a notification goes out), resolved once the condition has been false for one full Sample (another goes out), or at once when a Replay Rule resumes or sampling succeeds. A firing Alert survives a restart or a change of Background Leader without being sent again as new; removing its rule from the file drops it quietly.
 _Avoid_: Incident, event, page
 
 ## Running
@@ -133,8 +144,12 @@ The tool running as a shared service that Operators reach over the network after
 _Avoid_: Server mode, hosted mode, SSO mode
 
 **Replica**:
-One running Volverán server among those sharing an audit store on PostgreSQL. Until multi-Replica work lands, run exactly one.
+One running Volverán server. Several share an audit store on PostgreSQL; on SQLite there is exactly one.
 _Avoid_: Pod, node
+
+**Background Leader**:
+The one Replica currently running what must run once however many Replicas there are: the sampler, Alerts, Replay Rules and retention. It holds a lease in the audit store, and another Replica takes over when it goes away (ADR 0014). A single Replica on SQLite is simply its own leader.
+_Avoid_: Master, primary, active Replica
 
 **Audit Entry**:
 A record of one triage action: which Operator did it, as which broker user, when, on which Broker Profile and queue. For a Discard it includes a full copy of the Message.

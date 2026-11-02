@@ -76,9 +76,30 @@ describe('Restore on a store that answers late', () => {
     expect(await sqlite.list({ restoreOf: discardId })).toHaveLength(1);
   });
 
+  it('lets only one of two Replicas go on when both have seen no earlier Restore', async () => {
+    let seen = 0;
+    let bothSeen!: () => void;
+    const both = new Promise<void>((resolve) => (bothSeen = resolve));
+    const waiting: AuditStore = new Proxy(slow, {
+      get: (t, key) =>
+        key === 'list'
+          ? async (...args: Parameters<AuditStore['list']>) => {
+              const entries = await t.list(...args);
+              if (++seen === 2) bothSeen();
+              await both;
+              return entries;
+            }
+          : Reflect.get(t, key),
+    });
+    const results = await Promise.allSettled([restore(service(waiting)), restore(service(waiting))]);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'already_restored' } });
+    expect(await sqlite.list({ restoreOf: discardId })).toHaveLength(1);
+  });
+
   it('refuses a second Restore once the first has done its work', async () => {
     const { id: _id, ...discard } = (await sqlite.get(discardId))!;
-    await sqlite.record({ ...discard, operator: OPERATOR, action: 'restore', restoreOf: discardId, message: null });
+    await sqlite.record({ ...discard, at: new Date(), operator: OPERATOR, action: 'restore', restoreOf: discardId, message: null });
     await expect(restore(service())).rejects.toMatchObject({ code: 'already_restored' });
   });
 

@@ -1,7 +1,29 @@
 // Checkout time limit, heartbeat window and quorum x-consumer-timeout
 // backstop: settings from the environment and the countdown.
 import { describe, expect, it } from 'vitest';
-import { consumerTimeoutMs, parseCheckoutTiming, remainingMs } from '../../src/server/triage/checkout-timing.js';
+import { consumerTimeoutMs, endAnswersWithinMs, parseCheckoutTiming, remainingMs, returnWaitMs } from '../../src/server/triage/checkout-timing.js';
+
+describe('returnWaitMs', () => {
+  it('is 5 seconds for a small Checkout', () => {
+    expect(returnWaitMs(1)).toBe(5_000);
+    expect(returnWaitMs(125)).toBe(5_000);
+  });
+  it('is 40 ms per Message past that', () => {
+    expect(returnWaitMs(1_000)).toBe(40_000);
+    expect(returnWaitMs(5_000)).toBe(200_000);
+  });
+});
+
+describe('endAnswersWithinMs', () => {
+  const timing = { timeLimitMs: 1_000 } as Parameters<typeof endAnswersWithinMs>[0];
+  it('leaves at least 45 s past the time limit', () => {
+    expect(endAnswersWithinMs(timing, 1)).toBe(46_000);
+  });
+  it("leaves more than the return's wait and what follows it, at any limit of Messages", () => {
+    expect(endAnswersWithinMs(timing, 1_000)).toBe(56_000);
+    expect(endAnswersWithinMs(timing, 5_000)).toBe(216_000);
+  });
+});
 
 describe('parseCheckoutTiming', () => {
   it('defaults to a 30 minute time limit, a 2 minute heartbeat window and a 1 minute backstop margin', () => {

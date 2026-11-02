@@ -1,10 +1,10 @@
 # Running Volverán on PostgreSQL
 
-By default the audit store is SQLite on one volume. Setting a connection URL keeps it in a PostgreSQL database instead, one your team already backs up and monitors: Audit Entries, Discarded bodies, Replay Rule state, depth history, notifications and Alerts. Every view behaves the same on either store.
+By default the audit store is SQLite on one volume. Setting a connection URL keeps it in a PostgreSQL database instead, one your team already backs up and monitors: Audit Entries, Discarded bodies, Replay Rule state, depth history, notifications, Alerts and sessions. Every view behaves the same on either store.
 
-SQLite stays the default, and Solo Mode never needs a database server. Volverán still runs one Replica on PostgreSQL. Several Replicas come in a later version.
+SQLite stays the default, and Solo Mode never needs a database server. Several Replicas need it: see [Running several Replicas](replicas.md).
 
-Tested against PostgreSQL 17. Volverán uses no extensions.
+Tested against PostgreSQL 17, the only version supported ([compatibility policy](compatibility.md#supported-versions)). Volverán uses no extensions.
 
 ## Set up the database
 
@@ -41,7 +41,16 @@ postgres:
   existingSecret: volveran-postgres   # the key is `url`; postgres.urlKey changes it
 ```
 
-The chart then renders no PersistentVolumeClaim and no data volume, and still runs one replica with `Recreate`. A claim left from before stays in the cluster, because it carries `helm.sh/resource-policy: keep`.
+In Team Mode, sessions and sign-ins in progress live in the database too, so a restart signs nobody out, and their access and refresh tokens are encrypted, so a dump of the database hands out none. The key is a new required secret: add it to the Secret named in `oidc.existingSecret`, or the pod cannot start.
+
+```sh
+kubectl -n volveran patch secret volveran-oidc --type merge \
+  -p "{\"stringData\":{\"session-encryption-key\":\"$(openssl rand -hex 32)\"}}"
+```
+
+It must differ from the session secret, which keeps signing cookies, and be the same on every Replica. Changing it signs everyone out. Outside the chart, set [`VOLVERAN_SESSION_ENCRYPTION_KEY`](configuration.md).
+
+The chart then renders no PersistentVolumeClaim and no data volume, and still runs one replica with `Recreate` unless `replicaCount` says otherwise. A claim left from before stays in the cluster, because it carries `helm.sh/resource-policy: keep`.
 
 With `networkPolicy.egress` set, add a rule that lets the pod reach PostgreSQL.
 
@@ -83,7 +92,7 @@ Volverán prints one line saying why and exits with status 1, so the pod restart
 
 Nothing is settled without its Audit Entry ([ADR 0001](adr/0001-apply-settles-each-message-at-least-once.md)), and Volverán sets `synchronous_commit` to `on` on its connections, whatever the server's default:
 
-- **An Apply stops.** If a Message's Audit Entry cannot be written, that Message is reported `failed` and the rest `not-attempted`, and all of them go back to their queue (on a quorum queue, a large Checkout can use up Delivery Budget as it ends; see the [changelog](../CHANGELOG.md)). If the database goes while a step is in progress, that step finishes, since its `pending` Audit Entry is already committed. The entry stays `pending`, because its outcome could not be written. Look at the Message in question: it was settled, and Apply's result in the web app says so.
+- **An Apply stops.** If a Message's Audit Entry cannot be written, that Message is reported `failed` and the rest `not-attempted`, and all of them go back to their queue. If the database goes while a step is in progress, that step finishes, since its `pending` Audit Entry is already committed. The entry stays `pending`, because its outcome could not be written. Look at the Message in question: it was settled, and Apply's result in the web app says so.
 - **`/readyz` answers `503`**, within 2 seconds even if the database has vanished without closing its connections, so traffic goes elsewhere or the Service has no endpoints. The change is logged once. `/healthz` keeps answering `200`, so the pod is not restarted. Neither ever depends on a broker.
 - **Other work waits.** The audit view and anything else that reads the store answer errors. Sampling, Alerts, Replay Rules and retention log what they could not do and try again on their next run. A call that gets no answer gives up within 40 seconds: up to 10 to get a connection, and 30 for the answer.
 - **Volverán reconnects by itself.** Every call asks for a connection, so the first one after the database returns makes a new one. A failover needs no restart, and `/readyz` goes back to `200`.

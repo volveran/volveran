@@ -40,15 +40,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{/*
-The profiles.yaml file rendered from brokerProfiles.profiles. On SQLite it has no
-version: adding one would change the ConfigMap's checksum, which rolls the pod on
-upgrade and ends open Checkouts. Volverán then logs a warning, harmless until 1.0.
+The profiles.yaml file rendered from brokerProfiles.profiles, with its format version.
 */}}
 {{- define "volveran.profilesYaml" -}}
-{{- $file := dict "profiles" .Values.brokerProfiles.profiles -}}
-{{- if .Values.postgres.existingSecret -}}
-{{- $_ := set $file "version" 1 -}}
-{{- end -}}
+{{- $file := dict "profiles" .Values.brokerProfiles.profiles "version" 1 -}}
 {{- with .Values.brokerProfiles.alertDestinations -}}
 {{- $_ := set $file "alertDestinations" . -}}
 {{- end -}}
@@ -66,8 +61,22 @@ these first; these guards give the same answer with --skip-schema-validation
 and carry the explanation a schema error cannot.
 */}}
 {{- define "volveran.validate" -}}
-{{- if ne (int .Values.replicaCount) 1 -}}
-{{- fail (printf "replicaCount must be 1, got %v: Volverán holds Checkouts in one process and writes its audit store from a single writer, so the chart runs exactly one replica (see docs/adr/0003-single-replica-on-kubernetes.md)" .Values.replicaCount) -}}
+{{- if lt (int .Values.replicaCount) 1 -}}
+{{- fail (printf "replicaCount must be at least 1, got %v" .Values.replicaCount) -}}
+{{- end -}}
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{- if not .Values.postgres.existingSecret -}}
+{{- fail (printf "replicaCount above 1 needs postgres.existingSecret, got %v on SQLite: SQLite has a single writer on one volume, so Replicas must share PostgreSQL (see docs/adr/0014-replicas-forwarding-and-the-background-leader.md)" .Values.replicaCount) -}}
+{{- end -}}
+{{- if not .Values.forwarding.existingSecret -}}
+{{- fail "replicaCount above 1 needs forwarding.existingSecret: an existing Secret holding the secret Replicas forward requests under, at least 32 characters (see docs/replicas.md)" -}}
+{{- end -}}
+{{- if eq (int .Values.forwarding.port) 8080 -}}
+{{- fail "forwarding.port must differ from 8080, the web app's container port" -}}
+{{- end -}}
+{{- if and .Values.metrics.enabled (eq (int .Values.forwarding.port) (int .Values.metrics.port)) -}}
+{{- fail (printf "forwarding.port must differ from metrics.port (both are %d)" (int .Values.metrics.port)) -}}
+{{- end -}}
 {{- end -}}
 {{- $oidc := .Values.oidc | default dict -}}
 {{- range $key := list "issuer" "clientId" "redirectUrl" "existingSecret" -}}
@@ -110,7 +119,7 @@ historyRetentionDays: VOLVERAN_HISTORY_RETENTION_DAYS
 
 {{/* Variables the Deployment always sets; extraEnv may not set them. */}}
 {{- define "volveran.fixedVariables" -}}
-{{- list "VOLVERAN_AUTH" "VOLVERAN_HOST" "VOLVERAN_PORT" "VOLVERAN_PROFILES_FILE" "VOLVERAN_DATA_DIR" "VOLVERAN_OIDC_ISSUER" "VOLVERAN_OIDC_CLIENT_ID" "VOLVERAN_OIDC_REDIRECT_URL" "VOLVERAN_OIDC_SCOPES" "VOLVERAN_OIDC_CLIENT_SECRET" "VOLVERAN_SESSION_SECRET" | toJson -}}
+{{- list "VOLVERAN_AUTH" "VOLVERAN_HOST" "VOLVERAN_PORT" "VOLVERAN_PROFILES_FILE" "VOLVERAN_DATA_DIR" "VOLVERAN_OIDC_ISSUER" "VOLVERAN_OIDC_CLIENT_ID" "VOLVERAN_OIDC_REDIRECT_URL" "VOLVERAN_OIDC_SCOPES" "VOLVERAN_OIDC_CLIENT_SECRET" "VOLVERAN_SESSION_SECRET" "VOLVERAN_SESSION_ENCRYPTION_KEY" | toJson -}}
 {{- end -}}
 
 {{/* The directory every CA bundle is mounted under, as <dir>/<bundle name>/<key>. */}}
@@ -163,6 +172,11 @@ extraEnv, persistence, pod scheduling). Included next to volveran.validate.
 {{- range .Values.extraEnv -}}
 {{- if has .name (list "VOLVERAN_POSTGRES_URL" "VOLVERAN_POSTGRES_REQUIRE_TLS" "VOLVERAN_POSTGRES_CA_FILE") -}}
 {{- fail (printf "extraEnv sets %s: use the postgres values instead, so the URL comes from a Secret" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+{{- if has .name (list "VOLVERAN_FORWARDING_SECRET" "VOLVERAN_FORWARDING_PORT" "VOLVERAN_FORWARDING_ADDRESS" "VOLVERAN_POD_IP") -}}
+{{- fail (printf "extraEnv sets %s: use replicaCount and the forwarding values instead, which also add the port and close it to all but other Replicas" .name) -}}
 {{- end -}}
 {{- end -}}
 {{- $selector := include "volveran.selectorLabels" . | fromYaml -}}

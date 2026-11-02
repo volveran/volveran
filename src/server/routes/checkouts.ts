@@ -15,7 +15,10 @@
 // there is only one Operator. Each route then resolves the Checkout's
 // Broker Profile through the access check (profile-access.ts), with the
 // capability `checkout`.
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+//
+// With several Replicas, the routes given `toOwner` answer on the Checkout's Owner Replica
+// (replicas/forwarding.ts), and those checks run there.
+import type { FastifyInstance, FastifyRequest, onRequestAsyncHookHandler } from 'fastify';
 import type { CheckoutManager } from '../checkout/manager.js';
 import type { CheckoutView } from '../checkout/view.js';
 import { CheckoutError } from '../checkout/errors.js';
@@ -25,10 +28,15 @@ import { diffMessages } from '../triage/message-diff.js';
 import type { MessageComparison } from '../../shared/message-diff.js';
 import { operatorOf } from '../operator.js';
 import type { Capability, ProfileAccess, ProfileAccessCheck } from '../profile-access.js';
+import { aliasOf } from './api-prefix.js';
 
 export interface CheckoutRouteDeps {
   checkouts: CheckoutManager;
   access: ProfileAccessCheck;
+  /** Route options sending a request about another Replica's Checkout to its Owner Replica; none when this Replica is on its own. */
+  toOwner: { onRequest?: onRequestAsyncHookHandler };
+  /** The same for ending a Checkout, which answers only once an Apply in progress has finished and the Messages are back. */
+  toOwnerToEnd: { onRequest?: onRequestAsyncHookHandler };
 }
 
 /**
@@ -67,7 +75,7 @@ export async function compareMessages(checkouts: CheckoutManager, id: string, qu
 }
 
 export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
-  const { checkouts, access } = deps;
+  const { checkouts, access, toOwner, toOwnerToEnd } = deps;
   // Every response that shows a Checkout gets its rule badges here, after the route is
   // done: reading them awaits the store, which a first-wins section must not (ADR 0013).
   app.addHook('preSerialization', async (_req, _reply, payload: unknown) => {
@@ -76,8 +84,8 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
   });
   // Registered before the routes, so it covers every route under /api/checkouts/:id.
   app.addHook('preHandler', async (req) => {
-    const url = req.routeOptions.url;
-    if (url !== '/api/checkouts/:id' && !url?.startsWith('/api/checkouts/:id/')) return;
+    const url = aliasOf(req.routeOptions.url);
+    if (url !=='/api/checkouts/:id' && !url?.startsWith('/api/checkouts/:id/')) return;
     checkouts.checkOwner((req.params as { id: string }).id, operatorOf(req));
   });
 
@@ -96,25 +104,25 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
     },
   );
 
-  app.get<{ Params: { id: string } }>('/api/checkouts/:id', async (req) => {
+  app.get<{ Params: { id: string } }>('/api/checkouts/:id', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     return { checkout: checkouts.get(req.params.id) };
   });
 
-  app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', async (req) => {
+  app.get<{ Params: { id: string; handle: string } }>('/api/checkouts/:id/messages/:handle', toOwner, async (req) => {
     const handle = parseHandle(req.params.handle);
     checkoutAccess(deps, req, 'checkout');
     return { message: await checkouts.message(req.params.id, handle) };
   });
 
-  app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', async (req) => {
+  app.get<{ Params: { id: string }; Querystring: unknown }>('/api/checkouts/:id/compare', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     return compareMessages(checkouts, req.params.id, req.query);
   });
 
   // Only a heartbeat keeps a Checkout alive: reading it does not, so a stray
   // poll cannot keep Messages held after the browser is gone.
-  app.post<{ Params: { id: string } }>('/api/checkouts/:id/heartbeat', async (req) => {
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/heartbeat', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     return { checkout: checkouts.heartbeat(req.params.id) };
   });
@@ -123,6 +131,6 @@ export function registerCheckoutRoutes(app: FastifyInstance, deps: CheckoutRoute
     checkoutAccess(deps, req, 'checkout');
     return { checkout: await checkouts.end(req.params.id) };
   };
-  app.delete<{ Params: { id: string } }>('/api/checkouts/:id', end);
-  app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', end);
+  app.delete<{ Params: { id: string } }>('/api/checkouts/:id', toOwnerToEnd, end);
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/end', toOwnerToEnd, end);
 }

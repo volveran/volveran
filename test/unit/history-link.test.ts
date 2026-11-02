@@ -23,7 +23,7 @@ describe('historyPath', () => {
 });
 
 describe('auditViewPath', () => {
-  const auditUrl = '/api/audit-entries?profile=prod&queue=orders.dlq&checkoutId=abc-1';
+  const auditUrl = '/api/v1/audit-entries?profile=prod&queue=orders.dlq&checkoutId=abc-1';
 
   it('turns the API search of a mark into a link to the Audit view', () => {
     expect(auditViewPath(auditUrl)).toBe('/#/audit?profile=prod&queue=orders.dlq&checkoutId=abc-1');
@@ -34,7 +34,7 @@ describe('auditViewPath', () => {
   });
 
   it('reads back escaped values', () => {
-    const escaped = `/api/audit-entries?${new URLSearchParams({ profile: 'a b', queue: 'q&1' })}`;
+    const escaped = `/api/v1/audit-entries?${new URLSearchParams({ profile: 'a b', queue: 'q&1' })}`;
     expect(auditSearchIn(auditViewPath(escaped).slice(1))).toEqual({ profile: 'a b', queue: 'q&1' });
   });
 

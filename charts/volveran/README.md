@@ -1,7 +1,7 @@
 # volveran Helm chart
 
 Runs [Volverán](https://github.com/volveran/volveran) on Kubernetes as a shared service: Team Mode (OIDC sign-in), one
-replica, and a PersistentVolumeClaim for the audit store, or PostgreSQL. The pod passes the `restricted` Pod Security Standard.
+replica, and a PersistentVolumeClaim for the audit store, or PostgreSQL, which also allows several Replicas. The pod passes the `restricted` Pod Security Standard.
 
 The chart version always equals the Volverán version, and the default image tag is the chart's `appVersion`.
 
@@ -11,9 +11,12 @@ These follow from Volverán's design and are not values:
 
 - **Team Mode only**, listening on `0.0.0.0` inside the pod. Solo Mode never listens off loopback (ADR 0002), so it is
   not a value at all.
-- **One replica with the `Recreate` strategy.** A Checkout's held Messages live in one process, so `replicaCount` must
-  be `1`, on PostgreSQL too (ADR 0003, `docs/adr/0003-single-replica-on-kubernetes.md`).
-- **No Secret holding a credential, no PodDisruptionBudget and no HorizontalPodAutoscaler** are ever rendered.
+- **One replica uses the `Recreate` strategy, several a rolling update, and several need PostgreSQL.** SQLite has one
+  writer on one volume. A Checkout's held Messages live in one process, so Replicas forward requests to its owner on an
+  internal port (`docs/replicas.md`, ADR 0014).
+- **With several Replicas, a NetworkPolicy always closes the internal port** to all but the release's other pods.
+- **No Secret holding a credential and no HorizontalPodAutoscaler** are ever rendered. A PodDisruptionBudget is, with
+  several Replicas only.
 - **Pod security:** UID and GID 1000, `fsGroup` 1000, read-only root filesystem, no privilege escalation, all
   capabilities dropped, `RuntimeDefault` seccomp, and a 64Mi `emptyDir` at `/tmp`.
 - **Probes:** liveness on `/healthz`, readiness on `/readyz` (never depends on a broker; fails while PostgreSQL is
@@ -22,8 +25,8 @@ These follow from Volverán's design and are not values:
 - **The audit store PersistentVolumeClaim is kept on uninstall** (`helm.sh/resource-policy: keep`). Delete it by hand
   to delete the audit trail.
 
-A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues
-(on a quorum queue, a large Checkout can use up Delivery Budget as it ends); `pod.terminationGracePeriodSeconds` gives that time to finish.
+A deploy or pod restart signs every Operator out and ends open Checkouts. Their Messages return to their queues,
+which on a quorum queue can take about a minute at worst at the default limit of 1,000 Messages; `pod.terminationGracePeriodSeconds` (90) gives that time to finish.
 
 ## Install
 
@@ -125,7 +128,17 @@ names the missing value.
 
 | Value | Default | Description |
 |---|---|---|
-| `replicaCount` | `1` | Must be `1`. Any other value is refused, citing ADR 0003. |
+| `replicaCount` | `1` | Above `1` needs `postgres.existingSecret` and `forwarding.existingSecret`, and is otherwise refused. See `docs/replicas.md`, which says what was tested: up to three. |
+
+### Forwarding
+
+Only with `replicaCount` above 1.
+
+| Value | Default | Description |
+|---|---|---|
+| `forwarding.existingSecret` | `""` | An existing Secret holding the secret Replicas forward requests under, at least 32 characters. Whoever holds it and reaches the port can act as any Operator. |
+| `forwarding.secretKey` | `forwarding-secret` | Its key in the Secret. |
+| `forwarding.port` | `8081` | The internal port, reached at each pod's address. No route leads to it. |
 
 ### Image
 
@@ -149,6 +162,7 @@ names the missing value.
 | `oidc.existingSecret` | required | An existing Secret holding the OIDC client secret and the session secret. |
 | `oidc.clientSecretKey` | `client-secret` | Key of `oidc.existingSecret` holding the OIDC client secret. |
 | `oidc.sessionSecretKey` | `session-secret` | Key of `oidc.existingSecret` holding the session secret (at least 32 characters; it signs the session cookies). |
+| `oidc.sessionEncryptionKeyKey` | `session-encryption-key` | Key of `oidc.existingSecret` holding the session encryption key, read only with `postgres.existingSecret`: at least 32 characters, different from the session secret; it encrypts the tokens of sessions in the database. The pod cannot start until the Secret has this key. |
 
 ### Broker Profiles
 
@@ -289,12 +303,13 @@ refused at render time.
 
 | Value | Default | Description |
 |---|---|---|
-| `pod.terminationGracePeriodSeconds` | `60` | Time between `SIGTERM` and `SIGKILL`, for Volverán to end every active Checkout. |
+| `pod.terminationGracePeriodSeconds` | `90` | Time between `SIGTERM` and `SIGKILL`, for Volverán to end every active Checkout. Raise it with `VOLVERAN_CHECKOUT_MAX_MESSAGES`. |
 | `pod.resources` | requests `cpu: 100m`, `memory: 256Mi`; limits `cpu: 1`, `memory: 512Mi` | Container resources, sized for the default Checkout limit (100 MB of held Message bodies). Raise the memory limit along with any larger Checkout limit. |
 | `pod.automountServiceAccountToken` | `false` | Volverán never talks to the Kubernetes API, so no token is mounted. |
 | `pod.nodeSelector` | `{}` | Node labels the pod must run on, for example `{pool: tools}`. |
 | `pod.tolerations` | `[]` | Tolerations, for example to run on tainted tool nodes. |
 | `pod.affinity` | `{}` | Node or pod affinity rules. With a `ReadWriteOnce` claim, keep the pod in the volume's zone. |
+| `pod.topologySpreadConstraints` | `[]` | Replaces the chart's own, which several Replicas get: `ScheduleAnyway` over nodes and zones. |
 | `pod.priorityClassName` | `""` | PriorityClass of the pod. |
 | `pod.labels` | `{}` | Extra labels on the pod. `app.kubernetes.io/name` and `app.kubernetes.io/instance` select the pod and are refused. |
 | `pod.annotations` | `{}` | Extra annotations on the pod. `checksum/broker-profiles` is the chart's own and is refused. |
@@ -303,7 +318,7 @@ refused at render time.
 
 | Value | Default | Description |
 |---|---|---|
-| `networkPolicy.enabled` | `false` | Renders a NetworkPolicy that selects only the Volverán pod. See [Network policy](#network-policy). |
+| `networkPolicy.enabled` | `false` | Renders a NetworkPolicy that selects only the Volverán pod. With several Replicas one is rendered anyway. See [Network policy](#network-policy). |
 | `networkPolicy.ingressFrom` | `[]` | NetworkPolicy peers (`namespaceSelector`, `podSelector`, `ipBlock`) admitted to the http port, for example the Gateway or ingress controller. Empty admits no peer. |
 | `networkPolicy.metricsFrom` | `[]` | NetworkPolicy peers admitted to the metrics port only, when `metrics.enabled`, for example your Prometheus's pods. They gain no access to the http port. Empty admits no peer. |
 | `networkPolicy.egress` | `[]` (egress open) | NetworkPolicy egress rules (`to`, `ports`), for example the brokers and the OIDC provider. Any rule restricts egress to these rules plus DNS to `networkPolicy.dnsTo`. |
@@ -339,6 +354,11 @@ networkPolicy:
 With `networkPolicy.enabled`, the chart renders one NetworkPolicy that selects only this release's Volverán pod.
 It needs a CNI that enforces NetworkPolicy, such as Calico or Cilium. Without one, the object is accepted and has no
 effect.
+
+**Several Replicas.** With `replicaCount` above 1 that object is always rendered, and only the release's other pods
+reach the internal port. With `networkPolicy.enabled` false it leaves the http and metrics ports open to everyone, as
+with no policy, and restricts no egress. With it true, the rest of this section applies, and when `networkPolicy.egress`
+restricts egress the chart adds a rule to the other pods on the internal port. Add PostgreSQL to your egress rules.
 
 **Ingress.** Only the peers in `networkPolicy.ingressFrom` reach the pod, and only on its http port (8080), so nothing
 else in the cluster reaches the sign-in or the API. Each entry is a standard NetworkPolicy peer. A peer with both

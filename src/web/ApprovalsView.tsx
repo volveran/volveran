@@ -207,7 +207,7 @@ function WaitingCheckout({ id, onClose }: { id: string; onClose(): void }) {
 
   usePolling(
     {
-      load: () => api.approvalCheckout(id),
+      load: () => api.watchApprovalCheckout(id),
       received: (c) => {
         setCheckout(c);
         setError(undefined);

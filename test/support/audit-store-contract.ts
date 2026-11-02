@@ -3,20 +3,26 @@
 // and looks at nothing but the interface, so nothing here knows which database answers.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AlertMemory } from '../../src/server/alerts/evaluation.js';
+import { testNotification } from '../../src/server/alerts/payloads.js';
 import { ConfigError } from '../../src/server/config-error.js';
 import {
   FIRST_SEEN_LIMIT,
   PASS_HISTORY,
   type AuditQuery,
+  LeaderLeaseLost,
   type AuditStore,
+  type LeaseFence,
   type NewAuditEntry,
+  type NewLiveCheckout,
   type NewNotificationDelivery,
   type QueueSample,
   type StoredSamplingRun,
+  type StoredSession,
 } from '../../src/server/audit/audit-store.js';
 import { replayTrail } from '../../src/server/audit/replay-trail.js';
 import { diedAgain } from '../../src/server/triage/died-again.js';
 import type { RulePass } from '../../src/shared/replay-rules.js';
+import type { ApprovalSummary } from '../../src/shared/checkout.js';
 
 /** An empty store, and a way back to what it holds once it is closed. */
 export interface OpenedAuditStore {
@@ -620,6 +626,27 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
         expect(await store.ruleState.state(KEY)).toEqual({ paused: false, pausedReason: null, pausedBy: null, pausedAt: null });
       });
 
+      it('pauses and resumes once however many ask at once, with one Audit Entry each', async () => {
+        await store.ruleState.ensure(KEY, false);
+        const pauses = await Promise.all(Array.from({ length: 5 }, () => store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'))));
+        expect(pauses.filter(Boolean)).toHaveLength(1);
+        const resumes = await Promise.all(Array.from({ length: 5 }, () => store.ruleState.resume(KEY, ruleEntry('rule_resume'))));
+        expect(resumes.filter(Boolean)).toHaveLength(1);
+        expect(await store.list({ action: 'rule_pause' })).toHaveLength(1);
+        expect(await store.list({ action: 'rule_resume' })).toHaveLength(1);
+      });
+
+      it('keeps a next pass for a running rule only, cleared by a pause', async () => {
+        await store.ruleState.ensure(KEY, false);
+        await store.ruleState.setNextPass(KEY, AT);
+        expect(await store.ruleState.nextPass(KEY)).toEqual(AT);
+
+        await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
+        expect(await store.ruleState.nextPass(KEY)).toBeNull();
+        await store.ruleState.setNextPass(KEY, AT);
+        expect(await store.ruleState.nextPass(KEY)).toBeNull();
+      });
+
       it('writes the Audit Entry of a pause and of a resume, done, with the state', async () => {
         await store.ruleState.pause(KEY, { reason: 'stop', by: 'ana', at: AT }, ruleEntry('rule_pause'));
         await store.ruleState.resume(KEY, ruleEntry('rule_resume'));
@@ -928,6 +955,23 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       const arrivals: AlertMemory['arrivals'][number] = { vhost: '/', queue: 'orders.dlq', unsettled: 2, recent: [{ at: 1000, count: 2 }] };
       const NOTHING: AlertMemory = { alerts: [], arrivals: [] };
 
+      it('keeps the notifications of an evaluation with its result, until told they ended', async () => {
+        const first = testNotification(new Date(1000), 'first');
+        const second = testNotification(new Date(1000), 'second');
+        const ids = await store.alerts.save('local', { alerts: [firing], arrivals: [] }, [
+          { destination: 'pager', notification: first },
+          { destination: 'chat', notification: second },
+        ]);
+
+        expect(await store.alerts.unsent()).toEqual([
+          { id: ids[0], profile: 'local', destination: 'pager', notification: first },
+          { id: ids[1], profile: 'local', destination: 'chat', notification: second },
+        ]);
+
+        await store.alerts.ended(ids[0]!);
+        expect((await store.alerts.unsent()).map((u) => u.id)).toEqual([ids[1]]);
+      });
+
       it('remembers nothing of a profile at first', async () => {
         expect(await store.alerts.load('local')).toEqual(NOTHING);
       });
@@ -1051,6 +1095,642 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       });
     });
 
+    describe('claiming a Restore', () => {
+      const restoreOf = (discard: number) => ({ ...entry({ action: 'restore', restoreOf: discard, checkoutId: null, reason: null }), message: null, restoreOf: discard });
+
+      it('writes the Restore\'s entry, pending, and answers its id', async () => {
+        const discard = await store.record(entry());
+        const claim = await store.claimRestore(restoreOf(discard));
+        expect(claim.claimed).toBe(true);
+        const [restore] = await store.list({ restoreOf: discard });
+        expect(claim).toEqual({ claimed: true, id: restore!.id });
+        expect(restore).toMatchObject({ action: 'restore', outcome: 'pending', restoreOf: discard });
+      });
+
+      it('lets exactly one of many at once have the body', async () => {
+        const discard = await store.record(entry());
+        const claims = await Promise.all(Array.from({ length: 8 }, () => store.claimRestore(restoreOf(discard))));
+        expect(claims.filter((c) => c.claimed)).toHaveLength(1);
+        expect(await store.list({ restoreOf: discard })).toHaveLength(1);
+      });
+
+      it.each(['pending', 'done', 'uncertain'] as const)('refuses while an earlier Restore is %s, naming it', async (outcome) => {
+        const discard = await store.record(entry());
+        const first = await store.claimRestore(restoreOf(discard));
+        if (!first.claimed) throw new Error('the first claim should succeed');
+        if (outcome !== 'pending') await store.setOutcome(first.id, outcome);
+        expect(await store.claimRestore(restoreOf(discard))).toMatchObject({ claimed: false, earlier: { id: first.id, outcome } });
+        expect(await store.list({ restoreOf: discard })).toHaveLength(1);
+      });
+
+      it('claims again after a Restore that failed', async () => {
+        const discard = await store.record(entry());
+        const first = await store.claimRestore(restoreOf(discard));
+        if (!first.claimed) throw new Error('the first claim should succeed');
+        await store.setOutcome(first.id, 'failed', 'no route');
+        expect((await store.claimRestore(restoreOf(discard))).claimed).toBe(true);
+      });
+
+      it("takes no notice of another Discard's Restore", async () => {
+        const one = await store.record(entry());
+        const other = await store.record(entry());
+        await store.claimRestore(restoreOf(one));
+        expect((await store.claimRestore(restoreOf(other))).claimed).toBe(true);
+      });
+    });
+
+    describe('Replicas and Live Checkout records', () => {
+      const NOW = AT.getTime();
+      const lease = (replicaId: string, expiresAt = NOW + 1000) => ({ replicaId, forwardingAddress: `${replicaId}.internal:8081`, expiresAt });
+      const live = (overrides: Partial<NewLiveCheckout> = {}): NewLiveCheckout => ({
+        id: 'c-1',
+        ownerReplica: 'r-1',
+        operator: { id: 'sub-123', displayName: 'ana@example.com' },
+        profile: 'local',
+        vhost: '/',
+        queue: 'orders.dlq',
+        queueType: 'quorum',
+        deliveryLimit: 20,
+        readyAtStart: 3,
+        startedAt: NOW,
+        endsAt: NOW + 60_000,
+        status: 'active',
+        approval: null,
+        ...overrides,
+      });
+
+      it('finds a record with its owner, its address and whether the lease is live', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'r-1.internal:8081', ownerLeaseLive: true });
+      });
+
+      it('has no route without a record', async () => {
+        expect(await store.replicas.checkoutRoute('nobody', NOW)).toBeNull();
+      });
+
+      it('keeps the record when the lease runs out, exactly at its time', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect((await store.replicas.checkoutRoute('c-1', NOW + 999))?.ownerLeaseLive).toBe(true);
+        expect(await store.replicas.checkoutRoute('c-1', NOW + 1000)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'r-1.internal:8081', ownerLeaseLive: false });
+      });
+
+      it('extends a lease and takes a new address by renewing it', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.renewLease({ replicaId: 'r-1', forwardingAddress: 'moved:8081', expiresAt: NOW + 5000 });
+        expect(await store.replicas.checkoutRoute('c-1', NOW + 2000)).toEqual({ ownerReplica: 'r-1', forwardingAddress: 'moved:8081', ownerLeaseLive: true });
+      });
+
+      it('routes a record whose owner has no lease to nowhere', async () => {
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toEqual({ ownerReplica: 'r-1', forwardingAddress: null, ownerLeaseLive: false });
+      });
+
+      describe('markOwnerGone', () => {
+        const REASON = 'its owner has gone';
+
+        it.each(['starting', 'active', 'applying'] as const)('makes a Checkout that is %s lost, with the reason and no Approval', async (status) => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval: null });
+          await store.replicas.markOwnerGone('c-1', REASON);
+          expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', approval: null, lostReason: REASON });
+        });
+
+        it('does not overwrite a Checkout that has ended', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null, endReason: 'operator' });
+          await store.replicas.markOwnerGone('c-1', REASON);
+          expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'ended', endReason: 'operator', lostReason: null });
+        });
+
+        it('keeps the reason of a Checkout already lost', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'the broker closed it' });
+          await store.replicas.markOwnerGone('c-1', REASON);
+          expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', lostReason: 'the broker closed it' });
+        });
+
+        it('does nothing if the record has gone', async () => {
+          await expect(store.replicas.markOwnerGone('nobody', REASON)).resolves.toBeUndefined();
+        });
+      });
+
+      it('ends a lease at once, and a lease that ends leaves its records', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.endLease('r-1', NOW);
+        expect(await store.replicas.liveAddress('r-1', NOW)).toBeNull();
+        expect(await store.replicas.checkoutRecord('c-1')).not.toBeNull();
+      });
+
+      it("finds the Operator's active Checkout only while it is active and its owner's lease is live", async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBe('c-1');
+        expect(await store.replicas.activeCheckoutOf('someone-else', NOW)).toBeNull();
+        expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 1000)).toBeNull();
+        await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null });
+        expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBeNull();
+      });
+
+      it('ignores an update of a record that has gone', async () => {
+        await store.replicas.updateCheckout('nobody', { status: 'lost', approval: null });
+        expect(await store.replicas.checkoutRoute('nobody', NOW)).toBeNull();
+      });
+
+      it('removes one record, and removing it again does nothing', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        await store.replicas.removeCheckout('c-1');
+        await store.replicas.removeCheckout('c-1');
+        expect(await store.replicas.checkoutRoute('c-1', NOW)).toBeNull();
+        expect(await store.replicas.checkoutRoute('c-2', NOW)).not.toBeNull();
+      });
+
+      it('answers who runs a Checkout while it is active or applying on a live lease', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.runningOwner('c-1', NOW)).toBe('r-1');
+        await store.replicas.updateCheckout('c-1', { status: 'applying', approval: null });
+        expect(await store.replicas.runningOwner('c-1', NOW)).toBe('r-1');
+        expect(await store.replicas.runningOwner('c-1', NOW + 1000)).toBeNull();
+      });
+
+      it.each(['ended', 'lost'] as const)('answers nobody runs a Checkout that is %s, or has no record', async (status) => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.updateCheckout('c-1', { status, approval: null });
+        expect(await store.replicas.runningOwner('c-1', NOW)).toBeNull();
+        expect(await store.replicas.runningOwner('nobody', NOW)).toBeNull();
+      });
+
+      describe('waiting Approvals', () => {
+        const approval: ApprovalSummary = {
+          checkoutId: 'c-1',
+          requester: 'ana@example.com',
+          profile: 'local',
+          vhost: '/',
+          queue: 'orders.dlq',
+          queueType: 'quorum',
+          requestedAt: new Date(NOW).toISOString(),
+          waitingMs: 0,
+          endsAt: new Date(NOW + 60_000).toISOString(),
+          remainingMs: 60_000,
+          decisionSummary: [{ kind: 'discard', count: 2 }],
+          decisionSummaryText: '2 Discard',
+          rate: null,
+          canary: null,
+        };
+
+        it('lists an active Checkout that waits, with what the approvers see', async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval });
+          expect(await store.replicas.waitingApprovals(NOW)).toMatchObject([{ id: 'c-1', ownerReplica: 'r-1', approval }]);
+        });
+
+        it('leaves out a Checkout that waits for none', async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.waitingApprovals(NOW)).toEqual([]);
+        });
+
+        it.each(['starting', 'ended', 'lost'] as const)('leaves out a Checkout that is %s', async (status) => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval });
+          expect(await store.replicas.waitingApprovals(NOW)).toEqual([]);
+        });
+
+        it("leaves out a Checkout whose owner's lease is over, exactly at its time", async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval });
+          expect(await store.replicas.waitingApprovals(NOW + 999)).toHaveLength(1);
+          expect(await store.replicas.waitingApprovals(NOW + 1000)).toEqual([]);
+        });
+      });
+
+      it('reads a record back whole, with why it ended or was lost', async () => {
+        expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
+        await store.replicas.claimCheckout(live(), NOW);
+        expect(await store.replicas.checkoutRecord('c-1')).toEqual({ ...live(), endReason: null, lostReason: null });
+        await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null, endReason: 'operator' });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'ended', endReason: 'operator', lostReason: null });
+        await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'the broker closed it' });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', endReason: null, lostReason: 'the broker closed it' });
+      });
+
+      it('takes what is learned of the queue after the claim, and keeps it when an update does not say', async () => {
+        await store.replicas.claimCheckout(live({ status: 'starting', queueType: 'classic', deliveryLimit: null, readyAtStart: 0 }), NOW);
+        await store.replicas.updateCheckout('c-1', { status: 'active', approval: null, queueType: 'quorum', deliveryLimit: 20, readyAtStart: 3 });
+        await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'active', queueType: 'quorum', deliveryLimit: 20, readyAtStart: 3 });
+      });
+
+      it('keeps why a record was lost when its owner comes back and writes it active', async () => {
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.updateCheckout('c-1', { status: 'lost', approval: null, lostReason: 'its lease ran out' });
+        await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+        expect(await store.replicas.checkoutRecord('c-1')).toMatchObject({ status: 'lost', lostReason: 'its lease ran out' });
+      });
+
+      it("finds the records of Replicas whose lease is over, whatever their status, and no other's", async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2', NOW + 5000));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', status: 'ended', operator: { id: 'sub-789', displayName: 'cam@example.com' } }), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-3', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        expect(await store.replicas.checkoutsOfGoneReplicas(NOW + 999)).toEqual([]);
+        const gone = await store.replicas.checkoutsOfGoneReplicas(NOW + 1000);
+        expect(gone.map((c) => c.id).sort()).toEqual(['c-1', 'c-2']);
+      });
+
+      it('removes the leases over by a time and their records, and no others', async () => {
+        await store.replicas.renewLease(lease('r-1'));
+        await store.replicas.renewLease(lease('r-2', NOW + 5000));
+        await store.replicas.claimCheckout(live(), NOW);
+        await store.replicas.claimCheckout(live({ id: 'c-2', ownerReplica: 'r-2', operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW);
+        expect(await store.replicas.removeGoneReplicas(NOW + 999)).toBe(0);
+        expect(await store.replicas.checkoutRecord('c-1')).not.toBeNull();
+        expect(await store.replicas.removeGoneReplicas(NOW + 1000)).toBe(1);
+        expect(await store.replicas.checkoutRecord('c-1')).toBeNull();
+        expect(await store.replicas.checkoutRoute('c-2', NOW)).not.toBeNull();
+        // Its lease is gone too: a Replica coming back starts a new one.
+        await store.replicas.claimCheckout(live({ id: 'c-4', operator: { id: 'sub-789', displayName: 'cam@example.com' } }), NOW);
+        expect((await store.replicas.checkoutRoute('c-4', NOW))?.forwardingAddress).toBeNull();
+      });
+
+      describe('the limit of one Checkout per Operator', () => {
+        const held = { id: 'c-1', vhost: '/', queue: 'orders.dlq' };
+        const second = (overrides: Partial<NewLiveCheckout> = {}) => live({ id: 'c-2', ownerReplica: 'r-2', queue: 'payments.dlq', ...overrides });
+
+        beforeEach(async () => {
+          await store.replicas.renewLease(lease('r-1'));
+          await store.replicas.renewLease(lease('r-2'));
+        });
+
+        it('answers nothing to the first claim, and what the Operator holds to the next, which leaves no record', async () => {
+          expect(await store.replicas.claimCheckout(live(), NOW)).toBeNull();
+          expect(await store.replicas.claimCheckout(second(), NOW)).toEqual(held);
+          expect(await store.replicas.checkoutRoute('c-2', NOW)).toBeNull();
+        });
+
+        it('lets each Operator hold one', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.claimCheckout(second({ operator: { id: 'sub-456', displayName: 'ben@example.com' } }), NOW)).toBeNull();
+        });
+
+        it('lets only one of many claims at once win', async () => {
+          const claims = Array.from({ length: 8 }, (_, i) => store.replicas.claimCheckout(live({ id: `c-${i}`, ownerReplica: i % 2 ? 'r-1' : 'r-2' }), NOW));
+          const answers = await Promise.all(claims);
+          const won = answers.flatMap((answer, i) => (answer === null ? [`c-${i}`] : []));
+          expect(won).toHaveLength(1);
+          for (const answer of answers) if (answer) expect(answer.id).toBe(won[0]);
+        });
+
+        it('counts a Checkout still starting, which is not yet shown as active', async () => {
+          await store.replicas.claimCheckout(live({ status: 'starting' }), NOW);
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBeNull();
+          expect(await store.replicas.claimCheckout(second(), NOW)).toEqual(held);
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW)).toBe('c-1');
+        });
+
+        it.each(['ended', 'lost'] as const)('does not count a Checkout that is %s, though its record stays', async (status) => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.updateCheckout('c-1', { status, approval: null });
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+          expect(await store.replicas.checkoutRoute('c-1', NOW)).not.toBeNull();
+        });
+
+        it('frees the Operator when the record goes', async () => {
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.removeCheckout('c-1');
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+        });
+
+        it("does not count a Checkout whose owner's lease is over: its record stays, for its loss to be noticed", async () => {
+          await store.replicas.renewLease(lease('r-1', NOW + 10));
+          await store.replicas.renewLease(lease('r-2', NOW + 5000));
+          await store.replicas.claimCheckout(live(), NOW);
+          expect(await store.replicas.claimCheckout(second(), NOW + 10)).toBeNull();
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 10)).toBe('c-2');
+          expect(await store.replicas.checkoutRoute('c-1', NOW + 10)).toMatchObject({ ownerReplica: 'r-1', ownerLeaseLive: false });
+        });
+
+        it('does not count a Checkout whose owner has no lease at all', async () => {
+          await store.replicas.claimCheckout(live({ ownerReplica: 'gone' }), NOW);
+          expect(await store.replicas.claimCheckout(second(), NOW)).toBeNull();
+        });
+
+        it('keeps the Operator with the newer Checkout when an owner whose lease ran out comes back', async () => {
+          await store.replicas.renewLease(lease('r-1', NOW + 10));
+          await store.replicas.renewLease(lease('r-2', NOW + 5000));
+          await store.replicas.claimCheckout(live(), NOW);
+          await store.replicas.claimCheckout(second(), NOW + 10);
+          await store.replicas.renewLease(lease('r-1', NOW + 5000));
+          await store.replicas.updateCheckout('c-1', { status: 'active', approval: null });
+          expect(await store.replicas.activeCheckoutOf('sub-123', NOW + 20)).toBe('c-2');
+          await store.replicas.updateCheckout('c-1', { status: 'ended', approval: null });
+          await store.replicas.updateCheckout('c-2', { status: 'ended', approval: null });
+          expect(await store.replicas.claimCheckout(live({ id: 'c-3' }), NOW + 20)).toBeNull();
+        });
+      });
+    });
+
+    describe('entries left by a Replica that has gone', () => {
+      const entryOf = (checkoutId: string) => entry({ checkoutId });
+
+      it("makes a Checkout's pending entries uncertain, with the reason, and leaves the rest as they are", async () => {
+        const pending = await store.record(entryOf('c-1'));
+        const done = await store.record(entryOf('c-1'));
+        await store.setOutcome(done, 'done');
+        const failed = await store.record(entryOf('c-1'));
+        await store.setOutcome(failed, 'failed', 'channel closed');
+        const other = await store.record(entryOf('c-2'));
+
+        expect(await store.settleInterrupted('c-1', 'its Replica stopped')).toBe(1);
+
+        expect(await store.get(pending)).toMatchObject({ outcome: 'uncertain', outcomeReason: 'its Replica stopped' });
+        expect(await store.get(done)).toMatchObject({ outcome: 'done', outcomeReason: null });
+        expect(await store.get(failed)).toMatchObject({ outcome: 'failed', outcomeReason: 'channel closed' });
+        expect(await store.get(other)).toMatchObject({ outcome: 'pending' });
+        expect(await store.settleInterrupted('c-1', 'its Replica stopped')).toBe(0);
+      });
+    });
+
+    describe('sessions', () => {
+      const NOW = AT.getTime();
+      const session = (overrides: Partial<StoredSession> = {}): StoredSession => ({
+        operator: { id: 'sub-123', displayName: 'ana@example.com', email: 'ana@example.com', groups: ['ops'] },
+        tokens: 'sealed-tokens',
+        expiresAt: NOW + 1000,
+        idleExpiresAt: NOW + 60_000,
+        ...overrides,
+      });
+
+      it('answers a session as it was added', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+      });
+
+      it('answers null for a session it does not have', async () => {
+        expect(await store.sessions.session('nobody', NOW)).toBeNull();
+      });
+
+      it('no longer answers a session once it has expired', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        expect(await store.sessions.session('s-1', NOW + 999)).not.toBeNull();
+        expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('no longer answers a session once it has been idle too long, before its lifetime ends', async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        expect(await store.sessions.session('s-1', NOW + 399)).not.toBeNull();
+        expect(await store.sessions.session('s-1', NOW + 400)).toBeNull();
+      });
+
+      it("moves a session's idle expiry and nothing else", async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        await store.sessions.touchSession('s-1', NOW + 700);
+        expect(await store.sessions.session('s-1', NOW + 500)).toEqual(session({ idleExpiresAt: NOW + 700 }));
+      });
+
+      it('does not let its idle expiry carry a session past its lifetime', async () => {
+        await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 400 }), NOW);
+        await store.sessions.touchSession('s-1', NOW + 5000);
+        expect(await store.sessions.session('s-1', NOW + 1000)).toBeNull();
+      });
+
+      it('does not bring a removed session back when it is touched', async () => {
+        await store.sessions.touchSession('s-1', NOW + 700);
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+      });
+
+      it('removes a session, and removing it again does nothing', async () => {
+        await store.sessions.addSession('s-1', session(), NOW);
+        await store.sessions.addSession('s-2', session(), NOW);
+        await store.sessions.removeSession('s-1');
+        await store.sessions.removeSession('s-1');
+        expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        expect(await store.sessions.session('s-2', NOW)).not.toBeNull();
+      });
+
+      describe('refreshing tokens', () => {
+        /** A promise to settle by hand, and one that says when `refresh` was reached. */
+        const held = (tokens: string) => {
+          let release!: () => void;
+          let reached!: () => void;
+          const released = new Promise<void>((resolve) => (release = resolve));
+          const whenReached = new Promise<void>((resolve) => (reached = resolve));
+          return {
+            release,
+            reached: whenReached,
+            refresh: async () => {
+              reached();
+              await released;
+              return tokens;
+            },
+          };
+        };
+
+        it("replaces a session's tokens and nothing else, given the ones it holds", async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const seen: string[] = [];
+          const found = await store.sessions.refreshTokens('s-1', NOW, async (tokens) => {
+            seen.push(tokens);
+            return 'rotated';
+          });
+          expect(found).toBe(true);
+          expect(seen).toEqual(['sealed-tokens']);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated' }));
+        });
+
+        it('leaves the tokens as they are when the refresh answers null', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          expect(await store.sessions.refreshTokens('s-1', NOW, async () => null)).toBe(true);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+        });
+
+        it('leaves the tokens as they are when the refresh throws, and throws the same', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refused = new Error('refused');
+          await expect(
+            store.sessions.refreshTokens('s-1', NOW, async () => {
+              throw refused;
+            }),
+          ).rejects.toBe(refused);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session());
+          expect(await store.sessions.refreshTokens('s-1', NOW, async () => 'rotated')).toBe(true);
+        });
+
+        it('answers false without refreshing a session that has gone or expired', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          let called = false;
+          const refresh = async () => {
+            called = true;
+            return 'rotated';
+          };
+          expect(await store.sessions.refreshTokens('nobody', NOW, refresh)).toBe(false);
+          expect(await store.sessions.refreshTokens('s-1', NOW + 1000, refresh)).toBe(false);
+          expect(called).toBe(false);
+        });
+
+        it('runs refreshes of one session one at a time, the second given what the first saved', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const first = held('rotated-1');
+          const firstDone = store.sessions.refreshTokens('s-1', NOW, first.refresh);
+          await first.reached;
+          const seenBySecond: string[] = [];
+          const secondDone = store.sessions.refreshTokens('s-1', NOW, async (tokens) => {
+            seenBySecond.push(tokens);
+            return null;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          expect(seenBySecond).toEqual([]);
+          first.release();
+          await Promise.all([firstDone, secondDone]);
+          expect(seenBySecond).toEqual(['rotated-1']);
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated-1' }));
+        });
+
+        it('answers false without refreshing a session past its idle expiry', async () => {
+          await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 500 }), NOW);
+          let called = false;
+          const found = await store.sessions.refreshTokens('s-1', NOW + 500, async () => {
+            called = true;
+            return 'rotated';
+          });
+          expect(found).toBe(false);
+          expect(called).toBe(false);
+        });
+
+        it('moves the idle expiry without waiting for a refresh in progress, which still saves', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          let touched = false;
+          const touching = store.sessions.touchSession('s-1', NOW + 900).then(() => {
+            touched = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const answeredDuringRefresh = touched;
+          refresh.release();
+          await Promise.all([done, touching]);
+          expect(answeredDuringRefresh).toBe(true);
+          expect((await store.sessions.session('s-1', NOW))?.tokens).toBe('rotated');
+        });
+
+        it('does not bring back a session removed during its refresh', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          const removed = store.sessions.removeSession('s-1');
+          refresh.release();
+          await Promise.all([done, removed]);
+          expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        });
+
+        it('removes a session without waiting for a refresh in progress', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          let removed = false;
+          const removing = store.sessions.removeSession('s-1').then(() => {
+            removed = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const answeredDuringRefresh = removed;
+          refresh.release();
+          await Promise.all([done, removing]);
+          expect(answeredDuringRefresh).toBe(true);
+          expect(await store.sessions.session('s-1', NOW)).toBeNull();
+        });
+
+        it('sweeps an expired session without waiting for its refresh in progress', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          let added = false;
+          const adding = store.sessions.addSession('s-2', session({ expiresAt: NOW + 5000, idleExpiresAt: NOW + 5000 }), NOW + 2000).then(() => {
+            added = true;
+          });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          const answeredDuringRefresh = added;
+          refresh.release();
+          await Promise.all([done, adding]);
+          expect(answeredDuringRefresh).toBe(true);
+        });
+
+        it('moves the idle expiry during a refresh, and the move stays', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const refresh = held('rotated');
+          const done = store.sessions.refreshTokens('s-1', NOW, refresh.refresh);
+          await refresh.reached;
+          await store.sessions.touchSession('s-1', NOW + 900);
+          refresh.release();
+          await done;
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated', idleExpiresAt: NOW + 900 }));
+        });
+
+        it('keeps answering other calls while many sessions wait on slow refreshes', async () => {
+          const refreshes = Array.from({ length: 30 }, () => held('rotated'));
+          for (const [i] of refreshes.entries()) await store.sessions.addSession(`s-${i}`, session(), NOW);
+          const done = refreshes.map((r, i) => store.sessions.refreshTokens(`s-${i}`, NOW, r.refresh));
+          await refreshes[0]!.reached;
+          await expect(store.sessions.session('s-0', NOW)).resolves.toEqual(session());
+          await expect(store.sessions.addSession('other', session(), NOW)).resolves.toBeUndefined();
+          for (const r of refreshes) r.release();
+          await Promise.all(done);
+        }, 10_000);
+      });
+
+      it('hands a sign-in in progress to one caller only', async () => {
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW, 10);
+        const taken = await Promise.all([store.sessions.takeSignIn('l-1', NOW), store.sessions.takeSignIn('l-1', NOW)]);
+        expect(taken.sort()).toEqual(['sealed-login', null].sort());
+        expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
+      });
+
+      it('does not hand over a sign-in that has expired', async () => {
+        await store.sessions.addSignIn('l-1', { sealed: 'sealed-login', expiresAt: NOW + 1000 }, NOW, 10);
+        expect(await store.sessions.takeSignIn('l-1', NOW + 1000)).toBeNull();
+      });
+
+      it('keeps the newest sign-ins in progress when there are too many, and the oldest go', async () => {
+        for (const i of [1, 2, 3, 4]) await store.sessions.addSignIn(`l-${i}`, { sealed: `sealed-${i}`, expiresAt: NOW + 1000 + i }, NOW, 2);
+        expect(await store.sessions.takeSignIn('l-1', NOW)).toBeNull();
+        expect(await store.sessions.takeSignIn('l-2', NOW)).toBeNull();
+        expect(await store.sessions.takeSignIn('l-3', NOW)).toBe('sealed-3');
+        expect(await store.sessions.takeSignIn('l-4', NOW)).toBe('sealed-4');
+      });
+
+      it('holds no more than the limit under sign-ins added at once', async () => {
+        const count = 120;
+        await Promise.all(Array.from({ length: count }, (_, i) => store.sessions.addSignIn(`l-${i}`, { sealed: `sealed-${i}`, expiresAt: NOW + 1000 + i }, NOW, 3)));
+        // Those added at the same moment may pass the limit until the next add, by no more than can run at once.
+        const left = await Promise.all(Array.from({ length: count }, (_, i) => store.sessions.takeSignIn(`l-${i}`, NOW)));
+        expect(left.filter((sealed) => sealed !== null).length).toBeLessThanOrEqual(3 + 30);
+        expect(left.at(-1)).toBe(`sealed-${count - 1}`);
+      });
+
+      it('leaves others alone when something new is added past their expiry', async () => {
+        await store.sessions.addSession('old', session(), NOW);
+        await store.sessions.addSession('live', session({ expiresAt: NOW + 5000 }), NOW);
+        await store.sessions.addSession('new', session({ expiresAt: NOW + 5000 }), NOW + 2000);
+        expect(await store.sessions.session('live', NOW + 2000)).not.toBeNull();
+        expect(await store.sessions.session('old', NOW)).toBeNull();
+      });
+    });
+
     describe('closing', () => {
       it('answers a ping while it is open', async () => {
         await expect(store.ping()).resolves.toBeUndefined();
@@ -1059,6 +1739,139 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
       it('closes more than once', async () => {
         await store.close();
         await expect(store.close()).resolves.toBeUndefined();
+      });
+    });
+
+    describe('the leader lease', () => {
+      const NOW = AT.getTime();
+      const LEASE = 15_000;
+      const lease = () => store.leaderLease;
+      const oldDiscard = () => store.record(entry({ at: new Date(NOW - 2 * DAY), message: { body: Buffer.from('b'), properties: {}, headers: {} } }));
+      const evict = (fence: LeaseFence) => store.evictBodies({ now: new Date(NOW), maxAgeMs: DAY, maxBodyBytes: 1000 }, fence);
+
+      it('says who holds it, and where a Replica with a live lease can be reached', async () => {
+        expect(await lease().currentHolder()).toBeNull();
+        await lease().claim('a', NOW, LEASE);
+        expect(await lease().currentHolder()).toBe('a');
+        await lease().release('a');
+        expect(await lease().currentHolder()).toBeNull();
+
+        await store.replicas.renewLease({ replicaId: 'a', forwardingAddress: '10.0.0.1:9', expiresAt: NOW + LEASE });
+        expect(await store.replicas.liveAddress('a', NOW)).toBe('10.0.0.1:9');
+        expect(await store.replicas.liveAddress('a', NOW + LEASE)).toBeNull();
+        expect(await store.replicas.liveAddress('b', NOW)).toBeNull();
+      });
+
+      it('goes to the first to claim it, and to nobody else while it lasts', async () => {
+        expect(await lease().claim('a', NOW, LEASE)).toMatchObject({ holder: 'a', expiresAt: NOW + LEASE });
+        expect(await lease().claim('b', NOW + LEASE - 1, LEASE)).toBeNull();
+      });
+
+      it('is renewed by its holder, in the same term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        const renewed = await lease().claim('a', NOW + 5_000, LEASE);
+        expect(renewed).toEqual({ holder: 'a', term: first!.term, expiresAt: NOW + 5_000 + LEASE });
+        expect(await lease().claim('b', NOW + LEASE + 1, LEASE)).toBeNull();
+      });
+
+      it('goes to another once it has expired, in a later term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        const taken = await lease().claim('b', NOW + LEASE, LEASE);
+        expect(taken!.holder).toBe('b');
+        expect(taken!.term).toBeGreaterThan(first!.term);
+        expect(await lease().claim('a', NOW + LEASE + 1, LEASE)).toBeNull();
+      });
+
+      it('gives one of many claiming at once the lease', async () => {
+        const claims = await Promise.all(['a', 'b', 'c', 'd'].map((holder) => lease().claim(holder, NOW, LEASE)));
+        expect(claims.filter(Boolean)).toHaveLength(1);
+      });
+
+      it('is free for another at once when its holder gives it up, in a later term', async () => {
+        const first = await lease().claim('a', NOW, LEASE);
+        await lease().release('a');
+        const taken = await lease().claim('b', NOW + 1, LEASE);
+        expect(taken!.term).toBeGreaterThan(first!.term);
+      });
+
+      it('stays with its holder when another gives it up', async () => {
+        await lease().claim('a', NOW, LEASE);
+        await lease().release('b');
+        expect(await lease().claim('b', NOW + 1, LEASE)).toBeNull();
+      });
+
+      it('lets a write through for the lease as it is held', async () => {
+        const fence = (await lease().claim('a', NOW, LEASE))!;
+        await oldDiscard();
+        expect(await evict(fence)).toEqual({ evicted: 1 });
+        expect(await store.history.removeOlderThan(NOW, fence)).toEqual({ samples: 0, runs: 0 });
+        expect(await store.notifications.removeOlderThan(new Date(NOW), fence)).toBe(0);
+      });
+
+      it('refuses a write for a lease another has taken since, and does none of it', async () => {
+        const stale = (await lease().claim('a', NOW, LEASE))!;
+        await lease().claim('b', NOW + LEASE, LEASE);
+        const id = await oldDiscard();
+        await store.history.recordRun('p', { at: NOW - DAY, ok: true, errorCode: null, intervalMs: 1000 }, []);
+
+        await expect(evict(stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.history.removeOlderThan(NOW, stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.notifications.removeOlderThan(new Date(NOW), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await store.ruleState.ensure('p/r', false);
+        await expect(store.ruleState.setNextPass('p/r', new Date(NOW), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        expect(await store.ruleState.nextPass('p/r')).toBeNull();
+
+        expect(await store.body(id)).not.toBeNull();
+        expect((await store.history.lastRuns('p')).last).not.toBeNull();
+      });
+
+      it('refuses Alert state from a lease another has taken since, and does none of it', async () => {
+        const memory: AlertMemory = { alerts: [], arrivals: [{ vhost: '/', queue: 'orders.dlq', unsettled: 1, recent: [] }] };
+        await store.alerts.save('p', memory);
+        const stale = (await lease().claim('a', NOW, LEASE))!;
+        await lease().claim('b', NOW + LEASE, LEASE);
+
+        const outgoing = [{ destination: 'pager', notification: testNotification(new Date(NOW), 'in-flight') }];
+        await expect(store.alerts.save('p', { alerts: [], arrivals: [] }, outgoing, stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+        await expect(store.alerts.keepOnly(new Map(), stale)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect(await store.alerts.load('p')).toEqual(memory);
+        expect(await store.alerts.unsent()).toEqual([]);
+      });
+
+      it('lets Alert state through for the lease as it is held', async () => {
+        const fence = (await lease().claim('a', NOW, LEASE))!;
+        const memory: AlertMemory = { alerts: [], arrivals: [{ vhost: '/', queue: 'orders.dlq', unsettled: 1, recent: [] }] };
+        await store.alerts.save('p', memory, [], fence);
+        await store.alerts.keepOnly(new Map([['p', []]]), fence);
+        expect(await store.alerts.load('p')).toEqual(memory);
+      });
+
+      it('records a sampling run for the lease as it is held, and refuses one for a lease another has taken since, recording none of it', async () => {
+        const ref = { profile: 'p', vhost: '/', queue: 'q' };
+        const run = (at: number) => ({ at, ok: true, errorCode: null, intervalMs: 1000 });
+        const sample = (at: number) => ({ vhost: '/', queue: 'q', at, depth: 1, estimatedArrivals: null });
+        const held = (await lease().claim('a', NOW, LEASE))!;
+        await store.history.recordRun('p', run(NOW), [sample(NOW)], held);
+        await lease().claim('b', NOW + LEASE, LEASE);
+
+        await expect(store.history.recordRun('p', run(NOW + 1), [sample(NOW + 1)], held)).rejects.toBeInstanceOf(LeaderLeaseLost);
+
+        expect((await store.history.lastRuns('p')).last!.at).toBe(NOW);
+        expect((await store.history.samples(ref, NOW, NOW + 1)).map((s) => s.at)).toEqual([NOW]);
+      });
+
+      it('refuses a write for a lease given up', async () => {
+        const given = (await lease().claim('a', NOW, LEASE))!;
+        await lease().release('a');
+        await expect(evict(given)).rejects.toBeInstanceOf(LeaderLeaseLost);
+      });
+
+      it('refuses a write when the same holder is back in a later term', async () => {
+        const before = (await lease().claim('a', NOW, LEASE))!;
+        await lease().release('a');
+        await lease().claim('a', NOW + 1, LEASE);
+        await expect(evict(before)).rejects.toBeInstanceOf(LeaderLeaseLost);
       });
     });
 

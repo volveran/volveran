@@ -1,8 +1,11 @@
 // kind smoke test (npm run test:smoke): builds the image from this checkout,
 // loads it into a fresh kind cluster with RabbitMQ and the mock OIDC provider
 // (test/smoke/deps.yaml, their images loaded from the host's Docker), installs the chart into a namespace that enforces
-// the restricted Pod Security Standard, then runs test/smoke/operator.test.ts.
-// Needs docker, kind, kubectl and helm on PATH. See CONTRIBUTING.md.
+// the restricted Pod Security Standard, then runs test/smoke/operator.test.ts. It
+// then replaces the release with two Replicas on PostgreSQL (test/smoke/values-replicas.yaml)
+// and runs test/smoke/replicas.test.ts. Needs docker, kind, kubectl and helm on PATH. See
+// CONTRIBUTING.md. VOLVERAN_SMOKE_RUN=single or replicas runs only that one.
+// VOLVERAN_TEST_LOCK_FILE makes it take turns with the broker suites, as they do.
 //
 // When a step fails it prints the pods, events and logs of both namespaces.
 // The cluster is deleted at the end unless VOLVERAN_SMOKE_KEEP_CLUSTER=1,
@@ -17,19 +20,29 @@ import {
   clusterName,
   dependencyImages,
   depsNamespace,
+  forwardingSecret,
   helmInstallArgs,
   image,
   kubeconfig,
+  kubeContext,
+  kubernetesNodeImage,
   kubectl,
   oidc,
+  postgresUrl,
+  releaseName,
+  replicasValues,
   repoRoot,
+  sessionEncryptionKey,
   sessionSecret,
   brokerAdmin,
   smokeDir,
 } from '../test/smoke/kind-env.mjs';
+import { acquireLock } from './test-broker-lock.mjs';
 
 const keep = process.env.VOLVERAN_SMOKE_KEEP_CLUSTER === '1';
 const imageRef = `${image.repository}:${image.tag}`;
+const runs = process.env.VOLVERAN_SMOKE_RUN ? [process.env.VOLVERAN_SMOKE_RUN] : ['single', 'replicas'];
+const releaseLock = process.env.VOLVERAN_TEST_LOCK_FILE ? await acquireLock(process.env.VOLVERAN_TEST_LOCK_FILE) : () => {};
 
 /** Runs a command with its output shown; throws when it fails. Returns its stdout when `capture`. */
 function sh(command, args, { input, capture = false, env } = /** @type {{ input?: string, capture?: boolean, env?: NodeJS.ProcessEnv }} */ ({})) {
@@ -113,6 +126,20 @@ function diagnostics() {
   }
 }
 
+/** Installs the chart with these values, refusing any Pod Security warning, and plays an Operator with this test file. */
+function installAndPlay(/** @type {string} */ testFile, /** @type {string[]} */ valuesFiles) {
+  step(`helm install the chart from this checkout, for ${testFile}`);
+  const installed = sh('helm', helmInstallArgs(valuesFiles), { capture: true });
+  // The namespace's warn label makes Kubernetes report any violation, even one enforce would only refuse later.
+  if (/PodSecurity|would violate/i.test(installed.stderr)) throw new Error('the install reported Pod Security violations');
+
+  step(`play an Operator: ${testFile}`);
+  sh(path.join(repoRoot, 'node_modules/.bin/vitest'), ['run', '--config', 'vitest.smoke.config.ts', '--reporter=verbose', testFile], {
+    // The Operator's browser signs in at the mock provider over https too.
+    env: { ...process.env, NODE_EXTRA_CA_CERTS: caFile },
+  });
+}
+
 let status = 1;
 try {
   if (clusterExists() && !keep) {
@@ -121,17 +148,17 @@ try {
   }
   if (!clusterExists()) {
     step(`create the kind cluster ${clusterName}`);
-    sh('kind', ['create', 'cluster', '--name', clusterName, '--kubeconfig', kubeconfig, '--wait', '5m']);
+    sh('kind', ['create', 'cluster', '--name', clusterName, '--image', kubernetesNodeImage, '--kubeconfig', kubeconfig, '--wait', '5m']);
   }
 
   step(`build ${imageRef} and load it into kind`);
   sh('docker', ['build', '-t', imageRef, '.']);
   sh('kind', ['load', 'docker-image', imageRef, '--name', clusterName]);
 
-  step('load the RabbitMQ and mock OIDC provider images into kind');
+  step('load the RabbitMQ, PostgreSQL and mock OIDC provider images into kind');
   loadDependencyImages();
 
-  step('RabbitMQ and the mock OIDC provider');
+  step('RabbitMQ, PostgreSQL and the mock OIDC provider');
   applyGenerated('create', 'namespace', depsNamespace);
   applyGenerated(
     '-n', depsNamespace, 'create', 'configmap', 'rabbitmq-config',
@@ -140,7 +167,7 @@ try {
   );
   applyGenerated('-n', depsNamespace, 'create', 'secret', 'generic', 'oidc-tls', `--from-file=${path.join(smokeDir, 'tls/oidc.p12')}`);
   kubectl(['apply', '-f', path.join(smokeDir, 'deps.yaml')], { stdio: 'inherit' });
-  kubectl(['-n', depsNamespace, 'rollout', 'status', 'deployment/rabbitmq', 'deployment/oidc', '--timeout=5m'], { stdio: 'inherit' });
+  kubectl(['-n', depsNamespace, 'rollout', 'status', 'deployment/rabbitmq', 'deployment/postgres', 'deployment/oidc', '--timeout=5m'], { stdio: 'inherit' });
 
   step(`namespace ${appNamespace} (restricted Pod Security Standard) and its Secrets`);
   applyGenerated('create', 'namespace', appNamespace);
@@ -158,20 +185,21 @@ try {
     '-n', appNamespace, 'create', 'secret', 'generic', 'volveran-oidc',
     `--from-literal=client-secret=${oidc.clientSecret}`,
     `--from-literal=session-secret=${sessionSecret}`,
+    `--from-literal=session-encryption-key=${sessionEncryptionKey}`,
   );
+  applyGenerated('-n', appNamespace, 'create', 'secret', 'generic', 'volveran-postgres', `--from-literal=url=${postgresUrl}`);
+  applyGenerated('-n', appNamespace, 'create', 'secret', 'generic', 'volveran-forwarding', `--from-literal=forwarding-secret=${forwardingSecret}`);
   applyGenerated('-n', appNamespace, 'create', 'secret', 'generic', 'volveran-broker-passwords', `--from-literal=VOLVERAN_SMOKE_PASSWORD=${brokerAdmin.password}`);
   applyGenerated('-n', appNamespace, 'create', 'configmap', 'smoke-oidc-ca', `--from-file=ca.crt=${caFile}`);
 
-  step('helm install the chart from this checkout');
-  const installed = sh('helm', helmInstallArgs(), { capture: true });
-  // The namespace's warn label makes Kubernetes report any violation, even one enforce would only refuse later.
-  if (/PodSecurity|would violate/i.test(installed.stderr)) throw new Error('the install reported Pod Security violations');
-
-  step('play an Operator');
-  sh(path.join(repoRoot, 'node_modules/.bin/vitest'), ['run', '--config', 'vitest.smoke.config.ts', '--reporter=verbose'], {
-    // The Operator's browser signs in at the mock provider over https too.
-    env: { ...process.env, NODE_EXTRA_CA_CERTS: caFile },
-  });
+  if (runs.includes('single')) {
+    installAndPlay('test/smoke/operator.test.ts', []);
+    if (runs.includes('replicas')) {
+      step('uninstall the release, for the run with several Replicas');
+      sh('helm', ['uninstall', releaseName, '--kubeconfig', kubeconfig, '--kube-context', kubeContext, '--namespace', appNamespace, '--wait', '--timeout', '5m']);
+    }
+  }
+  if (runs.includes('replicas')) installAndPlay('test/smoke/replicas.test.ts', [replicasValues]);
   status = 0;
 } catch (err) {
   console.error(`\n[kind-smoke] failed: ${err instanceof Error ? err.message : err}`);
@@ -182,4 +210,5 @@ try {
     spawnSync('kind', ['delete', 'cluster', '--name', clusterName, '--kubeconfig', kubeconfig], { stdio: 'inherit' });
   }
 }
+releaseLock();
 process.exit(status);

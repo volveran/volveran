@@ -1,0 +1,18 @@
+{{- /*
+With several Replicas, a node drain takes one pod at a time, so another always
+serves and answers for the Checkouts of the one that went. One Replica has none:
+a budget would block the drain rather than protect anything.
+*/ -}}
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "volveran.fullname" . }}
+  labels:
+    {{- include "volveran.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "volveran.selectorLabels" . | nindent 6 }}
+{{- end }}

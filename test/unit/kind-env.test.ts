@@ -25,9 +25,10 @@ describe('smoke dependency images', () => {
     expect(containerImages(manifest)).toEqual(['busybox:1', 'one:1', 'two:2']);
   });
 
-  it('are the RabbitMQ and mock OIDC provider images of deps.yaml', () => {
+  it('are the RabbitMQ, PostgreSQL and mock OIDC provider images of deps.yaml', () => {
     const images = dependencyImages();
-    expect(images).toHaveLength(2);
+    expect(images).toHaveLength(3);
+    expect(images.some((i) => i.startsWith('postgres:'))).toBe(true);
     expect(images.some((i) => i.startsWith('rabbitmq:'))).toBe(true);
     expect(images.some((i) => i.startsWith('ghcr.io/navikt/mock-oauth2-server:'))).toBe(true);
   });

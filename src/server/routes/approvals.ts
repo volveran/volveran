@@ -33,34 +33,54 @@
 // errors of profile-access.ts, and 400 `queue_name_confirmation_required`
 // for a missing or wrong typed queue name on request or approve, 400
 // `invalid_request` for a rejection without a reason.
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+//
+// With several Replicas, the list adds the Approvals waiting on the others, from their Live
+// Checkout records, and every route naming a Checkout answers on its Owner Replica
+// (replicas/forwarding.ts), where these checks run. A change to a request answers once its
+// record is written, so what the Operator was told and the list on any Replica agree.
+import type { FastifyInstance, FastifyRequest, onRequestAsyncHookHandler } from 'fastify';
 import { InvalidRequestError } from '../http-error.js';
-import { view } from '../checkout/view.js';
-import { operatorOf } from '../operator.js';
+import { view, type ApprovalSummary } from '../checkout/view.js';
+import { operatorOf, type Operator } from '../operator.js';
 import { requireTypedQueueName } from '../protected-profile.js';
 import { checkApplyConfirmation, type ApplyRequestBody } from './apply.js';
 import { checkoutAccess, compareMessages, parseHandle, type CheckoutRouteDeps } from './checkouts.js';
 
-export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
-  const { checkouts, access } = deps;
+export interface ApprovalRouteDeps extends CheckoutRouteDeps {
+  /** `toOwner` for the routes that name the Checkout `:checkoutId`. */
+  toOwnerOfApproval: { onRequest?: onRequestAsyncHookHandler };
+  /** The Approvals waiting on other Replicas, except `approver`'s own; none when this Replica is on its own. */
+  waitingElsewhere?(approver: Operator): Promise<ApprovalSummary[]>;
+}
+
+export function registerApprovalRoutes(app: FastifyInstance, deps: ApprovalRouteDeps) {
+  const { checkouts, access, toOwner, toOwnerOfApproval, waitingElsewhere } = deps;
 
   app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>(
     '/api/checkouts/:id/approval-request',
+    toOwner,
     async (req) => {
       const { role } = checkoutAccess(deps, req, 'checkout');
       checkApplyConfirmation(checkouts.get(req.params.id), req.body);
-      return { checkout: checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary) };
+      const checkout = checkouts.requestApproval(req.params.id, role, req.body?.rate, req.body?.canary);
+      await checkouts.liveRecordWritten(req.params.id);
+      return { checkout };
     },
   );
 
-  app.delete<{ Params: { id: string } }>('/api/checkouts/:id/approval-request', async (req) => {
+  app.delete<{ Params: { id: string } }>('/api/checkouts/:id/approval-request', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
-    return { checkout: checkouts.withdrawApproval(req.params.id) };
+    const checkout = checkouts.withdrawApproval(req.params.id);
+    await checkouts.liveRecordWritten(req.params.id);
+    return { checkout };
   });
 
   app.get('/api/approvals', async (req) => {
     const approver = operatorOf(req);
-    const approvals = checkouts.listAwaitingApproval(approver).filter((a) => access.holds(approver, 'approve', a.profile));
+    const elsewhere = (await waitingElsewhere?.(approver)) ?? [];
+    const approvals = [...checkouts.listAwaitingApproval(approver), ...elsewhere]
+      .filter((a) => access.holds(approver, 'approve', a.profile))
+      .sort((a, b) => Date.parse(a.requestedAt) - Date.parse(b.requestedAt));
     return { approvals };
   });
 
@@ -71,7 +91,7 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
     return checkouts.awaitingCheckout(req.params.checkoutId, approver);
   };
 
-  app.get<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId', async (req) => {
+  app.get<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId', toOwnerOfApproval, async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
     return { checkout: view(checkouts.approvedBy(req.params.checkoutId, approver) ?? awaiting(req)) };
@@ -79,34 +99,38 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
 
   app.get<{ Params: { checkoutId: string; handle: string } }>(
     '/api/approvals/:checkoutId/messages/:handle',
+    toOwnerOfApproval,
     async (req) => {
       const checkout = awaiting(req);
       return { message: await checkouts.message(checkout.id, parseHandle(req.params.handle)) };
     },
   );
 
-  app.get<{ Params: { checkoutId: string }; Querystring: unknown }>('/api/approvals/:checkoutId/compare', async (req) => {
+  app.get<{ Params: { checkoutId: string }; Querystring: unknown }>('/api/approvals/:checkoutId/compare', toOwnerOfApproval, async (req) => {
     const checkout = awaiting(req);
     return compareMessages(checkouts, checkout.id, req.query);
   });
 
   app.post<{ Params: { checkoutId: string }; Body: { confirmQueueName?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/approve',
+    toOwnerOfApproval,
     async (req, reply) => {
       const checkout = awaiting(req);
       requireTypedQueueName(checkout.profile, checkout.queue, req.body, 'Approval');
       // Nothing awaits between these checks and approve() taking the request.
-      return reply.code(202).send({ checkout: checkouts.approve(checkout.id, operatorOf(req)) });
+      const started = checkouts.approve(checkout.id, operatorOf(req));
+      await checkouts.liveRecordWritten(checkout.id);
+      return reply.code(202).send({ checkout: started });
     },
   );
 
-  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/stop', async (req) => {
+  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/stop', toOwnerOfApproval, async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
     return { checkout: checkouts.stopApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
   });
 
-  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/continue', async (req) => {
+  app.post<{ Params: { checkoutId: string } }>('/api/approvals/:checkoutId/apply/continue', toOwnerOfApproval, async (req) => {
     const approver = operatorOf(req);
     access.of(approver, 'approve', checkouts.checkout(req.params.checkoutId));
     return { checkout: checkouts.continueApplyBy(req.params.checkoutId, { operator: approver, as: 'approver' }) };
@@ -114,13 +138,16 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: CheckoutRoute
 
   app.post<{ Params: { checkoutId: string }; Body: { reason?: unknown } | undefined }>(
     '/api/approvals/:checkoutId/reject',
+    toOwnerOfApproval,
     async (req) => {
       const checkout = awaiting(req);
       const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
       if (reason === '') {
         throw new InvalidRequestError('A rejection needs a "reason": the requester sees it, so they know what to change.');
       }
-      return { checkout: checkouts.reject(checkout.id, operatorOf(req), reason) };
+      const rejected = checkouts.reject(checkout.id, operatorOf(req), reason);
+      await checkouts.liveRecordWritten(checkout.id);
+      return { checkout: rejected };
     },
   );
 }

@@ -25,6 +25,10 @@ export type RunMode =
       oidc: OidcSettings;
       /** Signs the session cookie. */
       sessionSecret: string;
+      /** Encrypts the tokens of sessions kept at rest: set on PostgreSQL only (with SQLite, sessions stay in memory). */
+      sessionEncryptionKey?: string;
+      /** A session its Operator has not used for this long ends (VOLVERAN_SESSION_IDLE_MINUTES). */
+      sessionIdleMs: number;
     };
 
 export type RunModeResult = { ok: true; mode: RunMode } | { ok: false; error: string };
@@ -35,6 +39,9 @@ export const callbackPath = '/auth/callback';
 const minSessionSecretLength = 32;
 const defaultScopes = 'openid email profile';
 const defaultGroupsClaim = 'groups';
+const defaultSessionIdleMinutes = 60;
+/** A session's fixed lifetime: an idle timeout past it would never apply. */
+const maxSessionIdleMinutes = 720;
 
 export function resolveRunMode(env: Record<string, string | undefined>, host: string): RunModeResult {
   const auth = env.VOLVERAN_AUTH?.trim() || 'none';
@@ -107,6 +114,31 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
     };
   }
 
+  // Sessions are at rest in the store only on PostgreSQL.
+  let sessionEncryptionKey: string | undefined;
+  if (read('VOLVERAN_POSTGRES_URL')) {
+    sessionEncryptionKey = read('VOLVERAN_SESSION_ENCRYPTION_KEY');
+    if (!sessionEncryptionKey) {
+      return {
+        ok: false,
+        error:
+          'Team Mode on PostgreSQL keeps sessions in the database, with their tokens encrypted, and needs VOLVERAN_SESSION_ENCRYPTION_KEY: ' +
+          `at least ${minSessionSecretLength} characters (e.g. the output of \`openssl rand -hex 32\`), the same on every Replica.`,
+      };
+    }
+    if (sessionEncryptionKey.length < minSessionSecretLength) {
+      return { ok: false, error: `VOLVERAN_SESSION_ENCRYPTION_KEY must be at least ${minSessionSecretLength} characters long (e.g. the output of \`openssl rand -hex 32\`).` };
+    }
+    if (sessionEncryptionKey === sessionSecret) {
+      return { ok: false, error: 'VOLVERAN_SESSION_ENCRYPTION_KEY must differ from VOLVERAN_SESSION_SECRET: one encrypts tokens in the database, the other signs cookies.' };
+    }
+  }
+
+  const idleMinutes = read('VOLVERAN_SESSION_IDLE_MINUTES') ?? String(defaultSessionIdleMinutes);
+  if (!/^\d+$/.test(idleMinutes) || Number(idleMinutes) < 1 || Number(idleMinutes) > maxSessionIdleMinutes) {
+    return { ok: false, error: `VOLVERAN_SESSION_IDLE_MINUTES must be a whole number from 1 to ${maxSessionIdleMinutes}, not "${idleMinutes}".` };
+  }
+
   // A dotted path into the claims (groups-claim.ts): no empty step.
   const groupsClaim = read('VOLVERAN_OIDC_GROUPS_CLAIM') ?? defaultGroupsClaim;
   if (groupsClaim.split('.').includes('')) {
@@ -129,6 +161,8 @@ function resolveTeamMode(env: Record<string, string | undefined>): RunModeResult
         groupsClaim,
       },
       sessionSecret,
+      ...(sessionEncryptionKey !== undefined && { sessionEncryptionKey }),
+      sessionIdleMs: Number(idleMinutes) * 60 * 1000,
     },
   };
 }

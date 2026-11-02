@@ -12,10 +12,12 @@ Every `every`, plus a few seconds of jitter, a running rule makes a **Rule Pass*
    - **used up**: the filter selects it, but its attempts are used up;
    - **not due**: the filter selects it, but its back-off delay has not passed yet (or the pass already has `maxPerPass` Messages to Replay);
    - **no match**: the filter does not select it.
-3. It Replays up to `maxPerPass` due Messages at the rule's `rate`, Moves the used-up ones to the parking queue when `whenAttemptsUsedUp` says so, and Keeps every other Message in order. On a quorum queue, a large Checkout can use up Delivery Budget as it ends (see the [changelog](../CHANGELOG.md)).
+3. It Replays up to `maxPerPass` due Messages at the rule's `rate`, Moves the used-up ones to the parking queue when `whenAttemptsUsedUp` says so, and Keeps every other Message in order.
+
+   In a pass's counts, **failed** also holds Replays and Moves not attempted because of a time limit or a Lost Checkout: their Messages went back to the queue. A pass stopped by a pause counts its unattempted Replays as not due, and shows what stopped it.
 4. It ends the Checkout.
 
-Every Replay and Move is an Audit Entry naming the rule and the pass; search them with the **Rule** filter of the Audit view (`GET /api/audit-entries?rule=<name>`). The Replay rules view shows each rule's state, its next pass and its last 20 passes with their counts.
+Every Replay and Move is an Audit Entry naming the rule and the pass; search them with the **Rule** filter of the Audit view (`GET /api/v1/audit-entries?rule=<name>`). The Replay rules view shows each rule's state, its next pass and its last 20 passes with their counts.
 
 ### Attempts and back-off
 
@@ -47,10 +49,12 @@ A pass looks only at the Messages at the head of the queue: it holds at most `ma
 
 A paused rule runs no scheduled passes and stays paused across restarts. The Replay rules view shows why it paused, who paused it (a person, or the rule itself) and when.
 
-- **Pause** (`operator` or `admin`): from the Replay rules view, with a reason, or `POST /api/profiles/:profile/replay-rules/:name/pause` with `{ "reason": "…" }`. Use it during an incident to stop automatic Replay without a configuration change.
-- **Resume** (`admin`): from the view, or `POST /api/profiles/:profile/replay-rules/:name/resume`. Resuming clears the automatic stop's count, so the rule starts with a fresh window.
+- **Pause** (`operator` or `admin`): from the Replay rules view, with a reason, or `POST /api/v1/profiles/:profile/replay-rules/:name/pause` with `{ "reason": "…" }`. Use it during an incident to stop automatic Replay without a configuration change. A pass in progress stops at its next step: the step under way finishes, and the Messages it had not reached go back to the queue, counted as Not due in that pass.
+- **Resume** (`admin`): from the view, or `POST /api/v1/profiles/:profile/replay-rules/:name/resume`. Resuming clears the automatic stop's count, so the rule starts with a fresh window.
 - Pausing a paused rule, or resuming a running one, answers `409` (`replay_rule_paused`, `replay_rule_running`).
-- **Run now** (`admin`) still runs one pass of a paused rule, so you can check a fix before resuming. A pass run that way can pause a running rule like any other.
+- **Run now** (`admin`) still runs one pass of a paused rule, so you can check a fix before resuming; only a pause that comes after it began stops it. A pass run that way can pause a running rule like any other.
+
+With several Replicas, Rule Passes run on the Background Leader only, and a pause or resume works through any of them, also while the leader is changing. Attempts, back-off and the automatic stop's count live in the audit store and Audit Entries, so they carry on after a change. A new leader that finds a pass still going records its own as skipped. Run now answers `503` `replica_unreachable` while the leader cannot be reached.
 
 Every pause and resume is an Audit Entry (`rule_pause`, `rule_resume`) with the rule, the Operator (the person, or `Replay rule <name>` for an automatic pause) and the reason. The Audit view's action filter selects them.
 
