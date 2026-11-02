@@ -39,6 +39,9 @@ import { forwardedSession } from './replicas/forwarding.js';
 import type { OidcSettings } from './run-mode.js';
 import type { TokenSeal } from './token-seal.js';
 
+/** A refresh holds its lock and a store connection while it waits for the provider (ADR 0013). */
+const REFRESH_WITHIN_MS = 10_000;
+
 const sessionCookie = 'volveran_session';
 const loginCookie = 'volveran_login';
 /** A session ends this long after sign-in; the Operator signs in again. */
@@ -132,10 +135,23 @@ export async function createTeamAuth(settings: OidcSettings, sessionSecret: stri
     maxAge: Math.floor(maxAgeMs / 1000),
   });
 
+  /** Rejects when `work` has not settled in time. What it was doing goes on, and its answer is ignored. */
+  const withinTime = async <T>(work: Promise<T>, ms: number): Promise<T> => {
+    let timer: NodeJS.Timeout | undefined;
+    const ranOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`the provider did not answer within ${ms / 1000} seconds`)), ms);
+    });
+    try {
+      return await Promise.race([work, ranOut]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   /** The refresh grant, for a Broker Profile with `credentials: operatorToken` (operator-token.ts). */
   const refreshGrant = async (refreshToken: string): Promise<TokenGrant> => {
     try {
-      const tokens = await oidc.refreshTokenGrant(config, refreshToken);
+      const tokens = await withinTime(oidc.refreshTokenGrant(config, refreshToken), REFRESH_WITHIN_MS);
       return { accessToken: tokens.access_token, expiresIn: tokens.expiresIn(), refreshToken: tokens.refresh_token };
     } catch (err) {
       // The provider answered with an OAuth error (e.g. invalid_grant: revoked or expired).
@@ -397,8 +413,9 @@ function signInFailed(reason: string): HttpError<'sign_in_failed'> {
  * Only a path of this app, as a browser reads it: it strips tabs and newlines and takes `\` as `/`.
  * So the value is resolved the same way, and the path it resolves to is what the redirect uses.
  */
-function safeReturnTo(value: string | undefined): string {
-  if (!value?.startsWith('/')) return '/';
+function safeReturnTo(value: unknown): string {
+  // Given twice, the query parser hands over a list.
+  if (typeof value !== 'string' || !value.startsWith('/')) return '/';
   const base = 'http://return-to.invalid';
   let url: URL;
   try {

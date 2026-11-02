@@ -295,6 +295,10 @@ export class SqliteAuditStore implements AuditStore {
 
   /** Writes a `pending` entry (and its body, if any) in one durable commit; returns its id. */
   async record(entry: NewAuditEntry): Promise<number> {
+    return this.recordNow(entry);
+  }
+
+  private recordNow(entry: NewAuditEntry): number {
     const { message } = entry;
     const { sql, values } = insertEntry(entry, () => '?');
     this.db.exec('BEGIN');
@@ -312,13 +316,13 @@ export class SqliteAuditStore implements AuditStore {
     }
   }
 
-  /** No await before `record` writes, so nothing comes between the look and the write. */
+  /** No await at all, so nothing comes between the look and the write. */
   async claimRestore(entry: NewRestoreEntry): Promise<RestoreClaim> {
     const earlier = this.db
       .prepare("SELECT * FROM audit_entries WHERE restore_of = ? AND outcome <> 'failed' ORDER BY id DESC LIMIT 1")
       .get(entry.restoreOf) as EntryRow | undefined;
     if (earlier) return { claimed: false, earlier: toEntry(earlier) };
-    return { claimed: true, id: await this.record(entry) };
+    return { claimed: true, id: this.recordNow(entry) };
   }
 
   async setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): Promise<void> {

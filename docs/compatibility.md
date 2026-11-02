@@ -23,7 +23,7 @@ These are internal, and may change in any version:
 
 - The audit store's tables, except that its data stays readable. SQLite is promised as data and behaviour, not as the `node:sqlite` API under it.
 - Lock queue arguments, which must still work between adjacent minor versions.
-- What Replicas say to each other: the internal port and the `x-volveran-forwarded-*` and `x-volveran-forwarding-protocol` headers.
+- What Replicas say to each other: the internal port and the `x-volveran-forwarded-*` `x-volveran-forwarding-protocol` and `x-volveran-forwarding-refused` headers.
 - `VOLVERAN_POD_IP`, which the chart sets for itself.
 - The web app's own screens and text, and log lines.
 
@@ -76,11 +76,12 @@ Only what is run is supported. A version that is not listed may work, but nothin
 |---|---|---|
 | RabbitMQ | 4.4 | The broker-facts and integration suites on `rabbitmq:4.4.0-management` on every change, and the kind smoke test |
 | PostgreSQL | 17 | The integration suite and contract suite on `postgres:17.6-alpine` on every change, and the kind smoke test |
-| Kubernetes | 1.37 | The kind smoke test on `kindest/node:v1.37.0` on every change, under the `restricted` Pod Security Standard |
+| Kubernetes | 1.33 to 1.37 | The kind smoke test on `kindest/node` v1.33.12, v1.34.11, v1.35.8, v1.36.4 and v1.37.0 on every change, under the `restricted` Pod Security Standard |
 | Node | 24 | The image is built on `node:24-alpine`, pinned by digest, and CI runs every suite on the latest Node 24. You run Node only by building from source |
 
 - **Later RabbitMQ 4 versions.** A weekly run takes the suites to the latest `rabbitmq:4-management` and opens an issue if they fail. It warns of a release that breaks something, and a version joins this table only once the pinned image moves to it. As of this writing that tag is also 4.4.0.
-- **Other Kubernetes versions.** The rendered manifests are also checked against the Kubernetes 1.33 schemas with kubeconform. That reads the manifests and runs nothing, so it supports nothing. The chart sets no `kubeVersion`, so other versions are not refused.
+- **The OpenAPI description's depth.** Its routes, parameters and request bodies are complete. Its response schemas are exact only at the top level, and nested objects are loose: nothing checks them against real answers, so rely on the fields the guides name.
+- **Other Kubernetes versions.** The rendered manifests are also checked against the schemas of the oldest and newest version the smoke test runs, with kubeconform, which adds nothing to the table. The chart sets no `kubeVersion`, so other versions are not refused.
 - **Node 26** renames the `node:sqlite` API the store uses, and is not tested.
 
 A test fails when this table disagrees with the versions CI pins. Moving one is a change to both.

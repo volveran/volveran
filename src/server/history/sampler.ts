@@ -143,7 +143,7 @@ export class QueueSampler implements LeaderJob {
   }
 
   /** May be called again after stop(): each start reads what is known from the store. */
-  async start(fence?: LeaseFence): Promise<void> {
+  async start(fence: LeaseFence): Promise<void> {
     this.stopped = false;
     this.fence = fence;
     await Promise.all(

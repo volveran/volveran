@@ -29,7 +29,7 @@ export function goneReplicasJob({ store, everyMs, keepMs, log }: GoneReplicasJob
         // In this order: a run stopped between the two leaves the record to be found again.
         const settled = await store.settleInterrupted(record.id, INTERRUPTED_REASON);
         if (settled > 0) log.info({ checkoutId: record.id, settled }, 'Audit Entries left pending by a Replica that has gone are now uncertain');
-        if (record.status === 'active') await store.replicas.updateCheckout(record.id, { status: 'lost', approval: null, lostReason: ownerGoneReason(record.queueType) });
+        await store.replicas.markOwnerGone(record.id, ownerGoneReason(record.queueType));
       }
       await store.replicas.removeGoneReplicas(now - keepMs);
     } catch (err) {

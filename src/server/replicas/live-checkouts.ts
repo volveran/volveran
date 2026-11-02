@@ -71,7 +71,7 @@ export class LiveCheckouts implements LiveCheckoutListener {
   /** A start failed before it held anything: its claim goes, and the Operator is free when this resolves. */
   async abandoned(id: string): Promise<void> {
     this.forgotten(id);
-    await this.written(id);
+    await this.writesDone(id);
   }
 
   changed(checkout: Checkout): void {
@@ -79,7 +79,7 @@ export class LiveCheckouts implements LiveCheckoutListener {
   }
 
   /** Resolves once what was told of Checkout `id` has been written, or tried. Never rejects. */
-  written(id: string): Promise<void> {
+  writesDone(id: string): Promise<void> {
     return this.writes.run(id, async () => {});
   }
 

@@ -35,6 +35,7 @@ What this does not promise:
 
 - "Known" means known to these tools on the day they ran. A clean scan is not proof that nothing is vulnerable, and a finding can appear after a release: the weekly scan of the released image looks for those, but a release already published stays as it is until the next one.
 - Medium and low findings do not stop a release. They stay visible in the scan's log.
+- The image is on Alpine, whose vulnerability data may be thinner than Debian's: a clean result says less about what is unknown to the scanners.
 - The scan runs on the amd64 image, built in the release's first job. The arm64 image, and the image pushed by the later job, are built from the same Dockerfile and pins but are not scanned themselves.
 
 Dependabot proposes updates to dependencies, GitHub Actions and the base image, which are pinned by commit and by digest.

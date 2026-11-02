@@ -65,13 +65,19 @@ jobs:
         run: npm run test:chart:release
 
   smoke:
-    name: kind smoke test
+    name: kind smoke test (${{ matrix.kubernetes }})
     # The chart, image and server together; the weekly run is only for broker facts.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      # Each is what the table in docs/compatibility.md rests on, so one failing must not hide another's result.
+      fail-fast: false
+      matrix:
+        kubernetes: [v1.33.12, v1.34.11, v1.35.8, v1.36.4, v1.37.0]
     env:
       KIND_VERSION: v0.33.0
+      VOLVERAN_SMOKE_KUBERNETES: ${{ matrix.kubernetes }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

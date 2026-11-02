@@ -249,7 +249,10 @@ function PassHistory({ passes }: { passes: RulePass[] }) {
                 <td className="num">{p.summary.notDue}</td>
                 <td className="num">{p.summary.noMatch}</td>
                 <td className="num">{p.summary.cannotReplay}</td>
-                <td className={p.summary.failed > 0 ? 'num error-text' : 'num'}>{p.summary.failed}</td>
+                <td className={p.summary.failed > 0 ? 'num error-text' : 'num'} title={p.reason ?? undefined}>
+                  {p.summary.failed}
+                  {p.reason && <div className="muted">Stopped: {p.reason}</div>}
+                </td>
               </>
             ) : (
               <td colSpan={8} className={p.status === 'failed' ? 'error-text' : 'muted'}>

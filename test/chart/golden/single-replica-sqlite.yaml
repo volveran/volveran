@@ -22,6 +22,7 @@ data:
       username: volveran
       vhosts:
       - /
+    version: 1
 ---
 # Source: volveran/templates/pvc.yaml
 apiVersion: v1
@@ -91,7 +92,7 @@ spec:
         app.kubernetes.io/instance: volveran
       annotations:
         # A change to the chart-managed Broker Profiles rolls the pod.
-        checksum/broker-profiles: 3893a5007e5b6e3dfb982f816593e12dc663210b4945b5f20e05332bd4fc8b74
+        checksum/broker-profiles: 5384ec2dbdb9fb26b5ed049c599969e873cadaa4b36938b9f9b31de79d3ee591
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 90

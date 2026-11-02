@@ -32,7 +32,6 @@ import { readStartupConfig, type StartupConfig } from './startup-config.js';
 import { createForwarder, replicaUnreachable, startForwardingListener, type Forwarder, type ForwardingListener } from './replicas/forwarding.js';
 import { goneReplicasJob } from './replicas/gone-replicas-job.js';
 import { LiveCheckouts } from './replicas/live-checkouts.js';
-import { ownLeaseRanOutReason } from './replicas/owner-gone.js';
 import { DEFAULT_REPLICA_LEASE_TIMING, ReplicaLease, type ReplicaLeaseTiming } from './replicas/replica-lease.js';
 import { keySeal, noSeal } from './token-seal.js';
 import { systemClock } from './replay-rules/rule-clock.js';
@@ -415,7 +414,7 @@ async function serve(
       await Promise.all([checkouts.endAll(), stopBackgroundWork()]);
       await liveCheckouts?.settled();
       // Their records stay, saying why they ended, for the others to answer from.
-      await replicaLease?.giveUp().catch((err: unknown) => app.log.error({ err }, 'This Replica could not end its lease; it runs out by itself'));
+      await replicaLease?.end().catch((err: unknown) => app.log.error({ err }, 'This Replica could not end its lease; it runs out by itself'));
     })());
   app.addHook('onClose', async () => {
     await stopWork();
@@ -468,7 +467,7 @@ async function serve(
         forwardingAddress: forwarding.address,
         timing: replicaLeaseTiming,
         afterRenewal: () => liveCheckouts.writeAgain(),
-        onRanOut: () => checkouts.loseAll(ownLeaseRanOutReason),
+        onRanOut: () => checkouts.endAllOnLeaseRanOut(),
         onError: (err) => app.log.error({ err }, "This Replica's lease could not be renewed; trying again"),
       });
       await lease.start();
@@ -616,9 +615,13 @@ async function buildApp({ originCheck, profiles, access, checkouts, replayRules,
     const owner = await liveCheckouts.ownerOf(id);
     if (!owner) return null;
     if ('address' in owner) return owner.address;
-    // Answered here from now on. A profile no longer configured leaves it unknown here.
     const profile = profiles.find((p) => p.name === owner.gone.profile);
-    if (profile) checkouts.answerForGoneOwner(owner.gone, profile);
+    if (!profile) {
+      // Its route and Role checks need the profile, so nothing more can be said, and it did exist.
+      throw new HttpError(404, 'profile_not_found', `The Replica that held Checkout ${id} has gone, and its Broker Profile is no longer configured. Its Messages are back in the queue, or will be once the broker sees the connection gone.`);
+    }
+    // Answered here from now on.
+    checkouts.answerForGoneOwner(owner.gone, profile);
     return null;
   };
   const ownerOf = (req: FastifyRequest<{ Params: { id: string } }>) => ownerOfCheckout(req.params.id);

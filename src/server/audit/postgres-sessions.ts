@@ -6,7 +6,9 @@ import type { SessionStore, StoredSession, StoredSignIn } from './audit-store.js
 import { transaction } from './postgres-connection.js';
 
 // A refresh holds a connection while it waits for the provider or for another Replica's
-// refresh, so a slow provider must not take the pool from Audit Entries and sign-ins.
+// refresh, so a slow provider must not take the pool from Audit Entries and sign-ins. Its lock
+// is an advisory one on the session's id and not on the row, so that nothing else waits for
+// the provider: signing out, the sweep and a move of the idle expiry all go straight through.
 const MAX_REFRESHES_AT_ONCE = 3;
 
 export class PostgresSessionStore implements SessionStore {
@@ -33,7 +35,8 @@ export class PostgresSessionStore implements SessionStore {
     else this.refreshSlotsInUse++;
     try {
       return await transaction(this.pool, async (client) => {
-        const { rows } = await client.query<{ tokens: string }>('SELECT tokens FROM sessions WHERE id = $1 AND expires_at > $2 AND idle_expires_at > $2 FOR UPDATE', [id, now]);
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [id]);
+        const { rows } = await client.query<{ tokens: string }>('SELECT tokens FROM sessions WHERE id = $1 AND expires_at > $2 AND idle_expires_at > $2', [id, now]);
         const row = rows[0];
         if (!row) return false;
         const tokens = await refresh(row.tokens);
@@ -49,8 +52,7 @@ export class PostgresSessionStore implements SessionStore {
   }
 
   async touchSession(id: string, idleExpiresAt: number): Promise<void> {
-    // SKIP LOCKED: a request must not wait for a refresh, which holds the row while it waits for the provider.
-    await this.pool.query('UPDATE sessions SET idle_expires_at = $1 WHERE id IN (SELECT id FROM sessions WHERE id = $2 FOR NO KEY UPDATE SKIP LOCKED)', [idleExpiresAt, id]);
+    await this.pool.query('UPDATE sessions SET idle_expires_at = $1 WHERE id = $2', [idleExpiresAt, id]);
   }
 
   async removeSession(id: string): Promise<void> {

@@ -119,6 +119,8 @@ The queue list's `messages` is left out, not zero, when the broker has no statis
 - Classic queues put a returned Message back in its original position.
 - Quorum queues put returned Messages ahead of newer ones, in the order they were returned.
 
+That order holds for the few Messages the fact is checked on. On a large Checkout a quorum queue does not keep it, with or without waiting before the close (measured under #134): the Messages come back ahead of newer ones, not necessarily in order.
+
 ## Credentials
 
 - `update-secret` is accepted even with a wrong password on the internal authentication backend. The OAuth 2.0 backend does re-check the new secret; see "OAuth 2.0 tokens".
@@ -139,7 +141,7 @@ Observed on a broker with the OAuth 2.0 backend only (`auth_backends.1 = rabbit_
 
 ## Node.js runtime: `node:sqlite`
 
-Not a broker fact, but the same kind of gate: the audit store relies on it, and it was checked on 30 October 2026. On Node 24 `node:sqlite` is **[Stability 1.2, release candidate](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)**, since v24.15.0, and it is not stable. Node's [stability index](https://nodejs.org/api/documentation.html#stability-index) says of that stage: "No further breaking changes are anticipated but may still occur", and it is still a stage of Experimental, which semantic versioning does not cover. Node 24.21.0 and the image's 24.22.2 load it and open a database with no flag and no warning. The image pins `node:24-slim` by digest, so a Node release reaches it only through a Dependabot pull request.
+Not a broker fact, but the same kind of gate: the audit store relies on it, and it was checked on 30 October 2026. On Node 24 `node:sqlite` is **[Stability 1.2, release candidate](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)**, since v24.15.0, and it is not stable. Node's [stability index](https://nodejs.org/api/documentation.html#stability-index) says of that stage: "No further breaking changes are anticipated but may still occur", and it is still a stage of Experimental, which semantic versioning does not cover. Node 24.21.0 and the image's 24.22.2 load it and open a database with no flag and no warning. The image pins `node:24-alpine` by digest, so a Node release reaches it only through a Dependabot pull request.
 
 What this means for SQLite's long-term promise:
 

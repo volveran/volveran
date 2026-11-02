@@ -44,7 +44,8 @@ describe('the sampler, when the management API lists a queue with no depth', () 
       onError: (_, err) => onError?.(err),
       testHooks: { clock: { now: () => new Date(now), setTimer: () => ({ cancel() {} }) }, sampler: (c) => (control = c) },
     });
-    await sampler.start(fence);
+    const held = fence ?? (await store.leaderLease.claim('sampler', 0, Number.MAX_SAFE_INTEGER))!;
+    await sampler.start(held);
     cleanups.push(() => sampler.stop());
     const finished: FinishedRun[] = [];
     sampler.onRun((run) => void finished.push(run));
@@ -53,7 +54,7 @@ describe('the sampler, when the management API lists a queue with no depth', () 
       await control!.sampleNow();
       return finished.at(-1)!;
     };
-    return { sampler, sample, latest: () => control!.latest(), finished };
+    return { held, sampler, sample, latest: () => control!.latest(), finished };
   }
 
   const T0 = Date.parse('2026-10-30T10:00:00.000Z');
@@ -127,11 +128,11 @@ describe('the sampler, when the management API lists a queue with no depth', () 
 
   it('starts again after a stop, reading what is known from the store, and samples as before', async () => {
     const store = fresh();
-    const { sampler, sample, latest, finished } = await samplerOn(await brokerWith({ messages: 5 }), store);
+    const { sampler, sample, latest, finished, held } = await samplerOn(await brokerWith({ messages: 5 }), store);
     await sample(minute(1));
     await sampler.stop();
     expect((await sample(minute(2))).samplingRun.at.getTime()).toBe(minute(1));
-    await sampler.start();
+    await sampler.start(held);
     expect(latest().profiles[0]!.lastSuccessAt!.getTime()).toBe(minute(1));
     expect((await sample(minute(3))).samples[0]).toMatchObject({ previousDepth: 5, estimatedArrivals: 0 });
     expect(finished).toHaveLength(2);

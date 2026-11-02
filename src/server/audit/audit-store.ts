@@ -409,16 +409,15 @@ export interface SessionStore {
   session(id: string, now: number): Promise<StoredSession | null>;
   /**
    * Refreshes the session's sealed tokens, one caller at a time on any Replica: `refresh`
-   * runs holding the session's lock, given the tokens as they are now, and what it answers
-   * replaces them (null leaves them). When it throws nothing changes, and this throws the
-   * same. False, without calling it, when the session has gone. It may wait for the
-   * provider, so it never holds up the store's other calls: `refresh` must not call the store.
+   * runs holding a lock of the refresh's own, given the tokens as they are now, and what it
+   * answers replaces them (null leaves them), unless the session has gone by then. When it
+   * throws nothing changes, and this throws the same. False, without calling it, when the
+   * session has gone. It may wait for the provider, so it holds up no other call of the store,
+   * on this session or any other: `refresh` must not call the store, and its caller limits its time.
+   * It is the one method that waits on something outside the store (ADR 0013).
    */
   refreshTokens(id: string, now: number, refresh: (tokens: string) => Promise<string | null>): Promise<boolean>;
-  /**
-   * Moves the session's idle expiry; does nothing if it has gone. It answers without waiting
-   * for a refresh in progress, and may then do nothing: the Operator's next request tries again.
-   */
+  /** Moves the session's idle expiry; does nothing if it has gone. It does not wait for a refresh in progress. */
   touchSession(id: string, idleExpiresAt: number): Promise<void>;
   removeSession(id: string): Promise<void>;
   /**
@@ -501,6 +500,8 @@ export interface LiveCheckoutRoute {
 export interface ReplicaStore {
   /** Takes or extends the Replica's lease. */
   renewLease(lease: ReplicaLeaseRow): Promise<void>;
+  /** Ends the Replica's lease as of `at`, leaving its records. Does nothing if it has no lease. */
+  endLease(replicaId: string, at: number): Promise<void>;
   /** The Replica's internal address while its lease is live at `now`, else null. */
   liveAddress(replicaId: string, now: number): Promise<string | null>;
 
@@ -517,6 +518,12 @@ export interface ReplicaStore {
   checkoutRoute(id: string, now: number): Promise<LiveCheckoutRoute | null>;
   /** The record, or null when there is none. */
   checkoutRecord(id: string): Promise<LiveCheckoutRecord | null>;
+  /**
+   * The record's owner has gone: a Checkout still going at the last write becomes `lost`, with
+   * `lostReason`, and no Approval. One that has ended stays ended, and one already lost keeps its
+   * reason, as what its owner last wrote is more than is known here. Does nothing if the record has gone.
+   */
+  markOwnerGone(id: string, lostReason: string): Promise<void>;
   /** Every record whose owner's lease is over at `now`. */
   checkoutsOfGoneReplicas(now: number): Promise<LiveCheckoutRecord[]>;
   /** Removes each lease over by `before` and the records of its Replica, as one unit of work. Answers how many leases. */

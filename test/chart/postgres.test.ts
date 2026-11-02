@@ -11,9 +11,14 @@ const onPostgres = { postgres: { existingSecret: 'volveran-postgres' } };
 const bundles = [{ name: 'postgres-ca', secret: 'postgres-internal-ca' }];
 
 describe('one replica on SQLite', () => {
-  // The golden file is 0.5.1's chart rendered with the same values, with only its version
-  // replaced: a change to the ConfigMap or the pod template would roll the pod on upgrade.
-  it("renders 0.5.1's output byte for byte, but for the version", () => {
+  // The golden file is 0.5.1's chart rendered with the same values, with its version replaced
+  // and the profiles file's format version added: any other change to the ConfigMap or the pod
+  // template would be a further reason to roll the pod on upgrade.
+  it('writes the format version, so Volverán does not warn of it', () => {
+    expect(parse(render().one('ConfigMap').data!['profiles.yaml']!).version).toBe(1);
+  });
+
+  it("renders 0.5.1's output but for the version and the profiles file's format version", () => {
     const golden = readFileSync(path.join(repoRoot, 'test/chart/golden/single-replica-sqlite.yaml'), 'utf8').replaceAll('<version>', version);
     expect(render().output).toBe(golden);
   });

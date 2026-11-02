@@ -12,14 +12,6 @@ export function ownerGoneReason(queueType: CheckoutQueueType): string {
   );
 }
 
-/** On the Replica itself, when it could not renew its lease and so gives its Checkouts up. */
-export function ownLeaseRanOutReason(queueType: CheckoutQueueType): string {
-  return (
-    'This Replica could not renew its lease in the shared store, so the others take it to be gone. It closed its connection to the broker, which returns every Message to the queue' +
-    (queueType === 'quorum' ? ', using up 1 of the Delivery Budget of each.' : '.')
-  );
-}
-
 /** On an Audit Entry left `pending`: a step was begun, and nothing more is known. */
 export const INTERRUPTED_REASON =
   'The Replica carrying this out stopped before writing its outcome, so it may or may not have happened. Look in the queue and at the destination.';

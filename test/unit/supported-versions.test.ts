@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { kubernetesNodeImage, kubernetesVersion } from '../smoke/kind-env.mjs';
+import { kubernetesNodeDigests, kubernetesNodeImage, kubernetesVersion } from '../smoke/kind-env.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
@@ -39,8 +39,14 @@ describe('The supported versions', () => {
   it('of Kubernetes are what the smoke test pins, by digest', () => {
     expect(kubernetesVersion).toBe('v1.37.0');
     expect(kubernetesNodeImage).toMatch(/^kindest\/node:v1\.37\.0@sha256:[0-9a-f]{64}$/);
-    expect(supported('Kubernetes')).toBe('1.37');
+    expect(supported('Kubernetes')).toBe('1.33 to 1.37');
     expect(read('scripts/kind-smoke.mjs')).toContain("'--image', kubernetesNodeImage");
+  });
+
+  it('that CI runs the smoke test on are each pinned by digest', () => {
+    const matrix = /kubernetes: \[([^\]]+)\]/.exec(read('.github/workflows/ci.yml'))?.[1]?.split(', ');
+    expect(matrix).toEqual(Object.keys(kubernetesNodeDigests));
+    for (const digest of Object.values(kubernetesNodeDigests)) expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
   it('of Node are what the image is built on and CI runs', () => {

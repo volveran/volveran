@@ -21,6 +21,8 @@ describe('Replicas on different forwarding protocol versions', () => {
   /** What the stand-in makes requests say; null passes them on as they came. */
   let sayVersion: string | null = null;
   let requestsReachingOwner = 0;
+  /** The stand-in makes requests carry another secret, as during a rotation. */
+  let anotherSecret = false;
 
   beforeAll(async () => {
     await withChannel('/', async (ch) => {
@@ -30,7 +32,7 @@ describe('Replicas on different forwarding protocol versions', () => {
     standIn = http.createServer((req, res) => {
       requestsReachingOwner += 1;
       const { hostname, port } = new URL(two.b.forwardingUrl);
-      const headers = { ...req.headers, ...(sayVersion !== null && { [PROTOCOL_HEADER]: sayVersion }) };
+      const headers = { ...req.headers, ...(sayVersion !== null && { [PROTOCOL_HEADER]: sayVersion }), ...(anotherSecret && { authorization: 'Bearer another-secret' }) };
       const out = http.request({ host: hostname, port, method: req.method, path: req.url, headers }, (answer) => {
         res.writeHead(answer.statusCode ?? 502, answer.headers);
         answer.pipe(res);
@@ -88,6 +90,21 @@ describe('Replicas on different forwarding protocol versions', () => {
     expect(after.status).toBe(200);
     expect(after.body.checkout.status).toBe('active');
     expect(after.body.checkout.messages).toHaveLength(2);
+    expect((await browser.to(two.a).post(`/api/checkouts/${id}/end`, {})).status).toBe(200);
+  });
+
+  it('answers an Operator try again, not 401, when the Replicas hold different secrets', async () => {
+    await seedMessages('/', QUEUE, 1);
+    const started = await browser.to(two.b).post(startPath, {});
+    expect(started.status).toBe(201);
+    const id = started.body.checkout.id as string;
+    anotherSecret = true;
+    try {
+      const read = await browser.to(two.a).get(`/api/checkouts/${id}`);
+      expect([read.status, read.body.error.code, read.body.error.tryAgain]).toEqual([503, 'replica_unreachable', true]);
+    } finally {
+      anotherSecret = false;
+    }
     expect((await browser.to(two.a).post(`/api/checkouts/${id}/end`, {})).status).toBe(200);
   });
 

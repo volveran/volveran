@@ -22,6 +22,12 @@ The option was gated on broker facts ([RabbitMQ behaviour](../rabbitmq-behaviour
 - **Missing broker permission:** a refused read of the queue when a Checkout starts, the configure permission for the lock queue, and the management tag answer `403 broker_permission_denied`, naming the profile, the broker user, the resource and the permission. A refused publish (write on the exchange) answers the same `403` on a Restore, whose Audit Entry is recorded as failed; during an Apply it fails that Message, as any other failed step does, with a reason naming the broker user, the exchange and the permission.
 - **Token the broker does not accept** (audience, signing key): `authentication_failed`, as for wrong shared credentials, naming the Operator's token.
 
+## Limits with several Replicas
+
+- A refresh holds a lock and one store connection while it waits for the provider, at most 3 per process and 10 s each, so a slow provider delays other Operators' refreshes and nothing else. Past 10 s it counts as failed and is tried again; if the provider did act, a strict one may refuse the next try, and the Operator signs in again.
+- A refreshed token that cannot be saved is logged and the process carries on with it. After a restart that Operator may have to sign in again.
+- A token stored past its expiry answers the Operator's first request on a Replica `broker_token_expired`, as nothing has refreshed it yet.
+
 ## Consequences
 
 - RabbitMQ's permissions, not only Volverán's roles, limit what each Operator can do on such a profile; the two are independent, and the narrower one wins.

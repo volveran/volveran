@@ -1,7 +1,7 @@
 // What only PostgreSQL has: its migrations under an advisory lock.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPool } from '../../src/server/audit/postgres-connection.js';
-import { migrate } from '../../src/server/audit/postgres-migrations.js';
+import { migrate, MIGRATIONS } from '../../src/server/audit/postgres-migrations.js';
 import { PostgresAuditStore } from '../../src/server/audit/postgres-audit-store.js';
 import { createTestDatabase, type TestDatabase } from '../support/test-postgres.js';
 
@@ -26,6 +26,17 @@ describe('PostgreSQL migrations', () => {
   // Each writes a row: run twice, it leaves two. The wait keeps the others coming in meanwhile.
   const logged = (n: number) => `INSERT INTO applied (migration) VALUES (${n}); SELECT pg_sleep(0.1);`;
   const CREATE_LOG = 'CREATE TABLE applied (migration INTEGER NOT NULL);';
+
+  it('applies the real sequence from an empty database, once, when several start together', async () => {
+    const pools = [createPool(database.url), createPool(database.url), createPool(database.url)];
+    try {
+      await Promise.all(pools.map((pool) => migrate(pool)));
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+    }
+    const { rows } = await database.query('SELECT version FROM audit_store_version');
+    expect(rows).toEqual([{ version: MIGRATIONS.length }]);
+  });
 
   it('applies each migration once when several start together', async () => {
     await Promise.all(Array.from({ length: 6 }, () => migrateWith([CREATE_LOG, logged(2), logged(3)])));

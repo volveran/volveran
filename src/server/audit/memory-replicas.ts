@@ -10,6 +10,11 @@ export class MemoryReplicaStore implements ReplicaStore {
     this.leases.set(lease.replicaId, lease);
   }
 
+  async endLease(replicaId: string, at: number): Promise<void> {
+    const lease = this.leases.get(replicaId);
+    if (lease) this.leases.set(replicaId, { ...lease, expiresAt: at });
+  }
+
   async liveAddress(replicaId: string, now: number): Promise<string | null> {
     const lease = this.leases.get(replicaId);
     return lease && lease.expiresAt > now ? lease.forwardingAddress : null;
@@ -24,6 +29,11 @@ export class MemoryReplicaStore implements ReplicaStore {
     }
     this.checkouts.set(claim.id, { ...claim, endReason: claim.endReason ?? null, lostReason: claim.lostReason ?? null });
     return null;
+  }
+
+  async markOwnerGone(id: string, lostReason: string): Promise<void> {
+    const checkout = this.checkouts.get(id);
+    if (checkout && checkout.status !== 'ended' && checkout.status !== 'lost') this.checkouts.set(id, { ...checkout, status: 'lost', approval: null, lostReason });
   }
 
   async updateCheckout(id: string, update: LiveCheckoutUpdate): Promise<void> {

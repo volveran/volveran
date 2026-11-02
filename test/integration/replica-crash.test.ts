@@ -68,6 +68,46 @@ describe('an Owner Replica that crashes', () => {
     await browser.to(replicas.b).post(`/api/checkouts/${again.body.checkout.id}/end`);
   });
 
+  it('says what is known, not checkout_not_found, when its Broker Profile has left the file', async () => {
+    await start();
+    await seedMessages('/', QUEUE, 1);
+    const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+    await replicas.database.query('UPDATE live_checkouts SET profile = $1 WHERE id = $2', ['removed', id]);
+    await replicas.a.crash();
+
+    const answer = await eventually(async () => {
+      const view = await browser.to(replicas.b).get(`/api/checkouts/${id}`);
+      expect(view.status).toBe(404);
+      return view;
+    });
+    expect(answer.body.error.code).toBe('profile_not_found');
+    expect(answer.body.error.message).toMatch(/Replica .* has gone/);
+  });
+
+  it('frees the Operator on the owner as soon as the Checkout has ended, as on any other Replica', async () => {
+    const other = uniqueName('replica-free-other');
+    await withChannel('/', (ch) => ch.assertQueue(other, { durable: true }));
+    let holdReturn = () => {};
+    const held = new Promise<void>((resolve) => (holdReturn = resolve));
+    try {
+      await start({ perReplica: () => ({ checkoutTestHooks: { beforeReturn: () => held } }) });
+      await seedMessages('/', QUEUE, 1);
+      const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+      const ending = browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
+      const elsewhere = await eventually(async () => {
+        const started = await browser.to(replicas.a).post(startPath(other), {});
+        expect(started.status, JSON.stringify(started.body)).toBe(201);
+        return started.body.checkout as { id: string };
+      });
+      holdReturn();
+      await ending;
+      await browser.to(replicas.a).request('DELETE', `/api/checkouts/${elsewhere.id}`);
+    } finally {
+      holdReturn();
+      await withChannel('/', (ch) => ch.deleteQueue(other));
+    }
+  });
+
   it('answers a Checkout that had already ended as ended, with its reason', async () => {
     await start();
     await seedMessages('/', QUEUE, 1);
@@ -233,6 +273,61 @@ describe('an Owner Replica that is leased but cannot be reached', () => {
   });
 });
 
+describe('a Replica that cannot read who owns a Checkout', () => {
+  it('answers a retryable error, not a 500', async () => {
+    let failing = false;
+    const wrapAuditStore = (store: AuditStore): AuditStore =>
+      new Proxy(store, {
+        get(target, key) {
+          if (key !== 'replicas') {
+            const value = Reflect.get(target, key);
+            return typeof value === 'function' ? value.bind(target) : value;
+          }
+          return new Proxy(target.replicas, {
+            get(on, method) {
+              if (method === 'checkoutRoute' && failing) return () => Promise.reject(new Error('the store cannot be reached'));
+              const value = Reflect.get(on, method);
+              return typeof value === 'function' ? value.bind(on) : value;
+            },
+          });
+        },
+      });
+    const replicas = await startTwoReplicas({ profiles: [profile()], perReplica: (name) => (name === 'b' ? { wrapAuditStore } : {}) });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', QUEUE, 1);
+      const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+      failing = true;
+      const answer = await browser.to(replicas.b).get(`/api/checkouts/${id}`);
+      expect([answer.status, answer.body.error.code, answer.body.error.tryAgain]).toEqual([503, 'replica_unreachable', true]);
+      failing = false;
+      expect((await browser.to(replicas.b).get(`/api/checkouts/${id}`)).status).toBe(200);
+      await browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
+    } finally {
+      await replicas.close();
+      await purgeQueues('/', [QUEUE]);
+    }
+  });
+
+  it('forwards a path spelt another way, as the route it reached', async () => {
+    const replicas = await startTwoReplicas({ profiles: [profile()] });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', QUEUE, 1);
+      const { id } = (await browser.to(replicas.a).post(startPath(QUEUE), {})).body.checkout as { id: string };
+      const answer = await browser.to(replicas.b).get(`/%61pi/checkouts/${id}`);
+      expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+      expect(answer.body.checkout.id).toBe(id);
+      await browser.to(replicas.a).request('DELETE', `/api/checkouts/${id}`);
+    } finally {
+      await replicas.close();
+      await purgeQueues('/', [QUEUE]);
+    }
+  });
+});
+
 describe('an Owner Replica that cannot renew its lease', () => {
   it('gives up its Checkouts, so that what the others report is true: Messages back and the queue free', async () => {
     await withChannel('/', (ch) => ch.assertQueue(QUEUE, { durable: true }));
@@ -265,26 +360,89 @@ describe('an Owner Replica that cannot renew its lease', () => {
 
       const onOwner = await eventually(async () => {
         const view = await browser.to(replicas.a).get(`/api/checkouts/${id}`);
-        expect(view.body.checkout.status).toBe('lost');
+        expect(view.body.checkout.status).toBe('ended');
         return view.body.checkout;
       });
-      expect(onOwner.lostReason).toMatch(/could not renew its lease/);
+      expect(onOwner.endReason).toBe('lease-ran-out');
       await eventually(async () => expect(await readyCount('/', QUEUE)).toBe(2));
       const onOther = await eventually(async () => {
         const view = await browser.to(replicas.b).get(`/api/checkouts/${id}`);
-        expect(view.body.checkout?.status).toBe('lost');
+        expect(view.body.checkout?.status).toBe('ended');
         return view.body.checkout;
       });
+      expect(onOther.endReason).toBe('lease-ran-out');
       expect(onOther.messages).toEqual([]);
 
       // Its lease back, it does not take back what it gave up.
       renewals = true;
       await sleep(leaseTiming.renewEveryMs * 3);
-      expect((await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('lost');
-      expect((await browser.to(replicas.b).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('lost');
+      expect((await browser.to(replicas.a).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('ended');
+      expect((await browser.to(replicas.b).get(`/api/checkouts/${id}`)).body.checkout.status).toBe('ended');
     } finally {
       await replicas.close();
       await purgeQueues('/', [QUEUE]);
+    }
+  });
+
+  it('uses up no Delivery Budget and drops no Message on a quorum queue when the store goes away', async () => {
+    const quorum = uniqueName('replica-outage-quorum');
+    // At a limit of 0 any return that counts a delivery drops the Message, so all of them still being there is the proof.
+    await withChannel('/', (ch) => ch.assertQueue(quorum, { durable: true, arguments: { 'x-queue-type': 'quorum', 'x-delivery-limit': 0 } }));
+    let reachable = true;
+    // Every write about Replicas fails, as in an outage of the whole store; the rest of the store is not used by this Checkout.
+    const cutOff = (store: AuditStore): AuditStore =>
+      new Proxy(store, {
+        get(target, property) {
+          if (property !== 'replicas') {
+            const value = target[property as keyof AuditStore] as unknown;
+            return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          }
+          return new Proxy(target.replicas, {
+            get(replicas, method) {
+              const value = replicas[method as keyof typeof replicas] as unknown;
+              if (typeof value !== 'function') return value;
+              return (...args: unknown[]) => (reachable ? (value as (...a: unknown[]) => unknown).apply(replicas, args) : Promise.reject(new Error('the store cannot be reached')));
+            },
+          });
+        },
+      });
+    const replicas = await startTwoReplicas({
+      profiles: [profile()],
+      replicaLeaseTiming: leaseTiming,
+      perReplica: (name) => (name === 'a' ? { wrapAuditStore: cutOff } : {}),
+    });
+    try {
+      const browser = replicas.browser();
+      await browser.signIn(ana);
+      await seedMessages('/', quorum, 3);
+      const started = await browser.to(replicas.a).post(startPath(quorum), {});
+      expect(started.status, JSON.stringify(started.body)).toBe(201);
+      const { id } = started.body.checkout as { id: string };
+
+      reachable = false;
+      await eventually(async () => expect(await readyCount('/', quorum)).toBe(3), 20_000);
+      reachable = true;
+
+      const onOwner = await eventually(async () => {
+        const view = await browser.to(replicas.a).get(`/api/checkouts/${id}`);
+        expect(view.body.checkout.status).toBe('ended');
+        return view.body.checkout;
+      });
+      expect(onOwner.endReason).toBe('lease-ran-out');
+
+      const counts = await withChannel('/', async (ch) => {
+        const found: Array<number | undefined> = [];
+        for (let i = 0; i < 3; i++) {
+          const message = await ch.get(quorum);
+          if (!message) throw new Error(`Only ${i} Messages came back`);
+          found.push(message.properties.headers?.['x-delivery-count'] as number | undefined);
+        }
+        return found;
+      });
+      expect(counts).toEqual([undefined, undefined, undefined]);
+    } finally {
+      await replicas.close();
+      await withChannel('/', (ch) => ch.deleteQueue(quorum));
     }
   });
 });

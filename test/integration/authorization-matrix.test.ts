@@ -17,6 +17,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { startTwoReplicas } from './two-replicas.js';
 import { applyAndWait, closedPort, eventually, makeTempDir, purgeQueues, readyCount, seedMessages, startApp, testProfile, withChannel, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser } from './oidc-provider.js';
 
@@ -236,6 +237,36 @@ function refusal(row: Row, persona: Persona): { status: number; code: string } {
 }
 
 const routeKey = (method: string, route: string) => `${method} ${route}`;
+
+describe('The authorization matrix with forwarding on', () => {
+  /** What only exists with several Replicas, guarded by not being there at all on the web port. */
+  const INTERNAL_ROUTES = ['POST /api/profiles/:profile/replay-rules/:name/changed', 'POST /api/v1/profiles/:profile/replay-rules/:name/changed'];
+
+  it('adds to the matrix only the internal route, which answers nobody on the web port and only the secret on the internal one', async () => {
+    const registered = new Set<string>();
+    const rule = { name: 'transient', vhost: '/', queue: OWN_QUEUE, every: '5m', backoff: { initial: '10m', multiplier: 1, max: '10m' }, maxAttempts: 10, stopWhen: { diedAgain: 50, within: '1h' } };
+    const replicas = await startTwoReplicas({
+      profiles: [testProfile({ name: 'dev', roles: { admin: ['admins'], viewer: ['viewers'] }, replayRules: [rule] })],
+      perReplica: () => ({ onRouteRegistered: ({ method, url }) => registered.add(routeKey(method, url)) }),
+    });
+    try {
+      const inMatrix = MATRIX.flatMap((row) => [routeKey(row.method, row.route), ...(row.method === 'GET' ? [routeKey('HEAD', row.route)] : [])]);
+      expect([...registered].filter((route) => !inMatrix.includes(route)).sort()).toEqual([...INTERNAL_ROUTES].sort());
+
+      const path = '/api/v1/profiles/dev/replay-rules/transient/changed';
+      expect((await fetch(replicas.a.baseUrl + path, { method: 'POST' })).status).toBe(401);
+      for (const groups of [['admins'], ['viewers']]) {
+        const browser = replicas.browser();
+        await browser.signIn({ sub: `changed-${groups[0]}`, groups });
+        expect((await browser.to(replicas.a).post(path)).status).toBe(404);
+      }
+      expect((await fetch(replicas.a.forwardingUrl + path, { method: 'POST' })).status).toBe(401);
+      expect((await fetch(replicas.a.forwardingUrl + path, { method: 'POST', headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
+    } finally {
+      await replicas.close();
+    }
+  });
+});
 
 describe('The authorization matrix', () => {
   let app: TestApp;

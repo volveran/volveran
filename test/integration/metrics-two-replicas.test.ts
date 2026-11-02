@@ -122,7 +122,14 @@ describe('metrics with two Replicas', () => {
   it('keeps a counter on the Replica that counted, when the lease moves', async () => {
     const { two, samplers, leaders } = await started();
     const arrivals = (text: string) => text.split('\n').find((line) => line.startsWith(arrivalsSeries));
-    await samplers.a.sampleNow();
+    // The management API can still show what an earlier test purged for about 5 s. A depth
+    // that high as the Sample before would hide the arrival, so wait until the queue reads empty.
+    await eventually(async () => {
+      samplers.a.advance(MINUTE);
+      await samplers.a.sampleNow();
+      const sampled = samplers.a.latest().profiles[0]?.queues.find((q) => q.queue === dlq);
+      expect(sampled?.depth).toBe(0);
+    }, 20_000, 500);
     await deadLetter(route, [{ body: 'one', options: { messageId: 'one' } }]);
     let counted: string | undefined;
     await eventually(async () => {

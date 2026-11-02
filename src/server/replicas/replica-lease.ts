@@ -55,10 +55,9 @@ export class ReplicaLease {
    * Stops renewing and ends the lease now, leaving its records: other Replicas at once answer for
    * this one's Checkouts from them, and the Background Leader removes them after a while (ADR 0014).
    */
-  async giveUp(): Promise<void> {
+  async end(): Promise<void> {
     await this.stop();
-    const { store, replicaId, forwardingAddress } = this.options;
-    await store.renewLease({ replicaId, forwardingAddress, expiresAt: Date.now() });
+    await this.options.store.endLease(this.options.replicaId, Date.now());
   }
 
   private async renew(): Promise<void> {
