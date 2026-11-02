@@ -6,9 +6,11 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
-## [1.0.0-rc.1] - 2026-11-02
+## [1.0.0] - 2026-11-02
 
-The first release candidate of 1.0: several Replicas on PostgreSQL, a security review, upgrade guarantees and a stable configuration format (see the [roadmap](ROADMAP.md)).
+Volverán 1.0: several Replicas on PostgreSQL, a security review, upgrade guarantees and a stable configuration format (see the [roadmap](ROADMAP.md)).
+
+**Release candidate:** [`1.0.0-rc.1`][1.0.0-rc.1] was published and verified on its image and chart ([what ran](docs/upgrading-to-1.0.md#how-this-was-checked)). The code, chart and image definition of 1.0.0 are the same but for the version.
 
 **Upgrading from 0.x:** read the [upgrade guide](docs/upgrading-to-1.0.md), which lists every refusal. First among them, an unknown key anywhere in the profiles file stops startup, so run `check-config` beforehand. **In Team Mode on PostgreSQL**, set the new `VOLVERAN_SESSION_ENCRYPTION_KEY` (chart: add `session-encryption-key` to the Secret named in `oidc.existingSecret`), or Volverán refuses to start. Nothing changes there on SQLite or in Solo Mode.
 
@@ -331,7 +333,8 @@ First release: triage core and identity (see the [roadmap](ROADMAP.md)).
 - Retention of Discarded bodies: kept for 30 days or until they reach 1 GiB in total, whichever comes first, oldest evicted first, checked at startup and hourly (`VOLVERAN_BODY_RETENTION_DAYS`, `VOLVERAN_BODY_RETENTION_MAX_BYTES`, `VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES`). Audit Entries are kept indefinitely; an evicted one shows "body expired" and Restore is refused with the reason (`410 body_expired`). `GET /api/audit-store` reports the stored size against the limit, and the Audit view warns at 90 %. Audit store schema version 3 adds `restore_of` and `body_expired_at`. (#10)
 - Broker-facts suite: every fact in `docs/rabbitmq-behaviour.md` that the design depends on is checked against a real RabbitMQ, on every push against the pinned image and weekly against the latest `rabbitmq:4-management`. (#1)
 
-[Unreleased]: https://github.com/volveran/volveran/compare/v1.0.0-rc.1...HEAD
+[Unreleased]: https://github.com/volveran/volveran/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/volveran/volveran/releases/tag/v1.0.0
 [1.0.0-rc.1]: https://github.com/volveran/volveran/releases/tag/v1.0.0-rc.1
 [0.6.1]: https://github.com/volveran/volveran/releases/tag/v0.6.1
 [0.6.0]: https://github.com/volveran/volveran/releases/tag/v0.6.0

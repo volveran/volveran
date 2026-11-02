@@ -14,7 +14,7 @@ Most of this guide is about what 1.0 **refuses**, and what to do before it does.
 6. **Pick a time outside triage work.** The upgrade ends open Checkouts. Their Messages go back to their queues, but Decisions not yet Applied are lost.
 7. **If you build on Volverán's image, or `exec` into it, read [the image](#the-image-moved-to-alpine).**
 
-Then upgrade. On the chart, `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`; name the version, as Helm skips a release candidate otherwise. On Docker, stop the old container with time to finish (`docker stop -t 90`) and start the new image on the same volume, profiles file and variables.
+Then upgrade. On the chart, `helm upgrade volveran oci://ghcr.io/volveran/charts/volveran --version <version> --namespace volveran -f values.yaml`; name the version you checked, as Helm otherwise takes the latest. On Docker, stop the old container with time to finish (`docker stop -t 90`) and start the new image on the same volume, profiles file and variables.
 
 ## What it refuses at startup
 
@@ -211,7 +211,7 @@ These arrived in 0.6, so 0.6 users already have them:
 
 ### Flux
 
-`ref.semver: "0.6.x"` does not reach 1.0: change the range after doing the above. `1.0.x` skips release candidates, so use `>=1.0.0-0` to try one.
+`ref.semver: "0.6.x"` does not reach 1.0: change the range to `1.0.x` after doing the above.
 
 ## Afterwards
 
@@ -231,3 +231,5 @@ Every refusal above was read from the code of this release. The profile, session
 - **Then to PostgreSQL on kind.** The [Job](postgresql.md#on-kubernetes) as that guide writes it, changing only the namespace, version, Secret name, `VOLVERAN_POSTGRES_REQUIRE_TLS: "false"` (the test database has no TLS) and `imagePullPolicy`, from the store `1.0.0-rc.1` had migrated, then `helm upgrade` with `postgres.existingSecret`. The same checks passed.
 
 The kind run used fewer checks than `upgradeChecks`, one Message body of text, and no Move, Replay or Rule Pass. The refusals in sections 1 to 4 and 6, and 7 and 8 at a request, were also tried on the published image and chart. Refusal 9, 10's browser behaviour and an upgrade from 0.6 did not run on the published artifacts, nor did anything on real data.
+
+`1.0.0` is built from the same code, chart and `Dockerfile` as that candidate, but for the version. These runs were not repeated on its own image and chart.

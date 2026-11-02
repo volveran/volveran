@@ -6,7 +6,7 @@ The full results, what was seen for each, are in the [threat model](threat-model
 
 ## The result
 
-**No known high or critical finding is open** in `1.0.0-rc.1`, as of 2026-11-02. Two were rated high, and both are fixed:
+**No known high or critical finding is open** in `1.0.0`, as of 2026-11-02. Two were rated high, and both are fixed:
 
 | Finding | Rating | State |
 |---|---|---|
@@ -42,7 +42,7 @@ The full results, what was seen for each, are in the [threat model](threat-model
 - **The forwarding port:** missing, wrong and forged credentials and odd paths, with the results in the [threat model](threat-model.md#reviewed-on-request). With the secret, a forged identity did read and Discard, which is what N4 rates. The NetworkPolicy, on kind with kindnet, from pods with and without the labels.
 - **A flood of `/auth/login`,** on the real image at the chart's limits and on PostgreSQL.
 - **OWASP ASVS 4.0.3 Level 2, area by area,** as a checklist, some by test and some by reading: [the table](threat-model.md#owasp-asvs-level-2).
-- **In a real browser, on this release candidate:** headless Firefox 159 through `scripts/screenshots/browser-check.mjs`. Approvals, Compare, Canary and Restore in the built web app, with sign-in through the mock provider as two Operators. A form POST and a bodyless `fetch` from a foreign site on another port, with the session cookie sent, refused as `foreign_origin`, with no Checkout started. In Solo Mode, a name that resolves to loopback refused as `foreign_host`, and accepted once `VOLVERAN_PUBLIC_URL` names it. There was no CSP violation, and an inline script added by hand as a control was refused and reported. Run once by hand, not by CI.
+- **In a real browser, on the release candidate `1.0.0-rc.1`:** headless Firefox 159 through `scripts/screenshots/browser-check.mjs`. Approvals, Compare, Canary and Restore in the built web app, with sign-in through the mock provider as two Operators. A form POST and a bodyless `fetch` from a foreign site on another port, with the session cookie sent, refused as `foreign_origin`, with no Checkout started. In Solo Mode, a name that resolves to loopback refused as `foreign_host`, and accepted once `VOLVERAN_PUBLIC_URL` names it. There was no CSP violation, and an inline script added by hand as a control was refused and reported. Run once by hand, not by CI.
 
 That browser run found a real bug the suites could not: `Referrer-Policy: no-referrer` makes a browser send `Origin: null` on `navigator.sendBeacon`, so the Origin check refused the web app's own end of a Checkout when leaving the page, and its Messages stayed held until the heartbeat limit. It is fixed in this release. The same run would not find a similar mismatch on a browser it did not use.
 
