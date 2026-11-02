@@ -9,6 +9,9 @@
 //   VOLVERAN_OIDC_ISSUER, VOLVERAN_OIDC_CLIENT_ID, VOLVERAN_OIDC_CLIENT_SECRET,
 //   VOLVERAN_OIDC_REDIRECT_URL, VOLVERAN_OIDC_SCOPES, VOLVERAN_SESSION_SECRET
 //                           Team Mode sign-in (see run-mode.ts, auth.ts)
+//   VOLVERAN_SESSION_ENCRYPTION_KEY
+//                           Team Mode on PostgreSQL: encrypts the tokens of the
+//                           sessions kept there (see token-seal.ts)
 //   VOLVERAN_OIDC_GROUPS_CLAIM
 //                           the claim (name or dotted path) holding the
 //                           Operator's groups, for Roles (default groups; see
@@ -46,6 +49,10 @@
 //   VOLVERAN_METRICS_PORT   serves Prometheus metrics at /metrics on this port,
 //                           at VOLVERAN_HOST's address (default off; see
 //                           metrics/listener.ts)
+//   VOLVERAN_FORWARDING_SECRET, VOLVERAN_FORWARDING_PORT, VOLVERAN_FORWARDING_ADDRESS
+//                           several Replicas (Team Mode on PostgreSQL): the secret they
+//                           share, this one's internal port, and the host:port where
+//                           the others reach it (see replicas/config.ts)
 // plus each Broker Profile's password variable (its `passwordEnv`) and each
 // Alert Destination's variables (its `urlEnv` and `signingSecretEnv`).
 //

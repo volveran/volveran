@@ -9,6 +9,10 @@ export const STOP_REASONS = {
   timeLimit: 'The Checkout reached its time limit before this Message; it is back in the queue.',
   /** An Operator (the owner, or the approver of an approved Apply) stopped it; `name` is their display name. */
   stoppedBy: (name: string) => `Stopped by ${name} before this Message; it is back in the queue.`,
+  /** The Replica running it is shutting down. */
+  replicaShutDown: 'The Replica shut down before this Message; it is back in the queue.',
+  /** The Replica running it could not renew its lease in the audit store. */
+  leaseRanOut: 'The Replica could not renew its lease before this Message; it is back in the queue.',
   /** The audit store failed a write, so no further Message can have its Audit Entry first (ADR 0001). */
   auditStoreFailed: 'The audit store could not be written before this Message; it is back in the queue.',
   /** The Checkout ended (no heartbeat, the owner, shutdown) while the Apply waited after its Canary. */

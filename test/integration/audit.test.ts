@@ -304,6 +304,48 @@ describe('Audit browsing and Restore', () => {
     },
   );
 
+  it('settles a Restore that a crash left pending to uncertain and refuses it clearly, publishing nothing', async () => {
+    const dataDir = await makeTempDir('audit-restore-crash');
+    try {
+      const store = await openTestStore(dataDir);
+      const id = await store.record(storedDiscard('restore-crash-1', 0));
+      await store.setOutcome(id, 'done');
+      const claim = await store.claimRestore({
+        at: new Date(Date.now() - 3_600_000),
+        operator: { id: 'ana', displayName: 'Ana' },
+        role: 'admin',
+        brokerUser: 'guest',
+        profile: 'local',
+        vhost: '/',
+        queue: 'orders.dlq',
+        messageId: 'restore-crash-1',
+        action: 'restore',
+        reason: null,
+        destination: { exchange: '', routingKey: 'orders.dlq', queue: 'orders.dlq' },
+        checkoutId: null,
+        restoreOf: id,
+        replayId: 'crashed-replay',
+        message: null,
+      });
+      if (!claim.claimed) throw new Error('Could not set up the Restore');
+      await store.close();
+      const restarted = await startApp({ profiles: [testProfile({ name: 'local' })], dataDir });
+      try {
+        for (const attempt of [1, 2]) {
+          const refused = await restarted.post(`/api/audit-entries/${id}/restore`, { confirm: true, confirmUncertain: true });
+          expect([attempt, refused.status, refused.body.error.code]).toEqual([attempt, 409, 'restore_interrupted']);
+          expect(refused.body.error.message).toContain('orders.dlq');
+          expect((await restarted.get(`/api/audit-entries?action=restore&messageId=restore-crash-1`)).body.entries).toMatchObject([{ id: claim.id, outcome: 'uncertain' }]);
+        }
+        expect(await readyMessageIds('/', 'orders.dlq')).toEqual([]);
+      } finally {
+        await restarted.close();
+      }
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not Restore a Discard that failed in a known way (its Message stayed in the queue)', async () => {
     const dataDir = await makeTempDir('audit-failed');
     try {

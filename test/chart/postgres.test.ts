@@ -11,9 +11,14 @@ const onPostgres = { postgres: { existingSecret: 'volveran-postgres' } };
 const bundles = [{ name: 'postgres-ca', secret: 'postgres-internal-ca' }];
 
 describe('one replica on SQLite', () => {
-  // The golden file is 0.5.1's chart rendered with the same values, with only its version
-  // replaced: a change to the ConfigMap or the pod template would roll the pod on upgrade.
-  it("renders 0.5.1's output byte for byte, but for the version", () => {
+  // The golden file is 0.5.1's chart rendered with the same values, with its version replaced
+  // and the profiles file's format version added: any other change to the ConfigMap or the pod
+  // template would be a further reason to roll the pod on upgrade.
+  it('writes the format version, so Volverán does not warn of it', () => {
+    expect(parse(render().one('ConfigMap').data!['profiles.yaml']!).version).toBe(1);
+  });
+
+  it("renders 0.5.1's output but for the version and the profiles file's format version", () => {
     const golden = readFileSync(path.join(repoRoot, 'test/chart/golden/single-replica-sqlite.yaml'), 'utf8').replaceAll('<version>', version);
     expect(render().output).toBe(golden);
   });
@@ -34,6 +39,26 @@ describe('postgres', () => {
   it('takes another key of the Secret', () => {
     const chart = render({ postgres: { existingSecret: 'db', urlKey: 'connection' } });
     expect(env(chart, 'VOLVERAN_POSTGRES_URL').valueFrom.secretKeyRef).toEqual({ name: 'db', key: 'connection' });
+  });
+
+  it('reads the session encryption key from the OIDC Secret, since sessions are kept in the database', () => {
+    expect(env(render(onPostgres), 'VOLVERAN_SESSION_ENCRYPTION_KEY')).toEqual({
+      name: 'VOLVERAN_SESSION_ENCRYPTION_KEY',
+      valueFrom: { secretKeyRef: { name: 'volveran-oidc', key: 'session-encryption-key' } },
+    });
+  });
+
+  it('takes another key for it', () => {
+    const chart = render({ ...onPostgres, oidc: { sessionEncryptionKeyKey: 'tokens' } });
+    expect(env(chart, 'VOLVERAN_SESSION_ENCRYPTION_KEY').valueFrom.secretKeyRef.key).toBe('tokens');
+  });
+
+  it('asks for no session encryption key on SQLite, where sessions stay in memory', () => {
+    expect(env(render(), 'VOLVERAN_SESSION_ENCRYPTION_KEY')).toBeUndefined();
+  });
+
+  it('refuses the session encryption key in extraEnv', () => {
+    expect(renderRefusal({ ...onPostgres, extraEnv: [{ name: 'VOLVERAN_SESSION_ENCRYPTION_KEY', value: 'x' }] })).toContain('VOLVERAN_SESSION_ENCRYPTION_KEY');
   });
 
   it('never renders a Secret holding the URL', () => {
@@ -90,10 +115,6 @@ describe('postgres', () => {
 
   describe.each([false, true])('refusals (skip schema: %s)', (skipSchemaValidation) => {
     const refusal = (values: Record<string, unknown>) => renderRefusal(values, { skipSchemaValidation });
-
-    it('refuses several replicas, also on PostgreSQL', () => {
-      expect(refusal({ ...onPostgres, replicaCount: 2 })).toContain('replicaCount');
-    });
 
     it('refuses a CA bundle that is not listed', () => {
       expect(refusal({ postgres: { existingSecret: 'db', ca: { bundle: 'nope' } } })).toContain('postgres.ca.bundle names "nope"');

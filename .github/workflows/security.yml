@@ -1,0 +1,100 @@
+# Finds known vulnerabilities before and after a release. On pull requests and
+# on main: CodeQL over the code, npm audit over both lockfiles, and a scan of the
+# image built from the checkout. The weekly run does the same and also scans the
+# image last released, whose code does not change while new findings about it
+# appear, and opens an issue when any of it fails. The release workflow repeats
+# npm audit and the image scan before it pushes anything.
+#
+# The cut-off is high. The image scan counts findings with a fix and without one,
+# apart from the reviewed list in .grype.yaml, where each has a stated reason.
+# Everything below the cut-off stays visible in the log.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '41 5 * * 1' # Mondays 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: javascript-typescript
+          build-mode: none
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      # Reads the lockfiles; nothing is installed. Development dependencies count
+      # too: they build the web app that ships in the image.
+      - run: npm audit --audit-level=high
+      - run: npm audit --prefix tools/lint --audit-level=high
+
+  image:
+    name: Image scan (from the checkout)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: docker build -t volveran:scan .
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: volveran:scan
+          fail-build: true
+          severity-cutoff: high
+          config: .grype.yaml
+          output-format: table
+
+  released-image:
+    name: Image scan (last release)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      # For .grype.yaml; the image comes from the registry.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ghcr.io/volveran/volveran:latest
+          fail-build: true
+          severity-cutoff: high
+          config: .grype.yaml
+          output-format: table
+
+  report:
+    name: Open an issue when the weekly run finds something
+    needs: [codeql, audit, image, released-image]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: The weekly security scan failed
+    steps:
+      # One open issue at a time: a finding can take longer than a week to fix.
+      - run: |
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number --jq length)
+          if [ "$open" -eq 0 ]; then
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" \
+              --body "The weekly run found something: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Its log names the findings of npm audit and the image scans; CodeQL's are under Security, Code scanning."
+          fi

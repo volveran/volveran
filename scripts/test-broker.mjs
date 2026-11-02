@@ -58,8 +58,23 @@ async function waitForOidc(port) {
   return false;
 }
 
+/** Docker picks each random free port for itself, and another project on the host can take one first. */
+function composeUp() {
+  for (let attempt = 1; ; attempt++) {
+    const result = spawnSync('docker', ['compose', '-p', settings.project, '-f', composeFile, 'up', '-d', '--wait', '--wait-timeout', '180'], {
+      stdio: ['inherit', 'inherit', 'pipe'],
+      env: composeEnv,
+      encoding: 'utf8',
+    });
+    process.stderr.write(result.stderr ?? '');
+    if (result.status === 0 || attempt === 3 || !/address already in use/.test(result.stderr ?? '')) return result.status ?? 1;
+    console.error(`[test-broker] a port was taken as the broker came up; trying again (${attempt} of 2)`);
+    compose('down', '-v', '--remove-orphans');
+  }
+}
+
 async function up() {
-  const status = compose('up', '-d', '--wait', '--wait-timeout', '180');
+  const status = composeUp();
   if (status !== 0) return { status };
   const ports = publishedPorts(settings.project);
   if (!(await waitForOidc(ports.oidcPort))) return { status: 1 };
@@ -112,6 +127,11 @@ if (command === 'up') {
   // The child gets Ctrl-C from the terminal too; wait for it, then tear down.
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {});
   child.on('exit', (code, signal) => finish(code ?? (signal ? 1 : 0)));
+  // A command that cannot be spawned never exits.
+  child.on('error', (err) => {
+    console.error(`[test-broker] could not run ${cmd[0]}: ${err.message}`);
+    finish(127);
+  });
 } else {
   console.error('usage: test-broker.mjs up|down|run -- <command...>');
   process.exit(2);

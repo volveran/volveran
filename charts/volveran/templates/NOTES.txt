@@ -1,5 +1,5 @@
 {{- $service := include "volveran.fullname" . -}}
-Volverán {{ .Chart.AppVersion }} is installed in Team Mode (OIDC sign-in), one replica.
+Volverán {{ .Chart.AppVersion }} is installed in Team Mode (OIDC sign-in), {{ if gt (int .Values.replicaCount) 1 }}{{ int .Values.replicaCount }} Replicas{{ else }}one replica{{ end }}.
 
 Service: {{ $service }} (ClusterIP, port {{ .Values.service.port }})
 {{- /* Exposure: the route hosts, and whether the redirect URL's host is one of them. */}}
@@ -50,6 +50,12 @@ Audit store: PersistentVolumeClaim {{ include "volveran.dataClaimName" . }}. It 
 release is uninstalled; delete it by hand to delete the audit trail.
 {{- end }}
 
+{{ if gt (int .Values.replicaCount) 1 -}}
+A deploy or pod restart ends the open Checkouts on that pod (their Messages return
+to their queues). Operators stay signed in. Only other Replicas may reach the
+forwarding port: this release's NetworkPolicy says so, and it needs a CNI that
+enforces NetworkPolicy. See docs/replicas.md for what failover does and does not protect.
+{{- else -}}
 A deploy or pod restart signs every Operator out and ends open Checkouts
-(their Messages return to their queues; on a quorum queue, a large Checkout
-can use up Delivery Budget as it ends).
+(their Messages return to their queues).
+{{- end }}

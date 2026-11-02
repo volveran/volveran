@@ -9,11 +9,15 @@ import type {
   AuditEntry,
   AuditQuery,
   AuditStore,
-  BodyEviction,
+  BodyEviction, LeaderLeaseStore, LeaseFence,
   HistoryStore,
   NewAuditEntry,
+  NewRestoreEntry,
   NotificationStore,
+  ReplicaStore,
+  RestoreClaim,
   RuleStateStore,
+  SessionStore,
 } from './audit-store.js';
 import { ConfigError } from '../config-error.js';
 import { asStartupError, createPool, numbered, refusalAsStartupError, transaction, type PostgresTls } from './postgres-connection.js';
@@ -21,7 +25,10 @@ import { migrate } from './postgres-migrations.js';
 import { PostgresAlertStore } from './postgres-alerts.js';
 import { PostgresHistoryStore } from './postgres-history.js';
 import { PostgresNotificationStore } from './postgres-notifications.js';
+import { PostgresReplicaStore } from './postgres-replicas.js';
 import { PostgresRuleStateStore } from './postgres-rule-state.js';
+import { fenced, PostgresLeaderLease } from './postgres-leader-lease.js';
+import { PostgresSessionStore } from './postgres-sessions.js';
 import type { AuditCanaryOutcome, AuditOutcome } from '../../shared/audit.js';
 
 /** Under the chart's readiness probe timeout, so a probe gets an answer and not a timeout. */
@@ -43,6 +50,9 @@ export class PostgresAuditStore implements AuditStore {
   readonly history: HistoryStore;
   readonly notifications: NotificationStore;
   readonly alerts: AlertStore;
+  readonly sessions: SessionStore;
+  readonly leaderLease: LeaderLeaseStore;
+  readonly replicas: ReplicaStore;
   private closing: Promise<void> | undefined;
   private pinging: Promise<void> | undefined;
 
@@ -51,6 +61,9 @@ export class PostgresAuditStore implements AuditStore {
     this.history = new PostgresHistoryStore(pool);
     this.notifications = new PostgresNotificationStore(pool);
     this.alerts = new PostgresAlertStore(pool);
+    this.sessions = new PostgresSessionStore(pool);
+    this.leaderLease = new PostgresLeaderLease(pool);
+    this.replicas = new PostgresReplicaStore(pool);
   }
 
   /**
@@ -91,8 +104,28 @@ export class PostgresAuditStore implements AuditStore {
     });
   }
 
+  async claimRestore(entry: NewRestoreEntry): Promise<RestoreClaim> {
+    const { sql, values } = insertEntry(entry, numbered);
+    return transaction(this.pool, async (client) => {
+      // Holding the Discard's row makes claims of one body wait for each other, each then seeing what the last committed.
+      await client.query('SELECT id FROM audit_entries WHERE id = $1 FOR UPDATE', [entry.restoreOf]);
+      const { rows: earlier } = await client.query<EntryRow>(
+        "SELECT * FROM audit_entries WHERE restore_of = $1 AND outcome <> 'failed' ORDER BY id DESC LIMIT 1",
+        [entry.restoreOf],
+      );
+      if (earlier[0]) return { claimed: false, earlier: toEntry(earlier[0]) };
+      const { rows } = await client.query<{ id: number }>(`${sql} RETURNING id`, values);
+      return { claimed: true, id: rows[0]!.id };
+    });
+  }
+
   async setOutcome(id: number, outcome: Exclude<AuditOutcome, 'pending'>, reason: string | null = null): Promise<void> {
     await this.pool.query('UPDATE audit_entries SET outcome = $1, outcome_reason = $2 WHERE id = $3', [outcome, reason, id]);
+  }
+
+  async settleInterrupted(checkoutId: string, reason: string): Promise<number> {
+    const { rowCount } = await this.pool.query("UPDATE audit_entries SET outcome = 'uncertain', outcome_reason = $1 WHERE checkout_id = $2 AND outcome = 'pending'", [reason, checkoutId]);
+    return rowCount ?? 0;
   }
 
   async setCanaryOutcome(id: number, outcome: AuditCanaryOutcome): Promise<void> {
@@ -120,8 +153,8 @@ export class PostgresAuditStore implements AuditStore {
    * call that waited for another to finish finds the row marked, and neither counts nor
    * marks it again.
    */
-  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction): Promise<{ evicted: number }> {
-    const { rows } = await this.pool.query<{ evicted: number }>(
+  async evictBodies({ now, maxAgeMs, maxBodyBytes }: BodyEviction, fence?: LeaseFence): Promise<{ evicted: number }> {
+    const { rows } = await fenced(this.pool, fence, (client) => client.query<{ evicted: number }>(
       `WITH stored AS (
          SELECT id, created_at,
                 SUM(body_bytes) OVER (ORDER BY created_at DESC, id DESC ROWS UNBOUNDED PRECEDING) AS newer_bytes
@@ -136,7 +169,7 @@ export class PostgresAuditStore implements AuditStore {
        )
        SELECT COUNT(*) AS evicted FROM marked`,
       [now.getTime(), now.getTime() - maxAgeMs, maxBodyBytes],
-    );
+    ));
     return { evicted: rows[0]!.evicted };
   }
 

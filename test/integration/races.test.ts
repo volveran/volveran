@@ -96,8 +96,12 @@ describe.each(storeSpeeds)('races (%s)', (_speed, wrapAuditStore) => {
       return ids.sort();
     })).toEqual([`${QUEUE}-0`, `${QUEUE}-1`]);
     expect((await app.get('/api/session')).body.checkoutId).toBeNull();
-    const again = await app.post(checkoutPath);
-    expect(again.status).toBe(201);
+    // The broker deletes the lock queue of the closed connection a moment after the close.
+    const again = await eventually(async () => {
+      const started = await app.post(checkoutPath);
+      expect(started.status).toBe(201);
+      return started;
+    });
     await app.delete(`/api/checkouts/${again.body.checkout.id}`);
   });
 });

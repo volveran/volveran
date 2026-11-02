@@ -1,4 +1,5 @@
-// The queue sampler, owned by the server like the Replay Rules scheduler: every
+// The queue sampler, a job on the Background Leader (ADR 0014), so only the leader
+// reads the broker and records Samples: every
 // VOLVERAN_HISTORY_INTERVAL_SECONDS it reads the vhosts of each shared-credentials
 // Broker Profile through the management API and records one Sample per
 // dead-letter queue. It never takes a Checkout or reads a Message.
@@ -14,12 +15,18 @@
 // - `operatorToken` profiles are not sampled: nobody is signed in to lend a
 //   token (ADR 0008).
 // - The first run comes one interval after start().
+// - The Messages taken out come from the Audit Entries in the store, so they
+//   include those taken out through every Replica. A change of leader takes
+//   the depth before from the store too, and its missing runs show as a gap.
+// - Its write names the lease. A former leader's run is refused, records nothing
+//   and reaches no subscriber.
 //
 // Metrics and Alert evaluation read only this module's latest snapshot, or
 // subscribe with onRun(); neither touches the broker or the history tables.
 import { brokerCredentials } from '../broker-credentials.js';
 import { BrokerError } from '../broker-error.js';
-import type { HistoryStore, QueueSample } from '../audit/audit-store.js';
+import type { HistoryStore, LeaseFence, QueueSample } from '../audit/audit-store.js';
+import type { LeaderJob } from '../leader/background-leader.js';
 import { ManagementClient } from '../management.js';
 import type { BrokerProfile } from '../profiles.js';
 import { systemClock, type RuleClock } from '../replay-rules/rule-clock.js';
@@ -117,7 +124,10 @@ export function isSampled(profile: BrokerProfile): boolean {
 /** The sampler's identity for credentials; only `operatorToken` profiles would use it, and those are not sampled. */
 const SAMPLER = { id: 'volveran-sampler', displayName: 'Volverán sampler' };
 
-export class QueueSampler {
+export class QueueSampler implements LeaderJob {
+  readonly name = 'sampler';
+  /** A store that cannot say what was last sampled has always stopped startup. */
+  readonly mustStart = true;
   private readonly clock: RuleClock;
   private readonly sampled: BrokerProfile[];
   private readonly snapshots = new Map<string, ProfileSnapshot>();
@@ -125,13 +135,17 @@ export class QueueSampler {
   private readonly listeners = new Set<RunListener>();
   private timer: { cancel(): void } | null = null;
   private stopped = false;
+  private fence: LeaseFence | undefined;
 
   constructor(private readonly options: QueueSamplerOptions) {
     this.clock = options.testHooks?.clock ?? systemClock;
     this.sampled = options.profiles.filter(isSampled);
   }
 
-  async start(): Promise<void> {
+  /** May be called again after stop(): each start reads what is known from the store. */
+  async start(fence: LeaseFence): Promise<void> {
+    this.stopped = false;
+    this.fence = fence;
     await Promise.all(
       this.sampled.map(async ({ name }) => {
         const { last, lastOk } = await this.options.history.lastRuns(name);
@@ -214,7 +228,7 @@ export class QueueSampler {
 
     const samples = run.ok ? await this.toSamples(profile.name, at, readings) : [];
     const unknownDepth = readings.flatMap(({ vhost, queues }) => queues.filter((q) => q.depthMissing).map((q) => ({ vhost, queue: q.name })));
-    await this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode, intervalMs: this.options.intervalMs }, samples.map(toStored));
+    await this.options.history.recordRun(profile.name, { at: at.getTime(), ok: run.ok, errorCode: run.errorCode, intervalMs: this.options.intervalMs }, samples.map(toStored), this.fence);
 
     const previous = this.snapshots.get(profile.name);
     this.snapshots.set(profile.name, {

@@ -27,15 +27,18 @@ export interface Polling<T> {
   enabled?: boolean;
 }
 
+/** How soon a first load that failed and may be tried again is, when polling waits for its result to know how often. */
+const FIRST_LOAD_RETRY_MS = 2_000;
+
 /**
- * Loads now, then again every `everyMs`, until `deps` change or the
- * component goes away; what arrives after that is dropped.
+ * Loads now, then again every `everyMs`, until stopped; what arrives after that is dropped.
+ * A first load that says to try again (`tryAgain`) is tried again: polling that waits for
+ * it would otherwise never start, and a Checkout would go without its heartbeat.
  */
-export function usePolling<T>({ load, received, failed, everyMs, enabled = true }: Polling<T>, deps: DependencyList): void {
-  useEffect(() => {
-    if (!enabled) return;
+export function startPolling<T>({ load, received, failed, everyMs }: Omit<Polling<T>, 'enabled'>): () => void {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const once = () =>
       load().then(
         (value) => {
@@ -51,15 +54,28 @@ export function usePolling<T>({ load, received, failed, everyMs, enabled = true 
       once().catch(() => {});
       timer = setInterval(() => once().catch(() => {}), everyMs);
     } else {
-      once()
-        .then((first) => {
-          if (!cancelled) timer = setInterval(() => once().catch(() => {}), everyMs(first));
-        })
-        .catch(() => {});
+      const first = (): Promise<void> =>
+        once().then(
+          (value) => {
+            if (!cancelled) timer = setInterval(() => once().catch(() => {}), everyMs(value));
+          },
+          (err: ApiError) => {
+            if (!cancelled && err.details?.tryAgain === true) retry = setTimeout(() => void first(), FIRST_LOAD_RETRY_MS);
+          },
+        );
+      void first();
     }
     return () => {
       cancelled = true;
       clearInterval(timer);
+      clearTimeout(retry);
     };
+}
+
+/** startPolling, until `deps` change or the component goes away. */
+export function usePolling<T>({ enabled = true, ...polling }: Polling<T>, deps: DependencyList): void {
+  useEffect(() => {
+    if (!enabled) return;
+    return startPolling(polling);
   }, [enabled, ...deps]);
 }

@@ -8,7 +8,7 @@ describe('returnOrder', () => {
     expect(returnOrder('classic')).toBe('in their original positions');
   });
 
-  it('on a quorum queue, puts them ahead of newer Messages but behind any returned earlier', () => {
-    expect(returnOrder('quorum')).toBe('in their original order, ahead of newer Messages but behind any returned earlier');
+  it('on a quorum queue, puts them ahead of newer Messages but behind any returned earlier, and does not promise the order of a large Checkout', () => {
+    expect(returnOrder('quorum')).toBe('ahead of newer Messages but behind any returned earlier, in their original order unless the Checkout was large');
   });
 });

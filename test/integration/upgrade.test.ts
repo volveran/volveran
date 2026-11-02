@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import { copyAuditStore } from '../../src/server/audit/copy-audit-store.js';
-import { copyFixtureStore, RELEASED_VERSIONS, upgradeFixtures } from '../support/upgrade-fixtures.js';
+import { copyFixtureStore, releasesWithoutFixture, upgradeFixtures } from '../support/upgrade-fixtures.js';
 import { fixtureAppOptions, upgradeChecks } from '../support/upgrade-checks.js';
 import { makeTempDir, startApp, type TestApp } from './harness.js';
 import { storeEnv } from './test-store.js';
@@ -31,9 +31,8 @@ describe.each(upgradeFixtures)('upgrading from $version', (fixture) => {
   upgradeChecks(fixture, () => app);
 });
 
-it('has a fixture for every release in the changelog but the current version', async () => {
+it('has a fixture for every release in the changelog but the current version and pre-releases', async () => {
   // A release gets its fixture once its image is published, before the next version bump.
   const changelog = await readFile(path.join(repoRoot, 'CHANGELOG.md'), 'utf8');
-  const released = [...changelog.matchAll(/^## \[(\d[^\]]*)\]/gm)].map((m) => m[1]!).filter((v) => v !== product.version);
-  expect(released.filter((v) => !(RELEASED_VERSIONS as readonly string[]).includes(v))).toEqual([]);
+  expect(releasesWithoutFixture(changelog, product.version)).toEqual([]);
 });

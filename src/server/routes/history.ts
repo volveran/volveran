@@ -75,7 +75,7 @@ export function registerHistoryRoutes(app: FastifyInstance, { history, clock, in
       rule: t.rule,
       checkoutId: t.checkoutId,
       counts: t.counts,
-      auditUrl: `/api/audit-entries?${new URLSearchParams({ profile: profile.name, queue, checkoutId: t.checkoutId })}`,
+      auditUrl: `/api/v1/audit-entries?${new URLSearchParams({ profile: profile.name, queue, checkoutId: t.checkoutId })}`,
     }));
     return {
       from: from.toISOString(),

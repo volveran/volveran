@@ -248,7 +248,30 @@ async function takeLock(checkout: Checkout, connection: amqp.ChannelModel, manag
     }
     throw new CheckoutError('checkout_failed', `Cannot declare the Checkout lock queue "${lockQueue}": ${(err as Error).message}`);
   }
-  await channel.close().catch(() => {});
+  await closedOrGone(connection, channel.close());
+}
+
+/** How long one closing step waits for the broker, which answers in milliseconds when it is there. */
+const BROKER_CLOSE_MS = 5_000;
+
+/**
+ * Waits for `closing` (a close of a channel or the connection, or what leads up to it), until the
+ * connection goes or BROKER_CLOSE_MS passes. amqplib settles a close only when the broker answers
+ * it: if the connection drops before that, it forgets the callback, so the promise never settles,
+ * and on a silent broker nothing answers until the heartbeats fail. Either way the broker returns
+ * whatever is still held once it sees the connection gone. Never rejects.
+ */
+export function closedOrGone(connection: amqp.ChannelModel, closing: Promise<unknown>): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      connection.off('close', done);
+      resolve();
+    };
+    const timer = setTimeout(done, BROKER_CLOSE_MS);
+    connection.once('close', done);
+    closing.then(done, done);
+  });
 }
 
 /** The longest an end waits for the broker to stop counting its consumers; they have cleared within 200 ms on a starved broker. */
@@ -287,6 +310,12 @@ async function ownConsumersGone(connection: amqp.ChannelModel, queue: string): P
 export async function closeCheckoutConnection(checkout: Checkout): Promise<void> {
   const { connection } = checkout;
   if (!connection) return;
+  await closedOrGone(connection, deleteLock(checkout, connection));
+  // Even if the broker was too slow for the above: this is what frees the queue in the end.
+  await closedOrGone(connection, connection.close());
+}
+
+async function deleteLock(checkout: Checkout, connection: amqp.ChannelModel): Promise<void> {
   // Before the lock goes: while it is held, no start can read the count.
   if (checkout.onlyConsumer) await ownConsumersGone(connection, checkout.queue);
   try {
@@ -296,5 +325,4 @@ export async function closeCheckoutConnection(checkout: Checkout): Promise<void>
   } catch {
     // The connection is going anyway: the broker deletes the lock queue with it.
   }
-  await connection.close().catch(() => {});
 }

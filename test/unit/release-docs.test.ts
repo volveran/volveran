@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { escapeRegex } from '../support/escape-regex.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
@@ -41,6 +42,30 @@ function imageRefs(text: string): string[] {
   return [...text.matchAll(/ghcr\.io\/volveran\/volveran(?::[\w.-]+)?/g)].map((m) => m[0]);
 }
 
+describe('the profiles file schema', () => {
+  it('is attached to the GitHub Release', () => {
+    const jobs = (parse(workflow) as { jobs: Record<string, { steps: Array<{ run?: string }> }> }).jobs;
+    const create = jobs['github-release']!.steps.map((step) => step.run ?? '').find((run) => run.includes('gh release create'));
+    expect(create).toMatch(/gh release create[^\n]*(\\\n[^\n]*)*profiles\.schema\.json/);
+  });
+
+  it('names the file the repository holds', () => {
+    expect(JSON.parse(read('profiles.schema.json'))).toHaveProperty('$defs.brokerProfile');
+  });
+});
+
+describe('The OpenAPI description', () => {
+  it('is attached to the GitHub Release', () => {
+    const jobs = (parse(workflow) as { jobs: Record<string, { steps: Array<{ run?: string }> }> }).jobs;
+    const create = jobs['github-release']!.steps.map((step) => step.run ?? '').find((run) => run.includes('gh release create'));
+    expect(create).toMatch(/gh release create[^\n]*(\\\n[^\n]*)*openapi\.json/);
+  });
+
+  it('names the file the repository holds', () => {
+    expect(JSON.parse(read('openapi.json'))).toHaveProperty('paths');
+  });
+});
+
 describe('release quick start', () => {
   it('publishes the image the docs name', () => {
     expect(workflow).toContain(image);
@@ -66,7 +91,7 @@ describe('release quick start', () => {
 
   it('the CHANGELOG has an entry for the version in package.json', () => {
     const changelog = read('CHANGELOG.md');
-    expect(changelog).toMatch(new RegExp(`^## \\[${version.replaceAll('.', '\\.')}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm'));
+    expect(changelog).toMatch(new RegExp(`^## \\[${escapeRegex(version)}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm'));
     expect(changelog).toContain(`[${version}]: https://github.com/volveran/volveran/releases/tag/v${version}`);
     expect(changelog).toContain(`[Unreleased]: https://github.com/volveran/volveran/compare/v${version}...HEAD`);
   });

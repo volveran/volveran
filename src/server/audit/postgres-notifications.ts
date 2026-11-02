@@ -1,8 +1,9 @@
 // The outcome of each notification on PostgreSQL. See sqlite-notifications.ts.
 import type pg from 'pg';
 import { positions } from './audit-entry-sql.js';
-import type { NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
+import type { LeaseFence, NewNotificationDelivery, NotificationScope, NotificationStore } from './audit-store.js';
 import { numbered } from './postgres-connection.js';
+import { fenced } from './postgres-leader-lease.js';
 import { notificationScope, RECENT_LIMIT, toDelivery, type NotificationRow } from './store-rows.js';
 import type { NotificationDelivery } from '../../shared/alerts.js';
 
@@ -27,8 +28,8 @@ export class PostgresNotificationStore implements NotificationStore {
     return rows.map(toDelivery);
   }
 
-  async removeOlderThan(cutoff: Date): Promise<number> {
-    const { rowCount } = await this.pool.query('DELETE FROM notifications WHERE at < $1', [cutoff.getTime()]);
+  async removeOlderThan(cutoff: Date, fence?: LeaseFence): Promise<number> {
+    const { rowCount } = await fenced(this.pool, fence, (client) => client.query('DELETE FROM notifications WHERE at < $1', [cutoff.getTime()]));
     return rowCount ?? 0;
   }
 }

@@ -18,13 +18,18 @@
 // `checkout_in_progress` with the holder while someone holds the queue (the
 // pass then touches nothing). The role check comes first, before anything
 // else is looked up.
-import type { FastifyInstance } from 'fastify';
+//
+// With several Replicas (ADR 0014), Run now answers on the Background Leader, where a Rule Pass
+// belongs. A pause or resume is written by whichever Replica it reaches, so it works with the
+// leader gone, which it then tells through POST .../changed: a route of the internal port only.
+import type { FastifyInstance, onRequestAsyncHookHandler } from 'fastify';
+import { forwardedOperator } from '../replicas/forwarding.js';
 import { operatorOf } from '../operator.js';
 import type { ProfileAccessCheck } from '../profile-access.js';
 import type { ReplayRules } from '../replay-rules/rules.js';
 import type { ReplayRuleView, RulePass, RuleState } from '../../shared/replay-rules.js';
 
-export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRules, access: ProfileAccessCheck) {
+export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRules, access: ProfileAccessCheck, toLeader: { onRequest?: onRequestAsyncHookHandler }) {
   app.get<{ Params: { profile: string } }>('/api/profiles/:profile/replay-rules', async (req): Promise<{ rules: ReplayRuleView[] }> => {
     const { profile } = access.profile(operatorOf(req), 'see_profile', req.params.profile);
     return { rules: await rules.list(profile) };
@@ -32,6 +37,7 @@ export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRule
 
   app.post<{ Params: { profile: string; name: string } }>(
     '/api/profiles/:profile/replay-rules/:name/run',
+    toLeader,
     async (req): Promise<{ pass: RulePass }> => {
       const { profile } = access.profile(operatorOf(req), 'run_replay_rule', req.params.profile);
       return { pass: await rules.runNow(profile, req.params.name) };
@@ -55,4 +61,13 @@ export function registerReplayRuleRoutes(app: FastifyInstance, rules: ReplayRule
       return { state: await rules.resume(profile, req.params.name, operator, role) };
     },
   );
+
+  // Only with forwarding, so a single Replica has no such route. It says only "read the store",
+  // and the Replica that wrote the change has already checked who asked.
+  if (!toLeader.onRequest) return;
+  app.post<{ Params: { profile: string; name: string } }>('/api/profiles/:profile/replay-rules/:name/changed', async (req, reply) => {
+    if (!forwardedOperator(req.raw)) return reply.callNotFound();
+    await rules.changedElsewhere(req.params.profile, req.params.name);
+    return reply.status(204).send();
+  });
 }

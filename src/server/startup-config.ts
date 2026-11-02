@@ -38,5 +38,8 @@ export async function readStartupConfig(settings: StartupSettings): Promise<Star
   if (config.metricsPort !== null && config.metricsPort === settings.port) {
     throw new ConfigError(`VOLVERAN_METRICS_PORT must differ from the web app's port (${settings.port}): metrics are never served on it.`);
   }
+  if (config.forwarding && [settings.port, config.metricsPort].includes(config.forwarding.port)) {
+    throw new ConfigError(`VOLVERAN_FORWARDING_PORT must differ from the web app's port and the metrics port (${config.forwarding.port}): nothing but other Replicas may reach it.`);
+  }
   return { config, limits, file, postgresTls: await readPostgresTls(config.postgresTls) };
 }

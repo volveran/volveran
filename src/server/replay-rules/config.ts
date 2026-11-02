@@ -7,7 +7,7 @@
 import { ProfilesConfigError } from '../config-error.js';
 import { durationWithin } from '../duration.js';
 import { isRecord } from '../is-record.js';
-import { parseFilter } from '../triage/filters.js';
+import { FILTER_CLAUSE_KEYS, parseFilter, type FilterKind } from '../triage/filters.js';
 import { MAX_PREFETCH } from '../triage/checkout-collection.js';
 import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE } from '../../shared/replay-rate.js';
 import type { Filter } from '../../shared/filters.js';
@@ -115,8 +115,20 @@ type Fail = (message: string) => never;
 /** One clause as a mapping, or a list of clauses as the API takes them; left out, every Message. */
 function parseRuleFilter(value: unknown, fail: Fail): Filter | null {
   if (value === undefined || value === null) return null;
+  // Before parsing: a misspelt `value` is reported as the key it is, not as a missing one.
+  if (Array.isArray(value)) value.forEach((clause, i) => refuseUnknownClauseKeys(clause, `.filter[${i}]`, fail));
+  else refuseUnknownClauseKeys(value, '.filter', fail);
   const parsed = parseFilter(Array.isArray(value) ? value : [value]);
   return parsed.ok ? parsed.filter : fail(`.filter: ${parsed.error}`);
+}
+
+function refuseUnknownClauseKeys(clause: unknown, at: string, fail: Fail): void {
+  if (!isRecord(clause)) return;
+  // An unknown kind has no keys to compare with; parseFilter refuses it.
+  const keys = Object.hasOwn(FILTER_CLAUSE_KEYS, String(clause.kind)) ? FILTER_CLAUSE_KEYS[clause.kind as FilterKind] : null;
+  for (const key of Object.keys(clause)) {
+    if (keys !== null && !keys.includes(key)) fail(`${at}.${key} is not a key of this filter clause; ${String(clause.kind)} takes ${keys.join(', ')}`);
+  }
 }
 
 function parseRate(value: unknown, maxRate: number | null, fail: Fail): number {
@@ -143,9 +155,16 @@ function parseBackoff(value: unknown, fail: Fail): ReplayRule['backoff'] {
 function parseWhenUsedUp(value: unknown, queue: string, fail: Fail): WhenAttemptsUsedUp {
   if (value === undefined || value === null || value === 'keep') return 'keep';
   const shape = '.whenAttemptsUsedUp must be keep or { moveTo: { queue: <name> } }';
-  if (!isRecord(value) || Object.keys(value).length !== 1 || !isRecord(value.moveTo)) return fail(shape);
+  if (!isRecord(value)) return fail(shape);
+  for (const key of Object.keys(value)) {
+    if (key !== 'moveTo') fail(`.whenAttemptsUsedUp.${key} is not a key of whenAttemptsUsedUp; it takes moveTo`);
+  }
   const { moveTo } = value;
-  if (Object.keys(moveTo).length !== 1 || typeof moveTo.queue !== 'string' || moveTo.queue === '') return fail(shape);
+  if (!isRecord(moveTo)) return fail(shape);
+  for (const key of Object.keys(moveTo)) {
+    if (key !== 'queue') fail(`.whenAttemptsUsedUp.moveTo.${key} is not a key of moveTo; it takes queue`);
+  }
+  if (typeof moveTo.queue !== 'string' || moveTo.queue === '') return fail(shape);
   if (moveTo.queue === queue) fail(`.whenAttemptsUsedUp.moveTo.queue must differ from the rule's queue "${queue}"`);
   return { moveTo: { queue: moveTo.queue } };
 }

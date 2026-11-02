@@ -35,7 +35,7 @@ Volverán takes a **Sample** of every dead-letter queue of each Broker Profile o
 
 The queue list shows a 24-hour depth chart next to each dead-letter queue. A queue's history view (the link on the chart, or `h` on the focused queue) shows depth and estimated arrivals over the last hour, 24 hours, 7 days or the whole retention, the time of the latest Sample, gaps, and marks for the Applies and Rule Passes that took Messages out, linked to their Audit Entries. Any Role on the profile may read it, as with the queue list. Link to one with `#/history/<profile>/<vhost>/<queue>`.
 
-`GET /api/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 buckets of Samples, each with its last depth and summed arrivals; `arrivalsPartlyUnknown` says some of its Samples, not all, had unknown arrivals, and the view hatches it like an unknown stretch.
+`GET /api/v1/profiles/:profile/vhosts/:vhost/queues/:queue/history?from=&to=` answers the same data. `from` and `to` are ISO 8601 and default to the last 24 hours. A long range is downsampled to at most about 500 buckets of Samples, each with its last depth and summed arrivals; `arrivalsPartlyUnknown` says some of its Samples, not all, had unknown arrivals, and the view hatches it like an unknown stretch.
 
 ```json
 { "from": "2026-10-29T10:00:00.000Z", "to": "2026-10-30T10:00:00.000Z", "retentionDays": 14,
@@ -43,7 +43,7 @@ The queue list shows a 24-hour depth chart next to each dead-letter queue. A que
   "samples": [{ "at": "2026-10-30T09:59:30.000Z", "depth": 400, "estimatedArrivals": 12, "arrivalsPartlyUnknown": false }],
   "gaps": [{ "from": "2026-10-30T03:00:00.000Z", "to": "2026-10-30T03:20:00.000Z", "errorCode": "…" }],
   "marks": [{ "at": "2026-10-30T08:00:00.000Z", "kind": "apply", "operator": "ana", "rule": null, "checkoutId": "…",
-              "counts": { "discard": 2, "replay": 40, "move": 0 }, "auditUrl": "/api/audit-entries?…" }] }
+              "counts": { "discard": 2, "replay": 40, "move": 0 }, "auditUrl": "/api/v1/audit-entries?…" }] }
 ```
 
 The queue list's response gains, on each dead-letter queue, `depthSeries` (`{ from, to, points: [[ms, depth]], gaps }`, on sampled profiles) and `firingAlerts`.
@@ -75,7 +75,7 @@ Each vhost has a **Dead-letter Map**: which queues dead-letter into which, throu
 
 The Dead-letter Map view (`#/dead-letter-map/<profile>/<vhost>`) draws queues with their depth and set-up warnings, losses, chains and cycles, searches for one queue and shows the part connected to it, opens a queue's history or a Checkout, and lists the same graph as text to read or copy. Any Role on the profile may see it.
 
-`GET /api/profiles/:profile/vhosts/:vhost/dead-letter-map` answers `{ nodes, edges, cycles }`:
+`GET /api/v1/profiles/:profile/vhosts/:vhost/dead-letter-map` answers `{ nodes, edges, cycles }`:
 
 | Part | Fields |
 | --- | --- |
@@ -134,7 +134,7 @@ kubectl -n volveran create secret generic volveran-alerts \
 
 **Delivery.** Each delivery has a 5-second timeout and up to 3 attempts with a growing wait. Redirects are not followed, so a webhook that moved counts as failed with its 3xx status. Deliveries never hold up sampling or each other. The outcome is kept in the audit store for `VOLVERAN_HISTORY_RETENTION_DAYS`, without the URL.
 
-**Testing one.** An `admin` on any Broker Profile (anyone in Solo Mode) can send a clearly labelled test notification from the Alerts view, or with `POST /api/alert-destinations/:name/test`, which answers `{ delivery }` once the delivery has ended (`404 alert_destination_not_found` for an undeclared name, `403 role_required` without the Role).
+**Testing one.** An `admin` on any Broker Profile (anyone in Solo Mode) can send a clearly labelled test notification from the Alerts view, or with `POST /api/v1/alert-destinations/:name/test`, which answers `{ delivery }` once the delivery has ended (`404 alert_destination_not_found` for an undeclared name, `403 role_required` without the Role).
 
 ### Alert Rules
 
@@ -178,7 +178,10 @@ profiles:
 
 - A failed sampling run changes no Alert on a queue, though it may repeat one. A Sample with unknown arrivals holds an arrival Alert as it is, and a run with no depth for a queue holds that queue's Alerts.
 - **Arrival conditions count only what the depth has borne out**: a take-out counts once the next Sample shows it did not explain a drop in depth. So false spikes do not fire them, and arrivals hidden by triage alert one Sample late. The history and the metrics are not corrected in this way, and can show a spike with no Alert.
-- A firing Alert survives a restart without being sent again. A crash between storing an Alert and sending it loses that notification rather than sending it twice.
+- A firing Alert survives a restart without being sent again. On SQLite, a crash between storing an Alert and sending it loses that notification rather than sending it twice.
+- **On PostgreSQL, a notification in flight when the Background Leader goes may be sent twice.** Only the leader evaluates and sends, so there is one notification per Alert however many Replicas run, and a firing Alert stays firing across a change of leader without being sent again as new. But a notification is forgotten only when its delivery has ended, and the next leader sends whatever is left. A crash, or a shutdown that cuts a delivery short, can therefore send one again, with the same `alertId`: make a receiver tolerate that. A delivery that ran out of attempts has ended, and is not sent again.
+- **A Replay Rule's last automatic pause when a Replica shuts down.** With several Replicas (`VOLVERAN_FORWARDING_SECRET` set), a pass may still be ending after its leader has stopped, and a former leader writes no Alert state. Its pause is in the store, so the Alert fires at the new leader's next Sample. A single Replica has no next leader: it waits for its passes before it stops, and the pause notifies if the delivery finishes within the limit below.
+- **A stopping Replica gives notifications in progress 5 seconds to finish,** then cuts them short and logs a warning. One cut short is not lost on PostgreSQL: it stays unsent and the next leader sends it, also a restarted single Replica. On SQLite the unsent list is in memory, so it is lost, and because the Alert is stored as firing a restart does not send it again.
 - Removing an Alert Rule from the file drops its Alerts at the next restart, with no resolved notification.
 - A Replay Rule already paused, or a queue already warned, fires at the next evaluation, also when the Alert Rule has just been deployed. A Replay Rule deployed with `startPaused` never fires. Removing a paused Replay Rule from the file sends a resolved notification.
 
@@ -233,8 +236,8 @@ function isFromVolveran(secret, rawBody, headers, maxAgeSeconds = 300) {
 
 The Alerts view shows the firing and pending Alerts on the profiles you have a Role on, the selected profile's Alert Rules with their destinations, and the recent notifications with whether each was delivered and why not. A firing Alert also shows on its queue in the queue list. An `admin` can send a test notification from here.
 
-- `GET /api/alerts` answers `{ alerts, notifications, destinations }`, with the latest 100 notifications you may see, and `403 no_role` with no Role anywhere. Test notifications belong to no profile, so only those who may send one see them.
-- `GET /api/profiles/:profile/alert-rules` answers `{ rules }`. Any Role on the profile may read it.
+- `GET /api/v1/alerts` answers `{ alerts, notifications, destinations }`, with the latest 100 notifications you may see, and `403 no_role` with no Role anywhere. Test notifications belong to no profile, so only those who may send one see them.
+- `GET /api/v1/profiles/:profile/alert-rules` answers `{ rules }`. Any Role on the profile may read it.
 - Destinations appear as names and types, never URLs or secrets.
 
 Silencing, on-call schedules and grouping are out of scope. If you need them, route through Alertmanager with the [metrics](#metrics), or through the generic webhook into your paging tool.
@@ -245,9 +248,19 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 
 - The only route is `/metrics`, on its own port, at `VOLVERAN_HOST`'s address. In Solo Mode that is loopback.
 - It needs no session, so keep the port away from anything but your scraper. The web app's port never serves metrics.
-- A scrape never contacts a broker and never waits on the audit store. What it shows from the store (`volveran_replay_rule_paused`, `volveran_alerts_firing`, `volveran_audit_store_body_bytes`) is read in the background, every 15 seconds and whenever Volverán changes one of them itself, and keeps its last value while the store cannot be read.
-- Metric and label names stay stable within a minor version.
+- A scrape never contacts a broker and never waits on the audit store. What it shows from the store (`volveran_replay_rule_paused`, `volveran_alerts_firing`, `volveran_audit_store_body_bytes`) is read in the background, every 15 seconds and whenever Volverán changes one of them itself, and keeps its last value while the store cannot be read and the Replica is still the Background Leader.
+- Metric and label names are a public contract: from 1.0 they stay through every 1.x version, and new ones may be added ([compatibility policy](compatibility.md)).
 - Counters are held in memory and start again from zero after a restart, which `rate()` handles. A counter has no series until the first thing it counts.
+
+### Several Replicas
+
+Scrape every Replica. The metrics add up across them, so a dashboard can sum them:
+
+- **Shared state comes from the Background Leader only.** Queue depth, set-up warnings, sampling, `volveran_alerts_firing`, `volveran_replay_rule_paused` and `volveran_audit_store_body_bytes` describe what all Replicas share, so one copy is exported. The others show their `HELP` and `TYPE` with no series.
+- **What a process holds or counts stays per Replica.** Every counter, `volveran_checkouts_active` and `volveran_approvals_waiting`. After a change of leader, a former leader keeps the arrivals it counted, and they simply stop rising.
+- **`volveran_background_leader` says which Replica leads:** `volveran_background_leader == 1` names its `instance` or `pod`, for when Samples or Alerts are missing. Its log also says when it becomes the leader and when it stops.
+
+A change of leader shows. A leader that goes silently leaves the shared gauges absent for up to 20 seconds, until another takes the lease, so give alerts on them a `for` longer than that. The new leader shows the sampling metrics, Replay Rule state, Alerts and body bytes at once, and queue depth and set-up warnings from its first run, one sampling interval later. A stalled leader that has not yet noticed its lease ran out can export alongside the new one for a moment. Replicas that lose the store also lose the lease, within 15 seconds: on PostgreSQL, the shared gauges then go away with it until the store is back, while the counters below go on rising.
 
 ### Metric reference
 
@@ -266,6 +279,9 @@ Volverán serves Prometheus metrics when `VOLVERAN_METRICS_PORT` is set, and ope
 | `volveran_audit_store_body_bytes` | gauge | | Bytes of Discarded Message bodies kept in the audit store. |
 | `volveran_alerts_firing` | gauge | `profile`, `rule` | Alerts of the Alert Rule firing now; 0 for a rule with none. Pending Alerts are not counted. |
 | `volveran_alert_notifications_total` | counter | `destination`, `outcome` | Notifications of Alerts, by Alert Destination and `outcome`: `delivered` or `failed` once its attempts are over. Test notifications are not counted. |
+| `volveran_background_leader` | gauge | | 1 if this Replica is the Background Leader, 0 if not. |
+| `volveran_forwarding_failures_total` | counter | `reason` | Requests between Replicas that failed, on the Replica that saw it. `reason` is `unreachable` (the connection failed or dropped before an answer began), `timed_out` (no answer began in time), `no_address` (no live Background Leader to send it to), `refused` (this Replica's internal port refused it: another `VOLVERAN_FORWARDING_SECRET`, or something that should not reach the port) or `protocol_mismatch` (the other Replica speaks another forwarding protocol version, as can happen during a [rolling update](compatibility.md#during-a-rolling-update)). An Operator who goes away is not counted, nor an answer cut short once it has begun. |
+| `volveran_audit_store_errors_total` | counter | | Calls to the audit store that failed, whatever came of them: many are tried again. A write refused because this Replica is no longer the Background Leader is not counted. |
 
 A paused rule's `reason` can be free text typed by an Operator, so a pause and resume with new words starts a new series. Alert on `max by (profile, rule) (volveran_replay_rule_paused) == 1`, not on one reason.
 
@@ -278,7 +294,7 @@ Dead-letter queue metrics come from the latest Samples, so they move once per sa
 
 ### Example alerts
 
-Prometheus Operator rules for a deep dead-letter queue, a fast arrival rate, a lost broker and failed notifications. Adjust the thresholds and labels to your queues and your Prometheus's `ruleSelector`.
+Prometheus Operator rules for a deep dead-letter queue, a fast arrival rate, a lost broker, failed notifications and partial failure of Replicas. Adjust the thresholds and labels to your queues and your Prometheus's `ruleSelector`.
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -329,6 +345,28 @@ spec:
             severity: critical
           annotations:
             summary: '{{ $labels.queue }} on {{ $labels.profile }} has the set-up warning {{ $labels.code }}'
+        - alert: VolveranNoBackgroundLeader
+          # Past a takeover, which takes up to 20 s.
+          expr: sum(volveran_background_leader) == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: 'No Replica is the Background Leader: no Samples, Alerts, Rule Passes or retention'
+        - alert: VolveranForwardingFailing
+          expr: sum by (instance, reason) (rate(volveran_forwarding_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: '{{ $labels.instance }} cannot reach other Replicas ({{ $labels.reason }}): Operators get a 503 for Checkouts held there'
+        - alert: VolveranStoreErrors
+          expr: rate(volveran_audit_store_errors_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: '{{ $labels.instance }} is getting errors from the audit store: see its log'
 ```
 
 ### ServiceMonitor set-up

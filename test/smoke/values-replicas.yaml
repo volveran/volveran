@@ -1,0 +1,20 @@
+# The second smoke run: two Replicas on PostgreSQL, over test/smoke/values.yaml.
+# The Secrets and the database come from scripts/kind-smoke.mjs and deps.yaml.
+replicaCount: 2
+
+postgres:
+  existingSecret: volveran-postgres
+  # The in-cluster test database serves no TLS.
+  requireTls: false
+
+forwarding:
+  existingSecret: volveran-forwarding
+
+# The default, turned off again over values.yaml: threat model N4 is about an
+# installation that asked for no policy, whose forwarding port must still be closed.
+networkPolicy:
+  enabled: false
+
+# To count the Background Leaders across pods.
+metrics:
+  enabled: true

@@ -2,6 +2,7 @@
 // timeouts, so they run concurrently; each uses its own queues.
 import { describe, expect, it } from 'vitest';
 import { eventually, management, sleep, testBroker } from '../broker/client.js';
+import { escapeRegex } from '../support/escape-regex.js';
 import { hold, refusal, scratchFor, within } from './support.js';
 
 /** A quorum consumer timeout short enough to wait out. */
@@ -81,7 +82,7 @@ describe.concurrent('Consumer timeout', () => {
       const policy = `/policies/%2F/${encodeURIComponent(q)}`;
       const put = await management(policy, {
         method: 'PUT',
-        body: { pattern: `^${q.replace(/\./g, '\\.')}$`, definition: { 'consumer-timeout': SHORT }, 'apply-to': 'queues' },
+        body: { pattern: `^${escapeRegex(q)}$`, definition: { 'consumer-timeout': SHORT }, 'apply-to': 'queues' },
       });
       expect(put.status).toBeLessThan(300);
       try {

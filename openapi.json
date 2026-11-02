@@ -1,0 +1,2899 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Volverán API",
+    "version": "1",
+    "description": "The HTTP API of Volverán. `info.version` is the major version of the API, and through 1.x this API may only gain optional things. `/api`, where the API lived before 1.0, is an alias of `/api/v1` through 1.x, with the same routes, checks and answers.\n\nIn Team Mode every route needs a session: sign in at `/auth/login` and send its cookie. In Solo Mode there is no sign-in. A state-changing request with an `Origin` header must come from where the web app is reached (403 `foreign_origin`). With several Replicas, a request that another Replica must answer can get 503 `replica_unreachable`: try again."
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    },
+    {
+      "url": "/api",
+      "description": "An alias of /api/v1 through 1.x, for scripts from 0.x."
+    }
+  ],
+  "security": [
+    {
+      "session": []
+    },
+    {}
+  ],
+  "paths": {
+    "/alert-destinations/{name}/test": {
+      "post": {
+        "tags": [
+          "Alerts"
+        ],
+        "operationId": "testAlertDestination",
+        "summary": "Send a test notification",
+        "description": "`admin` on some Broker Profile; otherwise 403 `role_required`.\n\nAnswers once the delivery has ended, delivered or failed; the outcome is in the body. 404 `alert_destination_not_found` for an undeclared name.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/destinationName"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "delivery": {
+                      "type": "object",
+                      "description": "The delivery, and its outcome."
+                    }
+                  },
+                  "required": [
+                    "delivery"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/alerts": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "operationId": "getAlerts",
+        "summary": "Alerts and notifications",
+        "description": "A Role on some Broker Profile; otherwise 403 `no_role`.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertsOverview"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "listApprovals",
+        "summary": "The Approvals waiting",
+        "description": "Any session. Lists those the Operator may approve.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approvals": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Approval"
+                      }
+                    }
+                  },
+                  "required": [
+                    "approvals"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApproval",
+        "summary": "Read a Checkout waiting for Approval",
+        "description": "`operator` or `admin` on the Checkout's Broker Profile, and never its owner (403 `cannot_approve_own_apply`).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}/apply/continue": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "continueApprovedApply",
+        "summary": "Continue it after its Canary",
+        "description": "Only the approver of this Apply; anyone else gets 403 `not_checkout_owner`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}/apply/stop": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "stopApprovedApply",
+        "summary": "Stop the Apply this approver approved",
+        "description": "Only the approver of this Apply; anyone else gets 403 `not_checkout_owner`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}/approve": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "approve",
+        "summary": "Approve an Apply, which starts it",
+        "description": "`operator` or `admin` on the Checkout's Broker Profile, and never its owner (403 `cannot_approve_own_apply`).\n\n400 `queue_name_confirmation_required`; 409 `not_awaiting_approval`, `apply_would_outlast_checkout`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirmQueueName": {
+                    "type": "string",
+                    "description": "The queue's name, typed."
+                  }
+                },
+                "required": [
+                  "confirmQueueName"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The Apply started; it runs in the background, and the Checkout shows its progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}/compare": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "compareApprovalMessages",
+        "summary": "Compare two of its Messages",
+        "description": "`operator` or `admin` on the Checkout's Broker Profile, and never its owner (403 `cannot_approve_own_apply`).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          },
+          {
+            "name": "a",
+            "in": "query",
+            "required": true,
+            "description": "The handle of the left Message.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "b",
+            "in": "query",
+            "required": true,
+            "description": "The handle of the right Message.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageComparison"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}/messages/{handle}": {
+      "get": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "getApprovalMessage",
+        "summary": "Read one of its Messages",
+        "description": "`operator` or `admin` on the Checkout's Broker Profile, and never its owner (403 `cannot_approve_own_apply`).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          },
+          {
+            "$ref": "#/components/parameters/handle"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "$ref": "#/components/schemas/Message"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/approvals/{checkoutId}/reject": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "reject",
+        "summary": "Reject an Apply",
+        "description": "`operator` or `admin` on the Checkout's Broker Profile, and never its owner (403 `cannot_approve_own_apply`).\n\nThe Checkout goes back to staging. 400 `invalid_request` without a reason.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkoutId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/audit-entries": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "operationId": "searchAuditEntries",
+        "summary": "Search Audit Entries",
+        "description": "Any session. Answers only the entries the Operator may read, newest first, without Message bodies.",
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": false,
+            "description": "The Broker Profile.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "queue",
+            "in": "query",
+            "required": false,
+            "description": "The queue.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "messageId",
+            "in": "query",
+            "required": false,
+            "description": "The Message id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "description": "The action.",
+            "schema": {
+              "enum": [
+                "discard",
+                "replay",
+                "move",
+                "restore",
+                "export",
+                "rule_pause",
+                "rule_resume"
+              ]
+            }
+          },
+          {
+            "name": "operator",
+            "in": "query",
+            "required": false,
+            "description": "The Operator.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "checkoutId",
+            "in": "query",
+            "required": false,
+            "description": "The Checkout.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "replayId",
+            "in": "query",
+            "required": false,
+            "description": "The `x-volveran-replay-id`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "description": "The Replay Rule.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "ISO 8601 date or date-time.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "ISO 8601 date or date-time; a bare date includes that whole day.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "At most this many. Default 500.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AuditEntry"
+                      }
+                    }
+                  },
+                  "required": [
+                    "entries"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/audit-entries/{id}": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "operationId": "getAuditEntry",
+        "summary": "Read an Audit Entry",
+        "description": "Any Role on the Broker Profile (`viewer` and up). The body comes only to `operator` and up.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/entryId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/AuditEntry"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/audit-entries/{id}/restore": {
+      "post": {
+        "tags": [
+          "Audit"
+        ],
+        "operationId": "restoreMessage",
+        "summary": "Restore a Discarded Message",
+        "description": "`admin` on the Broker Profile.\n\n400 `confirmation_required` without `confirm`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/entryId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "const": true
+                  },
+                  "queue": {
+                    "type": "string",
+                    "description": "Where to publish it; default the queue it came from."
+                  },
+                  "confirmUncertain": {
+                    "type": "boolean",
+                    "description": "Accept a possible duplicate, for a Discard that did not finish in a known state."
+                  },
+                  "confirmQueueName": {
+                    "type": "string",
+                    "description": "The queue's name, typed, on a Protected Profile."
+                  }
+                },
+                "required": [
+                  "confirm"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Restore's own Audit Entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/AuditEntry"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/audit-store": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "operationId": "getAuditStoreUsage",
+        "summary": "How full the store of Discarded bodies is",
+        "description": "A Role on some Broker Profile; otherwise 403 `no_role`.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditStoreUsage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}": {
+      "get": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "getCheckout",
+        "summary": "Read a Checkout",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "endCheckout",
+        "summary": "End a Checkout",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nIts Messages go back to the queue. Waits for an Apply in progress.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/apply": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "applyCheckout",
+        "summary": "Carry out a Checkout's Decisions",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nRuns in the background. 400 `confirmation_required` without `confirm`; 409 `approval_required` when the Apply needs Approval.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "const": true,
+                    "description": "Must be true."
+                  },
+                  "confirmQueueName": {
+                    "type": "string",
+                    "description": "The queue's name, typed, on a Protected Profile."
+                  },
+                  "rate": {
+                    "type": "number",
+                    "description": "The Replay Rate in Messages per second, 0.1 to 1000."
+                  },
+                  "canary": {
+                    "description": "Start with a Canary: true for the first Replay, or the Message with this handle.",
+                    "oneOf": [
+                      {
+                        "const": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "handle": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "handle"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "confirm"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The Apply started; it runs in the background, and the Checkout shows its progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/apply/continue": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "continueApply",
+        "summary": "Continue an Apply after its Canary",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\n409 `apply_not_waiting`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/apply/stop": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "stopApply",
+        "summary": "Stop a running Apply",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nThe step in progress finishes. 409 `apply_not_running`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/approval-request": {
+      "post": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "requestApproval",
+        "summary": "Request Approval of an Apply",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\n409 `approval_not_required`, `awaiting_approval`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "const": true,
+                    "description": "Must be true."
+                  },
+                  "confirmQueueName": {
+                    "type": "string",
+                    "description": "The queue's name, typed, on a Protected Profile."
+                  },
+                  "rate": {
+                    "type": "number",
+                    "description": "The Replay Rate in Messages per second, 0.1 to 1000."
+                  },
+                  "canary": {
+                    "description": "Start with a Canary: true for the first Replay, or the Message with this handle.",
+                    "oneOf": [
+                      {
+                        "const": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "handle": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "handle"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "confirm"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Approvals"
+        ],
+        "operationId": "withdrawApproval",
+        "summary": "Withdraw a request for Approval",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\n409 `not_awaiting_approval`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/compare": {
+      "get": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "compareMessages",
+        "summary": "Compare two held Messages",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          },
+          {
+            "name": "a",
+            "in": "query",
+            "required": true,
+            "description": "The handle of the left Message.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "b",
+            "in": "query",
+            "required": true,
+            "description": "The handle of the right Message.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageComparison"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/decisions": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "stageDecision",
+        "summary": "Give held Messages a Decision",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nStaged in the Checkout until Apply; nothing changes on the broker. Keep clears a Decision.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "handles": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  },
+                  "decision": {
+                    "$ref": "#/components/schemas/Decision"
+                  }
+                },
+                "required": [
+                  "handles",
+                  "decision"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    },
+                    "rejected": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "handle": {
+                            "type": "integer"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "handle",
+                          "reason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "checkout",
+                    "rejected"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/end": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "endCheckoutByBeacon",
+        "summary": "End a Checkout, for navigator.sendBeacon",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nThe same as DELETE on the Checkout.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/export": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "exportMessages",
+        "summary": "Download held Messages as NDJSON",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nOne line per Message in queue order, streamed. Without `filter`, every held Message. Writes one `export` Audit Entry. 409 `checkout_not_active` on a Checkout that is over or lost.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filter": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/FilterClause"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Messages, one JSON object per line.",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/heartbeat": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "heartbeatCheckout",
+        "summary": "Say that the Checkout is still shown",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.\n\nNeeded at least every `heartbeatWindowMs`, or the Checkout ends.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/matching": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "selectMatching",
+        "summary": "The held Messages a filter matches",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filter": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/FilterClause"
+                    }
+                  }
+                },
+                "required": [
+                  "filter"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "handles": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer"
+                      }
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "handles",
+                    "count"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/checkouts/{id}/messages/{handle}": {
+      "get": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "getMessage",
+        "summary": "Read a held Message",
+        "description": "Only the Checkout's owner (403 `not_checkout_owner`), with `operator` or `admin` on its Broker Profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/id"
+          },
+          {
+            "$ref": "#/components/parameters/handle"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "$ref": "#/components/schemas/Message"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles": {
+      "get": {
+        "tags": [
+          "Broker Profiles"
+        ],
+        "operationId": "listProfiles",
+        "summary": "The Broker Profiles",
+        "description": "Any session. Lists those where the Operator has a Role.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Profile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "profiles"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/alert-rules": {
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "operationId": "listAlertRules",
+        "summary": "The Alert Rules of a Broker Profile",
+        "description": "Any Role on the Broker Profile (`viewer` and up).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AlertRule"
+                      }
+                    }
+                  },
+                  "required": [
+                    "rules"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/replay-rules": {
+      "get": {
+        "tags": [
+          "Replay Rules"
+        ],
+        "operationId": "listReplayRules",
+        "summary": "The Replay Rules of a Broker Profile",
+        "description": "Any Role on the Broker Profile (`viewer` and up).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReplayRule"
+                      }
+                    }
+                  },
+                  "required": [
+                    "rules"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/replay-rules/{name}/pause": {
+      "post": {
+        "tags": [
+          "Replay Rules"
+        ],
+        "operationId": "pauseReplayRule",
+        "summary": "Pause a Replay Rule",
+        "description": "`operator` or `admin` on the Broker Profile.\n\n400 `invalid_request` without a reason; 409 `replay_rule_paused` when it is already paused.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/ruleName"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "description": "Why; it goes into the Audit Entry."
+                  }
+                },
+                "required": [
+                  "reason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "object",
+                      "description": "The rule's state."
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/replay-rules/{name}/resume": {
+      "post": {
+        "tags": [
+          "Replay Rules"
+        ],
+        "operationId": "resumeReplayRule",
+        "summary": "Resume a paused Replay Rule",
+        "description": "`admin` on the Broker Profile.\n\n409 `replay_rule_running` when it is not paused.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/ruleName"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "object",
+                      "description": "The rule's state."
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/replay-rules/{name}/run": {
+      "post": {
+        "tags": [
+          "Replay Rules"
+        ],
+        "operationId": "runReplayRule",
+        "summary": "Run one Rule Pass now",
+        "description": "`admin` on the Broker Profile.\n\nAnswers once the pass has ended, with its counts. Runs on a paused rule too. 404 `replay_rule_not_found`; 409 `checkout_in_progress` while someone holds the queue.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/ruleName"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pass": {
+                      "type": "object",
+                      "description": "The Rule Pass."
+                    }
+                  },
+                  "required": [
+                    "pass"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/vhosts": {
+      "get": {
+        "tags": [
+          "Broker Profiles"
+        ],
+        "operationId": "listVhosts",
+        "summary": "The vhosts of a Broker Profile",
+        "description": "Any Role on the Broker Profile (`viewer` and up).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "vhosts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "vhosts"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/vhosts/{vhost}/dead-letter-map": {
+      "get": {
+        "tags": [
+          "Broker Profiles"
+        ],
+        "operationId": "getDeadLetterMap",
+        "summary": "The dead-letter map of a vhost",
+        "description": "Any Role on the Broker Profile (`viewer` and up).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/vhost"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadLetterMap"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/vhosts/{vhost}/move-destinations": {
+      "get": {
+        "tags": [
+          "Broker Profiles"
+        ],
+        "operationId": "listMoveDestinations",
+        "summary": "Where a Move can go",
+        "description": "`operator` or `admin` on the Broker Profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/vhost"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveDestinations"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/vhosts/{vhost}/queues": {
+      "get": {
+        "tags": [
+          "Broker Profiles"
+        ],
+        "operationId": "listQueues",
+        "summary": "The queue list of a vhost",
+        "description": "Any Role on the Broker Profile (`viewer` and up).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/vhost"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Only queues whose name has this text.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "onlyDeadLetterQueues",
+            "in": "query",
+            "required": false,
+            "description": "`true` for dead-letter queues only.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/vhosts/{vhost}/queues/{queue}/checkouts": {
+      "post": {
+        "tags": [
+          "Checkouts"
+        ],
+        "operationId": "startCheckout",
+        "summary": "Start a Checkout on a queue",
+        "description": "`operator` or `admin` on the Broker Profile.\n\n409 `operator_has_checkout` when the Operator already holds one, and `checkout_in_progress` while someone holds the queue.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/vhost"
+          },
+          {
+            "$ref": "#/components/parameters/queue"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "overrideConsumers": {
+                    "type": "boolean",
+                    "description": "Start even though other consumers read the queue."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The Checkout started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "checkout": {
+                      "$ref": "#/components/schemas/Checkout"
+                    }
+                  },
+                  "required": [
+                    "checkout"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/profiles/{profile}/vhosts/{vhost}/queues/{queue}/history": {
+      "get": {
+        "tags": [
+          "Broker Profiles"
+        ],
+        "operationId": "getQueueHistory",
+        "summary": "A queue's depth history",
+        "description": "Any Role on the Broker Profile (`viewer` and up).\n\nRead from the audit store, never the broker. 409 `history_not_sampled` on an `operatorToken` profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/profile"
+          },
+          {
+            "$ref": "#/components/parameters/vhost"
+          },
+          {
+            "$ref": "#/components/parameters/queue"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "ISO 8601. Default: 24 hours before `to`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "ISO 8601. Default: now.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueHistory"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    },
+    "/session": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "operationId": "getSession",
+        "summary": "Who is acting",
+        "description": "Any session.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Refused"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "volveran_session",
+        "description": "Team Mode. Solo Mode needs none."
+      }
+    },
+    "parameters": {
+      "profile": {
+        "name": "profile",
+        "in": "path",
+        "required": true,
+        "description": "The Broker Profile.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "vhost": {
+        "name": "vhost",
+        "in": "path",
+        "required": true,
+        "description": "The vhost, percent-encoded (`%2F` for `/`).",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "queue": {
+        "name": "queue",
+        "in": "path",
+        "required": true,
+        "description": "The queue.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ruleName": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "description": "The Replay Rule.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "destinationName": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "description": "The Alert Destination.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The Checkout.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "checkoutId": {
+        "name": "checkoutId",
+        "in": "path",
+        "required": true,
+        "description": "The Checkout.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "handle": {
+        "name": "handle",
+        "in": "path",
+        "required": true,
+        "description": "A held Message, by its handle in the Checkout.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "entryId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The Audit Entry.",
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "Refused": {
+        "description": "Refused, or failed. `error.code` says why; 401 `not_signed_in` without a session in Team Mode.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "description": "May carry more fields that belong to its code.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable, for a program to read."
+              },
+              "message": {
+                "type": "string",
+                "description": "For a person to read."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "enum": [
+              "solo",
+              "team"
+            ]
+          },
+          "operator": {
+            "type": "string",
+            "description": "Who is acting, as shown."
+          },
+          "operatorId": {
+            "type": "string",
+            "description": "Team Mode: the provider's `sub`."
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Team Mode: the groups read at sign-in."
+          },
+          "checkoutId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Operator's active Checkout."
+          },
+          "roles": {
+            "type": "object",
+            "description": "The Operator's Role on each Broker Profile where they have one.",
+            "additionalProperties": {
+              "enum": [
+                "viewer",
+                "operator",
+                "admin"
+              ]
+            }
+          }
+        },
+        "required": [
+          "mode",
+          "operator",
+          "checkoutId",
+          "roles"
+        ]
+      },
+      "Profile": {
+        "type": "object",
+        "description": "A Broker Profile, never with its password.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "credentials": {
+            "enum": [
+              "shared",
+              "operatorToken"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "managementUrl": {
+            "type": "string"
+          },
+          "amqpUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "credentials"
+        ]
+      },
+      "QueueList": {
+        "type": "object",
+        "properties": {
+          "defaultQueueFilter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "queues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A row of the queue list."
+            }
+          },
+          "setupWarningCounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "defaultQueueFilter",
+          "queues",
+          "setupWarningCounts"
+        ]
+      },
+      "MoveDestinations": {
+        "type": "object",
+        "properties": {
+          "queues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exchanges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "type"
+              ]
+            }
+          }
+        },
+        "required": [
+          "queues",
+          "exchanges"
+        ]
+      },
+      "DeadLetterMap": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A queue or an exchange."
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A way Messages go."
+            }
+          },
+          "cycles": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Each cycle's node ids."
+          }
+        },
+        "required": [
+          "nodes",
+          "edges",
+          "cycles"
+        ]
+      },
+      "QueueHistory": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "retentionDays": {
+            "type": "integer"
+          },
+          "latestSampleAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A Sample, or a bucket of them."
+            }
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A stretch with no Samples."
+            }
+          },
+          "marks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "apply",
+                    "rule_pass"
+                  ]
+                },
+                "operator": {
+                  "type": "string"
+                },
+                "rule": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "checkoutId": {
+                  "type": "string"
+                },
+                "counts": {
+                  "type": "object",
+                  "description": "Messages taken out, by Decision."
+                },
+                "auditUrl": {
+                  "type": "string",
+                  "description": "The audit search that lists its Audit Entries on this queue."
+                }
+              },
+              "required": [
+                "at",
+                "kind",
+                "checkoutId",
+                "auditUrl"
+              ]
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "samples",
+          "gaps",
+          "marks"
+        ]
+      },
+      "AlertRule": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A name and a type, never a URL or a secret."
+            }
+          },
+          "when": {
+            "type": "object",
+            "description": "The rule's condition: its `kind` and what the kind takes."
+          },
+          "forMs": {
+            "type": "integer"
+          },
+          "repeatEveryMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "when"
+        ]
+      },
+      "AlertsOverview": {
+        "type": "object",
+        "properties": {
+          "alerts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An Alert."
+            }
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "The outcome of a notification."
+            }
+          },
+          "destinations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A name and a type, never a URL or a secret."
+            }
+          }
+        },
+        "required": [
+          "alerts",
+          "notifications",
+          "destinations"
+        ]
+      },
+      "ReplayRule": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "object",
+            "description": "The rule as the profiles file declares it."
+          },
+          "state": {
+            "type": "object",
+            "description": "Running or paused, with who and why."
+          },
+          "passes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A Rule Pass."
+            },
+            "description": "Its last passes, newest first."
+          },
+          "nextPassAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rule",
+          "state",
+          "passes",
+          "nextPassAt"
+        ]
+      },
+      "Checkout": {
+        "type": "object",
+        "description": "A Checkout, as its owner sees it.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "protectedProfile": {
+            "type": "boolean"
+          },
+          "vhost": {
+            "type": "string"
+          },
+          "queue": {
+            "type": "string"
+          },
+          "queueType": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "timeLimitMs": {
+            "type": "integer"
+          },
+          "endsAt": {
+            "type": "string"
+          },
+          "remainingMs": {
+            "type": "integer"
+          },
+          "heartbeatWindowMs": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "lostReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownerGone": {
+            "type": "boolean"
+          },
+          "endReason": {
+            "description": "Why it ended; null unless `status` is `ended`."
+          },
+          "readyAtStart": {
+            "type": "integer"
+          },
+          "heldCount": {
+            "type": "integer"
+          },
+          "heldBytes": {
+            "type": "integer"
+          },
+          "limits": {
+            "type": "object",
+            "description": "The limits on what it may hold."
+          },
+          "deliveryLimit": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A held Message, without its body."
+            },
+            "description": "In queue order."
+          },
+          "diedAgainCount": {
+            "type": "integer"
+          },
+          "decisionSummary": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A line of the summary."
+            }
+          },
+          "decisionSummaryText": {
+            "type": "string"
+          },
+          "applyConfirmation": {
+            "type": "object",
+            "description": "The confirmation an Apply of the current Decisions needs."
+          },
+          "approvalRequest": {
+            "description": "The pending request for Approval, or null."
+          },
+          "rejection": {
+            "description": "The last request's rejection, or null."
+          },
+          "applyProgress": {
+            "description": "The progress of the Checkout's Apply, or null before it."
+          },
+          "lastApply": {
+            "description": "The outcome per Message once it has run, or null before."
+          },
+          "canary": {
+            "description": "The Apply's Canary, or null."
+          }
+        },
+        "required": [
+          "id",
+          "profile",
+          "vhost",
+          "queue",
+          "status",
+          "messages"
+        ]
+      },
+      "Message": {
+        "type": "object",
+        "description": "A held Message, with its body.",
+        "properties": {
+          "handle": {
+            "type": "integer"
+          },
+          "exchange": {
+            "type": "string"
+          },
+          "redelivered": {
+            "type": "boolean"
+          },
+          "deliveryCount": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "deliveryLimit": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "properties": {
+            "type": "object",
+            "description": "Every AMQP property that is set, except headers."
+          }
+        },
+        "required": [
+          "handle"
+        ]
+      },
+      "MessageComparison": {
+        "type": "object",
+        "properties": {
+          "left": {
+            "$ref": "#/components/schemas/Message"
+          },
+          "right": {
+            "$ref": "#/components/schemas/Message"
+          },
+          "diff": {
+            "type": "object",
+            "description": "What differs."
+          }
+        },
+        "required": [
+          "left",
+          "right",
+          "diff"
+        ]
+      },
+      "FilterClause": {
+        "type": "object",
+        "description": "One clause; all of a filter's clauses must match.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`routing-key`, `header`, and the other kinds of clause."
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "Decision": {
+        "description": "What to do with a Message.",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "keep"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "discard"
+              },
+              "reason": {
+                "type": "string",
+                "description": "It goes into the Audit Entry."
+              }
+            },
+            "required": [
+              "kind",
+              "reason"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "replay"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "move"
+              },
+              "destination": {
+                "type": "object",
+                "description": "A queue or an exchange."
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ]
+          }
+        ]
+      },
+      "Approval": {
+        "type": "object",
+        "description": "A Checkout waiting for Approval.",
+        "properties": {
+          "checkoutId": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "vhost": {
+            "type": "string"
+          },
+          "queue": {
+            "type": "string"
+          },
+          "decisionSummaryText": {
+            "type": "string"
+          },
+          "rate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "canary": {
+            "description": "The Canary the approved Apply starts with, or null."
+          }
+        },
+        "required": [
+          "profile",
+          "queue"
+        ]
+      },
+      "AuditEntry": {
+        "type": "object",
+        "description": "An Audit Entry. Properties and headers are in lossless AMQP JSON.",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "at": {
+            "type": "string"
+          },
+          "operatorId": {
+            "type": "string"
+          },
+          "operatorName": {
+            "type": "string"
+          },
+          "role": {
+            "description": "The Operator's Role when they acted; null on entries written before v0.3."
+          },
+          "approverId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "approverName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "brokerUser": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "vhost": {
+            "type": "string"
+          },
+          "queue": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "enum": [
+              "discard",
+              "replay",
+              "move",
+              "restore",
+              "export",
+              "rule_pause",
+              "rule_resume"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checkoutId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replayId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "outcomeReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "action",
+          "outcome"
+        ]
+      },
+      "AuditStoreUsage": {
+        "type": "object",
+        "properties": {
+          "storedBodyBytes": {
+            "type": "integer"
+          },
+          "maxBodyBytes": {
+            "type": "integer"
+          },
+          "maxAgeDays": {
+            "type": "number"
+          },
+          "nearLimit": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "storedBodyBytes",
+          "maxBodyBytes",
+          "maxAgeDays",
+          "nearLimit"
+        ]
+      }
+    }
+  }
+}

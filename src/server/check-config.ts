@@ -1,13 +1,12 @@
 // `check-config`: tries the configuration as startup would and reports, for CI.
-// Exit status: 0, it would start; 1, startup would refuse it; 2, it would start,
-// but 1.0 will refuse keys in the file. Findings name keys and variables, never
-// their values.
+// Exit status: 0, it would start; 1, startup would refuse it. Findings name keys
+// and variables, never their values.
 import { ConfigError } from './config-error.js';
 import { NO_VERSION_WARNING } from './profiles.js';
 import { readStartupConfig, type StartupSettings } from './startup-config.js';
 
 export interface CheckConfigResult {
-  exitCode: 0 | 1 | 2;
+  exitCode: 0 | 1;
   lines: string[];
 }
 
@@ -25,12 +24,5 @@ export async function checkConfig(settings: StartupSettings): Promise<CheckConfi
       warnings.push(`Broker Profile "${p.name}": ${p.credentials.passwordEnv} is not set; using this profile reports password_not_set`);
     }
   }
-  const lines = [
-    ...file.unknownKeys.map((key) => `refused in 1.0: ${key} is not a known key; this release ignores it`),
-    ...warnings.map((warning) => `warning: ${warning}`),
-  ];
-  if (file.unknownKeys.length > 0) {
-    return { exitCode: 2, lines: [...lines, `FAILED: ${file.unknownKeys.length} unknown key(s) that 1.0 will refuse`] };
-  }
-  return { exitCode: 0, lines: [...lines, 'OK'] };
+  return { exitCode: 0, lines: [...warnings.map((warning) => `warning: ${warning}`), 'OK'] };
 }

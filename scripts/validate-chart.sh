@@ -13,12 +13,12 @@
 #
 #   scripts/validate-chart.sh            # needs helm, kubectl and kubeconform on PATH
 #   KUBECONFORM=/opt/bin/kubeconform scripts/validate-chart.sh
-#   KUBERNETES_VERSION=1.32.0 scripts/validate-chart.sh
+#   KUBERNETES_VERSIONS="1.32.0" scripts/validate-chart.sh   # by default the oldest and newest the smoke test runs
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 kubeconform="${KUBECONFORM:-kubeconform}"
-kubernetes_version="${KUBERNETES_VERSION:-1.33.0}"
+kubernetes_versions="${KUBERNETES_VERSIONS:-1.33.12 1.37.0}"
 crds_catalog='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
 validate() {
@@ -29,12 +29,15 @@ validate() {
     "$@"
 }
 
-for fixture in "$root"/test/chart/fixtures/*.yaml; do
-  echo "== $(basename "$fixture")"
-  helm template volveran "$root/charts/volveran" --namespace volveran -f "$fixture" | validate -
-done
+for kubernetes_version in $kubernetes_versions; do
+  echo "==== Kubernetes $kubernetes_version"
+  for fixture in "$root"/test/chart/fixtures/*.yaml; do
+    echo "== $(basename "$fixture")"
+    helm template volveran "$root/charts/volveran" --namespace volveran -f "$fixture" | validate -
+  done
 
-echo "== examples/flux/app (kustomize build)"
-kubectl kustomize "$root/examples/flux/app" | validate -
-echo "== examples/flux/cluster"
-validate "$root/examples/flux/cluster"
+  echo "== examples/flux/app (kustomize build)"
+  kubectl kustomize "$root/examples/flux/app" | validate -
+  echo "== examples/flux/cluster"
+  validate "$root/examples/flux/cluster"
+done

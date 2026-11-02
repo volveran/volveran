@@ -13,6 +13,7 @@
 // its own Audit Entry (action `restore`, `restoreOf` the Discard, and the
 // replay id it published with), `pending` before the publish. A Discard whose body retention evicted cannot be
 // Restored.
+import { INTERRUPTED_REASON } from '../replicas/owner-gone.js';
 import { randomUUID } from 'node:crypto';
 import type * as amqp from 'amqplib';
 import { openAmqpConnection } from '../amqp-connection.js';
@@ -34,6 +35,7 @@ export type RestoreErrorCode =
   | 'outcome_uncertain'
   | 'discard_in_progress'
   | 'already_restored'
+  | 'restore_interrupted'
   | 'restore_in_progress'
   | 'profile_not_found'
   | 'queue_not_found';
@@ -46,6 +48,7 @@ const STATUS: Record<RestoreErrorCode, number> = {
   outcome_uncertain: 409,
   discard_in_progress: 409,
   already_restored: 409,
+  restore_interrupted: 409,
   restore_in_progress: 409,
   profile_not_found: 422,
   queue_not_found: 422,
@@ -78,8 +81,8 @@ export class RestoreService {
 
   constructor(
     private readonly audit: AuditStore,
-    /** Whether Checkout `id` is still active or Applying in this process. */
-    private readonly checkoutRunning: (id: string) => boolean,
+    /** Whether Checkout `id` is still active or Applying, on this Replica or another. */
+    private readonly checkoutRunning: (id: string) => boolean | Promise<boolean>,
   ) {}
 
   /**
@@ -123,7 +126,7 @@ export class RestoreService {
     // `pending` is also the normal state of a step being carried out right now:
     // only once its Checkout is gone (ended, lost, or Volverán restarted) can
     // it no longer finish on its own.
-    if (discard.outcome === 'pending' && discard.checkoutId !== null && this.checkoutRunning(discard.checkoutId)) {
+    if (discard.outcome === 'pending' && discard.checkoutId !== null && (await this.checkoutRunning(discard.checkoutId))) {
       throw new RestoreError(
         'discard_in_progress',
         `The Discard of Audit Entry ${id} is still being carried out by Checkout ${discard.checkoutId}. Wait for its Apply to finish; its outcome will then be known.`,
@@ -138,15 +141,12 @@ export class RestoreService {
     if (this.running.has(id)) throw new RestoreError('restore_in_progress', `Audit Entry ${id} is being Restored.`);
 
     // Claimed before the store is asked about earlier Restores, so a second request for the same entry is refused.
+    // This only chooses this Replica's answer: what stops a second publish is the store's claim below.
     this.running.add(id);
     try {
       const earlier = (await this.audit.list({ restoreOf: id })).find((e) => e.outcome !== 'failed');
-      if (earlier) {
-        throw new RestoreError(
-          'already_restored',
-          `The Message of Audit Entry ${id} was already Restored to "${earlier.destination?.queue}" (Audit Entry ${earlier.id}).`,
-        );
-      }
+      // Looked at again by the claim; here so that this answer still comes before queue_not_found.
+      if (earlier) throw await this.refusalOver(id, earlier);
       if (!profileHasVhost(profile, discard.vhost) || !(await management.getQueue(discard.vhost, queue))) {
         throw new RestoreError(
           'queue_not_found',
@@ -162,7 +162,7 @@ export class RestoreService {
       // The Operator's own token on a profile with `credentials: operatorToken`.
       const credentials = target.credentials();
       const replayId = randomUUID();
-      const entryId = await this.audit.record({
+      const claim = await this.audit.claimRestore({
         at: new Date(),
         operator,
         role,
@@ -179,6 +179,8 @@ export class RestoreService {
         replayId,
         message: null,
       });
+      if (!claim.claimed) throw await this.refusalOver(id, claim.earlier);
+      const entryId = claim.id;
       const options = republishOptions(
         { ...message.properties, headers: message.headers },
         { replayId, from: discard.queue },
@@ -199,6 +201,31 @@ export class RestoreService {
       this.running.delete(id);
     }
   }
+
+  /** Why an earlier Restore stops this one. One a crash left `pending` is settled here: all that is known is that it may have happened. */
+  private async refusalOver(id: number, earlier: AuditEntry): Promise<RestoreError> {
+    const interrupted = earlier.outcome === 'pending' && Date.now() - earlier.at.getTime() > RESTORE_FINISHES_WITHIN_MS;
+    if (interrupted) await this.audit.setOutcome(earlier.id, 'uncertain', INTERRUPTED_REASON);
+    if (!interrupted && earlier.outcome !== 'uncertain') return alreadyRestored(id, earlier);
+    return new RestoreError(
+      'restore_interrupted',
+      `An earlier Restore of the Message of Audit Entry ${id} (Audit Entry ${earlier.id}) stopped before its outcome was known, so the Message may or may not have reached "${earlier.destination?.queue}". Look in that queue. It is not Restored again, as that could duplicate the Message.`,
+    );
+  }
+}
+
+/**
+ * A Restore `pending` for longer than this has stopped: its Replica crashed before writing the
+ * outcome. Nothing else names who is carrying a Restore out, since it has no Checkout. One
+ * merely slow that finishes later still writes its outcome, which is then the truth.
+ */
+const RESTORE_FINISHES_WITHIN_MS = 2 * 60_000;
+
+function alreadyRestored(id: number, earlier: AuditEntry): RestoreError {
+  return new RestoreError(
+    'already_restored',
+    `The Message of Audit Entry ${id} was already Restored to "${earlier.destination?.queue}" (Audit Entry ${earlier.id}).`,
+  );
 }
 
 /**

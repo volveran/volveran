@@ -50,6 +50,43 @@ describe("The Operator's token", () => {
     token.stop();
   });
 
+  describe('read back from a shared store after it expired', () => {
+    it('refreshes at once, and is valid again', async () => {
+      const refresh = vi.fn(async () => grant(3600, 1));
+      const token = new OperatorToken(grant(-10), { refresh, refreshPastExpiry: true });
+      expect(token.valid()).toBeNull();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refresh).toHaveBeenCalledWith('refresh-0');
+      expect(token.valid()).not.toBeNull();
+      token.stop();
+    });
+
+    it('keeps trying while the provider cannot be reached', async () => {
+      const refresh = vi.fn<() => Promise<TokenGrant>>().mockRejectedValueOnce(new Error('unreachable')).mockImplementation(async () => grant(3600, 1));
+      const token = new OperatorToken(grant(-10), { refresh, refreshPastExpiry: true });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(token.valid()).not.toBeNull();
+      token.stop();
+    });
+
+    it('does not refresh past the end of the session', async () => {
+      const refresh = vi.fn(async () => grant(3600, 1));
+      const token = new OperatorToken(grant(-10), { refresh, refreshPastExpiry: true, until: t0 - 1 });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(refresh).not.toHaveBeenCalled();
+      token.stop();
+    });
+
+    it('otherwise stays expired', async () => {
+      const refresh = vi.fn(async () => grant(3600, 1));
+      const token = new OperatorToken(grant(-10), { refresh });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(refresh).not.toHaveBeenCalled();
+      token.stop();
+    });
+  });
+
   it('refreshes halfway through a token that lasts less than two minutes', async () => {
     const refresh = vi.fn(async () => grant(10, 1));
     const token = new OperatorToken(grant(10), { refresh });

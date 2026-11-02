@@ -1,0 +1,554 @@
+{
+  "metrics": {
+    "nodejs_eventloop_lag_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_external_memory_bytes": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_heap_size_total_bytes": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_heap_size_used_bytes": {
+      "type": "gauge",
+      "labels": []
+    },
+    "process_cpu_system_seconds_total": {
+      "type": "counter",
+      "labels": []
+    },
+    "process_cpu_user_seconds_total": {
+      "type": "counter",
+      "labels": []
+    },
+    "process_resident_memory_bytes": {
+      "type": "gauge",
+      "labels": []
+    },
+    "process_start_time_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "volveran_alert_notifications_total": {
+      "type": "counter",
+      "labels": [
+        "destination",
+        "outcome"
+      ]
+    },
+    "volveran_alerts_firing": {
+      "type": "gauge",
+      "labels": [
+        "profile",
+        "rule"
+      ]
+    },
+    "volveran_apply_messages_total": {
+      "type": "counter",
+      "labels": [
+        "decision",
+        "outcome",
+        "profile"
+      ]
+    },
+    "volveran_approvals_waiting": {
+      "type": "gauge",
+      "labels": []
+    },
+    "volveran_audit_store_body_bytes": {
+      "type": "gauge",
+      "labels": []
+    },
+    "volveran_audit_store_errors_total": {
+      "type": "counter",
+      "labels": []
+    },
+    "volveran_background_leader": {
+      "type": "gauge",
+      "labels": []
+    },
+    "volveran_checkouts_active": {
+      "type": "gauge",
+      "labels": []
+    },
+    "volveran_dead_letter_queue_estimated_arrived_messages_total": {
+      "type": "counter",
+      "labels": [
+        "profile",
+        "queue",
+        "vhost"
+      ]
+    },
+    "volveran_dead_letter_queue_messages": {
+      "type": "gauge",
+      "labels": [
+        "profile",
+        "queue",
+        "vhost"
+      ]
+    },
+    "volveran_dead_letter_queue_setup_warnings": {
+      "type": "gauge",
+      "labels": [
+        "code",
+        "profile",
+        "queue",
+        "severity",
+        "vhost"
+      ]
+    },
+    "volveran_forwarding_failures_total": {
+      "type": "counter",
+      "labels": [
+        "reason"
+      ]
+    },
+    "volveran_replay_rule_passes_total": {
+      "type": "counter",
+      "labels": [
+        "profile",
+        "result",
+        "rule"
+      ]
+    },
+    "volveran_replay_rule_paused": {
+      "type": "gauge",
+      "labels": [
+        "profile",
+        "reason",
+        "rule"
+      ]
+    },
+    "volveran_sampling_last_success_timestamp_seconds": {
+      "type": "gauge",
+      "labels": [
+        "profile"
+      ]
+    },
+    "volveran_sampling_up": {
+      "type": "gauge",
+      "labels": [
+        "profile"
+      ]
+    }
+  },
+  "environmentVariables": {
+    "server": [
+      "VOLVERAN_AUTH",
+      "VOLVERAN_BODY_RETENTION_DAYS",
+      "VOLVERAN_BODY_RETENTION_INTERVAL_MINUTES",
+      "VOLVERAN_BODY_RETENTION_MAX_BYTES",
+      "VOLVERAN_CHECKOUT_HEARTBEAT_SECONDS",
+      "VOLVERAN_CHECKOUT_MAX_MB",
+      "VOLVERAN_CHECKOUT_MAX_MESSAGES",
+      "VOLVERAN_CHECKOUT_TIME_LIMIT_MINUTES",
+      "VOLVERAN_DATA_DIR",
+      "VOLVERAN_FORWARDING_ADDRESS",
+      "VOLVERAN_FORWARDING_PORT",
+      "VOLVERAN_FORWARDING_SECRET",
+      "VOLVERAN_HISTORY_INTERVAL_SECONDS",
+      "VOLVERAN_HISTORY_RETENTION_DAYS",
+      "VOLVERAN_HOST",
+      "VOLVERAN_METRICS_PORT",
+      "VOLVERAN_OIDC_CLIENT_ID",
+      "VOLVERAN_OIDC_CLIENT_SECRET",
+      "VOLVERAN_OIDC_GROUPS_CLAIM",
+      "VOLVERAN_OIDC_ISSUER",
+      "VOLVERAN_OIDC_REDIRECT_URL",
+      "VOLVERAN_OIDC_SCOPES",
+      "VOLVERAN_OPERATOR",
+      "VOLVERAN_PORT",
+      "VOLVERAN_POSTGRES_CA_FILE",
+      "VOLVERAN_POSTGRES_REQUIRE_TLS",
+      "VOLVERAN_POSTGRES_URL",
+      "VOLVERAN_PROFILES_FILE",
+      "VOLVERAN_PUBLIC_URL",
+      "VOLVERAN_SESSION_ENCRYPTION_KEY",
+      "VOLVERAN_SESSION_IDLE_MINUTES",
+      "VOLVERAN_SESSION_SECRET",
+      "VOLVERAN_WEB_ROOT"
+    ],
+    "setByTheChartForItself": [
+      "VOLVERAN_POD_IP"
+    ]
+  },
+  "chartValues": [
+    "alerts.existingSecret",
+    "brokerProfiles.alertDestinations",
+    "brokerProfiles.alertDestinations[].name",
+    "brokerProfiles.alertDestinations[].signingSecretEnv",
+    "brokerProfiles.alertDestinations[].type",
+    "brokerProfiles.alertDestinations[].urlEnv",
+    "brokerProfiles.existingConfigMap",
+    "brokerProfiles.passwordsSecret",
+    "brokerProfiles.profiles",
+    "brokerProfiles.profiles[].alerts[].destinations",
+    "brokerProfiles.profiles[].alerts[].for",
+    "brokerProfiles.profiles[].alerts[].name",
+    "brokerProfiles.profiles[].alerts[].repeatEvery",
+    "brokerProfiles.profiles[].alerts[].when.anyArrival",
+    "brokerProfiles.profiles[].alerts[].when.arrivalsAbove.count",
+    "brokerProfiles.profiles[].alerts[].when.arrivalsAbove.within",
+    "brokerProfiles.profiles[].alerts[].when.depthAbove",
+    "brokerProfiles.profiles[].alerts[].when.queue",
+    "brokerProfiles.profiles[].alerts[].when.queuePattern",
+    "brokerProfiles.profiles[].alerts[].when.replayRulePaused",
+    "brokerProfiles.profiles[].alerts[].when.rule",
+    "brokerProfiles.profiles[].alerts[].when.samplingFailing.for",
+    "brokerProfiles.profiles[].alerts[].when.setupWarning",
+    "brokerProfiles.profiles[].alerts[].when.vhost",
+    "brokerProfiles.profiles[].amqpUrl",
+    "brokerProfiles.profiles[].caFile",
+    "brokerProfiles.profiles[].canary.requiredAbove",
+    "brokerProfiles.profiles[].canary.watchWindow",
+    "brokerProfiles.profiles[].credentials",
+    "brokerProfiles.profiles[].defaultQueueFilter",
+    "brokerProfiles.profiles[].managementUrl",
+    "brokerProfiles.profiles[].name",
+    "brokerProfiles.profiles[].passwordEnv",
+    "brokerProfiles.profiles[].protected",
+    "brokerProfiles.profiles[].replayRate.default",
+    "brokerProfiles.profiles[].replayRate.max",
+    "brokerProfiles.profiles[].replayRules[].backoff.initial",
+    "brokerProfiles.profiles[].replayRules[].backoff.max",
+    "brokerProfiles.profiles[].replayRules[].backoff.multiplier",
+    "brokerProfiles.profiles[].replayRules[].every",
+    "brokerProfiles.profiles[].replayRules[].filter",
+    "brokerProfiles.profiles[].replayRules[].maxAttempts",
+    "brokerProfiles.profiles[].replayRules[].maxPerPass",
+    "brokerProfiles.profiles[].replayRules[].name",
+    "brokerProfiles.profiles[].replayRules[].queue",
+    "brokerProfiles.profiles[].replayRules[].rate",
+    "brokerProfiles.profiles[].replayRules[].startPaused",
+    "brokerProfiles.profiles[].replayRules[].stopWhen.diedAgain",
+    "brokerProfiles.profiles[].replayRules[].stopWhen.within",
+    "brokerProfiles.profiles[].replayRules[].vhost",
+    "brokerProfiles.profiles[].replayRules[].whenAttemptsUsedUp.moveTo.queue",
+    "brokerProfiles.profiles[].requireApproval",
+    "brokerProfiles.profiles[].roles.admin",
+    "brokerProfiles.profiles[].roles.operator",
+    "brokerProfiles.profiles[].roles.viewer",
+    "brokerProfiles.profiles[].tokenUsernameClaim",
+    "brokerProfiles.profiles[].username",
+    "brokerProfiles.profiles[].vhosts",
+    "caBundles.bundles",
+    "caBundles.bundles[].configMap",
+    "caBundles.bundles[].name",
+    "caBundles.bundles[].secret",
+    "caBundles.oidcTrust.bundle",
+    "caBundles.oidcTrust.key",
+    "extraEnv",
+    "extraEnv[].name",
+    "extraEnv[].value",
+    "extraEnv[].valueFrom",
+    "forwarding.existingSecret",
+    "forwarding.port",
+    "forwarding.secretKey",
+    "global",
+    "httpRoute.annotations",
+    "httpRoute.enabled",
+    "httpRoute.hostnames",
+    "httpRoute.parentRefs",
+    "httpRoute.parentRefs[].group",
+    "httpRoute.parentRefs[].kind",
+    "httpRoute.parentRefs[].name",
+    "httpRoute.parentRefs[].namespace",
+    "httpRoute.parentRefs[].port",
+    "httpRoute.parentRefs[].sectionName",
+    "image.digest",
+    "image.pullPolicy",
+    "image.pullSecrets",
+    "image.repository",
+    "image.tag",
+    "ingress.annotations",
+    "ingress.className",
+    "ingress.enabled",
+    "ingress.hosts",
+    "ingress.tls",
+    "ingress.tls[].hosts",
+    "ingress.tls[].secretName",
+    "metrics.enabled",
+    "metrics.port",
+    "metrics.serviceMonitor.enabled",
+    "metrics.serviceMonitor.interval",
+    "metrics.serviceMonitor.labels",
+    "metrics.serviceMonitor.scrapeTimeout",
+    "networkPolicy.dnsTo[].ipBlock",
+    "networkPolicy.dnsTo[].namespaceSelector",
+    "networkPolicy.dnsTo[].namespaceSelector.matchLabels.kubernetes.io/metadata.name",
+    "networkPolicy.dnsTo[].podSelector",
+    "networkPolicy.dnsTo[].podSelector.matchLabels.k8s-app",
+    "networkPolicy.egress",
+    "networkPolicy.egress[].ports[].endPort",
+    "networkPolicy.egress[].ports[].port",
+    "networkPolicy.egress[].ports[].protocol",
+    "networkPolicy.egress[].to[].ipBlock",
+    "networkPolicy.egress[].to[].namespaceSelector",
+    "networkPolicy.egress[].to[].podSelector",
+    "networkPolicy.enabled",
+    "networkPolicy.ingressFrom",
+    "networkPolicy.ingressFrom[].ipBlock",
+    "networkPolicy.ingressFrom[].namespaceSelector",
+    "networkPolicy.ingressFrom[].podSelector",
+    "networkPolicy.metricsFrom",
+    "networkPolicy.metricsFrom[].ipBlock",
+    "networkPolicy.metricsFrom[].namespaceSelector",
+    "networkPolicy.metricsFrom[].podSelector",
+    "oidc.clientId",
+    "oidc.clientSecretKey",
+    "oidc.existingSecret",
+    "oidc.groupsClaim",
+    "oidc.issuer",
+    "oidc.redirectUrl",
+    "oidc.scopes",
+    "oidc.sessionEncryptionKeyKey",
+    "oidc.sessionSecretKey",
+    "persistence.accessMode",
+    "persistence.enabled",
+    "persistence.existingClaim",
+    "persistence.size",
+    "persistence.storageClass",
+    "pod.affinity",
+    "pod.annotations",
+    "pod.automountServiceAccountToken",
+    "pod.labels",
+    "pod.nodeSelector",
+    "pod.priorityClassName",
+    "pod.resources",
+    "pod.resources.limits.cpu",
+    "pod.resources.limits.memory",
+    "pod.resources.requests.cpu",
+    "pod.resources.requests.memory",
+    "pod.terminationGracePeriodSeconds",
+    "pod.tolerations",
+    "pod.topologySpreadConstraints",
+    "postgres.ca.bundle",
+    "postgres.ca.key",
+    "postgres.existingSecret",
+    "postgres.requireTls",
+    "postgres.urlKey",
+    "replicaCount",
+    "service.port",
+    "settings.bodyRetentionDays",
+    "settings.bodyRetentionIntervalMinutes",
+    "settings.bodyRetentionMaxBytes",
+    "settings.checkoutHeartbeatSeconds",
+    "settings.checkoutMaxMb",
+    "settings.checkoutMaxMessages",
+    "settings.checkoutTimeLimitMinutes",
+    "settings.historyIntervalSeconds",
+    "settings.historyRetentionDays"
+  ],
+  "httpApi": [
+    "DELETE /api/v1/checkouts/{id}",
+    "DELETE /api/v1/checkouts/{id}/approval-request",
+    "GET /api/v1/alerts",
+    "GET /api/v1/approvals",
+    "GET /api/v1/approvals/{checkoutId}",
+    "GET /api/v1/approvals/{checkoutId}/compare",
+    "GET /api/v1/approvals/{checkoutId}/messages/{handle}",
+    "GET /api/v1/audit-entries",
+    "GET /api/v1/audit-entries/{id}",
+    "GET /api/v1/audit-store",
+    "GET /api/v1/checkouts/{id}",
+    "GET /api/v1/checkouts/{id}/compare",
+    "GET /api/v1/checkouts/{id}/messages/{handle}",
+    "GET /api/v1/profiles",
+    "GET /api/v1/profiles/{profile}/alert-rules",
+    "GET /api/v1/profiles/{profile}/replay-rules",
+    "GET /api/v1/profiles/{profile}/vhosts",
+    "GET /api/v1/profiles/{profile}/vhosts/{vhost}/dead-letter-map",
+    "GET /api/v1/profiles/{profile}/vhosts/{vhost}/move-destinations",
+    "GET /api/v1/profiles/{profile}/vhosts/{vhost}/queues",
+    "GET /api/v1/profiles/{profile}/vhosts/{vhost}/queues/{queue}/history",
+    "GET /api/v1/session",
+    "POST /api/v1/alert-destinations/{name}/test",
+    "POST /api/v1/approvals/{checkoutId}/apply/continue",
+    "POST /api/v1/approvals/{checkoutId}/apply/stop",
+    "POST /api/v1/approvals/{checkoutId}/approve",
+    "POST /api/v1/approvals/{checkoutId}/reject",
+    "POST /api/v1/audit-entries/{id}/restore",
+    "POST /api/v1/checkouts/{id}/apply",
+    "POST /api/v1/checkouts/{id}/apply/continue",
+    "POST /api/v1/checkouts/{id}/apply/stop",
+    "POST /api/v1/checkouts/{id}/approval-request",
+    "POST /api/v1/checkouts/{id}/decisions",
+    "POST /api/v1/checkouts/{id}/end",
+    "POST /api/v1/checkouts/{id}/export",
+    "POST /api/v1/checkouts/{id}/heartbeat",
+    "POST /api/v1/checkouts/{id}/matching",
+    "POST /api/v1/profiles/{profile}/replay-rules/{name}/pause",
+    "POST /api/v1/profiles/{profile}/replay-rules/{name}/resume",
+    "POST /api/v1/profiles/{profile}/replay-rules/{name}/run",
+    "POST /api/v1/profiles/{profile}/vhosts/{vhost}/queues/{queue}/checkouts"
+  ],
+  "profilesFile": [
+    "alertDestinations[].name",
+    "alertDestinations[].signingSecretEnv",
+    "alertDestinations[].type",
+    "alertDestinations[].urlEnv",
+    "profiles[].alerts[].destinations",
+    "profiles[].alerts[].for",
+    "profiles[].alerts[].name",
+    "profiles[].alerts[].repeatEvery",
+    "profiles[].alerts[].when",
+    "profiles[].alerts[].when.anyArrival",
+    "profiles[].alerts[].when.arrivalsAbove.count",
+    "profiles[].alerts[].when.arrivalsAbove.within",
+    "profiles[].alerts[].when.depthAbove",
+    "profiles[].alerts[].when.queue",
+    "profiles[].alerts[].when.queuePattern",
+    "profiles[].alerts[].when.replayRulePaused",
+    "profiles[].alerts[].when.rule",
+    "profiles[].alerts[].when.samplingFailing.for",
+    "profiles[].alerts[].when.setupWarning",
+    "profiles[].alerts[].when.vhost",
+    "profiles[].amqpUrl",
+    "profiles[].caFile",
+    "profiles[].canary.requiredAbove",
+    "profiles[].canary.watchWindow",
+    "profiles[].credentials",
+    "profiles[].defaultQueueFilter",
+    "profiles[].managementUrl",
+    "profiles[].name",
+    "profiles[].passwordEnv",
+    "profiles[].protected",
+    "profiles[].replayRate.default",
+    "profiles[].replayRate.max",
+    "profiles[].replayRules[].backoff.initial",
+    "profiles[].replayRules[].backoff.max",
+    "profiles[].replayRules[].backoff.multiplier",
+    "profiles[].replayRules[].every",
+    "profiles[].replayRules[].filter.kind",
+    "profiles[].replayRules[].filter.name",
+    "profiles[].replayRules[].filter.path",
+    "profiles[].replayRules[].filter.value",
+    "profiles[].replayRules[].filter[].kind",
+    "profiles[].replayRules[].filter[].name",
+    "profiles[].replayRules[].filter[].path",
+    "profiles[].replayRules[].filter[].value",
+    "profiles[].replayRules[].maxAttempts",
+    "profiles[].replayRules[].maxPerPass",
+    "profiles[].replayRules[].name",
+    "profiles[].replayRules[].queue",
+    "profiles[].replayRules[].rate",
+    "profiles[].replayRules[].startPaused",
+    "profiles[].replayRules[].stopWhen.diedAgain",
+    "profiles[].replayRules[].stopWhen.within",
+    "profiles[].replayRules[].vhost",
+    "profiles[].replayRules[].whenAttemptsUsedUp.moveTo.queue",
+    "profiles[].requireApproval",
+    "profiles[].roles.admin",
+    "profiles[].roles.operator",
+    "profiles[].roles.viewer",
+    "profiles[].tokenUsernameClaim",
+    "profiles[].username",
+    "profiles[].vhosts",
+    "version"
+  ],
+  "webhook": {
+    "version": 1,
+    "bodyFields": [
+      "alertId",
+      "condition",
+      "endedAt",
+      "profile",
+      "queue",
+      "reason",
+      "replayRule",
+      "rule",
+      "startedAt",
+      "status",
+      "test",
+      "threshold",
+      "url",
+      "value",
+      "version",
+      "vhost"
+    ],
+    "signatureHeaders": [
+      "x-volveran-signature",
+      "x-volveran-timestamp"
+    ]
+  },
+  "xVolveranHeaders": {
+    "messageHeaders": [
+      "x-volveran-from",
+      "x-volveran-replay-id"
+    ],
+    "webhookRequestHeaders": [
+      "x-volveran-signature",
+      "x-volveran-timestamp"
+    ],
+    "httpApiHeaders": [
+      "x-volveran-background",
+      "x-volveran-message-count"
+    ],
+    "internalBetweenReplicas": [
+      "x-volveran-forwarded-operator",
+      "x-volveran-forwarded-session",
+      "x-volveran-forwarding-protocol",
+      "x-volveran-forwarding-refused"
+    ]
+  },
+  "ndjsonExport": {
+    "version": 1,
+    "fields": [
+      "body",
+      "bodyKind",
+      "decision.destination.exchange",
+      "decision.destination.queue",
+      "decision.destination.routingKey",
+      "decision.kind",
+      "decision.reason",
+      "deliveryBudget.remaining",
+      "deliveryBudget.warning",
+      "diedAgain.replayId",
+      "exchange",
+      "failureDetails.consumerType",
+      "failureDetails.exceptionType",
+      "failureDetails.extra",
+      "failureDetails.failedAt",
+      "failureDetails.framework",
+      "failureDetails.host.*",
+      "failureDetails.inputQueue",
+      "failureDetails.message",
+      "failureDetails.messageType",
+      "failureDetails.originalExchange",
+      "failureDetails.originalRoutingKey",
+      "failureDetails.reason",
+      "failureDetails.redeliveryCount",
+      "failureDetails.retryCount",
+      "failureDetails.stackTrace",
+      "headers.*.$bigint",
+      "headers.*.$bytes",
+      "headers.*.$table",
+      "messageId",
+      "position",
+      "properties",
+      "routingKey",
+      "v",
+      "xDeath[].count",
+      "xDeath[].exchange",
+      "xDeath[].originalExpiration",
+      "xDeath[].queue",
+      "xDeath[].reason",
+      "xDeath[].routingKeys[]",
+      "xDeath[].time"
+    ],
+    "fileName": "volveran-profile-queue-20260102T030405Z.ndjson"
+  },
+  "auditSchemaBaseline": {
+    "sqlite": {
+      "version": 18,
+      "sha256": "03b9f10f97e2eae5829232433af23a5818910cd4ff67abdd76df2a43ac8b738c"
+    },
+    "postgres": {
+      "version": 9,
+      "sha256": "6d1bdb4df4695287beda53daa691bd5b21600e462bd12042aee00710d8927a14"
+    }
+  }
+}

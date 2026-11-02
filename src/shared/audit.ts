@@ -17,7 +17,8 @@ export type AuditAction = (typeof AUDIT_ACTIONS)[number];
  * pending: written before the broker was touched, never updated (the process
  * stopped mid-action: the Message may still be in the queue too). done /
  * failed: carried out / not carried out. uncertain: the broker may or may not
- * have carried it out (the connection dropped before it confirmed the ack).
+ * have carried it out (the connection dropped before it confirmed the ack, or
+ * its Replica went away while it was `pending`).
  * An export is pending while its download is written, done once every line
  * is, failed when the download stopped part way.
  */

@@ -18,6 +18,10 @@
 //    with no Approval or confirmation; the Apply ends the Checkout, which
 //    Keeps every other Message in order. With nothing to do it just ends the Checkout.
 //
+// A pause reaches a pass in progress through its `PassStop` (rules.ts): before the Apply it ends
+// the Checkout with nothing done, and during the Apply it stops it at the next step, as an
+// Operator's stop does. What was not attempted goes back to the queue and counts as not due.
+//
 // The result is the pass's counts, and what the automatic stop looks at: the
 // Audit Entries its Died Again Messages last came from, and how its publishes
 // failed. The caller keeps the counts and decides on the stop (rules.ts).
@@ -51,11 +55,20 @@ export function ruleOperator(profile: string, rule: string): Operator {
   return { id: ruleOperatorId(profile, rule), displayName: ruleDisplayName(rule) };
 }
 
+/** A pass in progress, for a pause to stop. Nothing awaits between reading it and starting the Apply. */
+export interface PassStop {
+  /** Who paused the rule, once a pause has reached the pass. */
+  stoppedBy: string | null;
+  /** Its Checkout, once its Apply is about to run. */
+  checkoutId: string | null;
+}
+
 export interface RulePassOptions {
   /** The time the back-off is measured against (default: when the pass starts). */
   now?: Date;
   /** When a pass of the rule first saw each message id (rule state), storing `now` for new ones; default none. */
   firstSeen?(messageIds: string[], now: Date): Promise<Map<string, Date>>;
+  stop?: PassStop;
 }
 
 /** What a pass saw that its automatic stop needs (not kept with the pass). */
@@ -87,6 +100,8 @@ export async function runRulePass(
   };
   const started = await checkouts.start(target, operator, { maxMessages: rule.maxPerPass * KEPT_FACTOR });
   const checkout = checkouts.checkout(started.id);
+  const stopped = () => (options.stop?.stoppedBy ? `Stopped: paused by ${options.stop.stoppedBy}.` : null);
+  let reason: string | null = null;
   const summary: RulePassSummary = { held: checkout.held.size, replayed: 0, moved: 0, usedUp: 0, notDue: 0, noMatch: 0, cannotReplay: 0, failed: 0 };
   const findings: RulePassFindings = {
     diedAgainEntryIds: [...checkout.diedAgain.values()].flatMap((d) => (d.last ? [d.last.auditEntryId] : [])),
@@ -120,12 +135,22 @@ export async function runRulePass(
     if (parking !== null && usedUp.length > 0) {
       summary.failed += stageDecisions(checkout, usedUp, { kind: 'move', destination: { queue: parking } }).length;
     }
-    if (checkout.decisions.size === 0) {
+    reason = checkout.decisions.size === 0 ? null : stopped();
+    if (reason !== null) {
+      summary.notDue += due.length - summary.cannotReplay;
+      await checkouts.end(checkout.id, 'applied');
+    } else if (checkout.decisions.size === 0) {
       await checkouts.end(checkout.id, 'applied');
     } else {
+      if (options.stop) options.stop.checkoutId = checkout.id;
       const ended = await checkouts.applyForRule(checkout.id, { rate: rule.rate, rule: { name: rule.name, passId: pass.id } });
       for (const o of ended.lastApply?.outcomes ?? []) {
         if (o.decision.kind !== 'replay' && o.decision.kind !== 'move') continue;
+        if (o.status === 'not-attempted' && stopped() !== null) {
+          reason = stopped();
+          if (o.decision.kind === 'replay') summary.notDue++;
+          continue;
+        }
         if (o.status === 'failed') findings.publishFailure = o.refused || findings.publishFailure === 'refused' ? 'refused' : 'failed';
         if (o.status !== 'done') summary.failed++;
         else if (o.decision.kind === 'replay') summary.replayed++;
@@ -136,5 +161,5 @@ export async function runRulePass(
     // Whatever went wrong, the held Messages go back to the queue.
     if (checkouts.isRunning(checkout.id)) await checkouts.end(checkout.id, 'applied').catch(() => {});
   }
-  return { pass: { ...pass, status: 'ran', summary, reason: null }, findings };
+  return { pass: { ...pass, status: 'ran', summary, reason }, findings };
 }

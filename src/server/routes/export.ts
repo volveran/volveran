@@ -19,8 +19,8 @@ import { parseFilter, type Filter } from '../triage/filters.js';
 import { checkoutAccess, type CheckoutRouteDeps } from './checkouts.js';
 
 export function registerExportRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
-  const { checkouts } = deps;
-  app.post<{ Params: { id: string }; Body: unknown }>('/api/checkouts/:id/export', async (req, reply) => {
+  const { checkouts, toOwner } = deps;
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/checkouts/:id/export', toOwner, async (req, reply) => {
     const { role } = checkoutAccess(deps, req, 'checkout');
     const body = req.body ?? {};
     if (!isRecord(body)) throw new InvalidRequestError('The request body must be a JSON object.');

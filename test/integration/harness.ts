@@ -14,6 +14,7 @@ import { repoRoot } from '../../scripts/test-broker-env.mjs';
 import type { BodyRetention } from '../../src/server/audit/body-retention.js';
 import type { SamplerControl, SamplerTestHooks, SamplingRun } from '../../src/server/history/sampler.js';
 import type { CheckoutTestHooks } from '../../src/server/checkout/manager.js';
+import type { LeaderControl, LeaderTestHooks } from '../../src/server/leader/background-leader.js';
 import type { RuleClock, RuleSchedulerControl } from '../../src/server/replay-rules/rule-clock.js';
 import type { RulePass, RulePassSummary } from '../../src/shared/replay-rules.js';
 import { startServer, type ServerOptions } from '../../src/server/server.js';
@@ -113,12 +114,24 @@ export interface StartAppOptions {
   wrapAuditStore?: ServerOptions['wrapAuditStore'];
   /** The queue sampler's clock and "sample now" (samplerHooks). */
   samplerTestHooks?: SamplerTestHooks;
+  /** The Background Leader's clock, timing and control (leaderHooks). */
+  leaderTestHooks?: LeaderTestHooks;
   /** The audit store's directory (kept by the caller); default in memory. */
   dataDir?: string;
   /** Overrides the body retention limits and interval (ms) from the environment. */
   bodyRetention?: Partial<BodyRetention>;
   /** Collects the app's log lines (parsed JSON) here; default no logging. */
   logs?: Array<Record<string, any>>;
+  /** The directory of the built web app; default API only. */
+  webRoot?: string;
+  /** Told of each route the app registers. */
+  onRouteRegistered?: ServerOptions['onRouteRegistered'];
+  /** How often a Replica renews its lease and how long that holds. */
+  replicaLeaseTiming?: ServerOptions['replicaLeaseTiming'];
+  /** The session idle timeout in ms (tests use seconds, not the minutes of VOLVERAN_SESSION_IDLE_MINUTES). */
+  sessionIdleMs?: ServerOptions['sessionIdleMs'];
+  /** How many sign-ins in progress the store keeps. */
+  maxSignInsInProgress?: ServerOptions['maxSignInsInProgress'];
 }
 
 /**
@@ -155,8 +168,14 @@ export async function startApp(options: StartAppOptions = {}): Promise<TestApp> 
       checkoutTestHooks: options.checkoutTestHooks,
       wrapAuditStore: options.wrapAuditStore,
       samplerTestHooks: options.samplerTestHooks,
+      leaderTestHooks: options.leaderTestHooks,
       dataDir: options.dataDir,
       bodyRetention: options.bodyRetention,
+      webRoot: options.webRoot,
+      onRouteRegistered: options.onRouteRegistered,
+      replicaLeaseTiming: options.replicaLeaseTiming,
+      sessionIdleMs: options.sessionIdleMs,
+      maxSignInsInProgress: options.maxSignInsInProgress,
       logger: options.logs && { stream: { write: (line: string) => void options.logs!.push(JSON.parse(line)) } },
     });
   } catch (err) {
@@ -339,12 +358,23 @@ export async function closableManagementProxy(): Promise<{ url: string; close():
   };
 }
 
+/**
+ * A port nothing listens on, for a server to take later or to stay dead. It comes from below the
+ * kernel's ephemeral range (Linux starts at 32768): a port from listen(0) is free to be handed
+ * to the next listen(0) as soon as it closes, and then the server that wanted it gets EADDRINUSE.
+ */
 export async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as net.AddressInfo;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
+  for (;;) {
+    const port = 20_000 + Math.floor(Math.random() * 12_768);
+    const server = net.createServer();
+    const free = await new Promise<boolean>((resolve) => {
+      server.once('error', () => resolve(false));
+      server.listen(port, '127.0.0.1', () => resolve(true));
+    });
+    if (!free) continue;
+    await new Promise((resolve) => server.close(resolve));
+    return port;
+  }
 }
 
 /**
@@ -480,5 +510,42 @@ export function samplerHooks(start = new Date()) {
     sampleNow: (): Promise<SamplingRun[]> => started().sampleNow(),
     latest: () => started().latest(),
     onRun: (listener: Parameters<SamplerControl['onRun']>[0]) => started().onRun(listener),
+  };
+}
+
+/**
+ * A test clock for the Background Leader and the jobs on it, and its control (`hooks`,
+ * for startApp's leaderTestHooks). The clock starts at `start` and moves only when told:
+ * `advance` moves it and fires the timers due by then. So a Replica with these hooks
+ * renews nothing until told, as a stalled process.
+ */
+export function leaderHooks(start = new Date()) {
+  let now = start.getTime();
+  let timers: Array<{ at: number; run: () => void }> = [];
+  let control: LeaderControl | undefined;
+  const clock: RuleClock = {
+    now: () => new Date(now),
+    setTimer(run, ms) {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return { cancel: () => void (timers = timers.filter((t) => t !== timer)) };
+    },
+  };
+  const started = (): LeaderControl => {
+    if (!control) throw new Error('No app has started with these hooks');
+    return control;
+  };
+  const hooks: LeaderTestHooks = { clock, leader: (c) => (control = c) };
+  return {
+    hooks,
+    now: () => new Date(now),
+    advance(ms: number) {
+      now += ms;
+      const due = timers.filter((t) => t.at <= now);
+      timers = timers.filter((t) => t.at > now);
+      for (const t of due) t.run();
+    },
+    isLeader: () => started().isLeader,
+    claimNow: () => started().claimNow(),
   };
 }

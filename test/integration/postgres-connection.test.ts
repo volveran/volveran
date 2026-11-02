@@ -35,6 +35,24 @@ describe('the connection to PostgreSQL', () => {
     expect(Date.now() - startedAt).toBeLessThan(2 * queryTimeoutMs);
   });
 
+  it('never asks a connection two things at once', async () => {
+    const warnings: string[] = [];
+    const listener = (warning: Error) => warnings.push(warning.message);
+    process.on('warning', listener);
+    try {
+      database = await createTestDatabase();
+      const opened = createPool(database.url);
+      pool = opened;
+      await Promise.all(Array.from({ length: 4 }, () => opened.query('SELECT 1')));
+      await transaction(opened, (client) => client.query('SELECT 1'));
+      // A warning is emitted on the next tick.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off('warning', listener);
+    }
+    expect(warnings.filter((message) => message.includes('already executing'))).toEqual([]);
+  });
+
   it('commits durably on every connection, whatever the database is set to', async () => {
     database = await createTestDatabase();
     await database.query(`ALTER DATABASE ${new URL(database.url).pathname.slice(1)} SET synchronous_commit = off`);

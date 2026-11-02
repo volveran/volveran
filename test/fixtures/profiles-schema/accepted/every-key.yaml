@@ -1,0 +1,91 @@
+# Every key of the profiles file, in every place it can go. The agreement test
+# adds an unknown key to each mapping here, and fails if the schema names a key
+# this file does not use.
+version: 1
+alertDestinations:
+  - name: slack
+    type: slack
+    urlEnv: DESTINATION_URL
+  - name: pager
+    type: webhook
+    urlEnv: DESTINATION_URL
+    signingSecretEnv: DESTINATION_SECRET
+profiles:
+  - name: shared
+    managementUrl: https://broker.example.com:15671/
+    amqpUrl: amqps://broker.example.com:5671
+    caFile: ca.pem
+    credentials: shared
+    username: volveran
+    passwordEnv: PASSWORD
+    vhosts: [/, orders]
+    defaultQueueFilter: "*.dlq"
+    protected: true
+    requireApproval: false
+    roles:
+      viewer: [readers]
+      operator: [triagers]
+      admin: [ops]
+    replayRate:
+      default: 5
+      max: 50
+    canary:
+      watchWindow: 1m
+      requiredAbove: 10
+    replayRules:
+      - name: one-clause
+        vhost: /
+        queue: orders.dlq
+        filter: { kind: routing-key, value: orders.* }
+        every: 5m
+        maxPerPass: 100
+        rate: 10
+        backoff: { initial: 1m, multiplier: 2, max: 1h30m }
+        maxAttempts: 5
+        whenAttemptsUsedUp: { moveTo: { queue: orders.parked } }
+        stopWhen: { diedAgain: 10, within: 15m }
+        startPaused: true
+      - name: every-clause
+        vhost: orders
+        queue: payments.dlq
+        filter:
+          - { kind: routing-key, value: a }
+          - { kind: header, name: b, value: c }
+          - { kind: x-death-reason, value: rejected }
+          - { kind: original-queue, value: d }
+          - { kind: body-text, value: e }
+          - { kind: json-path, path: $.f, value: g }
+          - { kind: died-again }
+          - { kind: failure, value: h }
+        every: 1h
+        backoff: { initial: 1s, max: 7d }
+        maxAttempts: 1
+        whenAttemptsUsedUp: keep
+        stopWhen: { diedAgain: 1, within: 1m }
+    alerts:
+      - name: deep
+        destinations: [slack, pager]
+        when: { vhost: /, queue: orders.dlq, depthAbove: 100 }
+        for: 5m
+        repeatEvery: 1h
+      - name: burst
+        destinations: [slack]
+        when: { vhost: /, queuePattern: "*.dlq", arrivalsAbove: { count: 50, within: 10m } }
+      - name: any
+        destinations: [pager]
+        when: { vhost: orders, queue: payments.dlq, anyArrival: true }
+      - name: paused
+        destinations: [pager]
+        when: { replayRulePaused: true, rule: one-clause }
+      - name: warned
+        destinations: [pager]
+        when: { setupWarning: may_lose_messages }
+      - name: blind
+        destinations: [pager]
+        when: { samplingFailing: { for: 10m } }
+  - name: token
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    credentials: operatorToken
+    tokenUsernameClaim: preferred_username
+    vhosts: all

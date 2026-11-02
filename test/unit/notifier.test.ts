@@ -5,7 +5,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Notifier } from '../../src/server/alerts/notifier.js';
+import { CLOSE_WAIT_MS, Notifier, type NotifierOptions } from '../../src/server/alerts/notifier.js';
 import { testNotification } from '../../src/server/alerts/payloads.js';
 import { SqliteAuditStore } from '../../src/server/audit/sqlite-audit-store.js';
 
@@ -28,7 +28,7 @@ describe('Notifier', () => {
     return `http://127.0.0.1:${(server.address() as AddressInfo).port}/hook`;
   }
 
-  function notifierFor(destinations: Record<string, string>, deliveryTiming = timing) {
+  function notifierFor(destinations: Record<string, string>, deliveryTiming = timing, closing: Pick<NotifierOptions, 'closeWaitMs' | 'onCloseWaitRanOut'> = { closeWaitMs: 20 }) {
     const store = new SqliteAuditStore();
     cleanups.push(() => store.close());
     const notifier = new Notifier({
@@ -36,6 +36,7 @@ describe('Notifier', () => {
       store: store.notifications,
       publicUrl: null,
       timing: deliveryTiming,
+      ...closing,
     });
     cleanups.push(() => notifier.close());
     return { notifier, store };
@@ -112,12 +113,32 @@ describe('Notifier', () => {
     expect((await store.notifications.recent()).map((d) => [d.alertId, d.replayRule])).toEqual([['b', null], ['a', 'retry']]);
   });
 
-  it('on close, ends the deliveries in progress at once and records them', async () => {
-    const hung = await destination(() => {});
-    const { notifier, store } = notifierFor({ hung });
-    const delivery = notifier.send('hung', notification());
-    await new Promise((resolve) => setTimeout(resolve, 20));
+  it('waits 5 s on close by default', () => {
+    expect(CLOSE_WAIT_MS).toBe(5_000);
+  });
+
+  it('on close, lets a delivery in progress finish within the limit', async () => {
+    const slow = await destination((_req, res) => void setTimeout(() => res.end(), 100));
+    const ranOut: number[] = [];
+    const { notifier } = notifierFor({ slow }, timing, { closeWaitMs: 10_000, onCloseWaitRanOut: (n) => ranOut.push(n) });
+    const delivery = notifier.send('slow', notification());
     await notifier.close();
+    expect(await delivery).toMatchObject({ outcome: 'delivered' });
+    expect(ranOut).toEqual([]);
+  });
+
+  it('on close, is not held past the limit by a destination that never answers: it ends the delivery, records it and says so', async () => {
+    const hung = await destination(() => {});
+    const ranOut: number[] = [];
+    // Attempts far longer than the limit, so only the limit can end this.
+    const { notifier, store } = notifierFor({ hung }, { timeoutMs: 60_000, firstBackoffMs: 1 }, { closeWaitMs: 100, onCloseWaitRanOut: (n) => ranOut.push(n) });
+    const delivery = notifier.send('hung', notification());
+    const started = Date.now();
+    await notifier.close();
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(90);
+    expect(took).toBeLessThan(5_000);
+    expect(ranOut).toEqual([1]);
     expect(await delivery).toMatchObject({ outcome: 'failed', error: 'server_stopping' });
     expect(await store.notifications.recent()).toHaveLength(1);
   });

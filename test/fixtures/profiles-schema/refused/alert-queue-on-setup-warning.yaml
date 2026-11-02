@@ -1,0 +1,14 @@
+alertDestinations:
+  - name: a
+    type: slack
+    urlEnv: DESTINATION_URL
+profiles:
+  - name: dev
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    username: guest
+    passwordEnv: PASSWORD
+    alerts:
+      - name: x
+        destinations: [a]
+        when: { setupWarning: loses_messages, queue: q }

@@ -9,6 +9,10 @@ The interface holds these promises for any implementation:
 - **A store call is an interleave point for the caller.** Other requests can run while one is awaited. A section that must be first-wins claims its state in memory before its first store call, never after.
 - **Types are the store's vocabulary, not a database's.** Rows, statements and connections stay inside an implementation.
 
+**On SQLite some of the interface is in memory.** Sessions and sign-ins in progress, Replicas' leases and Live Checkout records have no table there: one Replica needs no more, and a session then never reaches the data volume, so a restart signs everyone out. The same contract suite holds these memory stores to what PostgreSQL's tables do.
+
+**One exception: `refreshTokens` waits on the provider inside its unit of work.** #92 asks that two Replicas refreshing at once do not spend a rotating refresh token twice, and only a lock held across the provider's answer gives that. So the exception is narrow: the method takes a callback, the lock is one of its own that no other call waits for (an advisory lock on PostgreSQL, a per-session queue in memory), at most 3 refreshes per process hold a connection, and the caller gives the provider 10 s. No other method may do this.
+
 SQLite keeps doing its work synchronously inside each call (`SqliteAuditStore` never awaits within one), so its transactions cannot interleave and its speed does not change. Each write still fsyncs on the event loop, as it always has.
 
 The move was an expand and contract: the interface came first beside the synchronous form, which handed out the asynchronous form on the same connection so that both could run together, callers moved in groups, and the synchronous form went when none was left. During the move the interface had the name it keeps, so moving a caller changed its import and added its awaits, and nothing was renamed at the end.

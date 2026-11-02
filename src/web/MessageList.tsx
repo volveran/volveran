@@ -192,7 +192,7 @@ const timesText = (count: number) => (count === 1 ? 'once' : `${count} times`);
 /** The Audit Entry, as the API returns it (the web app has no page for one entry). */
 function AuditEntryLink({ id }: { id: number }) {
   return (
-    <a href={`/api/audit-entries/${id}`} target="_blank" rel="noreferrer">
+    <a href={`/api/v1/audit-entries/${id}`} target="_blank" rel="noreferrer">
       Audit Entry {id}
     </a>
   );

@@ -3,6 +3,31 @@
 # line of the render, without its indentation, as the check prints it (`+ ` or
 # `- ` first). `fixture` limits it to one fixture's file name. Remove an entry
 # once it is in a release; the check says which ones it no longer needs.
-allowed: []
 #  - change: '+ imagePullPolicy: Always'
 #    reason: why an upgrade should bring this
+allowed:
+  - change: '+ version: 1'
+    reason: The profiles file names its format version on SQLite too, so Volverán does not warn of it. Rolls the pod once on upgrade (ADR 0014).
+  - change: '- checksum/broker-profiles: 3893a5007e5b6e3dfb982f816593e12dc663210b4945b5f20e05332bd4fc8b74'
+    reason: The profiles file gained its format version.
+  - change: '+ checksum/broker-profiles: 5384ec2dbdb9fb26b5ed049c599969e873cadaa4b36938b9f9b31de79d3ee591'
+    reason: The profiles file gained its format version.
+  - change: '+ terminationGracePeriodSeconds: 90'
+    reason: Shutdown ends Checkouts within a limit that 60 s did not cover (#119, docs/kubernetes.md).
+  - change: '- terminationGracePeriodSeconds: 60'
+    reason: Shutdown ends Checkouts within a limit that 60 s did not cover (#119, docs/kubernetes.md).
+  - change: '+ - name: VOLVERAN_SESSION_ENCRYPTION_KEY'
+    fixture: postgres.yaml
+    reason: Sessions on PostgreSQL keep their tokens encrypted, with a key from this new required secret (#107).
+  - change: '+ valueFrom:'
+    fixture: postgres.yaml
+    reason: The session encryption key comes from a Secret (#107).
+  - change: '+ secretKeyRef:'
+    fixture: postgres.yaml
+    reason: The session encryption key comes from a Secret (#107).
+  - change: '+ name: "volveran-oidc"'
+    fixture: postgres.yaml
+    reason: The session encryption key is in the OIDC Secret (#107).
+  - change: '+ key: "session-encryption-key"'
+    fixture: postgres.yaml
+    reason: The default key of the session encryption key in that Secret (#107).

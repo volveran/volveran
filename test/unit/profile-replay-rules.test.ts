@@ -44,6 +44,27 @@ const refusal = (rules: string[][], profileExtra: string[] = []) => {
 };
 const WHERE = 'profiles.yaml: profiles[0] ("prod").replayRules[0] ("db-timeouts")';
 
+describe('unknown keys in a Replay rule', () => {
+  it.each([
+    ['filter: { kind: routing-key, value: a, valeu: b }', '.filter.valeu'],
+    ['filter: { kind: routing-key, valeu: b }', '.filter.valeu'],
+    ['filter: { kind: died-again, value: a }', '.filter.value'],
+    ['filter: { kind: header, name: a, value: b, nam: c }', '.filter.nam'],
+    ['filter: { kind: json-path, path: $.a, value: b, paht: c }', '.filter.paht'],
+    ['filter: [{ kind: died-again }, { kind: failure, value: a, regex: true }]', '.filter[1].regex'],
+    ['whenAttemptsUsedUp: { moveTo: { queue: other }, moveto: x }', '.whenAttemptsUsedUp.moveto'],
+    ['whenAttemptsUsedUp: { moveTo: { queue: other, exchange: x } }', '.whenAttemptsUsedUp.moveTo.exchange'],
+  ])('refuses %s, naming %s', (line, at) => {
+    const key = line.slice(0, line.indexOf(':'));
+    expect(refusal([ruleWith(key, line)])).toContain(`${WHERE}${at} is not a key`);
+  });
+
+  it('still reads each kind of filter clause with the keys it takes', () => {
+    const line = 'filter: [{ kind: header, name: a, value: b }, { kind: json-path, path: $.a, value: b }, { kind: died-again }, { kind: failure, value: a }]';
+    expect(parse([ruleWith('filter', line)]).replayRules[0]!.filter).toHaveLength(4);
+  });
+});
+
 describe('Broker Profile replayRules', () => {
   it('has none by default', () => {
     expect(parse([]).replayRules).toEqual([]);

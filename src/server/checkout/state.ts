@@ -86,6 +86,11 @@ export interface Checkout extends QueueRef {
   /** The last request's rejection, shown to the requester until the next request. */
   rejection: Rejection | null;
   lostReason: string | null;
+  /**
+   * Known only from a Live Checkout record, since its Owner Replica has gone: Messages may
+   * still be on their way back, and an Apply may have settled some (its Audit Entries tell).
+   */
+  ownerGone: boolean;
   endReason: EndReason | null;
   /** Ready Messages in the queue when the Checkout started (passive declare). */
   readyAtStart: number;
@@ -107,10 +112,9 @@ export interface Checkout extends QueueRef {
   /** Decisions other than Keep, by Message handle (staging.ts); a Message missing here is Keep. */
   decisions: Map<number, ActionDecision>;
   /**
-   * The Apply running in the background, if any. Ending the Checkout (the
-   * Operator, shutdown) waits for it, so a Message whose step is done is never
-   * returned and a step is never cut short; the time limit asks it to stop
-   * before its next step.
+   * The Apply running in the background, if any. Ending the Checkout waits for
+   * it, so a Message whose step is done is never returned and a step is never
+   * cut short; the time limit and shutdown ask it to stop before its next step.
    */
   applying: RunningApply | null;
   /** The progress of the Checkout's Apply, from the moment it starts; kept once it has run. */

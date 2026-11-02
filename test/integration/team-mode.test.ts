@@ -1,7 +1,7 @@
 // Team Mode (ADR 0002): Operators sign in through an OIDC provider (the mock
 // provider of test/broker/docker-compose.yml), every API route needs a
 // session, and the Operator is the signed-in identity.
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applyAndWait, closedPort, purgeQueues, readyCount, seedMessages, startApp, testProfile, type TestApp } from './harness.js';
 import { teamModeEnv, TestBrowser, testOidc } from './oidc-provider.js';
 
@@ -87,10 +87,41 @@ describe('Team Mode', () => {
     expect(res.location).toBe('/queues?x=1');
   });
 
+  it('starts a sign-in when returnTo is given twice, returning to the start', async () => {
+    const browser = new TestBrowser(baseUrl);
+    const started = await browser.get('/auth/login?returnTo=/one&returnTo=/two');
+    expect(started.status).toBe(302);
+  });
+
   it('never returns to another site after sign-in', async () => {
-    for (const returnTo of ['https://evil.example.com/', '//evil.example.com/', '/\\evil.example.com']) {
+    for (const returnTo of [
+      'https://evil.example.com/',
+      '//evil.example.com/',
+      '/\\evil.example.com',
+      // The URL parser browsers follow strips tabs and newlines, and resolves dots.
+      '/\t/evil.example.com',
+      '/\t\\evil.example.com',
+      '/\n/evil.example.com',
+      '\t//evil.example.com',
+      '/.//evil.example.com',
+      '/..//evil.example.com',
+      '/%2e//evil.example.com',
+      // Not a URL at all.
+      '//[',
+      '/\\[',
+    ]) {
       expect((await new TestBrowser(baseUrl).signIn(alice, returnTo)).location).toBe('/');
     }
+  });
+
+  it('survives a newline in the page to return to', async () => {
+    const res = await new TestBrowser(baseUrl).signIn(alice, '/queues\nx');
+    expect(res.status).toBe(302);
+    expect(res.location).toBe('/queuesx');
+  });
+
+  it('keeps a query and a fragment on the page to return to', async () => {
+    expect((await new TestBrowser(baseUrl).signIn(alice, '/#/approvals/1?x=1')).location).toBe('/#/approvals/1?x=1');
   });
 
   it('shows the name when the provider gives no email, and the sub when it gives neither', async () => {
@@ -177,6 +208,8 @@ describe('Checkout in Team Mode', () => {
   beforeAll(async () => {
     ({ app, baseUrl } = await startTeamApp());
   });
+  // Queues are shared across the suite: these tests count what they seed, so they start from empty.
+  beforeEach(() => purgeQueues('/', ['orders.dlq', 'payments.dlq']));
   afterEach(async () => {
     for (const { browser, id } of open.splice(0)) await browser.request('DELETE', `/api/checkouts/${id}`);
     await purgeQueues('/', ['orders.dlq', 'payments.dlq']);

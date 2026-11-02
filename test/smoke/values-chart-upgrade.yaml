@@ -1,0 +1,22 @@
+# The chart upgrade (published-chart-upgrade.test.ts), over values.yaml: as values-upgrade.yaml
+# repeats the list, this one does too, adding the Role that Restore needs.
+brokerProfiles:
+  profiles:
+    - name: smoke
+      managementUrl: http://rabbitmq.volveran-smoke-deps.svc.cluster.local:15672
+      amqpUrl: amqp://rabbitmq.volveran-smoke-deps.svc.cluster.local:5672
+      username: volveran-admin
+      passwordEnv: VOLVERAN_SMOKE_PASSWORD
+      vhosts: ["/"]
+      defaultQueueFilter: "*.dlq"
+      roles:
+        admin: [smoke-admins]
+      replayRules:
+        - name: orders-transient
+          vhost: /
+          queue: orders.dlq
+          every: 5m
+          backoff: { initial: 1m, multiplier: 2, max: 1h }
+          maxAttempts: 3
+          stopWhen: { diedAgain: 5, within: 15m }
+          startPaused: true

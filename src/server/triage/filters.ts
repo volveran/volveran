@@ -23,6 +23,18 @@ const KINDS: readonly FilterKind[] = [
   'failure',
 ];
 
+/** The keys each kind of clause takes. An API body may carry others, which are ignored; the profiles file refuses them. */
+export const FILTER_CLAUSE_KEYS: Record<FilterKind, readonly string[]> = {
+  'routing-key': ['kind', 'value'],
+  header: ['kind', 'name', 'value'],
+  'x-death-reason': ['kind', 'value'],
+  'original-queue': ['kind', 'value'],
+  'body-text': ['kind', 'value'],
+  'json-path': ['kind', 'path', 'value'],
+  'died-again': ['kind'],
+  failure: ['kind', 'value'],
+};
+
 /** Reads a Filter from untrusted input (an API request body). */
 export function parseFilter(input: unknown): { ok: true; filter: Filter } | { ok: false; error: string } {
   if (!Array.isArray(input)) return { ok: false, error: 'A filter is a list of clauses, e.g. [{ "kind": "routing-key", "value": "orders.*" }].' };

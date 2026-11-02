@@ -98,3 +98,44 @@ describe('VOLVERAN_METRICS_PORT', () => {
     expect(!result.ok && result.error).toContain('VOLVERAN_METRICS_PORT');
   });
 });
+
+describe('forwarding between Replicas', () => {
+  const team = {
+    VOLVERAN_AUTH: 'oidc',
+    VOLVERAN_OIDC_ISSUER: 'https://idp.example.com',
+    VOLVERAN_OIDC_CLIENT_ID: 'volveran',
+    VOLVERAN_OIDC_CLIENT_SECRET: 'client-secret',
+    VOLVERAN_OIDC_REDIRECT_URL: 'https://volveran.example.com/auth/callback',
+    VOLVERAN_SESSION_SECRET: 's'.repeat(32),
+  };
+  const postgres = { VOLVERAN_POSTGRES_URL: 'postgres://db/volveran', VOLVERAN_SESSION_ENCRYPTION_KEY: 'k'.repeat(32) };
+  const forwarding = { VOLVERAN_FORWARDING_SECRET: 'f'.repeat(32), VOLVERAN_FORWARDING_PORT: '8081', VOLVERAN_FORWARDING_ADDRESS: '10.0.0.7:8081' };
+  const load = (env: Record<string, string | undefined>) => loadConfig({ ...team, ...postgres, ...env }, '0.0.0.0');
+
+  it('is off without the secret', () => {
+    expect(load({})).toMatchObject({ ok: true, config: { forwarding: null } });
+  });
+
+  it('reads the secret, the port and the address', () => {
+    expect(load(forwarding)).toMatchObject({ ok: true, config: { forwarding: { secret: 'f'.repeat(32), port: 8081, address: '10.0.0.7:8081' } } });
+    expect(load({ ...forwarding, VOLVERAN_FORWARDING_ADDRESS: '[fd00::7]:8081' })).toMatchObject({ config: { forwarding: { address: '[fd00::7]:8081' } } });
+  });
+
+  it('is off on SQLite and in Solo Mode, whatever is set', () => {
+    expect(loadConfig({ ...team, ...forwarding, VOLVERAN_FORWARDING_PORT: 'nonsense' }, '0.0.0.0')).toMatchObject({ ok: true, config: { forwarding: null } });
+    expect(loadConfig({ VOLVERAN_OPERATOR: 'ana', ...postgres, ...forwarding }, '127.0.0.1')).toMatchObject({ ok: true, config: { forwarding: null } });
+  });
+
+  it.each([
+    ['a short secret', { VOLVERAN_FORWARDING_SECRET: 'short' }, 'VOLVERAN_FORWARDING_SECRET'],
+    ['no port', { VOLVERAN_FORWARDING_PORT: undefined }, 'VOLVERAN_FORWARDING_PORT'],
+    ['a port out of range', { VOLVERAN_FORWARDING_PORT: '70000' }, 'VOLVERAN_FORWARDING_PORT'],
+    ['no address', { VOLVERAN_FORWARDING_ADDRESS: undefined }, 'VOLVERAN_FORWARDING_ADDRESS'],
+    ['an address without a port', { VOLVERAN_FORWARDING_ADDRESS: '10.0.0.7' }, 'VOLVERAN_FORWARDING_ADDRESS'],
+    ['an address with a path', { VOLVERAN_FORWARDING_ADDRESS: '10.0.0.7:8081/api' }, 'VOLVERAN_FORWARDING_ADDRESS'],
+  ])('refuses %s', (_, change, named) => {
+    const result = load({ ...forwarding, ...change });
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain(named);
+  });
+});

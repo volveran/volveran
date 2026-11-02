@@ -1,5 +1,5 @@
 {{- /*
-The optional NetworkPolicy. It selects only the Volverán pod and admits
+The NetworkPolicy, optional on one Replica. It selects only the Volverán pod and admits
 traffic to the http port from the peers in networkPolicy.ingressFrom (the
 Gateway or ingress controller), so nothing else in the cluster reaches the
 sign-in or the API. The peers in networkPolicy.metricsFrom (the scraper) reach
@@ -7,8 +7,16 @@ the metrics port only, when metrics are on. Kubelet probes come from the pod's o
 NetworkPolicy always allows. Egress stays open unless networkPolicy.egress
 lists rules; then those rules plus DNS to the cluster resolver are allowed,
 so name resolution never breaks.
+
+With several Replicas it is always rendered, with no value to turn it off, because
+the forwarding port trusts whoever holds one secret (threat model N4): only other
+Replicas reach that port. A policy cannot close one port alone, so without
+networkPolicy.enabled the same object leaves the other ports open to everyone, as
+they are with no policy, and it restricts no egress. Egress must let Replicas reach
+each other, by port number, since not every CNI resolves a named port on egress.
 */ -}}
-{{- if .Values.networkPolicy.enabled }}
+{{- $several := gt (int .Values.replicaCount) 1 }}
+{{- if or .Values.networkPolicy.enabled $several }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,13 +29,15 @@ spec:
       {{- include "volveran.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
-    {{- if .Values.networkPolicy.egress }}
+    {{- $egress := and .Values.networkPolicy.enabled .Values.networkPolicy.egress }}
+    {{- if $egress }}
     - Egress
     {{- end }}
   {{- /* An empty "from" would admit every source, so no peers means no ingress rule. */}}
   {{- $metricsFrom := and .Values.metrics.enabled .Values.networkPolicy.metricsFrom }}
-  {{- if or .Values.networkPolicy.ingressFrom $metricsFrom }}
+  {{- if or $several .Values.networkPolicy.ingressFrom $metricsFrom }}
   ingress:
+    {{- if .Values.networkPolicy.enabled }}
     {{- with .Values.networkPolicy.ingressFrom }}
     - from:
         {{- toYaml . | nindent 8 }}
@@ -42,12 +52,39 @@ spec:
         - port: metrics
           protocol: TCP
     {{- end }}
+    {{- else }}
+    - ports:
+        - port: http
+          protocol: TCP
+        {{- if .Values.metrics.enabled }}
+        - port: metrics
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- if $several }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "volveran.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: forwarding
+          protocol: TCP
+    {{- end }}
   {{- else }}
   ingress: []
   {{- end }}
-  {{- with .Values.networkPolicy.egress }}
+  {{- with $egress }}
   egress:
     {{- toYaml . | nindent 4 }}
+    {{- if $several }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "volveran.selectorLabels" $ | nindent 14 }}
+      ports:
+        - port: {{ $.Values.forwarding.port }}
+          protocol: TCP
+    {{- end }}
     - to:
         {{- toYaml $.Values.networkPolicy.dnsTo | nindent 8 }}
       ports:

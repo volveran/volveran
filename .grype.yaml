@@ -1,0 +1,13 @@
+# The reviewed list of the image scan (security.yml, release.yml). The scan
+# counts every high or critical finding, with a fix or without; only what is
+# named here is left out of the count.
+#
+# One rule per vulnerability, with `vulnerability` and `reason` and nothing else:
+#   - vulnerability: CVE-2026-0000
+#     reason: What was checked in what the image runs, and why Volverán cannot reach it.
+# The reason states a check that was done, per vulnerability. A finding nobody
+# could show unreachable does not go here: it is fixed, or the maintainer decides.
+# test/unit/supply-chain.test.ts holds the list to this shape.
+#
+# Empty: the image has no high or critical finding to review.
+ignore: []

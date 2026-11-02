@@ -1,0 +1,10 @@
+alertDestinations:
+  - name: a
+    type: slack
+    urlEnv: NOT_SET
+profiles:
+  - name: dev
+    managementUrl: http://localhost:15672
+    amqpUrl: amqp://localhost:5672
+    username: guest
+    passwordEnv: PASSWORD

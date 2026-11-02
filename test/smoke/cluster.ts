@@ -1,7 +1,7 @@
 // kind smoke test helpers: port-forwards into the cluster, the Volverán pod
 // and seeding a dead-letter queue through RabbitMQ's management API.
 import { spawn, type ChildProcess } from 'node:child_process';
-import { appNamespace, brokerAdmin, kubectl, kubectlFlags, ports, releaseName } from './kind-env.mjs';
+import { appNamespace, brokerAdmin, clusterName, image, kubectl, kubectlFlags, ports, releaseName, run } from './kind-env.mjs';
 
 export interface PortForward {
   close(): Promise<void>;
@@ -65,6 +65,10 @@ export interface VolveranPod {
   name: string;
   uid: string;
   ready: boolean;
+  /** Empty until the pod has one. */
+  ip: string;
+  /** Empty until its container has started. */
+  containerId: string;
 }
 
 /** The release's pods that are not being deleted. */
@@ -78,6 +82,8 @@ export function volveranPods(): VolveranPod[] {
       name: p.metadata.name,
       uid: p.metadata.uid,
       ready: (p.status.conditions ?? []).some((c: any) => c.type === 'Ready' && c.status === 'True'),
+      ip: p.status.podIP ?? '',
+      containerId: (p.status.containerStatuses?.[0]?.containerID ?? '').replace(/^[a-z]+:\/\//, ''),
     }));
 }
 
@@ -95,6 +101,76 @@ export function replacementOf(previous: VolveranPod): Promise<VolveranPod> {
     if (pod.uid === previous.uid) throw new Error(`${pod.name} has not been replaced yet`);
     return pod;
   });
+}
+
+/** Waits for exactly `count` Ready Volverán pods, and returns them. */
+export function readyPods(count: number): Promise<VolveranPod[]> {
+  return eventually(() => {
+    const pods = volveranPods();
+    if (pods.length !== count || pods.some((p) => !p.ready)) throw new Error(`expected ${count} Ready Volverán pods, got ${JSON.stringify(pods)}`);
+    return pods;
+  });
+}
+
+/**
+ * Kills the process abruptly, from the node, as a crash does: no SIGTERM, so it ends no
+ * Checkout. A signal sent inside the container could not do it, since the process is its
+ * PID 1. The pod object is then removed, so that the process does not come back in it.
+ */
+export function crash(pod: VolveranPod): void {
+  const node = `${clusterName}-control-plane`;
+  const pid = run('docker', ['exec', node, 'crictl', 'inspect', '--output', 'go-template', '--template', '{{.info.pid}}', pod.containerId]).trim();
+  run('docker', ['exec', node, 'kill', '-9', pid]);
+  kubectl(['-n', appNamespace, 'delete', 'pod', pod.name, '--grace-period=0', '--force']);
+}
+
+/** Node code that prints whether a TCP connection opens: refused, or dropped by a policy, is "closed". */
+const connectCode = (ip: string, port: number) =>
+  `const s=require('net').connect(${port},'${ip}');const done=(r)=>{console.log(r);process.exit(0)};s.on('connect',()=>done('open'));s.on('error',()=>done('closed'));setTimeout(()=>done('closed'),3000)`;
+
+/** What a Volverán pod is answered when it asks another's forwarding port for the session, saying this forwarding protocol version. */
+export function askForwardingPort(pod: VolveranPod, ip: string, port: number, secret: string, protocol: string): { status: number; protocol: string | null } {
+  const operator = Buffer.from(JSON.stringify({ id: 'smoke-operator', displayName: 'Smoke Operator', groups: [] })).toString('base64url');
+  const headers = { authorization: `Bearer ${secret}`, 'x-volveran-forwarded-operator': operator, 'x-volveran-forwarding-protocol': protocol };
+  const code = `fetch('http://${ip}:${port}/api/session',{headers:${JSON.stringify(headers)}}).then((r)=>console.log(JSON.stringify({status:r.status,protocol:r.headers.get('x-volveran-forwarding-protocol')})))`;
+  return JSON.parse(kubectl(['-n', appNamespace, 'exec', pod.name, '-c', 'volveran', '--', 'node', '-e', code]));
+}
+
+/** Whether a Volverán pod can open a connection to this address. */
+export function connectFromPod(pod: VolveranPod, ip: string, port: number): string {
+  return kubectl(['-n', appNamespace, 'exec', pod.name, '-c', 'volveran', '--', 'node', '-e', connectCode(ip, port)]).trim();
+}
+
+/** A pod with no label of the release, to try connections from. It runs the Volverán image only because that is loaded and has node. */
+export function startProbe(namespace: string): void {
+  const manifest = {
+    apiVersion: 'v1',
+    kind: 'Pod',
+    metadata: { name: 'probe', namespace, labels: { app: 'smoke-probe' } },
+    spec: {
+      terminationGracePeriodSeconds: 0,
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: 'RuntimeDefault' } },
+      containers: [
+        {
+          name: 'probe',
+          image: `${image.repository}:${image.tag}`,
+          imagePullPolicy: 'Never',
+          command: ['node', '-e', 'setInterval(() => {}, 1e6)'],
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } },
+        },
+      ],
+    },
+  };
+  kubectl(['apply', '-f', '-'], { input: JSON.stringify(manifest) });
+  kubectl(['-n', namespace, 'wait', '--for=condition=Ready', 'pod/probe', '--timeout=120s']);
+}
+
+export function connectFromProbe(namespace: string, ip: string, port: number): string {
+  return kubectl(['-n', namespace, 'exec', 'probe', '--', 'node', '-e', connectCode(ip, port)]).trim();
+}
+
+export function stopProbe(namespace: string): void {
+  kubectl(['-n', namespace, 'delete', 'pod', 'probe', '--ignore-not-found', '--wait=false']);
 }
 
 /** RabbitMQ's management API through its port-forward, as volveran-admin. */

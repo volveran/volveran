@@ -8,26 +8,41 @@ import { cp, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { repoRoot } from '../../scripts/test-broker-env.mjs';
 
-/** Every released version, oldest first. Add a new release here after generating its fixture. */
+/** Every released version, oldest first, a pre-release in the form of its tag (`1.0.0-rc.1`). Add a new release here, then generate its fixture. */
 export const RELEASED_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.5.1', '0.6.0', '0.6.1'] as const;
 
 export type ReleasedVersion = (typeof RELEASED_VERSIONS)[number];
 
 export interface UpgradeFixture {
   version: ReleasedVersion;
+  /** The release has Roles (0.3), so its profiles file can map them. */
+  hasRoles: boolean;
   /** The release has Replay Rules (0.4), so its store has their state. */
   hasReplayRules: boolean;
   /** The release has Alert Destinations (0.5), so its store has their tables and a test notification. */
   hasNotifications: boolean;
 }
 
-const atLeast = (version: string, minor: number) => {
+/** Whether `version` is 0.`minor` or later. Every 1.x is, whatever its own minor version. */
+export const atLeast = (version: string, minor: number) => {
   const [major = 0, min = 0] = version.split('.').map(Number);
   return major > 0 || min >= minor;
 };
 
+/**
+ * The releases in the changelog that should have a fixture and have none. The version being
+ * prepared has no image yet. A pre-release needs none, though it may have one: nothing promises an
+ * upgrade from it (docs/compatibility.md), and the release it leads to gets its own.
+ */
+export function releasesWithoutFixture(changelog: string, current: string, fixtures: readonly string[] = RELEASED_VERSIONS): string[] {
+  return [...changelog.matchAll(/^## \[(\d[^\]]*)\]/gm)]
+    .map((m) => m[1]!)
+    .filter((version) => version !== current && !version.includes('-') && !fixtures.includes(version));
+}
+
 export const upgradeFixtures: UpgradeFixture[] = RELEASED_VERSIONS.map((version) => ({
   version,
+  hasRoles: atLeast(version, 3),
   hasReplayRules: atLeast(version, 4),
   hasNotifications: atLeast(version, 5),
 }));

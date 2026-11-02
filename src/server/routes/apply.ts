@@ -85,8 +85,8 @@ export function checkApplyConfirmation(checkout: CheckoutView, body: ApplyReques
 }
 
 export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDeps) {
-  const { checkouts } = deps;
-  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', async (req, reply) => {
+  const { checkouts, toOwner } = deps;
+  app.post<{ Params: { id: string }; Body: ApplyRequestBody | undefined }>('/api/checkouts/:id/apply', toOwner, async (req, reply) => {
     const { role } = checkoutAccess(deps, req, 'checkout');
     // 404 for an unknown Checkout before asking for confirmation. Nothing
     // awaits between this check and apply() reading the Decisions.
@@ -94,12 +94,12 @@ export function registerApplyRoutes(app: FastifyInstance, deps: CheckoutRouteDep
     return reply.code(202).send({ checkout: checkouts.apply(req.params.id, role, req.body?.rate, req.body?.canary) });
   });
 
-  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', async (req) => {
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/stop', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     return { checkout: checkouts.stopApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
 
-  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/continue', async (req) => {
+  app.post<{ Params: { id: string } }>('/api/checkouts/:id/apply/continue', toOwner, async (req) => {
     checkoutAccess(deps, req, 'checkout');
     return { checkout: checkouts.continueApplyBy(req.params.id, { operator: operatorOf(req), as: 'owner' }) };
   });
