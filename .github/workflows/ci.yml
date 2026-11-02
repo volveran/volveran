@@ -101,6 +101,9 @@ jobs:
   broker:
     name: Broker facts (${{ github.event_name == 'schedule' && 'rabbitmq:4-management latest' || 'pinned RabbitMQ' }})
     runs-on: ubuntu-latest
+    # About 45 minutes in all (broker facts 7, each integration suite 18 to 19): a hang fails here
+    # rather than at the six-hour default.
+    timeout-minutes: 65
     permissions:
       contents: read
       issues: write
