@@ -1,6 +1,6 @@
 // Sessions on SQLite: in this process's memory, as one Replica needs no more, so a
 // restart signs everyone out and nothing about a session reaches the data volume.
-import type { SessionStore, StoredSession, StoredSignIn } from './audit-store.js';
+import { REFRESH_LOCK_WAIT_MS, RefreshBusy, type SessionStore, type StoredSession, type StoredSignIn } from './audit-store.js';
 
 function sweep(entries: Map<string, { expiresAt: number; idleExpiresAt?: number }>, now: number): void {
   for (const [id, entry] of entries) if (entry.expiresAt <= now || (entry.idleExpiresAt ?? now + 1) <= now) entries.delete(id);
@@ -23,7 +23,18 @@ export class MemorySessionStore implements SessionStore {
   }
 
   async refreshTokens(id: string, now: number, refresh: (tokens: string) => Promise<string | null>): Promise<boolean> {
-    const run = (this.refreshing.get(id) ?? Promise.resolve()).then(async () => {
+    const previous = this.refreshing.get(id);
+    // Waits for the refresh before it, but no longer than PostgreSQL's store does for its lock.
+    const turn =
+      previous &&
+      new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new RefreshBusy()), REFRESH_LOCK_WAIT_MS);
+        void previous.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    const run = (turn ?? Promise.resolve()).then(async () => {
       const session = this.sessions.get(id);
       if (!session || session.expiresAt <= now || session.idleExpiresAt <= now) return false;
       const tokens = await refresh(session.tokens);
@@ -31,10 +42,8 @@ export class MemorySessionStore implements SessionStore {
       if (tokens !== null && current) this.sessions.set(id, { ...current, tokens });
       return true;
     });
-    const settled = run.then(
-      () => {},
-      () => {},
-    );
+    // The next waits for this one and, if this one gave up waiting, for the one it waited for.
+    const settled = Promise.allSettled([previous, run]).then(() => {});
     this.refreshing.set(id, settled);
     void settled.then(() => {
       if (this.refreshing.get(id) === settled) this.refreshing.delete(id);

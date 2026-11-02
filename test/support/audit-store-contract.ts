@@ -10,6 +10,8 @@ import {
   PASS_HISTORY,
   type AuditQuery,
   LeaderLeaseLost,
+  REFRESH_LOCK_WAIT_MS,
+  RefreshBusy,
   type AuditStore,
   type LeaseFence,
   type NewAuditEntry,
@@ -1597,6 +1599,26 @@ export function auditStoreContract(name: string, open: () => Promise<OpenedAudit
           expect(seenBySecond).toEqual(['rotated-1']);
           expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated-1' }));
         });
+
+        it('gives up waiting for a refresh of the same session that holds on past the lock wait, changing nothing', async () => {
+          await store.sessions.addSession('s-1', session(), NOW);
+          const first = held('rotated-1');
+          const firstDone = store.sessions.refreshTokens('s-1', NOW, first.refresh);
+          await first.reached;
+          let called = false;
+          const startedAt = Date.now();
+          await expect(
+            store.sessions.refreshTokens('s-1', NOW, async () => {
+              called = true;
+              return 'rotated-2';
+            }),
+          ).rejects.toBeInstanceOf(RefreshBusy);
+          expect(Date.now() - startedAt).toBeGreaterThanOrEqual(REFRESH_LOCK_WAIT_MS - 100);
+          expect(called).toBe(false);
+          first.release();
+          await firstDone;
+          expect(await store.sessions.session('s-1', NOW)).toEqual(session({ tokens: 'rotated-1' }));
+        }, REFRESH_LOCK_WAIT_MS + 10_000);
 
         it('answers false without refreshing a session past its idle expiry', async () => {
           await store.sessions.addSession('s-1', session({ idleExpiresAt: NOW + 500 }), NOW);

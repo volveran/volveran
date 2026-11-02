@@ -6,6 +6,10 @@ All notable changes to Volverán are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- On PostgreSQL, a Replica waiting for another's refresh of an Operator's token gives up after 5 s and tries again, and the database cancels the wait, rather than keeping a connection queued for the lock long after the Replica stopped waiting. A Replica that goes silent while refreshing, frozen or cut off, loses the lock after 20 s rather than holding it until the database notices the connection gone.
+
 ## [1.0.0] - 2026-11-02
 
 Volverán 1.0: several Replicas on PostgreSQL, a security review, upgrade guarantees and a stable configuration format (see the [roadmap](ROADMAP.md)).

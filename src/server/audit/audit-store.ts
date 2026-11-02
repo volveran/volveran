@@ -390,6 +390,21 @@ export interface StoredSession {
   idleExpiresAt: number;
 }
 
+/**
+ * How long a refresh waits for another refresh of the same session to let go of its lock:
+ * half of the 10 seconds the caller gives the provider (ADR 0013). A refresh that waits this
+ * long throws RefreshBusy.
+ */
+export const REFRESH_LOCK_WAIT_MS = 5_000;
+
+/** Another refresh of the session held its lock for longer than REFRESH_LOCK_WAIT_MS. Nothing changed; try again. */
+export class RefreshBusy extends Error {
+  constructor() {
+    super(`another refresh of the session held its lock for more than ${REFRESH_LOCK_WAIT_MS / 1000} seconds`);
+    this.name = 'RefreshBusy';
+  }
+}
+
 /** A sign-in between /auth/login and /auth/callback. */
 export interface StoredSignIn {
   sealed: string;
@@ -412,7 +427,8 @@ export interface SessionStore {
    * runs holding a lock of the refresh's own, given the tokens as they are now, and what it
    * answers replaces them (null leaves them), unless the session has gone by then. When it
    * throws nothing changes, and this throws the same. False, without calling it, when the
-   * session has gone. It may wait for the provider, so it holds up no other call of the store,
+   * session has gone. RefreshBusy, without calling it, when another refresh of the session
+   * keeps the lock for REFRESH_LOCK_WAIT_MS. It may wait for the provider, so it holds up no other call of the store,
    * on this session or any other: `refresh` must not call the store, and its caller limits its time.
    * It is the one method that waits on something outside the store (ADR 0013).
    */
