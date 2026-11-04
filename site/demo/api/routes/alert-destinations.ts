@@ -5,17 +5,17 @@
 // Nothing leaves the browser in the demo (the banner says so), so a
 // destination the profiles file declares answers as delivered, on the first
 // attempt, without any request; no HTTP status, as nothing answered.
-import type { AlertDestinationType, NotificationDelivery } from '../../../../src/shared/alerts.js';
+import type { NotificationDelivery } from '../../../../src/shared/alerts.js';
 import { DemoApiError, json, type Router } from '../router.js';
+import type { DemoState } from '../state.js';
 
-/** The Alert Destinations of scripts/screenshots/profiles.yaml. */
-const DESTINATIONS: ReadonlyMap<string, AlertDestinationType> = new Map([['ops-slack', 'webhook']]);
-
-export function registerAlertDestinationRoutes(router: Router) {
-  let deliveries = 0;
+/** The destinations are those of the recording's GET /alerts (scripts/screenshots/profiles.yaml). */
+export function registerAlertDestinationRoutes(router: Router, state: DemoState) {
+  // Numbered after the recorded deliveries, as the server's store numbers them.
+  let deliveries = Math.max(0, ...state.alerts.notifications.map((n) => n.id));
   router.on('POST', '/alert-destinations/{name}/test', ({ params }) => {
     const name = params.name!;
-    const type = DESTINATIONS.get(name);
+    const type = state.alerts.destinations.find((d) => d.name === name)?.type;
     if (!type) throw new DemoApiError(404, 'alert_destination_not_found', `The profiles file declares no Alert Destination named "${name}".`);
     const delivery: NotificationDelivery = {
       id: ++deliveries,

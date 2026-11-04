@@ -1,5 +1,7 @@
-// The demo's state: what a visitor can change, in memory, per page load.
-import { fixture, type DemoProfile, type DemoVhost } from './fixture.js';
+// The demo's state: what a visitor can change, in memory, per page load. It
+// starts from the recording of the screenshot run (./recording.ts).
+import type { AlertsOverview } from '../../../src/shared/alerts.js';
+import { recording, type RecordedProfile, type RecordedVhost } from './recording.js';
 import { DemoApiError } from './router.js';
 import { AuditLog } from './simulator/audit-log.js';
 import { scenarioBroker, type DemoBroker } from './simulator/broker.js';
@@ -7,9 +9,13 @@ import { Checkouts } from './simulator/checkouts.js';
 
 export const OPERATOR = 'demo';
 
+export type DemoProfile = RecordedProfile;
+export type DemoVhost = RecordedVhost;
+
 export interface DemoState {
   operator: string;
   profiles: DemoProfile[];
+  alerts: AlertsOverview;
   /** The Operator's active Checkout, if any (the triage simulator sets it). */
   checkoutId: string | null;
   /** The triage simulator: the broker every Broker Profile points at, the audit store and the Checkouts. */
@@ -21,12 +27,15 @@ export interface DemoState {
 /** How long before the page loaded the scenario's Messages were dead-lettered. */
 const DEAD_LETTERED_AGO_MS = 8 * 60_000;
 
+/** The scenario: the read-only views as recorded, their times moved to `now`, and the simulator's broker. */
 export function startingState(now: Date = new Date()): DemoState {
+  const { profiles, alerts } = recording(now.getTime());
   const broker = scenarioBroker(new Date(now.getTime() - DEAD_LETTERED_AGO_MS));
   const audit = new AuditLog();
   const state: Omit<DemoState, 'checkouts'> & { checkouts?: Checkouts } = {
     operator: OPERATOR,
-    profiles: structuredClone(fixture.profiles),
+    profiles,
+    alerts,
     checkoutId: null,
     broker,
     audit,

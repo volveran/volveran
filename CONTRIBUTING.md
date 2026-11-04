@@ -29,7 +29,7 @@ docker build -t volveran .   # the image, as the release workflow builds it
    - `package.json` and (not checked) `package-lock.json`: `npm version <version> --no-git-tag-version` updates both.
    - `src/shared/product.ts` (the version the app reports; the server build compiles only `src/`, so it cannot import `package.json`).
    - `charts/volveran/Chart.yaml`: `version` and `appVersion`.
-   - `README.md`: the image tag and the `helm install --version` of the quick start. Then retake `docs/images` if the UI changed: `npm run build`, then `node scripts/test-broker.mjs run -- scripts/screenshots/capture.sh`.
+   - `README.md`: the image tag and the `helm install --version` of the quick start. Then retake `docs/images` if the UI or the API's answers changed, from the new tag checked out: `npm run build`, then `node scripts/test-broker.mjs run -- scripts/screenshots/capture.sh`. The same pass records the server's answers for the demo's read-only views into `docs/demo/recording.json`; commit it with the images.
    - `site/index.html` (the image tag).
    - `docs/team-mode.md` (the image tag) and `docs/kubernetes.md` (`helm install --version`).
    - `docker-compose.example.yml` (the image tag).
@@ -51,7 +51,7 @@ After the release's image is published, add its upgrade fixture (see **Upgrade s
 
 Another store can reuse this: copy a fixture with `copyFixtureStore`, start on it with `fixtureAppOptions`, and run `upgradeChecks`.
 
-**The demo.** `site/demo/` wraps the web app of the latest release tag, unchanged, in a page that answers its API calls in the browser (`site/demo/api/`, one module per area under `routes/`, registered on the `Router` with the paths of `openapi.json`); `scripts/demo.mjs` unpacks the tag's `src/web` and `src/shared` into `dist/demo-release/<tag>/` and builds around them. Nothing under `src/web` changes for the demo. `.github/workflows/pages.yml` publishes it at `/demo/` on pushes to `main` and of `v*` tags, always with `main`'s demo code. Its unit tests are `test/unit/demo-*.test.ts`.
+**The demo.** `site/demo/` wraps the web app of the latest release tag, unchanged, in a page that answers its API calls in the browser (`site/demo/api/`, one module per area under `routes/`, registered on the `Router` with the paths of `openapi.json`); `scripts/demo.mjs` unpacks the tag's `src/web` and `src/shared` into `dist/demo-release/<tag>/` and builds around them. Nothing under `src/web` changes for the demo. `.github/workflows/pages.yml` publishes it at `/demo/` on pushes to `main` and of `v*` tags, always with `main`'s demo code. The read-only views (queue list, History, Alerts, Dead-letter Map, Replay rules, alert rules, vhosts, move destinations) answer from `docs/demo/recording.json`, which the screenshot run records from its seeded broker (`scripts/screenshots/record-demo.mjs`), with every time moved to the moment the demo loads. Its unit tests are `test/unit/demo-*.test.ts`.
 
 **The profiles file schema.** `profiles.schema.json` is written by hand and published with each release; the parser (`src/server/profiles.ts`) stays the authority. `test/unit/profiles-schema.test.ts` holds the two to the fixtures in `test/fixtures/profiles-schema/`: `accepted/` and `refused/` for both, `parser-only/` for what a schema cannot see. A new key goes in the parser, the schema and `accepted/every-key.yaml`, where the test tries an unknown key beside it.
 

@@ -3,11 +3,13 @@
 // on the Router from its own module in ./routes.
 import { DemoApiError, errorResponse, Router } from './router.js';
 import { registerAlertDestinationRoutes } from './routes/alert-destinations.js';
+import { registerAlertRoutes } from './routes/alerts.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerCheckoutRoutes } from './routes/checkouts.js';
 import { registerCompareRoutes } from './routes/compare.js';
 import { registerExportRoutes } from './routes/export.js';
+import { registerHistoryRoutes } from './routes/history.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { startingState, type DemoState } from './state.js';
@@ -20,15 +22,17 @@ export interface DemoApi {
   readonly state: DemoState;
 }
 
-export function createDemoApi(state: DemoState = startingState()): DemoApi {
+export function createDemoApi(state: DemoState = startingState(), now: () => number = Date.now): DemoApi {
   const router = new Router();
   registerSessionRoutes(router, state);
   registerProfileRoutes(router, state);
+  registerHistoryRoutes(router, state, now);
+  registerAlertRoutes(router, state);
   registerCheckoutRoutes(router, state);
   registerCompareRoutes(router, state);
   registerExportRoutes(router, state);
   registerAuditRoutes(router, state);
-  registerAlertDestinationRoutes(router);
+  registerAlertDestinationRoutes(router, state);
   registerApprovalRoutes(router);
   return {
     state,

@@ -435,8 +435,9 @@ describe('the queue list while a Checkout holds a queue', () => {
     const api = createDemoApi();
     const checkout = await started(api);
     const { body } = await call(api, 'GET', '/profiles/production/vhosts/%2F/queues?onlyDeadLetterQueues=true');
-    expect(body.queues[0]).toMatchObject({ name: 'orders.dlq', approximateMessages: 15, checkedOutBy: { operator: 'demo', since: checkout.startedAt } });
-    expect(body.queues[1]).toMatchObject({ name: 'payments.dlq', checkedOutBy: null });
+    const row = (name: string) => body.queues.find((q: { name: string }) => q.name === name);
+    expect(row('orders.dlq')).toMatchObject({ approximateMessages: 15, checkedOutBy: { operator: 'demo', since: checkout.startedAt } });
+    expect(row('payments.dlq')).toMatchObject({ checkedOutBy: null });
     expect((await startCheckout(api, 'production', 'payments.dlq')).body.error.code).toBe('operator_has_checkout');
   });
 });
