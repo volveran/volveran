@@ -21,7 +21,7 @@ import type { AuditAction, AuditDestination } from '../../../../src/shared/audit
 import type { MessageOutcome } from '../../../../src/shared/checkout.js';
 import { destinationLabel, type ActionDecision, type Decision, type MoveDestination } from '../../../../src/shared/decisions.js';
 import type { Role } from '../../../../src/shared/roles.js';
-import type { AuditLog } from './audit-log.js';
+import type { AuditLog, NewAuditEntry } from './audit-log.js';
 import type { AmqpProperties, BrokerMessage, DemoBroker } from './broker.js';
 import { REPLAY_ID_HEADER } from './filters.js';
 import { messageIdOf, replayOrigin } from './message-view.js';
@@ -115,33 +115,7 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     }
     const handler = handlerFor(decision);
     const details = handler.audit(decision, message);
-    const { headers, ...properties } = message.properties;
-    const entryId = audit.record({
-      at: new Date().toISOString(),
-      operatorId: target.operator,
-      operatorName: target.operator,
-      role: target.role,
-      approverId: null,
-      approverName: null,
-      brokerUser: target.brokerUser,
-      profile: target.profile,
-      vhost: target.vhost,
-      queue: target.queue,
-      messageId: messageIdOf(message),
-      action: details.action,
-      reason: details.reason,
-      destination: details.destination,
-      checkoutId: target.checkoutId,
-      restoreOf: null,
-      replayId: details.replayId,
-      filter: null,
-      messageCount: null,
-      rate: run.rate,
-      rule: null,
-      rulePassId: null,
-      canary: isCanary,
-      message: { properties: { ...properties }, headers: structuredClone(headers ?? {}), body: details.copy === 'full' ? message.content : null },
-    });
+    const entryId = audit.record(stepEntry(target, message, details, { at: new Date(), rate: run.rate, canary: isCanary }));
     if (isCanary) canary.beforePublish(entryId, details.replayId);
     let result: StepResult;
     try {
@@ -158,6 +132,42 @@ export async function executeApply(run: ApplyRun): Promise<MessageOutcome[]> {
     const o = outcomes.get(handle);
     return o ? [o] : [];
   });
+}
+
+/** The Audit Entry of one step, written before the broker is touched. */
+export function stepEntry(
+  target: ApplyTarget,
+  message: BrokerMessage,
+  details: AuditDetails,
+  { at, rate, canary }: { at: Date; rate: number | null; canary: boolean },
+): NewAuditEntry {
+  const { headers, ...properties } = message.properties;
+  return {
+    at: at.toISOString(),
+    operatorId: target.operator,
+    operatorName: target.operator,
+    role: target.role,
+    approverId: null,
+    approverName: null,
+    brokerUser: target.brokerUser,
+    profile: target.profile,
+    vhost: target.vhost,
+    queue: target.queue,
+    messageId: messageIdOf(message),
+    action: details.action,
+    reason: details.reason,
+    destination: details.destination,
+    checkoutId: target.checkoutId,
+    restoreOf: null,
+    replayId: details.replayId,
+    filter: null,
+    messageCount: null,
+    rate,
+    rule: null,
+    rulePassId: null,
+    canary,
+    message: { properties: { ...properties }, headers: structuredClone(headers ?? {}), body: details.copy === 'full' ? message.content : null },
+  };
 }
 
 const discard: DecisionHandler<{ kind: 'discard'; reason: string }> = {

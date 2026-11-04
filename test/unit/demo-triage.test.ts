@@ -1,8 +1,10 @@
 // The demo's triage loop (site/demo/api/simulator): Checkout, Decisions,
 // Apply and Audit Entries against the in-memory broker seeded with the
-// screenshot scenario's Messages, through the API the web app calls.
+// screenshot scenario's Messages, through the API the web app calls. From the
+// broker as seed.mjs leaves it (seededState), with an empty audit store.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDemoApi, type DemoApi } from '../../site/demo/api/demo-api.js';
+import { seededState } from '../../site/demo/api/state.js';
 import type { CheckoutView, MessageDetail } from '../../src/shared/checkout.js';
 
 const origin = 'https://volveran.github.io';
@@ -30,7 +32,7 @@ afterEach(() => {
 
 describe('a Checkout in the demo', () => {
   it('holds the seeded Messages of orders.dlq on staging, every one Keep, for the Operator demo', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect(checkout).toMatchObject({
       profile: 'staging',
@@ -68,7 +70,7 @@ describe('a Message in a demo Checkout', () => {
   }
 
   it('shows the protobuf order as hex and base64', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const protobuf = checkout.messages.find((m) => m.messageId === 'ord-22e1b-0015')!;
     expect((await detail(api, checkout, protobuf.handle)).body).toEqual({
@@ -80,7 +82,7 @@ describe('a Message in a demo Checkout', () => {
   });
 
   it('shows the x-death the broker wrote when orders.work rejected it, and the Spring AMQP Failure Details', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const message = await detail(api, checkout, 1);
     expect(message.exchange).toBe('orders.dlx');
@@ -100,14 +102,14 @@ describe('a Message in a demo Checkout', () => {
   });
 
   it('shows the Delivery Budget of a Message on the quorum queue payments.dlq', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api, 'staging', 'payments.dlq');
     expect(checkout).toMatchObject({ queueType: 'quorum', deliveryLimit: 5, heldCount: 6 });
     expect((await detail(api, checkout, 1)).deliveryBudget).toEqual({ remaining: 5, warning: null });
   });
 
   it('answers a handle the Checkout does not hold as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect((await call(api, 'GET', `/checkouts/${checkout.id}/messages/99`)).body).toEqual({
       error: { code: 'message_not_found', message: `Checkout ${checkout.id} holds no Message with handle 99.` },
@@ -121,13 +123,13 @@ describe('selecting all matching Messages in the demo', () => {
   }
 
   it('finds the SQLTimeoutException Messages by their Failure Details', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect((await matching(api, checkout, [{ kind: 'failure', value: 'sqltimeoutexception' }])).body).toEqual({ handles: [1, 4, 7, 10, 13], count: 5 });
   });
 
   it('ANDs the clauses: a routing key glob and a JSON path', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const { body } = await matching(api, checkout, [
       { kind: 'routing-key', value: 'orders.created.*' },
@@ -139,7 +141,7 @@ describe('selecting all matching Messages in the demo', () => {
   });
 
   it('refuses a filter it cannot read, as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect(await matching(api, checkout, [{ kind: 'colour', value: 'red' }])).toEqual({
       status: 400,
@@ -159,7 +161,7 @@ async function decide(api: DemoApi, checkout: CheckoutView, handles: number[], d
 
 describe('Decisions in the demo', () => {
   it('are staged on the Messages given them; every other Message stays Keep', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await decide(api, checkout, [1], { kind: 'discard', reason: 'Duplicate of order 880210, already fulfilled' });
     await decide(api, checkout, [2, 3], { kind: 'replay' });
@@ -175,7 +177,7 @@ describe('Decisions in the demo', () => {
   });
 
   it('refuses a Discard without a reason and a Move to the queue being triaged, as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect(await decide(api, checkout, [1], { kind: 'discard', reason: ' ' })).toEqual({
       status: 400,
@@ -209,7 +211,7 @@ async function depths(api: DemoApi, profile = 'staging') {
 
 describe('Apply in the demo', () => {
   it('carries out the Decisions in the background, gives the outcome per Message and ends the Checkout', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await decide(api, checkout, [1], { kind: 'discard', reason: 'Duplicate of order 880210, already fulfilled' });
     await decide(api, checkout, [2, 3], { kind: 'replay' });
@@ -231,7 +233,7 @@ describe('Apply in the demo', () => {
   });
 
   it('leaves the queue list depths as the outcome left them, and the Replayed Messages out of the dead-letter queue', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     expect(await depths(api)).toMatchObject({ 'orders.dlq': 15, 'orders.parked': 0, 'orders.work': 0 });
     const checkout = await started(api);
     const replayed = checkout.messages.slice(1, 3).map((m) => m.messageId);
@@ -249,7 +251,7 @@ describe('Apply in the demo', () => {
   });
 
   it('needs the Operator\'s confirmation, as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect((await call(api, 'POST', `/checkouts/${checkout.id}/apply`, {})).body.error.code).toBe('confirmation_required');
   });
@@ -257,7 +259,7 @@ describe('Apply in the demo', () => {
 
 describe('Keep in the demo', () => {
   it('is what a Decision that fails falls back to: the Message stays in the queue', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await decide(api, checkout, [1], { kind: 'move', destination: { exchange: 'orders', routingKey: 'nowhere' } });
     const ended = await applied(api, checkout);
@@ -274,7 +276,7 @@ describe('Keep in the demo', () => {
 
   it('is what the steps an Operator stops before fall back to', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await decide(api, checkout, [2, 3, 4], { kind: 'replay' });
     const res = await call(api, 'POST', `/checkouts/${checkout.id}/apply`, { confirm: true, rate: 1 });
@@ -296,7 +298,7 @@ describe('Keep in the demo', () => {
 
 describe('ending a demo Checkout', () => {
   it('returns every Message without an applied Decision to the queue, in order', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await decide(api, checkout, [1, 2], { kind: 'discard', reason: 'Not needed' });
     const { status, body } = await call(api, 'DELETE', `/checkouts/${checkout.id}`);
@@ -310,7 +312,7 @@ describe('ending a demo Checkout', () => {
   });
 
   it('refuses Decisions once it is over, as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await call(api, 'POST', `/checkouts/${checkout.id}/end`);
     expect(await decide(api, checkout, [1], { kind: 'replay' })).toEqual({
@@ -328,7 +330,7 @@ describe('ending a demo Checkout', () => {
 
   it('happens by itself when the browser stops sending heartbeats for the heartbeat window', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await vi.advanceTimersByTimeAsync(100_000);
     expect((await call(api, 'POST', `/checkouts/${checkout.id}/heartbeat`)).body.checkout.status).toBe('active');
@@ -341,7 +343,7 @@ describe('ending a demo Checkout', () => {
 
   it('happens by itself at the 30-minute time limit, heartbeats or not', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     for (let minute = 0; minute < 30; minute++) {
       await call(api, 'POST', `/checkouts/${checkout.id}/heartbeat`);
@@ -362,7 +364,7 @@ describe('Audit Entries in the demo', () => {
   }
 
   it('record every action under the Operator demo, newest first, without bodies', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await appliedScenario(api);
     const { body } = await call(api, 'GET', '/audit-entries?operator=demo');
     expect(body.entries.map((e: Record<string, unknown>) => [e.id, e.action, e.messageId, e.outcome])).toEqual([
@@ -392,7 +394,7 @@ describe('Audit Entries in the demo', () => {
   });
 
   it('keep a full copy of a Discarded Message, body included', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     await appliedScenario(api);
     const { status, body } = await call(api, 'GET', '/audit-entries/1');
     expect(status).toBe(200);
@@ -416,7 +418,7 @@ describe('Audit Entries in the demo', () => {
   });
 
   it('are searchable as the audit view searches them', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     await appliedScenario(api);
     const ids = async (query: string) => ((await call(api, 'GET', `/audit-entries?${query}`)).body.entries as Array<{ id: number }>).map((e) => e.id);
     expect(await ids('action=discard')).toEqual([1]);
@@ -432,7 +434,7 @@ describe('Audit Entries in the demo', () => {
 
 describe('the queue list while a Checkout holds a queue', () => {
   it('shows who holds it, on every Broker Profile of the broker, and refuses a second Checkout', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const { body } = await call(api, 'GET', '/profiles/production/vhosts/%2F/queues?onlyDeadLetterQueues=true');
     const row = (name: string) => body.queues.find((q: { name: string }) => q.name === name);

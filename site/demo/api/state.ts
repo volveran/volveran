@@ -6,6 +6,7 @@ import { DemoApiError } from './router.js';
 import { AuditLog } from './simulator/audit-log.js';
 import { scenarioBroker, type DemoBroker } from './simulator/broker.js';
 import { Checkouts } from './simulator/checkouts.js';
+import { applyScreenshotPrep, type PrepApply } from './simulator/screenshot-prep.js';
 
 export const OPERATOR = 'demo';
 
@@ -27,8 +28,22 @@ export interface DemoState {
 /** How long before the page loaded the scenario's Messages were dead-lettered. */
 const DEAD_LETTERED_AGO_MS = 8 * 60_000;
 
-/** The scenario: the read-only views as recorded, their times moved to `now`, and the simulator's broker. */
+/**
+ * What a visitor starts from: the read-only views as recorded, their times moved to `now`, and the
+ * simulator's broker and audit store as the screenshot run left them when it recorded, after its
+ * prep Apply and die-again.mjs (./simulator/screenshot-prep.ts).
+ */
 export function startingState(now: Date = new Date()): DemoState {
+  const state = seededState(now);
+  applyScreenshotPrep(state.broker, state.audit, prepApply(state.profiles));
+  return state;
+}
+
+/**
+ * The scenario as seed.mjs leaves the broker, before the screenshot run's prep: every Message
+ * dead-lettered, an empty audit store. The read-only views are the recording's all the same.
+ */
+export function seededState(now: Date = new Date()): DemoState {
   const { profiles, alerts } = recording(now.getTime());
   const broker = scenarioBroker(new Date(now.getTime() - DEAD_LETTERED_AGO_MS));
   const audit = new AuditLog();
@@ -42,6 +57,15 @@ export function startingState(now: Date = new Date()): DemoState {
   };
   state.checkouts = new Checkouts({ broker, audit, operator: OPERATOR, activeChanged: (id) => (state.checkoutId = id) });
   return state as DemoState;
+}
+
+/** The screenshot run's prep Apply, from the mark it left in the recorded History of orders.dlq on staging. */
+function prepApply(profiles: DemoProfile[]): PrepApply {
+  const staging = profiles.find((p) => p.summary.name === 'staging');
+  const history = staging?.vhosts.find((v) => v.name === '/')?.histories['orders.dlq']?.['1h'];
+  const mark = history?.marks.find((m) => m.kind === 'apply');
+  if (!staging || !mark?.checkoutId || !mark.operator) throw new Error('The recording has no Apply mark on orders.dlq of staging: re-record it with capture.sh.');
+  return { checkoutId: mark.checkoutId, at: new Date(mark.at), operator: mark.operator, brokerUser: staging.summary.username ?? '' };
 }
 
 /** The named Broker Profile; throws 404 `profile_not_found` as the server does. */

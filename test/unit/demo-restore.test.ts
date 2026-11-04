@@ -1,9 +1,11 @@
 // The rest of what a visitor reaches in the demo (site/demo/api): Restore of a
 // Discarded Message from the audit log, export of a Checkout, Compare, the
 // audit store usage, the Alert Destination test and the Approval routes Solo
-// Mode never reaches, through the API the web app calls.
+// Mode never reaches, through the API the web app calls. From the broker as
+// seed.mjs leaves it (seededState), with an empty audit store.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDemoApi, type DemoApi } from '../../site/demo/api/demo-api.js';
+import { seededState } from '../../site/demo/api/state.js';
 import { fromAmqpJson } from '../../src/server/audit/amqp-json.js';
 import { exportLine } from '../../src/server/triage/export-line.js';
 import type { CheckoutView } from '../../src/shared/checkout.js';
@@ -62,7 +64,7 @@ async function discardedHead(api: DemoApi, profile = 'staging'): Promise<string>
 
 describe('Restore in the demo', () => {
   it('puts a Discarded Message back in the queue it was Discarded from and records its own Audit Entry', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const messageId = await discardedHead(api);
     expect((await depths(api))['orders.dlq']).toBe(14);
 
@@ -90,7 +92,7 @@ describe('Restore in the demo', () => {
   });
 
   it('puts it in another existing queue with a new replay id, so that it is Died Again if it is dead-lettered again', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const messageId = await discardedHead(api);
     const { body } = await call(api, 'POST', '/audit-entries/1/restore', { confirm: true, queue: 'orders.parked' });
     expect(body.entry).toMatchObject({ outcome: 'done', queue: 'orders.dlq', destination: { queue: 'orders.parked' } });
@@ -107,7 +109,7 @@ describe('Restore in the demo', () => {
   });
 
   it('on the Protected Profile production, needs the destination queue name typed exactly', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     await discardedHead(api, 'production');
     expect(await call(api, 'POST', '/audit-entries/1/restore', { confirm: true, confirmQueueName: 'orders.DLQ' })).toEqual({
       status: 400,
@@ -124,7 +126,7 @@ describe('Restore in the demo', () => {
   });
 
   it('refuses what the server refuses: no confirmation, a queue that does not exist, a second Restore, an entry that is not a Discard', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     await discardedHead(api);
     const restore = (id: number | string, body: unknown) => call(api, 'POST', `/audit-entries/${id}/restore`, body);
     expect(await restore(1, {})).toEqual({
@@ -155,7 +157,7 @@ describe('Restore in the demo', () => {
 
 describe('export in the demo', () => {
   it('downloads the held Messages as Volverán\'s NDJSON, one line each in queue order, with their Decisions', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     await decide(api, checkout, [1], { kind: 'discard', reason: 'Duplicate' });
     const res = await raw(api, 'POST', `/checkouts/${checkout.id}/export`, {});
@@ -185,7 +187,7 @@ describe('export in the demo', () => {
   });
 
   it('writes each line as the server writes it for the same Message', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const text = await (await raw(api, 'POST', `/checkouts/${checkout.id}/export`, {})).text();
     const info = { type: 'classic' as const, deliveryLimit: null, deadLetterExchange: false };
@@ -200,7 +202,7 @@ describe('export in the demo', () => {
   });
 
   it('exports only the Messages a filter matches, and records an export Audit Entry', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const filter = [{ kind: 'failure', value: 'SQLTimeoutException' }];
     const matching = (await call(api, 'POST', `/checkouts/${checkout.id}/matching`, { filter })).body.handles as number[];
@@ -214,7 +216,7 @@ describe('export in the demo', () => {
   });
 
   it('refuses a filter it cannot read and a Checkout that is over, as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect((await call(api, 'POST', `/checkouts/${checkout.id}/export`, { filter: [{ kind: 'colour' }] })).body.error.code).toBe('invalid_request');
     await call(api, 'POST', `/checkouts/${checkout.id}/end`);
@@ -227,7 +229,7 @@ describe('export in the demo', () => {
 
 describe('Compare in the demo', () => {
   it('shows what differs between two Messages of the Checkout: properties, headers and the JSON body by path', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const { status, body } = await call(api, 'GET', `/checkouts/${checkout.id}/compare?a=1&b=2`);
     expect(status).toBe(200);
@@ -240,7 +242,7 @@ describe('Compare in the demo', () => {
   });
 
   it('compares the protobuf order with a JSON one as bodies of different kinds, and two binary bodies byte by byte', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     const protobuf = checkout.messages.find((m) => m.messageId === 'ord-22e1b-0015')!.handle;
     const { body } = await call(api, 'GET', `/checkouts/${checkout.id}/compare?a=1&b=${protobuf}`);
@@ -248,7 +250,7 @@ describe('Compare in the demo', () => {
   });
 
   it('refuses the same Message twice and a handle the Checkout does not hold, as the server does', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     const checkout = await started(api);
     expect(await call(api, 'GET', `/checkouts/${checkout.id}/compare?a=1&b=1`)).toEqual({
       status: 400,
@@ -262,7 +264,7 @@ describe('Compare in the demo', () => {
 
 describe('the audit store usage in the demo', () => {
   it('counts the bodies of the Discarded Messages against Volverán\'s default limits', async () => {
-    const api = createDemoApi();
+    const api = createDemoApi(seededState());
     expect(await call(api, 'GET', '/audit-store')).toEqual({
       status: 200,
       body: { storedBodyBytes: 0, maxBodyBytes: 1024 ** 3, maxAgeDays: 30, nearLimit: false },
@@ -275,7 +277,7 @@ describe('the audit store usage in the demo', () => {
 describe('a test notification in the demo', () => {
   it('answers as delivered to the Alert Destination, with no network request', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const { status, body } = await call(createDemoApi(), 'POST', '/alert-destinations/ops-slack/test', {});
+    const { status, body } = await call(createDemoApi(seededState()), 'POST', '/alert-destinations/ops-slack/test', {});
     expect(status).toBe(200);
     expect(body.delivery).toMatchObject({
       destination: 'ops-slack',
@@ -293,7 +295,7 @@ describe('a test notification in the demo', () => {
   });
 
   it('refuses an Alert Destination the profiles file does not declare, as the server does', async () => {
-    expect(await call(createDemoApi(), 'POST', '/alert-destinations/pager/test', {})).toEqual({
+    expect(await call(createDemoApi(seededState()), 'POST', '/alert-destinations/pager/test', {})).toEqual({
       status: 404,
       body: { error: { code: 'alert_destination_not_found', message: 'The profiles file declares no Alert Destination named "pager".' } },
     });
@@ -315,14 +317,14 @@ describe('Approval in the demo', () => {
   ];
 
   it.each(approvalRoutes)('%s %s answers 404: Approval needs Team Mode', async (method, path) => {
-    expect(await call(createDemoApi(), method, path)).toEqual({
+    expect(await call(createDemoApi(seededState()), method, path)).toEqual({
       status: 404,
       body: { error: { code: 'not_in_demo', message: 'Not in the demo: Approval needs Team Mode.' } },
     });
   });
 
   it('lists the Approval routes as left out of the demo', () => {
-    expect(createDemoApi().routes().notInDemo).toEqual(
+    expect(createDemoApi(seededState()).routes().notInDemo).toEqual(
       expect.arrayContaining(['GET /api/v1/approvals', 'POST /api/v1/checkouts/{id}/approval-request', 'DELETE /api/v1/checkouts/{id}/approval-request']),
     );
   });
