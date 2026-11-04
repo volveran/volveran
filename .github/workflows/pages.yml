@@ -10,14 +10,22 @@ name: Pages
 on:
   push:
     branches: [main]
+    # What the build reads from main: the site, its images and the demo's
+    # recording, the server and shared modules and the scenario the demo
+    # imports, the build and check scripts (the Vite config is in demo.mjs)
+    # and the dependencies they run with.
     paths:
       - 'site/**'
       - 'docs/images/**'
       - 'docs/demo/**'
-      - 'scripts/demo.mjs'
-      - 'scripts/demo-*.mjs'
+      - 'src/server/**'
+      - 'src/shared/**'
+      - 'scripts/demo*.mjs'
       - 'scripts/release-tag.mjs'
+      - 'scripts/screenshots/messages.mjs'
+      - 'tsconfig.demo.json'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

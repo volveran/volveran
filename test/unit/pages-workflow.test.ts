@@ -2,7 +2,7 @@
 // a release, when the demo moves to the new release. The github-pages
 // environment deploys from main only, so a release does not run Pages itself:
 // release.yml dispatches pages.yml on main once the release is out.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -29,7 +29,7 @@ describe('the Pages workflow', () => {
     expect(workflow.on.push.tags).toBeUndefined();
     expect('workflow_dispatch' in workflow.on).toBe(true);
     expect(workflow.on.push.paths).toEqual(
-      expect.arrayContaining(['site/**', 'docs/images/**', 'docs/demo/**', 'scripts/demo.mjs', 'scripts/release-tag.mjs', '.github/workflows/pages.yml']),
+      expect.arrayContaining(['site/**', 'docs/images/**', 'docs/demo/**', 'scripts/demo*.mjs', 'scripts/release-tag.mjs', '.github/workflows/pages.yml']),
     );
   });
 
@@ -40,7 +40,38 @@ describe('the Pages workflow', () => {
   });
 
   it('runs on changes to the demo check too', () => {
-    expect(workflow.on.push.paths).toEqual(expect.arrayContaining(['scripts/demo-*.mjs', 'package.json']));
+    expect(workflow.on.push.paths).toEqual(expect.arrayContaining(['scripts/demo*.mjs', 'package.json']));
+  });
+
+  it("runs on changes to what the demo build takes from main's server, shared code and scenario", () => {
+    expect(workflow.on.push.paths).toEqual(
+      expect.arrayContaining([
+        'src/server/**',
+        'src/shared/**',
+        'scripts/screenshots/messages.mjs',
+        'tsconfig.demo.json',
+        'package-lock.json',
+      ]),
+    );
+  });
+
+  it('covers every module of main that site/demo imports from outside site/', () => {
+    const imported = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(file);
+        else if (/\.tsx?$/.test(entry.name))
+          for (const [, spec] of readFileSync(file, 'utf8').matchAll(/from '(\.[^']+)'/g)) {
+            const target = path.relative(root, path.resolve(path.dirname(file), spec!));
+            if (!target.startsWith('site/')) imported.add(target.replace(/\.js$/, '.ts'));
+          }
+      }
+    };
+    walk(path.join(root, 'site/demo'));
+    expect(imported.size).toBeGreaterThan(0);
+    const globs = workflow.on.push.paths.map((p) => new RegExp(`^${p.replace(/[.]/g, '\\.').replace(/\*\*/g, '.+').replace(/(?<!\.)\*/g, '[^/]*')}$`));
+    expect([...imported].filter((file) => !globs.some((g) => g.test(file)))).toEqual([]);
   });
 
   it('checks the built demo, contract and smoke run in Firefox, before anything is uploaded or deployed', () => {
