@@ -1,10 +1,22 @@
-# Publishes the landing page in site/, with docs/images, to GitHub Pages.
+# Publishes the landing page in site/, with docs/images, and the demo at /demo/
+# to GitHub Pages. The demo is the web app of the latest release tag, built with
+# the demo page, simulator and banner of main (scripts/demo.mjs). A release tag
+# runs it too, so a release republishes the demo; that run checks out main all
+# the same, since the demo's code comes from main.
 name: Pages
 
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'docs/images/**', '.github/workflows/pages.yml']
+    # Path filters do not apply to tag pushes.
+    tags: ['v*']
+    paths:
+      - 'site/**'
+      - 'docs/images/**'
+      - 'docs/demo/**'
+      - 'scripts/demo.mjs'
+      - 'scripts/release-tag.mjs'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -25,9 +37,22 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: cp -r docs/images site/images
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: |
+          mkdir _site
+          cp -r site/. _site/
+          rm -rf _site/demo
+          cp -r docs/images _site/images
+      # Finds the latest release tag on origin and fetches it (the checkout has no tags).
+      - run: node scripts/demo.mjs build _site/demo
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
-          path: site
+          path: _site
       - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
         id: deploy
