@@ -79,9 +79,19 @@ export class AuditLog {
     return this.#entries[id - 1]?.body ?? null;
   }
 
-  /** The entry that published `replayId` (Replay, Move or Restore): the Died Again trail. */
+  /** How many bytes of Discarded bodies the store keeps, for the audit store usage. */
+  storedBodyBytes(): number {
+    return this.#entries.reduce((sum, s) => sum + (s.body?.length ?? 0), 0);
+  }
+
+  /** The entry that published `replayId` (Replay, Move or Restore): the Died Again trail (#150). */
   byReplayId(replayId: string): AuditEntryJson | null {
     return this.#entries.find((s) => s.entry.replayId === replayId)?.entry ?? null;
+  }
+
+  /** The Restores of the Discard of entry `id`, oldest first. */
+  restoresOf(id: number): AuditEntryJson[] {
+    return this.#entries.filter((s) => s.entry.restoreOf === id).map((s) => s.entry);
   }
 
   /** Every entry matching `query`, newest first, without bodies. */
