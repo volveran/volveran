@@ -2,7 +2,8 @@
 # to GitHub Pages. The demo is the web app of the latest release tag, built with
 # the demo page, simulator and banner of main (scripts/demo.mjs). A release tag
 # runs it too, so a release republishes the demo; that run checks out main all
-# the same, since the demo's code comes from main.
+# the same, since the demo's code comes from main. Before anything is
+# uploaded, the demo check (npm run demo:check) must pass.
 name: Pages
 
 on:
@@ -15,7 +16,9 @@ on:
       - 'docs/images/**'
       - 'docs/demo/**'
       - 'scripts/demo.mjs'
+      - 'scripts/demo-*.mjs'
       - 'scripts/release-tag.mjs'
+      - 'package.json'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -51,6 +54,15 @@ jobs:
           cp -r docs/images _site/images
       # Finds the latest release tag on origin and fetches it (the checkout has no tags).
       - run: node scripts/demo.mjs build _site/demo
+      - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1.7.2
+        id: firefox
+      # The demo's guard: every route of the tag's openapi.json is handled or
+      # listed as not in the demo, and a smoke run in headless Firefox walks the
+      # banner's suggested path (scripts/demo-check.mjs). A failure ends the job
+      # here, before the upload: the landing page and the demo stay as published.
+      - run: npm run demo:check -- _site/demo
+        env:
+          FIREFOX: ${{ steps.firefox.outputs.firefox-path }}
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: _site

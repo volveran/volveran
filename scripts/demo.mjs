@@ -48,17 +48,35 @@ function demoConfig(tag, releaseDir) {
   };
 }
 
+/**
+ * Builds the demo around the web app of `tag` into `outDir`; returns where the release was unpacked.
+ * @param {string} outDir
+ * @param {string} tag
+ * @returns {Promise<string>}
+ */
+export async function buildDemo(outDir, tag) {
+  const releaseDir = unpackDemoRelease(tag);
+  console.log(`Demo around the web app of ${tag}`);
+  await build({ ...demoConfig(tag, releaseDir), build: { outDir: path.resolve(outDir), emptyOutDir: true } });
+  return releaseDir;
+}
+
+/** @returns {string} */
+export function latestReleaseTag() {
+  const tag = findLatestRelease();
+  if (tag === undefined) throw new Error('No release tag to build the demo from.');
+  return tag;
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   const tagArg = command === 'build' ? args[1] : args[0];
-  const tag = tagArg ?? findLatestRelease();
-  if (tag === undefined) throw new Error('No release tag to build the demo from.');
-  const releaseDir = unpackDemoRelease(tag);
-  console.log(`Demo around the web app of ${tag}`);
+  const tag = tagArg ?? latestReleaseTag();
   if (command === 'build') {
-    const outDir = path.resolve(args[0] ?? path.join(repoRoot, 'dist/demo'));
-    await build({ ...demoConfig(tag, releaseDir), build: { outDir, emptyOutDir: true } });
+    await buildDemo(args[0] ?? path.join(repoRoot, 'dist/demo'), tag);
   } else if (command === 'dev') {
+    const releaseDir = unpackDemoRelease(tag);
+    console.log(`Demo around the web app of ${tag}`);
     const server = await createServer(demoConfig(tag, releaseDir));
     await server.listen();
     server.printUrls();

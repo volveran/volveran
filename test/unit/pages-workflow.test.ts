@@ -36,6 +36,25 @@ describe('the Pages workflow', () => {
     expect(runs).toMatch(/node scripts\/demo\.mjs build _site\/demo/);
   });
 
+  it('runs on changes to the demo check too', () => {
+    expect(workflow.on.push.paths).toEqual(expect.arrayContaining(['scripts/demo-*.mjs', 'package.json']));
+  });
+
+  it('checks the built demo, contract and smoke run in Firefox, before anything is uploaded or deployed', () => {
+    const index = (find: (s: Step) => boolean) => steps.findIndex(find);
+    const build = index((s) => /node scripts\/demo\.mjs build _site\/demo/.test(s.run ?? ''));
+    const firefox = index((s) => s.uses?.startsWith('browser-actions/setup-firefox@') ?? false);
+    const check = index((s) => /npm run demo:check -- _site\/demo/.test(s.run ?? ''));
+    const upload = index((s) => s.uses?.startsWith('actions/upload-pages-artifact@') ?? false);
+    const deploy = index((s) => s.uses?.startsWith('actions/deploy-pages@') ?? false);
+    expect([build, firefox, check].every((i) => i >= 0)).toBe(true);
+    expect(build < check && firefox < check && check < upload && upload < deploy).toBe(true);
+    expect(steps[firefox]!.uses).toMatch(/@[0-9a-f]{40}$/);
+    expect((steps[check] as Step & { env?: Record<string, string> }).env?.FIREFOX).toMatch(/steps\.firefox\.outputs\.firefox-path/);
+    // A failed check must stop the job: nothing after it may run regardless.
+    expect(steps.slice(check + 1).some((s) => /always\(\)|failure\(\)/.test(String((s as { if?: string }).if ?? '')))).toBe(false);
+  });
+
   it('publishes the landing page as before, with its images, and the demo under /demo/', () => {
     expect(runs).toMatch(/cp -r site\/\. _site\//);
     expect(runs).toMatch(/cp -r docs\/images _site\/images/);

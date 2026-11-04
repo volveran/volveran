@@ -19,6 +19,7 @@
     "lint": "npm run typecheck && tools/lint/node_modules/.bin/eslint --config tools/lint/eslint.config.mjs src test site/demo",
     "demo": "node scripts/demo.mjs dev",
     "demo:build": "node scripts/demo.mjs build",
+    "demo:check": "tsx scripts/demo-check.mjs",
     "verify": "scripts/verify.sh",
     "test": "npm run test:unit",
     "test:unit": "vitest run --config vitest.unit.config.ts",
