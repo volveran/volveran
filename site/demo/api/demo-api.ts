@@ -2,6 +2,8 @@
 // memory, so a reload starts the scenario over. Each area registers its routes
 // on the Router from its own module in ./routes.
 import { DemoApiError, errorResponse, Router } from './router.js';
+import { registerAlertRoutes } from './routes/alerts.js';
+import { registerHistoryRoutes } from './routes/history.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { startingState, type DemoState } from './state.js';
@@ -14,10 +16,12 @@ export interface DemoApi {
   readonly state: DemoState;
 }
 
-export function createDemoApi(state: DemoState = startingState()): DemoApi {
+export function createDemoApi(state: DemoState = startingState(), now: () => number = Date.now): DemoApi {
   const router = new Router();
   registerSessionRoutes(router, state);
   registerProfileRoutes(router, state);
+  registerHistoryRoutes(router, state, now);
+  registerAlertRoutes(router, state);
   return {
     state,
     routes: () => router.routes(),
