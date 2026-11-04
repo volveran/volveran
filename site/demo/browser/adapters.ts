@@ -20,10 +20,13 @@ export function interceptFetch(win: { fetch: typeof fetch; location: { href: str
 /**
  * The web app's links to its own views are root-relative (`/#/history/...`),
  * since it is served at `/`; under the demo they would leave it. Returns the
- * link under `pathname` (the demo page's), or undefined for any other link.
+ * link under `pathname` (the demo page's), or undefined for any other link
+ * and for one that is already there (the demo served at `/`).
  */
 export function inDemoUrl(href: string, pathname: string): string | undefined {
-  return href.startsWith('/#') ? `${pathname}${href.slice(1)}` : undefined;
+  if (!href.startsWith('/#')) return undefined;
+  const inDemo = `${pathname}${href.slice(1)}`;
+  return inDemo === href ? undefined : inDemo;
 }
 
 /** Replaces localStorage and sessionStorage with storage in memory, gone with the page. */

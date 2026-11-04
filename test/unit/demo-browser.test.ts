@@ -43,6 +43,11 @@ describe('links in the demo', () => {
     expect(inDemoUrl('https://github.com/volveran/volveran', '/volveran/demo/')).toBeUndefined();
     expect(inDemoUrl('/volveran/', '/volveran/demo/')).toBeUndefined();
   });
+
+  it('leaves a link alone when the demo is served at the root, as `npm run demo` does', () => {
+    // Rewriting it to itself would set the href again, and the page's link watcher would never stop.
+    expect(inDemoUrl('/#/history/staging/%2F/orders.dlq', '/')).toBeUndefined();
+  });
 });
 
 describe('storage in the demo', () => {
