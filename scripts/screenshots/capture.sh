@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Regenerates docs/images from a freshly seeded test broker and the built app.
-# Run it from a tag, so the images show what people pull:
+# Regenerates docs/images from a freshly seeded test broker and the built app,
+# and in the same pass records the server's answers for the demo's read-only
+# views into docs/demo/recording.json (record-demo.mjs). Run it from a tag, so
+# the images and the recording show what people pull, then commit both:
 #
 #   npm run build
 #   node scripts/test-broker.mjs run -- scripts/screenshots/capture.sh
@@ -35,6 +37,9 @@ for theme in light dark; do
   sleep 40 # Sampling and the Alert Rules need a run or two.
   node "$here/shot.mjs" "$tmp/scratch" "$theme" prep
   node "$here/die-again.mjs"
+  sleep 16 # Queue depths in the management API, and the Alerts and Samples read from them, catch up (15 s here).
+  # The state the images below show; one theme is enough.
+  if [ "$theme" = light ]; then VOLVERAN_OPERATOR=ana node "$here/record-demo.mjs" docs/demo/recording.json "http://127.0.0.1:$hook/" "$tmp"; fi
   node "$here/shot.mjs" "$out" "$theme" queues history alerts map checkout compare rules audit canary
   node "$here/shot.mjs" "$tmp/flow" "$theme" flow
   ffmpeg -y -loglevel error -framerate 0.5 -pattern_type glob -i "$tmp/flow/flow-*-$theme.png" \
