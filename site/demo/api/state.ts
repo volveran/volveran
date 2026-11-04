@@ -1,6 +1,9 @@
 // The demo's state: what a visitor can change, in memory, per page load.
 import { fixture, type DemoProfile, type DemoVhost } from './fixture.js';
 import { DemoApiError } from './router.js';
+import { AuditLog } from './simulator/audit-log.js';
+import { scenarioBroker, type DemoBroker } from './simulator/broker.js';
+import { Checkouts } from './simulator/checkouts.js';
 
 export const OPERATOR = 'demo';
 
@@ -9,10 +12,27 @@ export interface DemoState {
   profiles: DemoProfile[];
   /** The Operator's active Checkout, if any (the triage simulator sets it). */
   checkoutId: string | null;
+  /** The triage simulator: the broker every Broker Profile points at, the audit store and the Checkouts. */
+  broker: DemoBroker;
+  audit: AuditLog;
+  checkouts: Checkouts;
 }
 
-export function startingState(): DemoState {
-  return { operator: OPERATOR, profiles: structuredClone(fixture.profiles), checkoutId: null };
+/** How long before the page loaded the scenario's Messages were dead-lettered. */
+const DEAD_LETTERED_AGO_MS = 8 * 60_000;
+
+export function startingState(now: Date = new Date()): DemoState {
+  const broker = scenarioBroker(new Date(now.getTime() - DEAD_LETTERED_AGO_MS));
+  const audit = new AuditLog();
+  const state: Omit<DemoState, 'checkouts'> & { checkouts?: Checkouts } = {
+    operator: OPERATOR,
+    profiles: structuredClone(fixture.profiles),
+    checkoutId: null,
+    broker,
+    audit,
+  };
+  state.checkouts = new Checkouts({ broker, audit, operator: OPERATOR, activeChanged: (id) => (state.checkoutId = id) });
+  return state as DemoState;
 }
 
 /** The named Broker Profile; throws 404 `profile_not_found` as the server does. */
