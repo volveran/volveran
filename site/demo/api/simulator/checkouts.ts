@@ -3,11 +3,12 @@
 // window, Decisions staged until Apply, an Apply in the background that ends
 // the Checkout, and every Message without an applied Decision returned to the
 // queue when it ends. Ended Checkouts stay readable for the page's life.
-import { rateAboveMaximum } from '../../../../src/server/apply/errors.js';
 import { ApplyProgressTracker } from '../../../../src/server/apply/progress.js';
 import { STOP_REASONS } from '../../../../src/server/apply/stop-reasons.js';
 import { applyConfirmationFor } from '../../../../src/server/triage/apply-confirmation.js';
 import { DEFAULT_CHECKOUT_TIMING } from '../../../../src/server/triage/checkout-timing.js';
+import { summarizeDecisions } from '../../../../src/server/triage/decisions.js';
+import { applyOutlastsCheckout, replayRateFor } from '../../../../src/server/triage/replay-rate.js';
 import type {
   AppliedResult,
   CanaryConfirmation,
@@ -19,9 +20,9 @@ import type {
   EndReason,
   MessageDetail,
 } from '../../../../src/shared/checkout.js';
-import { summaryText, type ActionDecision, type Decision, type DecisionKind, type DecisionSummaryLine, type MoveDestination } from '../../../../src/shared/decisions.js';
+import { summaryText, type ActionDecision, type Decision, type MoveDestination } from '../../../../src/shared/decisions.js';
 import type { Filter } from '../../../../src/shared/filters.js';
-import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE, pacedDurationMs } from '../../../../src/shared/replay-rate.js';
+import { pacedDurationMs } from '../../../../src/shared/replay-rate.js';
 import { HttpError } from '../../../../src/server/http-error.js';
 import { executeApply, type ApplyStep, type CanaryHooks } from './apply.js';
 import type { AuditLog } from './audit-log.js';
@@ -279,26 +280,19 @@ export class Checkouts {
   }
 
   /**
-   * The Replay Rate an Apply runs at, as src/server/triage/replay-rate.ts
-   * resolves it: the request's, else the profile's default; 400
-   * `rate_above_maximum` above the profile's maximum (or with no rate at all
-   * under a maximum, unless nothing is paced), and 409
+   * The Replay Rate an Apply runs at, by the server's rules
+   * (src/server/triage/replay-rate.ts): the request's, else the profile's
+   * default; 400 `invalid_request` or `rate_above_maximum`, and 409
    * `apply_would_outlast_checkout` when the paced steps at that rate need more
-   * than the time left less a margin.
+   * than the time left less a margin. That error's message is a copy of
+   * src/server/checkout/errors.ts, whose module needs node:crypto.
    */
   #rateFor(checkout: DemoCheckout, requested: unknown): number | null {
-    const { profile } = checkout;
-    if (requested !== undefined && requested !== null && !isReplayRate(requested)) {
-      throw new HttpError(400, 'invalid_request', `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`);
-    }
-    const asked = (requested as number | null | undefined) ?? null;
-    const rate = asked ?? profile.replayRate.default;
     const paced = pacedSteps(checkout);
-    const { max } = profile.replayRate;
-    if (max !== null && (rate === null ? paced > 0 : rate > max)) throw rateAboveMaximum(profile.name, max, asked);
-    const neededMs = pacedDurationMs(paced, rate);
-    const remainingMs = Math.max(0, checkout.endsAt.getTime() - Date.now());
-    if (neededMs !== null && neededMs > remainingMs - APPLY_TIME_MARGIN_MS) {
+    const rate = replayRateFor(requested, checkout.profile, { pacedSteps: paced });
+    const outlasts = applyOutlastsCheckout({ pacedSteps: paced, rate, remainingMs: Math.max(0, checkout.endsAt.getTime() - Date.now()) });
+    if (outlasts) {
+      const { neededMs, remainingMs } = outlasts;
       const seconds = (ms: number) => `${Math.ceil(ms / 1000)} s`;
       throw new HttpError(
         409,
@@ -506,7 +500,7 @@ export class Checkouts {
   #view(c: DemoCheckout): CheckoutView {
     const handles = [...c.held.keys()];
     const decisionOf = (h: number): Decision => c.decisions.get(h) ?? { kind: 'keep' };
-    const decisionSummary = summarize(handles.map(decisionOf));
+    const decisionSummary = summarizeDecisions(handles, c.decisions);
     const paced = pacedSteps(c);
     return {
       id: c.id,
@@ -577,9 +571,6 @@ function pacedSteps(c: DemoCheckout): number {
   return [...c.held.keys()].filter((h) => ['replay', 'move'].includes(c.decisions.get(h)?.kind ?? 'keep')).length;
 }
 
-/** How close to its end a paced Apply may be estimated to run (src/server/triage/replay-rate.ts). */
-const APPLY_TIME_MARGIN_MS = 10_000;
-
 /** The held Messages that are Died Again, by handle. */
 function diedAgainOf(held: ReadonlyMap<number, BrokerMessage>, audit: AuditLog): Map<number, DiedAgain> {
   const found = new Map<number, DiedAgain>();
@@ -588,29 +579,6 @@ function diedAgainOf(held: ReadonlyMap<number, BrokerMessage>, audit: AuditLog):
     if (facts) found.set(handle, facts);
   }
   return found;
-}
-
-const SUMMARY_ORDER: DecisionKind[] = ['discard', 'replay', 'move', 'keep'];
-
-function destinationKey(d: MoveDestination): string {
-  return 'queue' in d ? `0 ${d.queue}` : `1 ${d.exchange}\u0000${d.routingKey}`;
-}
-
-/** Messages per Decision, Moves per destination, Keep last (src/server/triage/decisions.ts, summarizeDecisions). */
-function summarize(decisions: Decision[]): DecisionSummaryLine[] {
-  const counts = new Map<string, DecisionSummaryLine>();
-  for (const decision of decisions) {
-    const k = decision.kind === 'move' ? `move:${destinationKey(decision.destination)}` : decision.kind;
-    const line: DecisionSummaryLine =
-      counts.get(k) ?? (decision.kind === 'move' ? { kind: 'move', destination: decision.destination, count: 0 } : { kind: decision.kind, count: 0 });
-    line.count++;
-    counts.set(k, line);
-  }
-  return [...counts.values()].sort(
-    (a, b) =>
-      SUMMARY_ORDER.indexOf(a.kind) - SUMMARY_ORDER.indexOf(b.kind) ||
-      (a.kind === 'move' && b.kind === 'move' ? destinationKey(a.destination).localeCompare(destinationKey(b.destination)) : 0),
-  );
 }
 
 function notActive(c: DemoCheckout, consequence: string): HttpError {
