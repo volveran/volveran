@@ -141,17 +141,29 @@ export const DATABASE_TIMEOUT_MS = 3_000;
 /** Whether a Message's Failure Details name the database timeout. */
 const TIMED_OUT = /SQLTimeoutException/;
 
+/** Spring AMQP's Failure Details headers. */
+type SpringFailure = Pick<Record<string, unknown>, 'x-exception-message' | 'x-exception-stacktrace'>;
+
+/** The Spring AMQP Failure Details in `headers`, if any. */
+function springFailure(headers: Record<string, unknown> | undefined): SpringFailure | undefined {
+  if (headers?.['x-exception-message'] === undefined) return undefined;
+  return { 'x-exception-message': headers['x-exception-message'], 'x-exception-stacktrace': headers['x-exception-stacktrace'] };
+}
+
 /**
- * The orders application while its database is still down: a Message whose
- * save timed out before (its Failure Details named SQLTimeoutException,
- * `failures` by Message id) times out again, so DATABASE_TIMEOUT_MS later
- * Spring AMQP rejects it with fresh Failure Details and the broker
+ * The orders application while its database is still down. What decides a
+ * Message's fate is its Failure Details: the ones it carries, or, on a copy
+ * Volverán republished (which strips them), the ones this application gave it
+ * when it first failed, found by Message id in `firstFailure`. When they name
+ * SQLTimeoutException, its save needs the database and times out again: DATABASE_TIMEOUT_MS
+ * later Spring AMQP rejects it with those Failure Details and the broker
  * dead-letters it. Every other Message it processes.
  */
-export function ordersApplication(failures: ReadonlyMap<string, Record<string, unknown>>): Consumer {
+export function ordersApplication(firstFailure: (messageId: string) => SpringFailure | undefined): Consumer {
   return (message, broker, ref) => {
-    const failure = message.properties.messageId === undefined ? undefined : failures.get(message.properties.messageId);
-    if (!failure) return;
+    const { messageId, headers } = message.properties;
+    const failure = springFailure(headers) ?? (messageId === undefined ? undefined : firstFailure(messageId));
+    if (!TIMED_OUT.test(String(failure?.['x-exception-message'] ?? ''))) return;
     setTimeout(() => {
       message.properties.headers = {
         ...message.properties.headers,
@@ -164,16 +176,14 @@ export function ordersApplication(failures: ReadonlyMap<string, Record<string, u
   };
 }
 
-/** The Spring AMQP exception headers of the scenario's Messages whose save timed out, by Message id. */
-function databaseTimeouts(messages: ReadonlyArray<{ properties: AmqpProperties }>): Map<string, Record<string, unknown>> {
-  const timeouts = new Map<string, Record<string, unknown>>();
+/** The Failure Details each of the scenario's Messages was published with (seed.mjs), by Message id. */
+function scenarioFailures(messages: ReadonlyArray<{ properties: AmqpProperties }>): (messageId: string) => SpringFailure | undefined {
+  const failures = new Map<string, SpringFailure>();
   for (const { properties } of messages) {
-    const h = properties.headers ?? {};
-    if (properties.messageId !== undefined && TIMED_OUT.test(String(h['x-exception-message'] ?? ''))) {
-      timeouts.set(properties.messageId, { 'x-exception-message': h['x-exception-message'], 'x-exception-stacktrace': h['x-exception-stacktrace'] });
-    }
+    const failure = springFailure(properties.headers);
+    if (properties.messageId !== undefined && failure) failures.set(properties.messageId, failure);
   }
-  return timeouts;
+  return (messageId) => failures.get(messageId);
 }
 
 export class DemoBroker {
@@ -317,7 +327,7 @@ export function scenarioBroker(at: Date): DemoBroker {
   for (const m of messages) {
     broker.publish('/', m.exchange, m.routingKey, { properties: { ...m.properties }, content: m.content });
   }
-  const consumers: Record<string, Consumer> = { 'orders.work': ordersApplication(databaseTimeouts(messages)), 'payments.work': consumes };
+  const consumers: Record<string, Consumer> = { 'orders.work': ordersApplication(scenarioFailures(messages)), 'payments.work': consumes };
   for (const [queue, consumer] of Object.entries(consumers)) {
     const ref = { vhost: '/', queue };
     for (const m of broker.hold(ref, Infinity)) broker.reject(ref, m, at);

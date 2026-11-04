@@ -12,6 +12,7 @@ import { createDemoApi, type DemoApi } from '../../site/demo/api/demo-api.js';
 import { seededState } from '../../site/demo/api/state.js';
 import { AuditLog, type NewAuditEntry } from '../../site/demo/api/simulator/audit-log.js';
 import { diedAgain } from '../../site/demo/api/simulator/died-again.js';
+import { DATABASE_TIMEOUT_MS, scenarioBroker } from '../../site/demo/api/simulator/broker.js';
 import type { CheckoutView } from '../../src/shared/checkout.js';
 
 const origin = 'https://volveran.github.io';
@@ -173,6 +174,46 @@ describe('the orders application behind orders.work in the demo', () => {
     const detail = (await call(api, 'GET', `/checkouts/${next.id}/messages/${again.handle}`)).body.message;
     expect(detail.xDeath).toEqual([expect.objectContaining({ queue: 'orders.work', reason: 'rejected', count: 1, exchange: '', routingKeys: ['orders.work'] })]);
     expect(detail.headers).toMatchObject({ 'x-volveran-from': 'orders.dlq', 'x-original-exchange': '', 'x-original-routingKey': 'orders.work' });
+  });
+});
+
+describe('the orders application decides by the Failure Details of the Message', () => {
+  it('processes a Replay of a Message from orders.dlq whose Failure Details do not name SQLTimeoutException', async () => {
+    vi.useFakeTimers();
+    const api = createDemoApi(seededState());
+    const checkout = await started(api, 'staging');
+    const other = checkout.messages.find((m) => m.messageId === 'ord-9bf8-0002')!;
+    expect(other.failureDetails?.message ?? '').not.toContain('SQLTimeoutException');
+    await decide(api, checkout, [other.handle], { kind: 'replay' });
+    await applyStarted(api, checkout);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await depths(api)).toMatchObject({ 'orders.dlq': 14, 'orders.work': 0 });
+    expect((await started(api, 'staging')).messages.some((m) => m.messageId === 'ord-9bf8-0002')).toBe(false);
+  });
+
+  it('dead-letters any Message whose own Failure Details name SQLTimeoutException, not only the scenario\'s', () => {
+    vi.useFakeTimers();
+    const broker = scenarioBroker(new Date());
+    const before = broker.depth({ vhost: '/', queue: 'orders.dlq' });
+    const failure = 'Could not acquire JDBC connection; SQLTimeoutException: Connection is not available, request timed out after 30000ms.';
+    broker.publish('/', '', 'orders.work', {
+      properties: { messageId: 'ord-not-in-the-scenario', contentType: 'application/json', deliveryMode: 2, headers: { 'x-exception-message': failure } },
+      content: new TextEncoder().encode('{}'),
+    });
+    vi.advanceTimersByTime(DATABASE_TIMEOUT_MS);
+    expect(broker.depth({ vhost: '/', queue: 'orders.dlq' })).toBe(before + 1);
+  });
+
+  it('processes a Message not in the scenario whose own Failure Details name something else', () => {
+    vi.useFakeTimers();
+    const broker = scenarioBroker(new Date());
+    const before = broker.depth({ vhost: '/', queue: 'orders.dlq' });
+    broker.publish('/', '', 'orders.work', {
+      properties: { messageId: 'ord-not-in-the-scenario', contentType: 'application/json', deliveryMode: 2, headers: { 'x-exception-message': 'IllegalArgumentException: no such customer' } },
+      content: new TextEncoder().encode('{}'),
+    });
+    vi.advanceTimersByTime(10_000);
+    expect(broker.depth({ vhost: '/', queue: 'orders.dlq' })).toBe(before);
   });
 });
 
