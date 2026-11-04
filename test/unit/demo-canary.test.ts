@@ -219,6 +219,30 @@ describe('Died Again in the demo', () => {
   });
 });
 
+describe('a Restored Message that dies again in the demo', () => {
+  it('Restored to orders.work from a SQLTimeoutException Discard, is dead-lettered again and flagged Died Again in the next Checkout', async () => {
+    vi.useFakeTimers();
+    const api = createDemoApi();
+    await sendOut(api, ['ord-7d09-0001'], { kind: 'discard', reason: 'Database down, retry later' });
+    const [discard] = (await call(api, 'GET', '/audit-entries?action=discard')).body.entries;
+    expect((await depths(api))['orders.dlq']).toBe(14);
+
+    const { status, body } = await call(api, 'POST', `/audit-entries/${discard.id}/restore`, { confirm: true, queue: 'orders.work' });
+    expect(status).toBe(200);
+    const restored = body.entry;
+    expect(restored).toMatchObject({ action: 'restore', restoreOf: discard.id, outcome: 'done', destination: { queue: 'orders.work' } });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await depths(api)).toMatchObject({ 'orders.dlq': 15, 'orders.work': 0 });
+
+    const next = await started(api, 'staging');
+    expect(next.diedAgainCount).toBe(1);
+    const flagged = next.messages.filter((m) => m.diedAgain !== null);
+    expect(flagged.map((m) => [m.messageId, m.diedAgain])).toEqual([
+      ['ord-7d09-0001', { replayId: restored.replayId, count: 1, last: expect.objectContaining({ auditEntryId: restored.id, action: 'restore' }) }],
+    ]);
+  });
+});
+
 describe('a Canary in the demo', () => {
   it('is required on production for more than 3 Replays, and needs a Replay to be one', async () => {
     const api = createDemoApi();
