@@ -10,7 +10,7 @@ const now = Date.parse('2027-03-01T12:00:00.000Z');
 const hour = 3_600_000;
 
 async function call(path: string, init?: RequestInit) {
-  const res = await createDemoApi(startingState(now), () => now).handle(new Request(`${origin}${path}`, init));
+  const res = await createDemoApi(startingState(new Date(now)), () => now).handle(new Request(`${origin}${path}`, init));
   return { status: res.status, body: (await res.json()) as Record<string, any> };
 }
 

@@ -9,6 +9,7 @@
 //   GET /profiles/{profile}/replay-rules                   → { rules }
 import type { ProfileSummary, QueueList, QueueRow } from '../../../../src/shared/queues.js';
 import { json, type Router } from '../router.js';
+import { withLiveQueues } from '../simulator/queue-overlay.js';
 import { profileNamed, vhostOf, type DemoState } from '../state.js';
 
 export function registerProfileRoutes(router: Router, state: DemoState) {
@@ -23,7 +24,7 @@ export function registerProfileRoutes(router: Router, state: DemoState) {
     const { queueList } = vhostOf(state, params.profile!, params.vhost!);
     const narrowed: QueueList = {
       ...queueList,
-      queues: narrowQueues(queueList.queues, {
+      queues: narrowQueues(withLiveQueues(queueList.queues, params.vhost!, state), {
         onlyDeadLetterQueues: query.get('onlyDeadLetterQueues') === 'true',
         search: query.get('search') ?? undefined,
       }),
