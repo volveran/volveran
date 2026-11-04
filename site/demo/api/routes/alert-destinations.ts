@@ -4,7 +4,10 @@
 //
 // Nothing leaves the browser in the demo (the banner says so), so a
 // destination the profiles file declares answers as delivered, on the first
-// attempt, without any request; no HTTP status, as nothing answered.
+// attempt, without any request; no HTTP status, as nothing answered. It is
+// recorded as the server records it: GET /alerts lists it first among the
+// notifications, which keep the latest RECENT_LIMIT.
+import { RECENT_LIMIT } from '../../../../src/server/audit/store-rows.js';
 import type { NotificationDelivery } from '../../../../src/shared/alerts.js';
 import { DemoApiError, json, type Router } from '../router.js';
 import type { DemoState } from '../state.js';
@@ -35,6 +38,7 @@ export function registerAlertDestinationRoutes(router: Router, state: DemoState)
       error: null,
       attempts: 1,
     };
+    state.alerts.notifications = [delivery, ...state.alerts.notifications].slice(0, RECENT_LIMIT);
     return json({ delivery });
   });
 }

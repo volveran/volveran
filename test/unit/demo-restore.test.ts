@@ -294,6 +294,15 @@ describe('a test notification in the demo', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('lists the test notification first among the notifications of GET /alerts, as the server records it', async () => {
+    const api = createDemoApi(seededState());
+    const before = (await call(api, 'GET', '/alerts')).body.notifications as Array<{ id: number }>;
+    const { body } = await call(api, 'POST', '/alert-destinations/ops-slack/test', {});
+    const after = (await call(api, 'GET', '/alerts')).body.notifications as Array<{ id: number }>;
+    expect(after[0]).toEqual(body.delivery);
+    expect(after.slice(1)).toEqual(before.slice(0, 99));
+  });
+
   it('refuses an Alert Destination the profiles file does not declare, as the server does', async () => {
     expect(await call(createDemoApi(seededState()), 'POST', '/alert-destinations/pager/test', {})).toEqual({
       status: 404,
