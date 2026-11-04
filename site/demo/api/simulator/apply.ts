@@ -8,7 +8,7 @@
 // Extension points:
 // - `rate`: Replay and Move steps start at least 1/rate apart (the server's
 //   pacer); Discards are not paced, and a stop wakes the wait.
-// - `canary`: the hooks of a Canary (#150), as checkout/canary.ts gives the
+// - `canary`: the hooks of a Canary, as checkout/canary.ts gives the
 //   server's executor: its step goes first and alone, `beforePublish` runs
 //   once its Audit Entry is written, `afterStep` once it settled, and may
 //   wait (the Watch Window, then Continue or Stop).
@@ -64,7 +64,7 @@ export interface DecisionHandler<D extends ActionDecision> {
   execute(decision: D, message: BrokerMessage, ctx: StepContext, details: AuditDetails): StepResult;
 }
 
-/** The Canary's hooks (#150): see checkout/canary.ts on the server. */
+/** The Canary's hooks: see checkout/canary.ts on the server. */
 export interface CanaryHooks {
   handle: number;
   beforePublish(entryId: number, replayId: string | null): void;

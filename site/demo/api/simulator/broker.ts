@@ -11,8 +11,10 @@
 //
 // Consumers stand for the applications behind the work queues: a Message
 // published to a queue with a consumer goes to the consumer instead of
-// waiting in the queue. The consumer decides its fate (`consumes` acks it;
-// #150 adds one that rejects some, so they die again).
+// waiting in the queue. The consumer decides its fate: `consumes` processes
+// it; the orders application behind orders.work (ordersApplication) rejects
+// the Messages whose save timed out on its database, which is still down, so
+// a Replay of one dies again.
 import { scenarioMessages } from '../../../../scripts/screenshots/messages.mjs';
 
 export type QueueType = 'classic' | 'quorum' | 'stream';
@@ -133,10 +135,52 @@ export const SCENARIO_TOPOLOGY: Topology = {
 /** A consumer that processes every Message it gets: the Message is gone. */
 export const consumes: Consumer = () => {};
 
+/** How long the orders application waits on its database before the save times out. */
+export const DATABASE_TIMEOUT_MS = 3_000;
+
+/** Whether a Message's Failure Details name the database timeout. */
+const TIMED_OUT = /SQLTimeoutException/;
+
+/**
+ * The orders application while its database is still down: a Message whose
+ * save timed out before (its Failure Details named SQLTimeoutException,
+ * `failures` by Message id) times out again, so DATABASE_TIMEOUT_MS later
+ * Spring AMQP rejects it with fresh Failure Details and the broker
+ * dead-letters it. Every other Message it processes.
+ */
+export function ordersApplication(failures: ReadonlyMap<string, Record<string, unknown>>): Consumer {
+  return (message, broker, ref) => {
+    const failure = message.properties.messageId === undefined ? undefined : failures.get(message.properties.messageId);
+    if (!failure) return;
+    setTimeout(() => {
+      message.properties.headers = {
+        ...message.properties.headers,
+        ...failure,
+        'x-original-exchange': message.exchange,
+        'x-original-routingKey': message.routingKey,
+      };
+      broker.reject(ref, message);
+    }, DATABASE_TIMEOUT_MS);
+  };
+}
+
+/** The Spring AMQP exception headers of the scenario's Messages whose save timed out, by Message id. */
+function databaseTimeouts(messages: ReadonlyArray<{ properties: AmqpProperties }>): Map<string, Record<string, unknown>> {
+  const timeouts = new Map<string, Record<string, unknown>>();
+  for (const { properties } of messages) {
+    const h = properties.headers ?? {};
+    if (properties.messageId !== undefined && TIMED_OUT.test(String(h['x-exception-message'] ?? ''))) {
+      timeouts.set(properties.messageId, { 'x-exception-message': h['x-exception-message'], 'x-exception-stacktrace': h['x-exception-stacktrace'] });
+    }
+  }
+  return timeouts;
+}
+
 export class DemoBroker {
   readonly #queues = new Map<string, Queue>();
   readonly #exchanges = new Map<string, ExchangeSpec>();
   readonly #bindings: BindingSpec[];
+  readonly #taps = new Set<{ vhost: string; exchange: string; listener: (message: BrokerMessage) => void }>();
 
   constructor(topology: Topology) {
     for (const q of topology.queues) this.#queues.set(key(q.vhost, q.name), { ...q, messages: [], held: new Set(), consumer: null });
@@ -170,6 +214,17 @@ export class DemoBroker {
   }
 
   /**
+   * Shows `listener` a copy of every Message published through `exchange`
+   * from now on, as a queue of its own bound to it would get it (the Canary's
+   * watch queue). Returns how to stop.
+   */
+  tap(vhost: string, exchange: string, listener: (message: BrokerMessage) => void): () => void {
+    const tap = { vhost, exchange, listener };
+    this.#taps.add(tap);
+    return () => this.#taps.delete(tap);
+  }
+
+  /**
    * Publishes through `exchange` ('' for the default exchange, which routes
    * to the queue named by the routing key). Returns the queues it reached;
    * none means the broker could not route it.
@@ -181,6 +236,11 @@ export class DemoBroker {
       const copy: BrokerMessage = { exchange, routingKey, redelivered: false, properties: structuredClone(message.properties), content: message.content };
       if (q.consumer) q.consumer(copy, this, { vhost, queue: name });
       else q.messages.push(copy);
+    }
+    for (const tap of [...this.#taps]) {
+      if (tap.vhost === vhost && tap.exchange === exchange && exchange !== '') {
+        tap.listener({ exchange, routingKey, redelivered: false, properties: structuredClone(message.properties), content: message.content });
+      }
     }
     return targets;
   }
@@ -248,17 +308,20 @@ export class DemoBroker {
  * The broker of the screenshot scenario as seed.mjs leaves it: every
  * Message published to `orders` or `payments`, rejected by its work queue
  * at `at` and dead-lettered (orders.dlq, payments.dlq and their siblings).
- * The work queues' consumers then process whatever reaches them.
+ * Then the payments application processes whatever reaches payments.work,
+ * and the orders application everything but the database timeouts.
  */
 export function scenarioBroker(at: Date): DemoBroker {
   const broker = new DemoBroker(SCENARIO_TOPOLOGY);
-  for (const m of scenarioMessages()) {
+  const messages = scenarioMessages();
+  for (const m of messages) {
     broker.publish('/', m.exchange, m.routingKey, { properties: { ...m.properties }, content: m.content });
   }
-  for (const queue of ['orders.work', 'payments.work']) {
+  const consumers: Record<string, Consumer> = { 'orders.work': ordersApplication(databaseTimeouts(messages)), 'payments.work': consumes };
+  for (const [queue, consumer] of Object.entries(consumers)) {
     const ref = { vhost: '/', queue };
     for (const m of broker.hold(ref, Infinity)) broker.reject(ref, m, at);
-    broker.consume(ref, consumes);
+    broker.consume(ref, consumer);
   }
   return broker;
 }

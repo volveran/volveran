@@ -60,7 +60,7 @@ export class AuditLog {
     stored.entry = { ...stored.entry, outcome, outcomeReason: reason };
   }
 
-  /** How the watch of a Canary ended (#150). */
+  /** How the watch of a Canary ended. */
   setCanaryOutcome(id: number, canaryOutcome: AuditCanaryOutcome): void {
     const stored = this.#stored(id);
     stored.entry = { ...stored.entry, canaryOutcome };
@@ -79,7 +79,7 @@ export class AuditLog {
     return this.#entries[id - 1]?.body ?? null;
   }
 
-  /** The entry that published `replayId` (Replay, Move or Restore): the Died Again trail (#150). */
+  /** The entry that published `replayId` (Replay, Move or Restore): the Died Again trail. */
   byReplayId(replayId: string): AuditEntryJson | null {
     return this.#entries.find((s) => s.entry.replayId === replayId)?.entry ?? null;
   }

@@ -12,6 +12,7 @@
 //
 // Request checks and their messages follow src/server/routes/checkouts.ts,
 // decisions.ts and apply.ts.
+import { requireTypedQueueName } from '../../../../src/server/protected-profile.js';
 import type { Decision, MoveDestination } from '../../../../src/shared/decisions.js';
 import { json, DemoApiError, type Router } from '../router.js';
 import { invalid } from '../simulator/audit-log.js';
@@ -77,11 +78,9 @@ export function registerCheckoutRoutes(router: Router, state: DemoState) {
         'Apply needs the Operator\'s confirmation: send { "confirm": true } after showing the summary of Decisions.',
       );
     }
-    if (request.canary !== undefined && request.canary !== null && request.canary !== false) {
-      throw new DemoApiError(404, 'not_in_demo', 'Not in the demo yet: an Apply that starts with a Canary.');
-    }
-    const rate = checkouts.rateFor(params.id!, request.rate);
-    return json({ checkout: checkouts.apply(params.id!, { rate, canary: null }) }, 202);
+    const { protectedProfile, profile, queue, applyConfirmation } = checkouts.get(params.id!);
+    if (applyConfirmation.typeQueueName) requireTypedQueueName({ name: profile, protected: protectedProfile }, queue, request, 'Apply');
+    return json({ checkout: checkouts.apply(params.id!, { rate: request.rate, canary: request.canary }) }, 202);
   });
 
   router.on('POST', '/checkouts/{id}/apply/stop', ({ params }) => json({ checkout: checkouts.stopApply(params.id!) }));

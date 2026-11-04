@@ -3,6 +3,7 @@
 // window, Decisions staged until Apply, an Apply in the background that ends
 // the Checkout, and every Message without an applied Decision returned to the
 // queue when it ends. Ended Checkouts stay readable for the page's life.
+import { rateAboveMaximum } from '../../../../src/server/apply/errors.js';
 import { ApplyProgressTracker } from '../../../../src/server/apply/progress.js';
 import { STOP_REASONS } from '../../../../src/server/apply/stop-reasons.js';
 import { applyConfirmationFor } from '../../../../src/server/triage/apply-confirmation.js';
@@ -25,6 +26,8 @@ import { DemoApiError } from '../router.js';
 import { executeApply, type ApplyStep, type CanaryHooks } from './apply.js';
 import type { AuditLog } from './audit-log.js';
 import type { BrokerMessage, DemoBroker, QueueRef } from './broker.js';
+import { canaryFor, canaryHooks } from './canary.js';
+import { diedAgain } from './died-again.js';
 import { matchesFilter } from './filters.js';
 import { messageDetail, messageSummary, replayOrigin, type QueueInfo } from './message-view.js';
 import type { ProfileSettings } from './profile-settings.js';
@@ -41,14 +44,20 @@ interface RunningApply {
   settled: Promise<void>;
   stop: ApplyStop | null;
   stopController: AbortController;
-  /** Set while the Apply waits after its Canary (#150): carries out the rest. */
+  /** Set while the Apply waits after its Canary: carries out the rest. */
   continueAfterCanary: (() => void) | null;
 }
 
-/** What starts an Apply, beyond the confirmation the route checks. */
-export interface ApplyOptions {
+/** What starts an Apply, beyond the confirmation the route checks: the request's values as sent. */
+export interface ApplyRequest {
+  rate?: unknown;
+  canary?: unknown;
+}
+
+/** How an Apply runs, once its request is checked. */
+interface ApplyOptions {
   rate: number | null;
-  /** The Canary's handle, or null for none (#150 picks it, canaryFor). */
+  /** The Canary's handle, or null for none. */
   canary: number | null;
 }
 
@@ -68,12 +77,12 @@ export interface DemoCheckout extends QueueRef {
   heldBytes: number;
   /** Decisions other than Keep; a handle without one is Keep. */
   decisions: Map<number, ActionDecision>;
-  /** Held Messages that are Died Again (#150 fills it at start). */
+  /** Held Messages that are Died Again, found at start. */
   diedAgain: Map<number, DiedAgain>;
   applying: RunningApply | null;
   applyProgress: ApplyProgressTracker | null;
   lastApply: AppliedResult | null;
-  /** The Canary of the Apply (#150). */
+  /** The Canary of the last Apply. */
   canary: CanaryView | null;
   timeLimitTimer?: ReturnType<typeof setTimeout>;
   heartbeatTimer?: ReturnType<typeof setTimeout>;
@@ -85,11 +94,6 @@ export interface CheckoutsDeps {
   operator: string;
   /** The Operator's active Checkout changed (GET /session's `checkoutId`). */
   activeChanged(id: string | null): void;
-  /**
-   * The Canary hooks of an Apply (#150, the server's checkout/canary.ts);
-   * none by default.
-   */
-  canaryHooks?(checkout: DemoCheckout, handle: number, running: { stopSignal: AbortSignal; waitStarted(continueAfterCanary: () => void): void; waitEnded(): void }): CanaryHooks;
 }
 
 export class Checkouts {
@@ -170,7 +174,7 @@ export class Checkouts {
       held,
       heldBytes,
       decisions: new Map(),
-      diedAgain: new Map(),
+      diedAgain: diedAgainOf(held, this.deps.audit),
       applying: null,
       applyProgress: null,
       lastApply: null,
@@ -230,23 +234,51 @@ export class Checkouts {
     return { checkout: this.#view(checkout), rejected };
   }
 
-  /** The Replay Rate an Apply runs at: the request's, else the profile's default (#150 adds its maximum). */
-  rateFor(id: string, requested: unknown): number | null {
-    const { profile } = this.#find(id);
+  /**
+   * The Replay Rate an Apply runs at, as src/server/triage/replay-rate.ts
+   * resolves it: the request's, else the profile's default; 400
+   * `rate_above_maximum` above the profile's maximum (or with no rate at all
+   * under a maximum, unless nothing is paced), and 409
+   * `apply_would_outlast_checkout` when the paced steps at that rate need more
+   * than the time left less a margin.
+   */
+  #rateFor(checkout: DemoCheckout, requested: unknown): number | null {
+    const { profile } = checkout;
     if (requested !== undefined && requested !== null && !isReplayRate(requested)) {
       throw new DemoApiError(400, 'invalid_request', `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`);
     }
-    return (requested as number | null | undefined) ?? profile.replayRate.default;
+    const asked = (requested as number | null | undefined) ?? null;
+    const rate = asked ?? profile.replayRate.default;
+    const paced = pacedSteps(checkout);
+    const { max } = profile.replayRate;
+    if (max !== null && (rate === null ? paced > 0 : rate > max)) throw rateAboveMaximum(profile.name, max, asked);
+    const neededMs = pacedDurationMs(paced, rate);
+    const remainingMs = Math.max(0, checkout.endsAt.getTime() - Date.now());
+    if (neededMs !== null && neededMs > remainingMs - APPLY_TIME_MARGIN_MS) {
+      const seconds = (ms: number) => `${Math.ceil(ms / 1000)} s`;
+      throw new DemoApiError(
+        409,
+        'apply_would_outlast_checkout',
+        `At its Replay Rate this Apply needs about ${seconds(neededMs)}, but the Checkout of "${checkout.queue}" in vhost "${checkout.vhost}" has ${seconds(remainingMs)} left, ` +
+          'so it would stop part way. Choose a higher rate, or Replay fewer Messages in this Checkout.',
+        { neededMs, remainingMs },
+      );
+    }
+    return rate;
   }
 
   /**
    * Starts carrying out the Decisions in the background; the Checkout ends
-   * when it has run. Returns the Checkout `applying`.
+   * when it has run. Returns the Checkout `applying`. `request` holds the
+   * request's Replay Rate and Canary as sent; their refusals are thrown
+   * before anything starts.
    */
-  apply(id: string, options: ApplyOptions): CheckoutView {
+  apply(id: string, request: ApplyRequest): CheckoutView {
     const checkout = this.#find(id);
     if (checkout.status !== 'active') throw notActive(checkout, 'nothing can be Applied');
     if (checkout.applying) throw applyInProgress(checkout);
+    const canary = canaryFor(checkout, request.canary);
+    const options: ApplyOptions = { canary, rate: this.#rateFor(checkout, request.rate) };
     clearTimeout(checkout.heartbeatTimer);
     const running: RunningApply = { settled: Promise.resolve(), stop: null, stopController: new AbortController(), continueAfterCanary: null };
     checkout.applying = running;
@@ -266,7 +298,7 @@ export class Checkouts {
     return this.#view(checkout);
   }
 
-  /** The Operator continues an Apply waiting after its Canary (#150). */
+  /** The Operator continues an Apply waiting after its Canary. */
   continueApply(id: string): CheckoutView {
     const checkout = this.#find(id);
     const running = checkout.applying;
@@ -336,9 +368,11 @@ export class Checkouts {
           checkout.held.delete(handle);
           checkout.decisions.delete(handle);
         },
-        ...(options.canary !== null &&
-          this.deps.canaryHooks && {
-            canary: this.deps.canaryHooks(checkout, options.canary, {
+        ...(options.canary !== null && {
+            canary: canaryHooks(checkout, {
+              handle: options.canary,
+              broker,
+              audit,
               stopSignal: running.stopController.signal,
               waitStarted: (go) => {
                 running.continueAfterCanary = go;
@@ -429,7 +463,7 @@ export class Checkouts {
     const handles = [...c.held.keys()];
     const decisionOf = (h: number): Decision => c.decisions.get(h) ?? { kind: 'keep' };
     const decisionSummary = summarize(handles.map(decisionOf));
-    const paced = handles.filter((h) => ['replay', 'move'].includes(decisionOf(h).kind)).length;
+    const paced = pacedSteps(c);
     return {
       id: c.id,
       profile: c.profile.name,
@@ -492,6 +526,24 @@ export class Checkouts {
     const { watchWindowMs, requiredAbove } = c.profile.canary;
     return { watchWindowMs, requiredAbove, required: requiredAbove !== null && candidates.length > requiredAbove, candidates };
   }
+}
+
+/** The Replay and Move steps of an Apply of the Checkout now: the ones a Replay Rate paces. */
+function pacedSteps(c: DemoCheckout): number {
+  return [...c.held.keys()].filter((h) => ['replay', 'move'].includes(c.decisions.get(h)?.kind ?? 'keep')).length;
+}
+
+/** How close to its end a paced Apply may be estimated to run (src/server/triage/replay-rate.ts). */
+const APPLY_TIME_MARGIN_MS = 10_000;
+
+/** The held Messages that are Died Again, by handle. */
+function diedAgainOf(held: ReadonlyMap<number, BrokerMessage>, audit: AuditLog): Map<number, DiedAgain> {
+  const found = new Map<number, DiedAgain>();
+  for (const [handle, m] of held) {
+    const facts = diedAgain(m.properties.headers, audit);
+    if (facts) found.set(handle, facts);
+  }
+  return found;
 }
 
 const SUMMARY_ORDER: DecisionKind[] = ['discard', 'replay', 'move', 'keep'];

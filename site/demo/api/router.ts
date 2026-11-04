@@ -3,6 +3,7 @@
 // /api/v1 and with `{param}` placeholders, so the contract check can compare
 // them with the release's openapi.json. DOM-free: it runs in the browser and
 // under Node.
+import { HttpError } from '../../../src/server/http-error.js';
 
 /** What a handler gets: the path parameters, decoded, the query and the JSON body. */
 export interface DemoRequest {
@@ -36,7 +37,8 @@ export function json(body: unknown, status = 200, headers: Record<string, string
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } });
 }
 
-export function errorResponse(err: DemoApiError): Response {
+/** Also answers the server's own HttpErrors, for the pure checks the demo shares with it (src/server/apply/errors.ts, protected-profile.ts). */
+export function errorResponse(err: DemoApiError | HttpError): Response {
   return json({ error: { code: err.code, message: err.message, ...err.details } }, err.status);
 }
 
@@ -99,7 +101,7 @@ export class Router {
       }
       throw new DemoApiError(404, NOT_IN_DEMO, `Not in the demo yet: ${method} /api/v1${path}.`);
     } catch (err) {
-      if (err instanceof DemoApiError) return errorResponse(err);
+      if (err instanceof DemoApiError || err instanceof HttpError) return errorResponse(err);
       throw err;
     }
   }
