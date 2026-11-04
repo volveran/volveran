@@ -25,6 +25,7 @@ import { DemoApiError } from '../router.js';
 import { executeApply, type ApplyStep, type CanaryHooks } from './apply.js';
 import type { AuditLog } from './audit-log.js';
 import type { BrokerMessage, DemoBroker, QueueRef } from './broker.js';
+import { exportFilename, exportLine } from './export.js';
 import { matchesFilter } from './filters.js';
 import { messageDetail, messageSummary, replayOrigin, type QueueInfo } from './message-view.js';
 import type { ProfileSettings } from './profile-settings.js';
@@ -204,6 +205,49 @@ export class Checkouts {
   matching(id: string, filter: Filter): number[] {
     const checkout = this.#find(id);
     return [...checkout.held.entries()].filter(([, m]) => matchesFilter(filter, m)).map(([handle]) => handle);
+  }
+
+  /**
+   * The held Messages matching `filter` (every one when null) as NDJSON, as
+   * the server's checkout/export.ts makes it, with one `export` Audit Entry.
+   * Only reads: no Message or Decision changes.
+   */
+  exportMessages(id: string, filter: Filter | null): { filename: string; count: number; text: string } {
+    const checkout = this.#find(id);
+    if (checkout.status !== 'active') throw notActive(checkout, 'its Messages can no longer be exported');
+    if (checkout.applying) throw applyInProgress(checkout);
+    const picked = [...checkout.held.entries()].map(([handle, m], i) => ({ position: i + 1, m, decision: checkout.decisions.get(handle) ?? { kind: 'keep' as const } }));
+    const lines = picked.filter(({ m }) => filter === null || matchesFilter(filter, m));
+    const at = new Date();
+    const entryId = this.deps.audit.record({
+      at: at.toISOString(),
+      operatorId: checkout.operator,
+      operatorName: checkout.operator,
+      role: 'admin',
+      approverId: null,
+      approverName: null,
+      brokerUser: checkout.profile.brokerUser,
+      profile: checkout.profile.name,
+      vhost: checkout.vhost,
+      queue: checkout.queue,
+      messageId: null,
+      action: 'export',
+      reason: null,
+      destination: null,
+      checkoutId: checkout.id,
+      restoreOf: null,
+      replayId: null,
+      filter,
+      messageCount: lines.length,
+      rate: null,
+      rule: null,
+      rulePassId: null,
+      canary: false,
+      message: null,
+    });
+    const text = lines.map(({ position, m, decision }) => `${JSON.stringify(exportLine(position, m, checkout.info, decision))}\n`).join('');
+    this.deps.audit.setOutcome(entryId, 'done');
+    return { filename: exportFilename(checkout.profile.name, checkout.queue, at), count: lines.length, text };
   }
 
   /**
