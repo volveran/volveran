@@ -2,7 +2,7 @@
 // starts from the recording of the screenshot run (./recording.ts).
 import type { AlertsOverview } from '../../../src/shared/alerts.js';
 import { recording, type RecordedProfile, type RecordedVhost } from './recording.js';
-import { DemoApiError } from './router.js';
+import { HttpError } from '../../../src/server/http-error.js';
 import { AuditLog } from './simulator/audit-log.js';
 import { scenarioBroker, type DemoBroker } from './simulator/broker.js';
 import { Checkouts } from './simulator/checkouts.js';
@@ -71,7 +71,7 @@ function prepApply(profiles: DemoProfile[]): PrepApply {
 /** The named Broker Profile; throws 404 `profile_not_found` as the server does. */
 export function profileNamed(state: DemoState, name: string): DemoProfile {
   const found = state.profiles.find((p) => p.summary.name === name);
-  if (!found) throw new DemoApiError(404, 'profile_not_found', `No Broker Profile named "${name}".`);
+  if (!found) throw new HttpError(404, 'profile_not_found', `No Broker Profile named "${name}".`);
   return found;
 }
 
@@ -79,6 +79,6 @@ export function profileNamed(state: DemoState, name: string): DemoProfile {
 export function vhostOf(state: DemoState, profileName: string, vhost: string): DemoVhost {
   const profile = profileNamed(state, profileName);
   const found = profile.vhosts.find((v) => v.name === vhost);
-  if (!found) throw new DemoApiError(404, 'vhost_not_in_profile', `Vhost "${vhost}" is not configured for Broker Profile "${profileName}".`);
+  if (!found) throw new HttpError(404, 'vhost_not_in_profile', `Vhost "${vhost}" is not configured for Broker Profile "${profileName}".`);
   return found;
 }

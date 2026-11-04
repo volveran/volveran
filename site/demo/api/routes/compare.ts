@@ -1,7 +1,8 @@
 // Compare two Messages of a Checkout (src/server/routes/checkouts.ts, compareMessages):
 //
 //   GET /checkouts/{id}/compare?a=<handle>&b=<handle> → { left, right, diff }
-import { DemoApiError, json, type Router } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
+import { json, type Router } from '../router.js';
 import { invalid } from '../simulator/audit-log.js';
 import { diffMessages } from '../simulator/message-diff.js';
 import type { DemoState } from '../state.js';
@@ -22,6 +23,6 @@ export function registerCompareRoutes(router: Router, state: DemoState) {
 
 function handleOf(raw: string): number {
   const handle = Number(raw);
-  if (raw === '' || !Number.isSafeInteger(handle)) throw new DemoApiError(404, 'message_not_found', `"${raw}" is not a Message handle.`);
+  if (raw === '' || !Number.isSafeInteger(handle)) throw new HttpError(404, 'message_not_found', `"${raw}" is not a Message handle.`);
   return handle;
 }

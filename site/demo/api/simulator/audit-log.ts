@@ -4,7 +4,7 @@
 // does (ADR 0001). Search mirrors GET /api/audit-entries (routes/audit.ts and
 // audit/audit-entry-sql.ts): newest first, without bodies.
 import { AUDIT_ACTIONS, type AuditAction, type AuditCanaryOutcome, type AuditEntryJson, type AuditOutcome } from '../../../../src/shared/audit.js';
-import { DemoApiError } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
 import { toBase64 } from './message-view.js';
 
 /** What a new entry records; the log adds its id and the `pending` outcome. */
@@ -159,6 +159,6 @@ function parseDate(name: string, value: string): Date {
   return date;
 }
 
-export function invalid(message: string): DemoApiError {
-  return new DemoApiError(400, 'invalid_request', message);
+export function invalid(message: string): HttpError {
+  return new HttpError(400, 'invalid_request', message);
 }

@@ -9,7 +9,8 @@
 // notifications, which keep the latest RECENT_LIMIT.
 import { RECENT_LIMIT } from '../../../../src/server/audit/store-rows.js';
 import type { NotificationDelivery } from '../../../../src/shared/alerts.js';
-import { DemoApiError, json, type Router } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
+import { json, type Router } from '../router.js';
 import type { DemoState } from '../state.js';
 
 /** The destinations are those of the recording's GET /alerts (scripts/screenshots/profiles.yaml). */
@@ -19,7 +20,7 @@ export function registerAlertDestinationRoutes(router: Router, state: DemoState)
   router.on('POST', '/alert-destinations/{name}/test', ({ params }) => {
     const name = params.name!;
     const type = state.alerts.destinations.find((d) => d.name === name)?.type;
-    if (!type) throw new DemoApiError(404, 'alert_destination_not_found', `The profiles file declares no Alert Destination named "${name}".`);
+    if (!type) throw new HttpError(404, 'alert_destination_not_found', `The profiles file declares no Alert Destination named "${name}".`);
     const delivery: NotificationDelivery = {
       id: ++deliveries,
       at: new Date().toISOString(),

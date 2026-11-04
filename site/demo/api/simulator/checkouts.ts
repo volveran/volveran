@@ -22,7 +22,7 @@ import type {
 import { summaryText, type ActionDecision, type Decision, type DecisionKind, type DecisionSummaryLine, type MoveDestination } from '../../../../src/shared/decisions.js';
 import type { Filter } from '../../../../src/shared/filters.js';
 import { isReplayRate, MAX_REPLAY_RATE, MIN_REPLAY_RATE, pacedDurationMs } from '../../../../src/shared/replay-rate.js';
-import { DemoApiError } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
 import { executeApply, type ApplyStep, type CanaryHooks } from './apply.js';
 import type { AuditLog } from './audit-log.js';
 import type { BrokerMessage, DemoBroker, QueueRef } from './broker.js';
@@ -108,9 +108,9 @@ export class Checkouts {
     const { broker, operator } = this.deps;
     const { vhost, queue } = ref;
     const spec = broker.queue(ref);
-    if (!spec) throw new DemoApiError(404, 'queue_not_found', `Queue "${queue}" does not exist in vhost "${vhost}".`);
+    if (!spec) throw new HttpError(404, 'queue_not_found', `Queue "${queue}" does not exist in vhost "${vhost}".`);
     if (spec.type === 'stream') {
-      throw new DemoApiError(
+      throw new HttpError(
         409,
         'queue_not_checkoutable',
         'Stream queues cannot be checked out: a stream keeps its Messages after they are read, so there is nothing to hold and settle one by one. Only classic and quorum queues can be triaged.',
@@ -118,7 +118,7 @@ export class Checkouts {
     }
     const mine = this.#active().find((c) => c.operator === operator);
     if (mine) {
-      throw new DemoApiError(
+      throw new HttpError(
         409,
         'operator_has_checkout',
         `${operator} already has an active Checkout of queue "${mine.queue}" in vhost "${mine.vhost}". End it before starting another.`,
@@ -127,7 +127,7 @@ export class Checkouts {
     }
     const holder = this.holderOf(ref);
     if (holder) {
-      throw new DemoApiError(
+      throw new HttpError(
         409,
         'checkout_in_progress',
         `Queue "${queue}" in vhost "${vhost}" is already checked out: ${holder.operator} has held it since ${holder.since}. Only one Checkout per queue can exist at a time; try again once it has ended.`,
@@ -137,7 +137,7 @@ export class Checkouts {
     const consumers = spec.consumers ?? 0;
     if (consumers > 0 && !options.overrideConsumers) {
       const n = consumers === 1 ? '1 consumer is' : `${consumers} consumers are`;
-      throw new DemoApiError(
+      throw new HttpError(
         409,
         'queue_has_consumers',
         `${n} reading queue "${queue}" in vhost "${vhost}". A Checkout would compete with them for Messages, and they keep receiving the ones the Checkout does not hold. Stop them first, or start the Checkout with the consumer override to go ahead anyway.`,
@@ -201,7 +201,7 @@ export class Checkouts {
   message(id: string, handle: number): MessageDetail {
     const checkout = this.#find(id);
     const m = checkout.held.get(handle);
-    if (!m) throw new DemoApiError(404, 'message_not_found', `Checkout ${id} holds no Message with handle ${handle}.`);
+    if (!m) throw new HttpError(404, 'message_not_found', `Checkout ${id} holds no Message with handle ${handle}.`);
     return { ...messageDetail(handle, m, checkout.info), diedAgain: checkout.diedAgain.get(handle) ?? null, rule: null };
   }
 
@@ -289,7 +289,7 @@ export class Checkouts {
   #rateFor(checkout: DemoCheckout, requested: unknown): number | null {
     const { profile } = checkout;
     if (requested !== undefined && requested !== null && !isReplayRate(requested)) {
-      throw new DemoApiError(400, 'invalid_request', `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`);
+      throw new HttpError(400, 'invalid_request', `"rate" must be a number of Messages per second from ${MIN_REPLAY_RATE} to ${MAX_REPLAY_RATE}, or left out.`);
     }
     const asked = (requested as number | null | undefined) ?? null;
     const rate = asked ?? profile.replayRate.default;
@@ -300,7 +300,7 @@ export class Checkouts {
     const remainingMs = Math.max(0, checkout.endsAt.getTime() - Date.now());
     if (neededMs !== null && neededMs > remainingMs - APPLY_TIME_MARGIN_MS) {
       const seconds = (ms: number) => `${Math.ceil(ms / 1000)} s`;
-      throw new DemoApiError(
+      throw new HttpError(
         409,
         'apply_would_outlast_checkout',
         `At its Replay Rate this Apply needs about ${seconds(neededMs)}, but the Checkout of "${checkout.queue}" in vhost "${checkout.vhost}" has ${seconds(remainingMs)} left, ` +
@@ -346,7 +346,7 @@ export class Checkouts {
   continueApply(id: string): CheckoutView {
     const checkout = this.#find(id);
     const running = checkout.applying;
-    const cannot = (why: string) => new DemoApiError(409, 'apply_not_waiting', `The Apply of Checkout ${checkout.id} cannot continue: ${why}.`);
+    const cannot = (why: string) => new HttpError(409, 'apply_not_waiting', `The Apply of Checkout ${checkout.id} cannot continue: ${why}.`);
     if (!running) throw cannot('no Apply is running');
     if (running.stop) throw cannot(`${running.stop.stoppedBy ?? 'the Checkout ending'} already stopped it`);
     const go = running.continueAfterCanary;
@@ -475,17 +475,17 @@ export class Checkouts {
     const { vhost, queue } = checkout;
     if ('queue' in destination) {
       if (destination.queue === queue) {
-        throw new DemoApiError(422, 'decision_not_allowed', `The Messages are already in "${queue}": Move them to another queue, or Keep them.`);
+        throw new HttpError(422, 'decision_not_allowed', `The Messages are already in "${queue}": Move them to another queue, or Keep them.`);
       }
       if (!this.deps.broker.queue({ vhost, queue: destination.queue })) {
-        throw new DemoApiError(
+        throw new HttpError(
           422,
           'decision_not_allowed',
           `There is no queue "${destination.queue}" in vhost "${vhost}": a Move can only go to an existing queue of the same vhost.`,
         );
       }
     } else if (!this.deps.broker.hasExchange(vhost, destination.exchange)) {
-      throw new DemoApiError(
+      throw new HttpError(
         422,
         'decision_not_allowed',
         `There is no exchange "${destination.exchange}" in vhost "${vhost}": a Move can only go to an existing exchange of the same vhost.`,
@@ -499,7 +499,7 @@ export class Checkouts {
 
   #find(id: string): DemoCheckout {
     const checkout = this.#checkouts.get(id);
-    if (!checkout) throw new DemoApiError(404, 'checkout_not_found', `No Checkout with id "${id}".`);
+    if (!checkout) throw new HttpError(404, 'checkout_not_found', `No Checkout with id "${id}".`);
     return checkout;
   }
 
@@ -613,8 +613,8 @@ function summarize(decisions: Decision[]): DecisionSummaryLine[] {
   );
 }
 
-function notActive(c: DemoCheckout, consequence: string): DemoApiError {
-  return new DemoApiError(
+function notActive(c: DemoCheckout, consequence: string): HttpError {
+  return new HttpError(
     409,
     'checkout_not_active',
     `The Checkout of "${c.queue}" in vhost "${c.vhost}" is over: its Messages are back in the queue. So ${consequence}. Start a new Checkout.`,
@@ -622,10 +622,10 @@ function notActive(c: DemoCheckout, consequence: string): DemoApiError {
   );
 }
 
-function applyInProgress(c: DemoCheckout): DemoApiError {
-  return new DemoApiError(409, 'apply_in_progress', `Checkout ${c.id} is being Applied. Wait for that Apply to finish.`);
+function applyInProgress(c: DemoCheckout): HttpError {
+  return new HttpError(409, 'apply_in_progress', `Checkout ${c.id} is being Applied. Wait for that Apply to finish.`);
 }
 
-function applyNotRunning(c: DemoCheckout, why: string): DemoApiError {
-  return new DemoApiError(409, 'apply_not_running', `No Apply of Checkout ${c.id} can be stopped: ${why}.`);
+function applyNotRunning(c: DemoCheckout, why: string): HttpError {
+  return new HttpError(409, 'apply_not_running', `No Apply of Checkout ${c.id} can be stopped: ${why}.`);
 }

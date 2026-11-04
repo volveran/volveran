@@ -9,14 +9,15 @@
 import { replayRuleNotFound, replayRulePaused, replayRuleRunning } from '../../../../src/server/replay-rules/errors.js';
 import type { AuditAction } from '../../../../src/shared/audit.js';
 import type { ReplayRuleView, RuleState } from '../../../../src/shared/replay-rules.js';
-import { DemoApiError, json, type Router } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
+import { json, type Router } from '../router.js';
 import { profileNamed, type DemoProfile, type DemoState } from '../state.js';
 
 export function registerReplayRuleRoutes(router: Router, state: DemoState, now: () => number) {
   router.on('POST', '/profiles/{profile}/replay-rules/{name}/pause', ({ params, body }) => {
     const { profile, view } = ruleOf(state, params.profile!, params.name!);
     const reason = (body as { reason?: unknown } | undefined)?.reason;
-    if (typeof reason !== 'string' || reason.trim() === '') throw new DemoApiError(400, 'invalid_request', '"reason" must say why the rule is paused.');
+    if (typeof reason !== 'string' || reason.trim() === '') throw new HttpError(400, 'invalid_request', '"reason" must say why the rule is paused.');
     if (view.state.paused) throw replayRulePaused(profile.summary.name, view.rule.name);
     const at = new Date(now()).toISOString();
     setState(view, { paused: true, pausedReason: reason.trim(), pausedBy: state.operator, pausedAt: at }, null);

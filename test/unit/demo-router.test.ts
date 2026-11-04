@@ -1,7 +1,8 @@
 // How a demo handler is registered (site/demo/api/router.ts): the seam later
 // demo tickets add their routes through.
 import { describe, expect, it } from 'vitest';
-import { DemoApiError, json, Router } from '../../site/demo/api/router.js';
+import { HttpError } from '../../src/server/http-error.js';
+import { json, Router } from '../../site/demo/api/router.js';
 
 const request = (path: string, init?: RequestInit) => new Request(`https://volveran.github.io/api/v1${path}`, init);
 
@@ -24,7 +25,7 @@ describe('the demo router', () => {
 
   it('answers an error a handler throws as the server does', async () => {
     const router = new Router().on('GET', '/checkouts/{id}', ({ params }) => {
-      throw new DemoApiError(404, 'checkout_not_found', `No Checkout ${params.id}.`, { tryAgain: false });
+      throw new HttpError(404, 'checkout_not_found', `No Checkout ${params.id}.`, { tryAgain: false });
     });
     const res = await router.handle(request('/checkouts/c1'), '/checkouts/c1');
     expect(res.status).toBe(404);

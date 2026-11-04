@@ -14,7 +14,7 @@
 // permission, and a Restore still running when another one asks.
 import { requireTypedQueueName } from '../../../../src/server/protected-profile.js';
 import type { AuditEntryJson } from '../../../../src/shared/audit.js';
-import { DemoApiError } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
 import { republished } from './apply.js';
 import type { AuditLog } from './audit-log.js';
 import type { AmqpProperties, DemoBroker } from './broker.js';
@@ -38,7 +38,7 @@ export function restore(deps: RestoreDeps, id: number, request: unknown): AuditE
   const body = isRecord(request) ? request : {};
   if (body.confirm !== true) throw refusal('confirmation_required', 'Restore needs the Operator\'s confirmation: send { "confirm": true }.');
   if (body.queue !== undefined && (typeof body.queue !== 'string' || body.queue === '')) {
-    throw new DemoApiError(400, 'invalid_request', '"queue" must be the name of an existing queue.');
+    throw new HttpError(400, 'invalid_request', '"queue" must be the name of an existing queue.');
   }
   const queue = (body.queue as string | undefined) ?? discard.queue;
   const stored = audit.body(id);
@@ -104,8 +104,8 @@ const STATUS: Record<RestoreErrorCode, number> = {
   queue_not_found: 422,
 };
 
-function refusal(code: RestoreErrorCode, message: string): DemoApiError {
-  return new DemoApiError(STATUS[code], code, message);
+function refusal(code: RestoreErrorCode, message: string): HttpError {
+  return new HttpError(STATUS[code], code, message);
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

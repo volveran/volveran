@@ -21,25 +21,13 @@ export type Handler = (req: DemoRequest) => Response | Promise<Response>;
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-/** An error answered as the server answers one: `{ error: { code, message, ...details } }`. */
-export class DemoApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    readonly details: Record<string, unknown> = {},
-  ) {
-    super(message);
-  }
-}
-
 export function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } });
 }
 
-/** Also answers the server's own HttpErrors, for the pure checks the demo shares with it (src/server/apply/errors.ts, protected-profile.ts). */
-export function errorResponse(err: DemoApiError | HttpError): Response {
-  return json({ error: { code: err.code, message: err.message, ...err.details } }, err.status);
+/** An error answered as the server answers one (server.ts): `{ error: { ...details, code, message } }`. */
+export function errorResponse(err: HttpError): Response {
+  return json({ error: { ...err.details, code: err.code, message: err.message } }, err.status);
 }
 
 /** How a route the demo leaves out is answered, and why. */
@@ -66,7 +54,7 @@ export class Router {
   notInDemo(method: Method, template: string, message: string): this {
     this.#left.set(`${method} ${template}`, message);
     return this.on(method, template, () => {
-      throw new DemoApiError(404, NOT_IN_DEMO, message);
+      throw new HttpError(404, NOT_IN_DEMO, message);
     });
   }
 
@@ -99,9 +87,9 @@ export class Router {
           headers: request.headers,
         });
       }
-      throw new DemoApiError(404, NOT_IN_DEMO, `Not in the demo yet: ${method} /api/v1${path}.`);
+      throw new HttpError(404, NOT_IN_DEMO, `Not in the demo yet: ${method} /api/v1${path}.`);
     } catch (err) {
-      if (err instanceof DemoApiError || err instanceof HttpError) return errorResponse(err);
+      if (err instanceof HttpError) return errorResponse(err);
       throw err;
     }
   }

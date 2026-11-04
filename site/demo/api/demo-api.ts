@@ -1,7 +1,8 @@
 // The demo's whole API: one instance per page load holds the demo's state in
 // memory, so a reload starts the scenario over. Each area registers its routes
 // on the Router from its own module in ./routes.
-import { DemoApiError, errorResponse, Router } from './router.js';
+import { HttpError } from '../../../src/server/http-error.js';
+import { errorResponse, Router } from './router.js';
 import { registerAlertDestinationRoutes } from './routes/alert-destinations.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerApprovalRoutes } from './routes/approvals.js';
@@ -41,7 +42,7 @@ export function createDemoApi(state: DemoState = startingState(), now: () => num
     routes: () => router.routes(),
     handle: async (request) => {
       const { pathname } = new URL(request.url);
-      if (isSignInPath(pathname)) return errorResponse(new DemoApiError(404, 'not_in_demo', 'Not in the demo: signing in needs Team Mode.'));
+      if (isSignInPath(pathname)) return errorResponse(new HttpError(404, 'not_in_demo', 'Not in the demo: signing in needs Team Mode.'));
       return router.handle(request, apiPath(pathname));
     },
   };

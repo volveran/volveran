@@ -14,7 +14,8 @@
 // decisions.ts and apply.ts.
 import { requireTypedQueueName } from '../../../../src/server/protected-profile.js';
 import type { Decision, MoveDestination } from '../../../../src/shared/decisions.js';
-import { json, DemoApiError, type Router } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
+import { json, type Router } from '../router.js';
 import { invalid } from '../simulator/audit-log.js';
 import { parseFilter } from '../simulator/filters.js';
 import { profileSettings } from '../simulator/profile-settings.js';
@@ -39,7 +40,7 @@ export function registerCheckoutRoutes(router: Router, state: DemoState) {
   router.on('GET', '/checkouts/{id}/messages/{handle}', ({ params }) => {
     const raw = params.handle!;
     const handle = Number(raw);
-    if (raw === '' || !Number.isSafeInteger(handle)) throw new DemoApiError(404, 'message_not_found', `"${raw}" is not a Message handle.`);
+    if (raw === '' || !Number.isSafeInteger(handle)) throw new HttpError(404, 'message_not_found', `"${raw}" is not a Message handle.`);
     checkouts.get(params.id!);
     return json({ message: checkouts.message(params.id!, handle) });
   });
@@ -72,7 +73,7 @@ export function registerCheckoutRoutes(router: Router, state: DemoState) {
     checkouts.get(params.id!);
     const request = isRecord(body) ? body : {};
     if (request.confirm !== true) {
-      throw new DemoApiError(
+      throw new HttpError(
         400,
         'confirmation_required',
         'Apply needs the Operator\'s confirmation: send { "confirm": true } after showing the summary of Decisions.',

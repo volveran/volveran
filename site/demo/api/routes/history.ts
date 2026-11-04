@@ -7,7 +7,8 @@
 // has an empty history, as an unsampled one has on the server.
 import type { QueueHistory } from '../../../../src/shared/history.js';
 import type { RecordedRange } from '../recording.js';
-import { DemoApiError, json, type Router } from '../router.js';
+import { HttpError } from '../../../../src/server/http-error.js';
+import { json, type Router } from '../router.js';
 import { vhostOf, type DemoState } from '../state.js';
 
 const DAY_MS = 86_400_000;
@@ -60,5 +61,5 @@ function parseTime(name: string, value: string | null): number | null {
 }
 
 function invalid(message: string) {
-  return new DemoApiError(400, 'invalid_request', message);
+  return new HttpError(400, 'invalid_request', message);
 }
