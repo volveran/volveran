@@ -23,6 +23,7 @@
     <p class="lede">Open-source, self-hosted triage for RabbitMQ dead-letter queues. Hold the messages still, decide what happens to each one, and apply it all in one step.</p>
     <p class="actions">
       <a class="button" href="#start">Run it in Docker</a>
+      <a class="button quiet" href="demo/">Try it in your browser</a>
       <a class="button quiet" href="https://github.com/volveran/volveran">See the source on GitHub</a>
     </p>
     <p class="verse"><em>Volverán las oscuras golondrinas…</em> Gustavo Adolfo Bécquer</p>
@@ -119,6 +120,7 @@
 
 <section class="wrap rail" id="start">
   <h2>Try it on your laptop</h2>
+  <p>Tried <a href="demo/">the demo</a>? This is the same web app, on your own broker.</p>
   <p>Write <code>profiles.yaml</code> from the <a href="https://github.com/volveran/volveran/blob/main/profiles.example.yaml">example</a>, then open <code>http://127.0.0.1:8080</code>. It listens on loopback only, with no sign-in. On Docker Desktop (macOS, Windows), first turn on host networking in Settings, Resources, Network (version 4.34 or later).</p>
   <div class="command"><button type="button" class="copy" hidden>Copy command</button>
   <pre tabindex="0"><code>export VOLVERAN_DEV_PASSWORD=guest
