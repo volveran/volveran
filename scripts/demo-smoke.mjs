@@ -148,12 +148,13 @@ export async function runSmoke({ dir, version, firefox = firefoxPath(), shots = 
     [
       'Check out orders.dlq on production',
       async () => {
-        await page.evaluate(() => {
+        // The demo opens on production (adapters.ts seeds the remembered Broker Profile).
+        const profile = await page.evaluate(() => {
           const select = [...document.querySelectorAll('label')].find((l) => l.textContent?.startsWith('Broker Profile'))?.querySelector('select');
           if (!select) throw new Error('no Broker Profile select');
-          select.value = 'production';
-          select.dispatchEvent(new Event('change', { bubbles: true }));
+          return select.value;
         });
+        if (profile !== 'production') throw new Error(`the demo opens on ${profile}, not production`);
         await checkOut('orders.dlq');
         await untilText(/production/);
       },

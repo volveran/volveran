@@ -67,4 +67,11 @@ describe('storage in the demo', () => {
     expect(win.localStorage.getItem('volveran.location')).toBeNull();
     expect(stored.size).toBe(0);
   });
+
+  it("opens the web app on production, as the banner's suggested path starts there", () => {
+    const win = {} as { localStorage: Storage };
+    installMemoryStorage(win);
+    // The release's App.tsx remembers the Broker Profile under this key and opens on it.
+    expect(JSON.parse(win.localStorage.getItem('volveran.location') ?? '{}')).toEqual({ profile: 'production' });
+  });
 });

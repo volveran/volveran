@@ -29,15 +29,22 @@ export function inDemoUrl(href: string, pathname: string): string | undefined {
   return inDemo === href ? undefined : inDemo;
 }
 
+/**
+ * What localStorage holds when the demo opens: the release's web app
+ * (App.tsx) opens on the Broker Profile it remembers under
+ * `volveran.location`, so the demo opens on production, where the banner's
+ * suggested path starts. A link to a view still opens that view's profile.
+ */
+const STARTING_LOCAL_STORAGE: Record<string, string> = { 'volveran.location': JSON.stringify({ profile: 'production' }) };
+
 /** Replaces localStorage and sessionStorage with storage in memory, gone with the page. */
 export function installMemoryStorage(win: object): void {
-  for (const name of ['localStorage', 'sessionStorage']) {
-    Object.defineProperty(win, name, { value: memoryStorage(), configurable: true, enumerable: true });
-  }
+  Object.defineProperty(win, 'localStorage', { value: memoryStorage(STARTING_LOCAL_STORAGE), configurable: true, enumerable: true });
+  Object.defineProperty(win, 'sessionStorage', { value: memoryStorage({}), configurable: true, enumerable: true });
 }
 
-function memoryStorage(): Storage {
-  const items = new Map<string, string>();
+function memoryStorage(initial: Record<string, string>): Storage {
+  const items = new Map<string, string>(Object.entries(initial));
   return {
     get length() {
       return items.size;
