@@ -11,6 +11,7 @@ import { registerCompareRoutes } from './routes/compare.js';
 import { registerExportRoutes } from './routes/export.js';
 import { registerHistoryRoutes } from './routes/history.js';
 import { registerProfileRoutes } from './routes/profiles.js';
+import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
 import { startingState, type DemoState } from './state.js';
 
@@ -26,6 +27,7 @@ export function createDemoApi(state: DemoState = startingState(), now: () => num
   const router = new Router();
   registerSessionRoutes(router, state);
   registerProfileRoutes(router, state);
+  registerReplayRuleRoutes(router, state, now);
   registerHistoryRoutes(router, state, now);
   registerAlertRoutes(router, state);
   registerCheckoutRoutes(router, state);
