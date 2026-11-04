@@ -15,6 +15,8 @@ scripts/validate-chart.sh  # validates the rendered manifests and examples/flux/
 npm run test:chart:release  # renders the chart from the last release tag and the working tree and fails on a difference not listed in test/chart/release-diff-allow.yaml (needs Helm)
 npm run test:smoke     # kind smoke test: installs the chart in a throwaway kind cluster and plays an Operator, on one Replica and on several (needs kind, kubectl, Helm)
 npm run build          # dist/server and dist/web
+npm run demo           # the demo (site/demo) around the latest release's web app, on :5174, no server or broker
+npm run demo:build     # the same into dist/demo, as the Pages workflow publishes it at /demo/
 docker build -t volveran .   # the image, as the release workflow builds it
 ```
 
@@ -48,6 +50,8 @@ After the release's image is published, add its upgrade fixture (see **Upgrade s
 4. Run `npx vitest run --config vitest.integration.config.ts test/integration/upgrade.test.ts` with the broker up, and commit the directory.
 
 Another store can reuse this: copy a fixture with `copyFixtureStore`, start on it with `fixtureAppOptions`, and run `upgradeChecks`.
+
+**The demo.** `site/demo/` wraps the web app of the latest release tag, unchanged, in a page that answers its API calls in the browser (`site/demo/api/`, one module per area under `routes/`, registered on the `Router` with the paths of `openapi.json`); `scripts/demo.mjs` unpacks the tag's `src/web` and `src/shared` into `dist/demo-release/<tag>/` and builds around them. Nothing under `src/web` changes for the demo. `.github/workflows/pages.yml` publishes it at `/demo/` on pushes to `main` and of `v*` tags, always with `main`'s demo code. Its unit tests are `test/unit/demo-*.test.ts`.
 
 **The profiles file schema.** `profiles.schema.json` is written by hand and published with each release; the parser (`src/server/profiles.ts`) stays the authority. `test/unit/profiles-schema.test.ts` holds the two to the fixtures in `test/fixtures/profiles-schema/`: `accepted/` and `refused/` for both, `parser-only/` for what a schema cannot see. A new key goes in the parser, the schema and `accepted/every-key.yaml`, where the test tries an unknown key beside it.
 
