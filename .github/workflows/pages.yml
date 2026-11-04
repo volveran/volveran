@@ -1,16 +1,15 @@
 # Publishes the landing page in site/, with docs/images, and the demo at /demo/
 # to GitHub Pages. The demo is the web app of the latest release tag, built with
-# the demo page, simulator and banner of main (scripts/demo.mjs). A release tag
-# runs it too, so a release republishes the demo; that run checks out main all
-# the same, since the demo's code comes from main. Before anything is
+# the demo page, simulator and banner of main (scripts/demo.mjs). A release
+# republishes the demo by dispatching this workflow on main once the GitHub
+# Release is out (release.yml, job pages): the github-pages environment deploys
+# from main only, so a run on the tag would be refused. Before anything is
 # uploaded, the demo check (npm run demo:check) must pass.
 name: Pages
 
 on:
   push:
     branches: [main]
-    # Path filters do not apply to tag pushes.
-    tags: ['v*']
     paths:
       - 'site/**'
       - 'docs/images/**'

@@ -1,6 +1,7 @@
-// The Pages workflow publishes the landing page and the demo: on main, and on a
-// release tag, when the demo moves to the new release. The demo's own code
-// always comes from main, even on a tag push, whose run checks out the tag.
+// The Pages workflow publishes the landing page and the demo: on main, and after
+// a release, when the demo moves to the new release. The github-pages
+// environment deploys from main only, so a release does not run Pages itself:
+// release.yml dispatches pages.yml on main once the release is out.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,16 +16,18 @@ interface Step {
   with?: Record<string, string>;
 }
 const workflow = parse(readFileSync(path.join(root, '.github/workflows/pages.yml'), 'utf8')) as {
-  on: { push: { branches: string[]; tags: string[]; paths: string[] } };
+  on: { push: { branches: string[]; tags?: string[]; paths: string[] }; workflow_dispatch?: unknown };
   jobs: { deploy: { steps: Step[] } };
 };
 const steps = workflow.jobs.deploy.steps;
 const runs = steps.map((s) => s.run ?? '').join('\n');
 
 describe('the Pages workflow', () => {
-  it('runs on pushes to main that touch the site, the demo or its data, and on every release tag', () => {
+  it('runs on pushes to main that touch the site, the demo or its data, and when dispatched', () => {
     expect(workflow.on.push.branches).toEqual(['main']);
-    expect(workflow.on.push.tags).toEqual(['v*']);
+    // A tag push could not deploy: the github-pages environment allows main only.
+    expect(workflow.on.push.tags).toBeUndefined();
+    expect('workflow_dispatch' in workflow.on).toBe(true);
     expect(workflow.on.push.paths).toEqual(
       expect.arrayContaining(['site/**', 'docs/images/**', 'docs/demo/**', 'scripts/demo.mjs', 'scripts/release-tag.mjs', '.github/workflows/pages.yml']),
     );
@@ -59,5 +62,27 @@ describe('the Pages workflow', () => {
     expect(runs).toMatch(/cp -r site\/\. _site\//);
     expect(runs).toMatch(/cp -r docs\/images _site\/images/);
     expect(steps.find((s) => s.uses?.startsWith('actions/upload-pages-artifact@'))?.with?.path).toBe('_site');
+  });
+});
+
+describe('the Release workflow', () => {
+  interface Job {
+    needs?: string | string[];
+    permissions?: Record<string, string>;
+    steps: Array<Step & { env?: Record<string, string> }>;
+  }
+  const release = parse(readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8')) as {
+    jobs: Record<string, Job>;
+  };
+  const dispatches = (s: Step) => /gh workflow run pages\.yml\b/.test(s.run ?? '');
+
+  it('republishes the demo after the GitHub Release, by dispatching the Pages workflow on main', () => {
+    const job = Object.values(release.jobs).find((j) => j.steps.some(dispatches));
+    expect(job).toBeDefined();
+    expect([job!.needs].flat()).toContain('github-release');
+    expect(job!.permissions).toEqual({ actions: 'write' });
+    const step = job!.steps.find(dispatches)!;
+    expect(step.run).toMatch(/--ref main\b/);
+    expect(step.env?.GH_TOKEN).toMatch(/github\.token|secrets\.GITHUB_TOKEN/);
   });
 });
