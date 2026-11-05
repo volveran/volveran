@@ -16,8 +16,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { findLatestRelease, latestRelease, repoRoot, unpackRelease } from './release-tag.mjs';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'test/chart/fixtures');
 const allowFile = path.join(repoRoot, 'test/chart/release-diff-allow.yaml');
 const version = '\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?';
@@ -35,16 +35,7 @@ const version = '\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?';
  * @property {string} change
  */
 
-/**
- * The newest release among `tags`: no pre-releases, highest version first by number.
- * @param {string[]} tags
- * @returns {string | undefined}
- */
-export function latestRelease(tags) {
-  return tags
-    .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag))
-    .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }))[0];
-}
+export { latestRelease };
 
 /**
  * `rendered` with the version strings of a release replaced, and nothing else.
@@ -149,52 +140,6 @@ function render(chart, fixture) {
   return execFileSync('helm', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/**
- * @param {string[]} args
- * @returns {string}
- */
-function git(args) {
-  return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-
-/**
- * Asks origin first: CI's checkout fetches no tags, and a local clone may be behind.
- * Local tags are the answer only when origin cannot be reached.
- * @returns {string | undefined}
- */
-function findLatestRelease() {
-  /** @type {string[]} */
-  let tags;
-  try {
-    tags = git(['ls-remote', '--tags', '--refs', 'origin', 'v*'])
-      .split('\n')
-      .map((line) => line.split('refs/tags/')[1] ?? '');
-  } catch (err) {
-    tags = git(['tag', '--list', 'v*']).split('\n');
-    if (latestRelease(tags) === undefined) throw err;
-    console.error('Could not ask origin for its tags; using the local ones.');
-  }
-  return latestRelease(tags);
-}
-
-/**
- * Unpacks the chart and fixtures of `tag` into `dir`, fetching the tag if it is not here.
- * @param {string} tag
- * @param {string} dir
- */
-function unpackRelease(tag, dir) {
-  let ref = `refs/tags/${tag}`;
-  if (spawnSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd: repoRoot }).status !== 0) {
-    // Depth only in a shallow checkout: it would turn a full clone shallow.
-    const depth = git(['rev-parse', '--is-shallow-repository']) === 'true' ? ['--depth=1'] : [];
-    git(['fetch', '--quiet', '--no-tags', ...depth, 'origin', ref]);
-    ref = 'FETCH_HEAD';
-  }
-  const archive = path.join(dir, 'release.tar');
-  git(['archive', '--output', archive, ref, 'charts/volveran', 'test/chart/fixtures']);
-  execFileSync('tar', ['-xf', archive, '-C', dir]);
-}
-
 function main() {
   const tag = process.argv[2] ?? findLatestRelease();
   if (tag === undefined) {
@@ -203,7 +148,7 @@ function main() {
   }
   const dir = mkdtempSync(path.join(tmpdir(), 'volveran-chart-release-'));
   try {
-    unpackRelease(tag, dir);
+    unpackRelease(tag, dir, ['charts/volveran', 'test/chart/fixtures']);
     const releaseFixtures = readdirSync(path.join(dir, 'test/chart/fixtures'));
     const fixtures = readdirSync(fixturesDir)
       .filter((f) => f.endsWith('.yaml'))

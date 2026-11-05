@@ -1,0 +1,95 @@
+/* The demo's banner: the landing page's hero blue, so it reads as the site, not as the app. */
+:root {
+  --demo-bg: #1f4fa3;
+  --demo-text: #fff;
+  --demo-notice-bg: #fff7d6;
+  --demo-notice-text: #3d3000;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --demo-bg: #17346b;
+    --demo-notice-bg: #3d3000;
+    --demo-notice-text: #fff7d6;
+  }
+}
+
+.demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 6px 16px;
+  background: var(--demo-bg);
+  color: var(--demo-text);
+  font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.demo-banner .demo-version {
+  font-weight: 700;
+}
+
+/* Back to the landing page's docker run, once the visitor has tried it. */
+.demo-banner .demo-docker {
+  margin-left: auto;
+  color: inherit;
+  font-weight: 700;
+}
+
+/* The suggested path: a row of its own under the rest, wrapping step by step on narrow screens. */
+.demo-banner .demo-path {
+  display: flex;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+  gap: 2px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: demo-step;
+}
+
+.demo-banner .demo-path li {
+  counter-increment: demo-step;
+}
+
+.demo-banner .demo-path li::before {
+  content: counter(demo-step) '. ';
+  font-weight: 700;
+}
+
+.demo-banner .demo-path li + li::before {
+  content: '\2192\00a0' counter(demo-step) '. ';
+}
+
+.demo-banner .demo-path code {
+  font: 13px/1.4 ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+.demo-desktop-notice button {
+  margin-left: auto;
+}
+
+.demo-banner .demo-reset,
+.demo-desktop-notice button {
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.demo-desktop-notice {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--demo-notice-bg);
+  color: var(--demo-notice-text);
+  font: 14px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.demo-desktop-notice[hidden] {
+  display: none;
+}

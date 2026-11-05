@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Volverán</title>
+  </head>
+  <body>
+    <div id="demo-banner" class="demo-banner" role="region" aria-label="Demo">
+      <span class="demo-version">Volverán</span>
+      <span>Demo: nothing here touches a real broker.</span>
+      <a class="demo-docker" href="../#start">Run it in Docker</a>
+      <button type="button" class="demo-reset">Reset demo</button>
+      <ol class="demo-path" aria-label="Suggested path">
+        <li>Check out <code>orders.dlq</code> on production</li>
+        <li>Replay the timeouts with a Canary</li>
+        <li>See it die again, then Restore what you discarded</li>
+      </ol>
+    </div>
+    <div id="demo-desktop-notice" class="demo-desktop-notice" role="note" hidden>
+      <span>Best on a desktop: the demo is the web app as Operators use it, on a wide screen.</span>
+      <button type="button">Go on anyway</button>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

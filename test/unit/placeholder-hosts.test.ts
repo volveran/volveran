@@ -17,6 +17,8 @@ const scanned = ['README.md', 'GLOSSARY.md', 'profiles.example.yaml', 'docker-co
 const publicHosts = [
   // Volverán's own registry, source, signing identity and Sigstore.
   'ghcr.io', 'github.com', 'githubusercontent.com', 'sigstore.dev',
+  // Volverán's landing page and its demo.
+  'volveran.github.io',
   // Identity provider vendors named in the Team Mode guide.
   'jumpcloud.com', 'okta.com', 'microsoftonline.com',
   // References.

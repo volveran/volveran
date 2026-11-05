@@ -47,9 +47,13 @@
 # default) writes Sigstore bundles as OCI referrers instead, which Flux reads
 # only from source-controller v1.8.0 (Flux v2.8.0, February 2026) on. Move to
 # v3 once older Flux releases no longer matter.
-# GitHub Release: published last, with the version's CHANGELOG.md entry as its
-# notes and the JSON Schema of the profiles file attached; a pre-release tag gets
-# a Release marked as a pre-release.
+# GitHub Release: published with the version's CHANGELOG.md entry as its notes
+# and the JSON Schema of the profiles file attached; a pre-release tag gets a
+# Release marked as a pre-release.
+#
+# Demo: last, the Pages workflow is dispatched on main, so the demo moves to the
+# new release's web app. The github-pages environment deploys from main only,
+# which a run on the tag is not.
 name: Release
 
 on:
@@ -247,3 +251,17 @@ jobs:
           case "$version" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "Volverán $version" \
             --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}" profiles.schema.json openapi.json
+
+  pages:
+    name: Republish the demo on GitHub Pages
+    # After the Release: the demo builds around the latest release tag.
+    needs: github-release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the Pages workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run pages.yml --ref main

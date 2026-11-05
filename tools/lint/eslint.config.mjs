@@ -6,13 +6,13 @@ import tseslint from 'typescript-eslint';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 export default tseslint.config({
-  files: ['src/**/*.{ts,tsx}', 'test/**/*.{ts,tsx}'],
+  files: ['src/**/*.{ts,tsx}', 'test/**/*.{ts,tsx}', 'site/demo/**/*.ts'],
   linterOptions: { reportUnusedDisableDirectives: 'error' },
   languageOptions: {
     parser: tseslint.parser,
     parserOptions: {
       tsconfigRootDir: repoRoot,
-      project: ['tsconfig.server.json', 'tsconfig.web.json', 'tsconfig.test.json'],
+      project: ['tsconfig.server.json', 'tsconfig.web.json', 'tsconfig.test.json', 'tsconfig.demo.json'],
     },
   },
   plugins: { '@typescript-eslint': tseslint.plugin },

@@ -15,6 +15,8 @@
 
 Your dead-letter queue has hundreds of messages in it and the incident is finally over. Some should go back, some should go to the bin, and a few need a human. Volverán is an open-source, self-hosted tool for RabbitMQ that holds those messages still while you look at them, lets you decide what happens to each one, and carries it all out in one step.
 
+**[Try it in your browser](https://volveran.github.io/volveran/demo/)**: the web app of the latest release against a simulated broker, with no Docker and nothing to set up.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/checkout-dark.png">
   <img src="docs/images/checkout-light.png" alt="A Checkout of orders.dlq: each Message has a Decision, and two are flagged Died Again">
@@ -120,6 +122,8 @@ Run it on your laptop in **Solo Mode**, or as a shared service in **Team Mode**,
 - **Small footprint.** One read-only container that writes only to its audit volume. Solo Mode refuses to listen on anything but loopback.
 
 ## Quick start
+
+Tried [the demo](https://volveran.github.io/volveran/demo/)? This is the same web app, on your own broker.
 
 Write `profiles.yaml` from [`profiles.example.yaml`](profiles.example.yaml). Each Broker Profile names the environment variable holding its password, so passwords never go in the file. Then:
 
