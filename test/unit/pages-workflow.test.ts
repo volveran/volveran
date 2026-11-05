@@ -70,7 +70,10 @@ describe('the Pages workflow', () => {
     };
     walk(path.join(root, 'site/demo'));
     expect(imported.size).toBeGreaterThan(0);
-    const globs = workflow.on.push.paths.map((p) => new RegExp(`^${p.replace(/[.]/g, '\\.').replace(/\*\*/g, '.+').replace(/(?<!\.)\*/g, '[^/]*')}$`));
+    // A path filter as GitHub reads it: `**` crosses directories, `*` does not, everything else is literal.
+    const globToRegExp = (glob: string) =>
+      new RegExp(`^${glob.split(/(\*\*|\*)/).map((part) => (part === '**' ? '.+' : part === '*' ? '[^/]*' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('')}$`);
+    const globs = workflow.on.push.paths.map(globToRegExp);
     expect([...imported].filter((file) => !globs.some((g) => g.test(file)))).toEqual([]);
   });
 

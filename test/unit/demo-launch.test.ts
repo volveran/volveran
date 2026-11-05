@@ -8,7 +8,15 @@ import { describe, expect, it } from 'vitest';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
-const text = (html: string) => html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+// Strips tags until none are left, so a tag split by another one does not survive.
+const text = (html: string) => {
+  let previous: string;
+  do {
+    previous = html;
+    html = html.replace(/<[^>]+>/g, '');
+  } while (html !== previous);
+  return html.replace(/\s+/g, ' ').trim();
+};
 
 const demoPage = read('site/demo/index.html');
 const banner = /<div id="demo-banner"[\s\S]*?\n {4}<\/div>/.exec(demoPage)?.[0] ?? '';
