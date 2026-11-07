@@ -1,6 +1,6 @@
 // The demo's contract with a release: every route of the release's
 // openapi.json has a demo handler, or is listed as not in the demo
-// (createDemoApi().routes()). Routes are compared as `METHOD /api/v1/path`
+// (createDemoApi(state).routes()). Routes are compared as `METHOD /api/v1/path`
 // with `{param}` placeholders, the form of test/support/api-routes.ts.
 
 /**

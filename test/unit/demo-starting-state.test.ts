@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDemoApi, type DemoApi } from '../../site/demo/api/demo-api.js';
 import { startingState } from '../../site/demo/api/state.js';
 import type { CheckoutView } from '../../src/shared/checkout.js';
+import { committedRecording } from '../support/demo-recording.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const recorded = JSON.parse(readFileSync(path.join(root, 'docs/demo/recording.json'), 'utf8'));
@@ -22,7 +23,7 @@ async function call(api: DemoApi, method: string, url: string, body?: unknown) {
   return { status: res.status, body: (await res.json()) as Record<string, any> };
 }
 
-const demoApi = () => createDemoApi(startingState(new Date(now)), () => now);
+const demoApi = () => createDemoApi(startingState(committedRecording, new Date(now)), () => now);
 
 afterEach(() => {
   vi.useRealTimers();

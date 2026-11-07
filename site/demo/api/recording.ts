@@ -2,12 +2,13 @@
 // screenshot run from the same seeded broker as docs/images
 // (scripts/screenshots/demo-recording.mjs writes docs/demo/recording.json).
 // The demo serves them with every time moved forward to the moment it loads.
+// The recording is not imported here: the demo page fetches it as its own file
+// (site/demo/main.ts), and tests and the contract check read it from disk.
 import type { AlertRuleView, AlertsOverview } from '../../../src/shared/alerts.js';
 import type { DeadLetterMap } from '../../../src/shared/dead-letter-map.js';
 import type { QueueHistory } from '../../../src/shared/history.js';
 import type { MoveDestinations, ProfileSummary, QueueList } from '../../../src/shared/queues.js';
 import type { ReplayRuleView } from '../../../src/shared/replay-rules.js';
-import recorded from '../../../docs/demo/recording.json' with { type: 'json' };
 
 /** The history ranges recorded per queue, as the web app offers them; its whole retention gets the longest. */
 export type RecordedRange = '1h' | '24h' | '7d';
@@ -36,9 +37,17 @@ export interface Recording {
   alerts: AlertsOverview;
 }
 
-/** The committed recording, with its times moved to `now`. */
-export function recording(now: number): Recording {
-  return rebased(recorded as unknown as Recording, now);
+/**
+ * The recording in `text` (docs/demo/recording.json). Throws if it is not JSON
+ * or not shaped like one, such as an HTML page answered in its place.
+ */
+export function parseRecording(text: string): Recording {
+  const value: unknown = JSON.parse(text);
+  const candidate = value as Partial<Recording> | null;
+  if (typeof candidate?.recordedAt !== 'string' || !Array.isArray(candidate.profiles) || typeof candidate.alerts !== 'object') {
+    throw new Error('Not a demo recording: it needs recordedAt, profiles and alerts.');
+  }
+  return value as Recording;
 }
 
 /** A whole ISO 8601 UTC time, as the server writes them. */

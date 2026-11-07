@@ -1,6 +1,7 @@
 // The demo's banner above the web app: the release's version, that nothing
 // touches a real broker, and Reset demo. Narrow screens also get a notice they
-// can dismiss (for this page only: nothing is stored).
+// can dismiss (for this page only: nothing is stored). If the demo cannot
+// start, the banner says why (showStartFailure).
 import './banner.css';
 
 declare const __VOLVERAN_RELEASE__: string;
@@ -22,3 +23,13 @@ notice.querySelector('button')!.addEventListener('click', () => {
 });
 narrow.addEventListener('change', showNotice);
 showNotice();
+
+/** Says in the banner that the demo did not start, and why; the web app is not loaded. */
+export function showStartFailure(error: unknown): void {
+  const message = document.createElement('p');
+  message.className = 'demo-start-failure';
+  message.setAttribute('role', 'alert');
+  const reason = error instanceof Error ? error.message : String(error);
+  message.textContent = `The demo has not started: it could not load its recording. Reload the page to try again. (${reason})`;
+  banner.append(message);
+}
