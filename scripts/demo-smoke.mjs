@@ -17,7 +17,7 @@ import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 
 const BASE_PATH = '/volveran/demo/';
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png' };
 /** How long a step may wait for what it expects; the Canary's watch is 15 s on production. */
 const STEP_TIMEOUT_MS = 20_000;
 

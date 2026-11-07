@@ -93,3 +93,10 @@
 .demo-desktop-notice[hidden] {
   display: none;
 }
+
+/* The demo did not start: a row of its own, where the web app would be. */
+.demo-banner .demo-start-failure {
+  flex-basis: 100%;
+  margin: 0;
+  font-weight: 700;
+}

@@ -14,6 +14,7 @@ import { AuditLog, type NewAuditEntry } from '../../site/demo/api/simulator/audi
 import { diedAgain } from '../../site/demo/api/simulator/died-again.js';
 import { DATABASE_TIMEOUT_MS, scenarioBroker } from '../../site/demo/api/simulator/broker.js';
 import type { CheckoutView } from '../../src/shared/checkout.js';
+import { committedRecording } from '../support/demo-recording.js';
 
 const origin = 'https://volveran.github.io';
 
@@ -48,7 +49,7 @@ afterEach(() => {
 
 describe('Apply on the Protected Profile production', () => {
   it('needs the queue name typed exactly, besides the confirmation', async () => {
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api);
     await decide(api, checkout, [2], { kind: 'discard', reason: 'Duplicate' });
     expect((await current(api, checkout)).applyConfirmation).toMatchObject({ typeQueueName: true });
@@ -66,7 +67,7 @@ describe('Apply on the Protected Profile production', () => {
   });
 
   it('is not asked for on staging', async () => {
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api, 'staging');
     await decide(api, checkout, [2], { kind: 'discard', reason: 'Duplicate' });
     expect((await current(api, checkout)).applyConfirmation).toMatchObject({ typeQueueName: false });
@@ -84,7 +85,7 @@ async function auditTimes(api: DemoApi): Promise<Array<[string, string, number]>
 describe('the Replay Rate in the demo', () => {
   it('starts Replay and Move steps at least 1/rate apart and does not slow Discards down', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api, 'staging');
     await decide(api, checkout, [1, 5, 6], { kind: 'discard', reason: 'Duplicate' });
     await decide(api, checkout, [2, 3], { kind: 'replay' });
@@ -103,7 +104,7 @@ describe('the Replay Rate in the demo', () => {
   });
 
   it('runs at the profile default when the request leaves it out, and refuses a rate above the maximum', async () => {
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api);
     await decide(api, checkout, [2], { kind: 'replay' });
     expect((await current(api, checkout)).applyConfirmation.replayRate).toEqual({ default: 5, max: 50 });
@@ -124,7 +125,7 @@ describe('the Replay Rate in the demo', () => {
 
   it('refuses an Apply whose paced steps would outlast the Checkout', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api, 'staging');
     await decide(api, checkout, [2, 3, 5, 6, 8, 9], { kind: 'replay' });
     for (let minute = 0; minute < 29; minute++) {
@@ -154,7 +155,7 @@ async function applyStarted(api: DemoApi, checkout: CheckoutView, body: Record<s
 describe('the orders application behind orders.work in the demo', () => {
   it('dead-letters a Replay of a SQLTimeoutException Message again a few seconds later; it processes every other one', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api, 'staging');
     await decide(api, checkout, [1, 2], { kind: 'replay' });
     await applyStarted(api, checkout);
@@ -180,7 +181,7 @@ describe('the orders application behind orders.work in the demo', () => {
 describe('the orders application decides by the Failure Details of the Message', () => {
   it('processes a Replay of a Message from orders.dlq whose Failure Details do not name SQLTimeoutException', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api, 'staging');
     const other = checkout.messages.find((m) => m.messageId === 'ord-9bf8-0002')!;
     expect(other.failureDetails?.message ?? '').not.toContain('SQLTimeoutException');
@@ -230,7 +231,7 @@ async function sendOut(api: DemoApi, messageIds: string[], decision: unknown): P
 describe('Died Again in the demo', () => {
   it('flags a Replayed Message that died again in the next Checkout, by its replay id, with the Audit Entry that sent it out', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     await sendOut(api, ['ord-7d09-0001', 'ord-9bf8-0002'], { kind: 'replay' });
     const [replayed] = (await call(api, 'GET', '/audit-entries?messageId=ord-7d09-0001')).body.entries;
 
@@ -249,7 +250,7 @@ describe('Died Again in the demo', () => {
 
   it('counts each time it died again, following the replay ids back through the Audit Entries, whichever Decision sent it out', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     await sendOut(api, ['ord-7d09-0001'], { kind: 'replay' });
     await sendOut(api, ['ord-7d09-0001'], { kind: 'move', destination: { queue: 'orders.work' } });
     const [moved] = (await call(api, 'GET', '/audit-entries?action=move')).body.entries;
@@ -266,7 +267,7 @@ describe('Died Again in the demo', () => {
 describe('a Restored Message that dies again in the demo', () => {
   it('Restored to orders.work from a SQLTimeoutException Discard, is dead-lettered again and flagged Died Again in the next Checkout', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     await sendOut(api, ['ord-7d09-0001'], { kind: 'discard', reason: 'Database down, retry later' });
     const [discard] = (await call(api, 'GET', '/audit-entries?action=discard')).body.entries;
     expect((await depths(api))['orders.dlq']).toBe(14);
@@ -289,7 +290,7 @@ describe('a Restored Message that dies again in the demo', () => {
 
 describe('a Canary in the demo', () => {
   it('is required on production for more than 3 Replays, and needs a Replay to be one', async () => {
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api);
     await decide(api, checkout, [5], { kind: 'discard', reason: 'Duplicate' });
     const apply = (body: Record<string, unknown>) => call(api, 'POST', `/checkouts/${checkout.id}/apply`, { confirm: true, confirmQueueName: 'orders.dlq', ...body });
@@ -314,7 +315,7 @@ describe('a Canary in the demo', () => {
 
   it('on a SQLTimeoutException Message dies again within the 15-second Watch Window; stopping leaves the rest as Keep', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api);
     await decide(api, checkout, TIMEOUTS, { kind: 'replay' });
     await decide(api, checkout, [2], { kind: 'discard', reason: 'Duplicate' });
@@ -372,7 +373,7 @@ describe('a Canary in the demo', () => {
 
   it('on any other Message is not dead-lettered within the Watch Window; continuing carries out the rest', async () => {
     vi.useFakeTimers();
-    const api = createDemoApi(seededState());
+    const api = createDemoApi(seededState(committedRecording));
     const checkout = await started(api);
     await decide(api, checkout, [2, 3, 5, 6], { kind: 'replay' });
     await applyStarted(api, checkout, { canary: { handle: 3 } });

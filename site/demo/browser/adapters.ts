@@ -2,6 +2,18 @@
 // it cannot change itself (no change under src/web). Each takes the window
 // as a parameter, so it runs under Node with a stand-in.
 import { isDemoApiPath, type DemoApi } from '../api/demo-api.js';
+import { parseRecording, type Recording } from '../api/recording.js';
+
+/**
+ * Loads the recording the demo starts from (docs/demo/recording.json, published
+ * next to the page), with the network's fetch: call it before interceptFetch.
+ * Throws with what went wrong if it does not answer 200 with a recording.
+ */
+export async function fetchRecording(network: typeof fetch, url: string): Promise<Recording> {
+  const res = await network(url);
+  if (!res.ok) throw new Error(`${url} answered ${res.status}.`);
+  return parseRecording(await res.text());
+}
 
 /**
  * Answers the web app's calls to /api/ (and Team Mode's /auth/) from `api`, so

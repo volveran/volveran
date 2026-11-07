@@ -1,7 +1,8 @@
 // The demo's state: what a visitor can change, in memory, per page load. It
-// starts from the recording of the screenshot run (./recording.ts).
+// starts from the recording of the screenshot run (./recording.ts), which the
+// caller passes in: the demo page fetches it, tests read it from disk.
 import type { AlertsOverview } from '../../../src/shared/alerts.js';
-import { recording, type RecordedProfile, type RecordedVhost } from './recording.js';
+import { rebased, type RecordedProfile, type RecordedVhost, type Recording } from './recording.js';
 import { HttpError } from '../../../src/server/http-error.js';
 import { AuditLog } from './simulator/audit-log.js';
 import { scenarioBroker, type DemoBroker } from './simulator/broker.js';
@@ -33,8 +34,8 @@ const DEAD_LETTERED_AGO_MS = 8 * 60_000;
  * simulator's broker and audit store as the screenshot run left them when it recorded, after its
  * prep Apply and die-again.mjs (./simulator/screenshot-prep.ts).
  */
-export function startingState(now: Date = new Date()): DemoState {
-  const state = seededState(now);
+export function startingState(recorded: Recording, now: Date = new Date()): DemoState {
+  const state = seededState(recorded, now);
   applyScreenshotPrep(state.broker, state.audit, prepApply(state.profiles));
   return state;
 }
@@ -43,8 +44,8 @@ export function startingState(now: Date = new Date()): DemoState {
  * The scenario as seed.mjs leaves the broker, before the screenshot run's prep: every Message
  * dead-lettered, an empty audit store. The read-only views are the recording's all the same.
  */
-export function seededState(now: Date = new Date()): DemoState {
-  const { profiles, alerts } = recording(now.getTime());
+export function seededState(recorded: Recording, now: Date = new Date()): DemoState {
+  const { profiles, alerts } = rebased(recorded, now.getTime());
   const broker = scenarioBroker(new Date(now.getTime() - DEAD_LETTERED_AGO_MS));
   const audit = new AuditLog();
   const state: Omit<DemoState, 'checkouts'> & { checkouts?: Checkouts } = {
