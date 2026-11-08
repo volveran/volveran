@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDemoApi } from '../../site/demo/api/demo-api.js';
 import { startingState } from '../../site/demo/api/state.js';
+import { committedRecording } from '../support/demo-recording.js';
 
 const origin = 'https://volveran.github.io';
 /** When the demo loads in these tests: long after the screenshot run recorded its answers. */
@@ -10,7 +11,7 @@ const now = Date.parse('2027-03-01T12:00:00.000Z');
 const hour = 3_600_000;
 
 async function call(path: string, init?: RequestInit) {
-  const res = await createDemoApi(startingState(new Date(now)), () => now).handle(new Request(`${origin}${path}`, init));
+  const res = await createDemoApi(startingState(committedRecording, new Date(now)), () => now).handle(new Request(`${origin}${path}`, init));
   return { status: res.status, body: (await res.json()) as Record<string, any> };
 }
 
@@ -61,7 +62,7 @@ describe('the demo API', () => {
   });
 
   it('lists the routes it handles and those it leaves out, as the contract check compares them', () => {
-    expect(createDemoApi().routes().handled).toEqual(
+    expect(createDemoApi(startingState(committedRecording)).routes().handled).toEqual(
       expect.arrayContaining([
         'GET /api/v1/profiles',
         'GET /api/v1/profiles/{profile}/vhosts',

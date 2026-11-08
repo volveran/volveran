@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDemoApi, type DemoApi } from '../../site/demo/api/demo-api.js';
 import { startingState } from '../../site/demo/api/state.js';
+import { committedRecording } from '../support/demo-recording.js';
 
 const origin = 'https://volveran.github.io';
 const now = Date.parse('2027-03-01T12:00:00.000Z');
@@ -14,7 +15,7 @@ async function call(api: DemoApi, method: string, path: string, body?: unknown) 
   return { status: res.status, body: (await res.json()) as Record<string, any> };
 }
 
-const demoApi = () => createDemoApi(startingState(new Date(now)), () => now);
+const demoApi = () => createDemoApi(startingState(committedRecording, new Date(now)), () => now);
 const rule = async (api: DemoApi, name: string) => (await call(api, 'GET', '/profiles/staging/replay-rules')).body.rules.find((r: any) => r.rule.name === name);
 
 describe('a Replay rule in the demo', () => {

@@ -14,7 +14,7 @@ import { registerHistoryRoutes } from './routes/history.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerReplayRuleRoutes } from './routes/replay-rules.js';
 import { registerSessionRoutes } from './routes/session.js';
-import { startingState, type DemoState } from './state.js';
+import type { DemoState } from './state.js';
 
 export interface DemoApi {
   /** Answers a request the web app made to /api/v1 (or its /api alias). */
@@ -24,7 +24,8 @@ export interface DemoApi {
   readonly state: DemoState;
 }
 
-export function createDemoApi(state: DemoState = startingState(), now: () => number = Date.now): DemoApi {
+/** The demo's API over `state` (./state.ts startingState, from the recording). */
+export function createDemoApi(state: DemoState, now: () => number = Date.now): DemoApi {
   const router = new Router();
   registerSessionRoutes(router, state);
   registerProfileRoutes(router, state);

@@ -15,6 +15,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createDemoApi } from '../site/demo/api/demo-api.ts';
+import { parseRecording } from '../site/demo/api/recording.ts';
+import { startingState } from '../site/demo/api/state.ts';
 import { contractProblems } from './demo-contract.mjs';
 import { buildDemo, latestReleaseTag, unpackDemoRelease } from './demo.mjs';
 import { runSmoke } from './demo-smoke.mjs';
@@ -30,7 +32,8 @@ else if (!existsSync(path.join(dir, 'index.html'))) throw new Error(`No built de
 
 let openapiFile = path.join(repoRoot, 'dist/demo-release', tag, 'openapi.json');
 if (!existsSync(openapiFile)) openapiFile = path.join(unpackDemoRelease(tag), 'openapi.json');
-const routes = createDemoApi().routes();
+const recorded = parseRecording(readFileSync(path.join(repoRoot, 'docs/demo/recording.json'), 'utf8'));
+const routes = createDemoApi(startingState(recorded)).routes();
 const contract = contractProblems(JSON.parse(readFileSync(openapiFile, 'utf8')), routes);
 console.log(`Contract with the openapi.json of ${tag}: ${routes.handled.length} routes handled, ${routes.notInDemo.length} not in the demo.`);
 for (const problem of contract) console.log(`FAIL contract: ${problem}`);

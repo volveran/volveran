@@ -3,7 +3,9 @@
 // stay under /demo/, and it stores nothing.
 import { describe, expect, it, vi } from 'vitest';
 import { createDemoApi } from '../../site/demo/api/demo-api.js';
-import { installMemoryStorage, interceptFetch, inDemoUrl } from '../../site/demo/browser/adapters.js';
+import { startingState } from '../../site/demo/api/state.js';
+import { fetchRecording, installMemoryStorage, interceptFetch, inDemoUrl } from '../../site/demo/browser/adapters.js';
+import { committedRecording } from '../support/demo-recording.js';
 
 const demoPage = 'https://volveran.github.io/volveran/demo/';
 
@@ -15,7 +17,7 @@ function fakeWindow() {
 describe('the demo fetch', () => {
   it("answers the web app's API calls from the demo, never from the network", async () => {
     const { network, win } = fakeWindow();
-    interceptFetch(win, createDemoApi());
+    interceptFetch(win, createDemoApi(startingState(committedRecording)));
     const session = await win.fetch('/api/v1/session', { headers: { accept: 'application/json' } });
     expect(await session.json()).toMatchObject({ mode: 'solo', operator: 'demo' });
     const end = await win.fetch(new Request(new URL('/api/v1/checkouts/c1/end', demoPage), { method: 'POST', keepalive: true }));
@@ -26,9 +28,33 @@ describe('the demo fetch', () => {
 
   it('leaves every other request to the network', async () => {
     const { network, win } = fakeWindow();
-    interceptFetch(win, createDemoApi());
+    interceptFetch(win, createDemoApi(startingState(committedRecording)));
     expect(await (await win.fetch('assets/font.woff2')).text()).toBe('from the network');
     expect(network).toHaveBeenCalledWith('assets/font.woff2', undefined);
+  });
+});
+
+describe('the recording', () => {
+  const url = 'assets/recording-abc123.json';
+
+  it('loads with one request to the network, before the demo answers anything', async () => {
+    const network = vi.fn(async () => new Response(JSON.stringify(committedRecording)));
+    const recorded = await fetchRecording(network as unknown as typeof fetch, url);
+    expect(recorded.recordedAt).toBe(committedRecording.recordedAt);
+    expect(network).toHaveBeenCalledTimes(1);
+    expect(network).toHaveBeenCalledWith(url);
+  });
+
+  it('says what went wrong when it cannot be loaded', async () => {
+    const answering = (res: Response) => (async () => res) as unknown as typeof fetch;
+    await expect(fetchRecording(answering(new Response('', { status: 404 })), url)).rejects.toThrow(`${url} answered 404.`);
+    // A static host answering its index page for a missing file.
+    await expect(fetchRecording(answering(new Response('<!doctype html><html></html>')), url)).rejects.toThrow(SyntaxError);
+    await expect(fetchRecording(answering(new Response('{"profiles": []}')), url)).rejects.toThrow(/Not a demo recording/);
+    const offline = (async () => {
+      throw new TypeError('NetworkError when attempting to fetch resource.');
+    }) as unknown as typeof fetch;
+    await expect(fetchRecording(offline, url)).rejects.toThrow(/NetworkError/);
   });
 });
 
